@@ -234,6 +234,45 @@
   .setreassure { margin-top: 10px; font-size: .8rem; background: var(--accent-soft);
     color: var(--accent); border-radius: 8px; padding: 8px 12px; font-weight: 600; }
 
+  /* ---- filter, disclosure, per-row risk ----
+     Risk used to be the grouping axis. At 21 rows that stopped working — you cannot
+     find the setting about your voice by asking whether it's safe — so subject is the
+     grouping now and risk is a per-row marker instead.
+     The effect line stays visible on every row; only the background moves behind a
+     disclosure. "States its real effect before you press it" is the promise, and it
+     survives intact — what's hidden is the reasoning, not the consequence. */
+  .setfilterbar { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .setfilterbar input {
+    flex: 1 1 auto; min-width: 0; font: inherit; font-size: .84rem;
+    padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel); color: var(--ink);
+  }
+  .setfilterbar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .setnomatch { margin-top: 12px; }
+  .setrow-text details { margin-top: 3px; }
+  .setrow-text summary {
+    font-size: .74rem; color: var(--accent); cursor: pointer; width: fit-content;
+    list-style: none; font-weight: 600;
+  }
+  .setrow-text summary::-webkit-details-marker { display: none; }
+  .setrow-text summary::before { content: "▸ "; font-size: .7em; }
+  .setrow-text details[open] summary::before { content: "▾ "; }
+  .setrow-text summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  .setrow-text details p { margin-top: 4px; }
+  .setwarn {
+    display: inline-block; margin-left: 6px; font-size: .64rem; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; vertical-align: 1px;
+    color: #a3691f; background: var(--gold-soft); border-radius: 4px; padding: 1px 5px;
+  }
+  .setrow-danger .setrow-text b { color: #8c5a1a; }
+  /* An 18px tap target is a miss on a phone. Padding rather than font-size so the
+     disclosure still reads as secondary to the effect line above it. */
+  @media (max-width: 760px) {
+    .setrow-text summary { padding: 8px 0; }
+    .setrow { align-items: flex-start; }
+    .setrow .btn { margin-top: 2px; }
+  }
+
   /* ---- history ---- */
   /* Saved messages are chips now, not a stacked list — they sit inside the inbox
      alongside the thing that made them, and a row of them costs a line instead of a panel. */
@@ -1676,10 +1715,26 @@
   </div>
 </div>
 
-<!-- settings modal -->
+<!-- settings modal
+     Reorganised 2026-08-20. It had grown to 21 rows and 813 words of explanation in
+     four groups sorted by RISK — "Housekeeping / Resets / Overwrites custom data".
+     That axis worked at eight rows and stopped working at twenty-one: "Housekeeping"
+     had become a thirteen-row grab bag holding a preference, a diagnostic, library
+     curation and queue maintenance, and you cannot find the thing about your voice by
+     asking yourself whether it is safe.
+
+     So: grouped by SUBJECT, which is how anyone actually looks for a setting, with
+     risk kept as a per-row property where it belongs. A row that clears or overwrites
+     something carries a marker and still states its effect in full before you press
+     it — that promise is unchanged, and it is why the effect line stays visible while
+     only the background moves behind "why".
+
+     A filter box sits at the top, because twenty-one rows is past the point where
+     scanning beats typing. -->
 <div class="modal-backdrop" id="settingsModal" style="display:none">
   <div class="modal">
     <h2>Settings</h2>
+
     <label style="font-size:.85rem">Gemini API key (powers transcription, AI translation and pad lookups)</label>
     <input type="password" id="geminiKey" placeholder="paste a free key from aistudio.google.com">
     <label style="font-size:.85rem">Backup Gemini API key (optional — a second Google account's key)</label>
@@ -1690,23 +1745,35 @@
       is fully spent — it isn't split between the two.</p>
     <p class="note" id="dictStats"></p>
 
-    <!-- Every row below states its real effect before you press it, not just in the
-         confirm() that follows — an audit turned up two buttons whose names implied
-         something scarier or vaguer than what they actually do. -->
+    <div class="setfilterbar">
+      <input type="text" id="setFilter" placeholder="filter settings — try “audio”, “reset”, “forms”…">
+      <span class="status" id="setFilterCount"></span>
+    </div>
     <div class="setreassure">None of the actions on this page can delete a word from your library.</div>
+    <p class="note setnomatch" id="setNoMatch" style="display:none">Nothing matches that.</p>
 
-    <!-- First group on the page on purpose. Everything below it is an action on your
-         data; this is the one that means you can undo any of them. -->
-    <div class="setgroup">
+    <div class="setgroup" data-group="You">
+      <h3 class="setgroup-title">You<span class="setgroup-sub">Who the app thinks is speaking.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>I am</b>
+          <p>Sets whether the app expects your Hebrew to be masculine or feminine.</p>
+          <details><summary>Why this matters</summary><p>Hebrew verbs and adjectives agree with whoever is speaking, so "I want" is <em>ani rotze</em> from a man and <em>ani rotza</em> from a woman. The Sentence pad checks your writing against this. The lens above the Library is the other half: who you're talking <em>to</em>.</p></details></div>
+        <button class="btn secondary" id="speakerBtn"></button>
+      </div>
+    </div>
+
+    <div class="setgroup" data-group="Your data">
       <h3 class="setgroup-title">Your data<span class="setgroup-sub">The only copy of your progress is in this browser.</span></h3>
       <div class="setrow">
         <div class="setrow-text"><b>Export everything</b>
-          <p>Saves one file holding your whole library, every word's drill schedule and strength, your streak and practice history, banked sentences, path progress, conversations, marks and settings. This is the only backup that exists — the .xlsx export is words alone. Cached audio isn't included (it's regenerated on demand). The file contains your API keys, so keep it somewhere private.</p></div>
+          <p>Saves one file holding everything: your library, every word's schedule and strength, your streak and history, banked sentences, path progress, conversations and settings.</p>
+          <details><summary>What's in it, and what isn't</summary><p>This is the only real backup — the .xlsx export is words alone. Cached audio and kept voice notes aren't included; they live outside the main save and are regenerated or re-added. The file contains your API keys, so keep it somewhere private.</p></details></div>
         <button class="btn secondary" id="exportAllBtn">Save file</button>
       </div>
       <div class="setrow">
         <div class="setrow-text"><b>Import a backup</b>
-          <p><b>Replaces</b> everything currently in this browser with the contents of a backup file — it doesn't merge. You'll see what's in the file and what it's about to replace, and have to confirm, before anything is written. This is also how you move your progress to another browser, another computer, or a phone.</p></div>
+          <p><b>Replaces</b> everything currently in this browser with a backup file. It doesn't merge.</p>
+          <details><summary>What happens when you press it</summary><p>You'll see what's in the file and what it's about to replace, and have to confirm, before anything is written. Merging two drill histories has no correct answer — which due date would win? — so replacing is the honest behaviour. This is also how you move your progress to another browser, another computer, or a phone.</p></details></div>
         <button class="btn secondary" id="importAllBtn">Choose file</button>
       </div>
       <input type="file" id="importAllFile" accept="application/json,.json" style="display:none">
@@ -1714,8 +1781,32 @@
       <p class="note" id="notesStatus"></p>
     </div>
 
-    <div class="setgroup">
-      <h3 class="setgroup-title">Housekeeping<span class="setgroup-sub">Safe. Nothing here loses anything.</span></h3>
+    <div class="setgroup" data-group="Your library">
+      <h3 class="setgroup-title">Your library<span class="setgroup-sub">Which words you're working on, and how well you know them.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>Fine-tune word strength</b>
+          <p>Opens every word with where the app thinks you are on understanding it and on saying it. Click to set either directly.</p>
+          <details><summary>Why you'd use it</summary><p>This is what the session builder and Conversation mode actually check before they'll use a word, so correcting it here changes what you get asked next time — for anything the schedule has wrong, not just imported batches.</p></details></div>
+        <button class="btn secondary" id="openStrengthBtn">Open</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Mark Duolingo batch as known</b>
+          <p>Fast-forwards the schedule for words added from Duolingo, so they're treated as trained rather than brand new.</p>
+          <details><summary>What it won't touch</summary><p>For the ones you can already say on sight. It skips any word that's already strong, so it never undoes real practice history.</p></details></div>
+        <button class="btn secondary" id="markDuoKnownBtn">Run</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Retire words you already know</b>
+          <p>Moves every word that's strong on both understanding and speaking off the focus grid into reserve.</p>
+          <details><summary>Where they go</summary><p>They stay in your library — still drilled, searched and exported — just not filling the wall. Starred words are skipped.</p></details></div>
+        <button class="btn secondary" id="retireStrongBtn">Run</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Retire untouched imports</b>
+          <p>Clears imported words that have never appeared in a real message off the focus grid.</p>
+          <details><summary>Where they go</summary><p>The Duolingo and starter batches added words you never picked yourself. Starred words are skipped, and any of them come back with ↑ or by starring it.</p></details></div>
+        <button class="btn secondary" id="retireBatchBtn">Run</button>
+      </div>
       <div class="setrow">
         <div class="setrow-text"><b>Un-dismiss words</b>
           <p>Dismissed suggestions get offered again next time they show up in a message.</p></div>
@@ -1726,99 +1817,92 @@
           <p>Unstars every word. The words themselves aren't touched.</p></div>
         <button class="btn secondary" id="clearFocusBtn">Run</button>
       </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Check which Hebrew voices work</b>
-          <p id="ttsCheckDesc">Asks Google which models your key can actually reach, and lists the ones that can speak. Real Hebrew audio has been failing since 7 Aug, and the app was only ever asking for one model by an exact dated name — this says whether that name still exists or the account is genuinely blocked. Uses one request and generates nothing.</p></div>
-        <button class="btn secondary" id="ttsCheckBtn">Check</button>
+      <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Fix opposites <span class="setwarn">overwrites</span></b>
+          <p id="fixOppositesDesc">Resets every opposite pairing in your library to the curated built-in set — silently discarding any pairing you've dragged together yourself that isn't in it.</p></div>
+        <button class="btn secondary" id="fixOppositesBtn">Run</button>
       </div>
+    </div>
+
+    <div class="setgroup" data-group="Words and their forms">
+      <h3 class="setgroup-title">Words and their forms<span class="setgroup-sub">Dictionary forms, conjugations, the lens.</span></h3>
       <div class="setrow">
         <div class="setrow-text"><b>Re-file under dictionary forms</b>
-          <p>Some words are filed under a form rather than the word: "siyamti" instead of "lesayem", or "ha-izdamnut" with the ה still attached. This lists them and moves each to its dictionary form, carrying drill history, marks, pairs and cached audio across. Only words whose forms have been generated are offered — the model is what tells an attached ה from a word that simply starts with one.</p></div>
+          <p>Finds words filed under a form rather than the word itself, and moves each to its dictionary form.</p>
+          <details><summary>What gets moved, and what carries over</summary><p>"siyamti" instead of "lesayem", or "ha-izdamnut" with the ה still attached. Drill history, marks, pairs and cached audio all move with the word. Only words whose forms have been generated are offered — the model is what tells an attached ה from a word that simply starts with one.</p></details></div>
         <button class="btn secondary" id="rebaseBtn">Run</button>
       </div>
       <div class="setrow" id="undoRebaseRow" style="display:none">
         <div class="setrow-text"><b>Undo re-filing</b>
-          <p>Puts the library back exactly as it was before the last re-filing. Drill history, marks and pairs were only repointed, never deleted, so this restores those too. Available until you re-file again.</p></div>
+          <p>Puts the library back exactly as it was before the last re-filing.</p>
+          <details><summary>What comes back</summary><p>Drill history, marks and pairs were only repointed, never deleted, so this restores those too. Available until you re-file again.</p></details></div>
         <button class="btn secondary" id="undoRebaseBtn">Run</button>
       </div>
       <div class="setrow">
-        <div class="setrow-text"><b>I am</b>
-          <p>Hebrew verbs and adjectives agree with whoever is speaking, so the app needs to know which forms are yours — "ani rotze" or "ani rotza". This is you. The lens above the Library is the other half: who you're talking <em>to</em>.</p></div>
-        <button class="btn secondary" id="speakerBtn"></button>
-      </div>
-      <div class="setrow">
         <div class="setrow-text"><b>Fill in forms automatically</b>
-          <p>When on, the app generates forms for new words on its own once about ten have built up — roughly two API calls per ten words, from the 500-a-day pool the transcription quota doesn't touch. Off by default so the first run on a fresh library is one you start and watch.</p></div>
+          <p>When on, the app generates forms for new words on its own once about ten have built up.</p>
+          <details><summary>What it costs</summary><p>Roughly two API calls per ten words, from the 500-a-day pool the transcription quota doesn't touch. Off by default so the first run on a fresh library is one you start and watch.</p></details></div>
         <button class="btn secondary" id="formsAutoBtn">Off</button>
       </div>
       <div class="setrow">
         <div class="setrow-text"><b>Clear form queue</b>
-          <p>A word whose forms failed to generate three times gets parked so the queue stops retrying it. This unparks everything and resets today's call count. Generated forms are kept.</p></div>
+          <p>Unparks words whose forms failed to generate, and resets today's call count.</p>
+          <details><summary>Why words get parked</summary><p>A word whose forms fail three times gets parked so the queue stops retrying it forever. Generated forms are kept.</p></details></div>
         <button class="btn secondary" id="clearFormQBtn">Run</button>
       </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Mark Duolingo batch as known</b>
-          <p>Fast-forwards the spaced-repetition schedule for the words added from Duolingo — for the ones you can already say on sight, so sessions and conversations treat them as trained instead of brand new. Skips any that are already strong, so it never undoes real practice.</p></div>
-        <button class="btn secondary" id="markDuoKnownBtn">Run</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Fine-tune word strength</b>
-          <p>Every word in your Library, with where the app thinks you are on understanding it and on speaking it. Click to set either one directly — for anything the schedule has wrong, not just the Duolingo batch.</p></div>
-        <button class="btn secondary" id="openStrengthBtn">Open</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Retire words you already know</b>
-          <p>Moves every word that's strong on both understanding and speaking off the focus grid into reserve. They stay in your library — still drilled, searched and exported — just not filling the wall. Starred words are skipped.</p></div>
-        <button class="btn secondary" id="retireStrongBtn">Run</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Retire untouched imports</b>
-          <p>The Duolingo and starter batches added words you never picked yourself. This retires the ones that have never appeared in a real message, clearing them off the focus grid in one go. Starred words are skipped, and any of them can be brought back with ↑ or by starring it.</p></div>
-        <button class="btn secondary" id="retireBatchBtn">Run</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Clean up nonsense sentences</b>
-          <p>Re-checks every banked sentence and removes only the ones that don't actually make sense. Everything that passes keeps its history.</p></div>
-        <button class="btn secondary" id="reviewBankBtn">Run</button>
-      </div>
-      <p class="note" id="reviewBankStatus"></p>
     </div>
 
-    <div class="setgroup">
-      <h3 class="setgroup-title">Resets<span class="setgroup-sub">Clears something specific. Your library stays intact.</span></h3>
-      <div class="setrow">
-        <div class="setrow-text"><b>Reset "words I know"</b>
-          <p>Forgets words you've marked as already-known and spelling variants the pad has learned. They'll be flagged again.</p></div>
-        <button class="btn secondary" id="clearKnownBtn">Run</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Forget corrected spellings</b>
-          <p>A separate list from "words I know" above — this is text you've personally corrected while <em>reading a message</em>. Clearing it means those corrections stop applying.</p></div>
-        <button class="btn secondary" id="clearLearnedBtn">Run</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Bin the practice sentences</b>
-          <p>Deletes every banked practice sentence outright, unread. Your library, word strengths and progress all stay exactly as they are — new sentences get written next session.</p></div>
-        <button class="btn secondary" id="newSentencesBtn">Run</button>
-      </div>
+    <div class="setgroup" data-group="Practice and scheduling">
+      <h3 class="setgroup-title">Practice and scheduling<span class="setgroup-sub">What you get asked, and when it comes back.</span></h3>
       <div class="setrow">
         <div class="setrow-text"><b>Correct inflated review dates</b>
-          <p id="deflateDesc">Until 20 Aug 2026 the scheduler counted a word twice when a session showed it twice — as a card and again inside a sentence — so some words were pushed months or years out on a single evening's practice. This pulls any interval longer than two months back to two months, measured from when you last actually answered that word. Nothing else changes: your library, strengths, marks and sentences are untouched, and words already inside two months are left exactly as they are.</p></div>
+          <p id="deflateDesc">Pulls any review interval longer than two months back to two months, measured from when you last actually answered that word.</p>
+          <details><summary>Why this exists</summary><p>Until 20 Aug 2026 the scheduler counted a word twice when a session showed it twice — as a card and again inside a sentence — so some words were pushed months or years out on a single evening's practice. Your library, strengths, marks and sentences are untouched, and anything already inside two months is left exactly as it is.</p></details></div>
         <button class="btn secondary" id="deflateBtn">Run</button>
       </div>
       <div class="setrow">
-        <div class="setrow-text"><b>Reset drill schedule</b>
-          <p>This is the one that resets progress, not your words: every word becomes due for review again, as if freshly added. Nothing is deleted — your library, marks and banked sentences are untouched.</p></div>
+        <div class="setrow-text"><b>Clean up nonsense sentences</b>
+          <p>Re-checks every banked sentence and removes only the ones that don't actually make sense.</p>
+          <details><summary>How it decides</summary><p>The same reviewer that vets new sentences, run retroactively over what's already stored. Everything that passes keeps its history. Different from "Bin the practice sentences", which throws everything away unread.</p></details></div>
+        <button class="btn secondary" id="reviewBankBtn">Run</button>
+      </div>
+      <p class="note" id="reviewBankStatus"></p>
+      <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Bin the practice sentences <span class="setwarn">clears</span></b>
+          <p>Deletes every banked practice sentence outright, unread.</p>
+          <details><summary>What survives</summary><p>Your library, word strengths and progress all stay exactly as they are — new sentences get written next session.</p></details></div>
+        <button class="btn secondary" id="newSentencesBtn">Run</button>
+      </div>
+      <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Reset drill schedule <span class="setwarn">clears</span></b>
+          <p>Every word becomes due for review again, as if freshly added.</p>
+          <details><summary>What survives</summary><p>This is the one that resets progress, not your words. Nothing is deleted — your library, marks and banked sentences are untouched.</p></details></div>
         <button class="btn secondary" id="resetSrsBtn">Run</button>
       </div>
     </div>
 
-    <div class="setgroup setgroup-danger">
-      <h3 class="setgroup-title">Overwrites custom data<span class="setgroup-sub">The one place a mis-click can lose something you made yourself.</span></h3>
+    <div class="setgroup" data-group="Reading and the pad">
+      <h3 class="setgroup-title">Reading and the pad<span class="setgroup-sub">What the app has learned about how you write.</span></h3>
+      <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Reset “words I know” <span class="setwarn">clears</span></b>
+          <p>Forgets words you've marked as already-known and spelling variants the pad has learned. They'll be flagged again.</p></div>
+        <button class="btn secondary" id="clearKnownBtn">Run</button>
+      </div>
+      <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Forget corrected spellings <span class="setwarn">clears</span></b>
+          <p>Clears text you've personally corrected while <em>reading a message</em>, so those corrections stop applying.</p>
+          <details><summary>Not the same list</summary><p>A separate list from "words I know" above — that one is about the pad, this one is about the reader.</p></details></div>
+        <button class="btn secondary" id="clearLearnedBtn">Run</button>
+      </div>
+    </div>
+
+    <div class="setgroup" data-group="Audio">
+      <h3 class="setgroup-title">Audio<span class="setgroup-sub">Hebrew voices, and what this key can reach.</span></h3>
       <div class="setrow">
-        <div class="setrow-text"><b>Fix opposites</b>
-          <p id="fixOppositesDesc">Resets every opposite pairing in your library to the curated built-in set — silently discarding any pairing you've dragged together yourself that isn't in it.</p></div>
-        <button class="btn secondary" id="fixOppositesBtn">Run</button>
+        <div class="setrow-text"><b>Check which Hebrew voices work</b>
+          <p id="ttsCheckDesc">Asks Google which speech models your key can actually reach. Uses one request and generates nothing.</p>
+          <details><summary>Why you'd check</summary><p>Real Hebrew audio has been failing since 7 Aug. This says whether the app is asking for a model that no longer exists, or the account itself is blocked — rather than guessing.</p></details></div>
+        <button class="btn secondary" id="ttsCheckBtn">Check</button>
       </div>
     </div>
 
@@ -3152,6 +3236,17 @@ function lensGet() {
 }
 function lensSet(v) { lsSet(LENS_KEY, LENS_VALUES.indexOf(v) === -1 ? "" : v); }
 function speakerGet() { return lsGet(SPEAKER_KEY) === "f" ? "f" : "m"; }
+/* This was missing entirely. The button existed in Settings, the getter existed, the
+   pad's agreement checker read it — but nothing ever WROTE the key and nothing ever
+   set the button's label, so it rendered blank and did nothing when clicked. It has
+   never worked in any version of this file. A woman using the app was silently told
+   her own correct Hebrew was wrong. */
+function speakerSet(v) { lsSet(SPEAKER_KEY, v === "f" ? "f" : "m"); }
+function speakerLabel(v) {
+  return (v || speakerGet()) === "f"
+    ? "a woman — “ani rotza”"
+    : "a man — “ani rotze”";
+}
 
 /* Which slot of the bank a lens selects, per part of speech.
    - adj/pron/num agree with the addressee.
@@ -4645,6 +4740,13 @@ function openSettings() {
     "Built-in dictionary: " + Object.keys(DICT).length + " words + " + Object.keys(PHRASES).length +
     " phrases. Words you've taught it: " + n + ".";
   vnotesRenderStatus();
+  paintSpeakerBtn();
+  paintFormsAutoBtn();
+  paintUndoRebaseRow();
+  /* Opened fresh every time. A panel that reopens still filtered looks like settings
+     have gone missing. */
+  document.getElementById("setFilter").value = "";
+  setFilterApply();
   /* States the real number before you press it, like every other row here. */
   const infl = srsDeflateCount(srsAll());
   const dfl = document.getElementById("deflateDesc");
@@ -4687,6 +4789,70 @@ function settingsAction(fn) {
     catch (e) { alert("Couldn't complete that — " + e.message); }
   };
 }
+/* ---- the two dead buttons ----
+   Both of these rendered in Settings and did nothing, in every version of this file.
+   `speakerBtn` had a getter and a reader (the pad's agreement checker) but nothing
+   ever wrote the key and nothing ever set the label, so it drew blank. `formsAutoBtn`
+   is worse: the entire background queue behind it is implemented and working, gated on
+   `lsGet(FORMS_AUTO_KEY) !== "1"` — a key that nothing in the app could set. A complete
+   feature, unreachable by one missing line. */
+function paintSpeakerBtn() {
+  const b = document.getElementById("speakerBtn");
+  if (b) b.textContent = speakerLabel();
+}
+document.getElementById("speakerBtn").onclick = settingsAction(() => {
+  speakerSet(speakerGet() === "f" ? "m" : "f");
+  paintSpeakerBtn();
+  /* The lens renders agreeing forms off this, so the grid has to repaint or the
+     change looks like it did nothing. */
+  renderLibrary();
+});
+
+function paintFormsAutoBtn() {
+  const b = document.getElementById("formsAutoBtn");
+  if (b) b.textContent = formsAutoOn() ? "On" : "Off";
+}
+document.getElementById("formsAutoBtn").onclick = settingsAction(() => {
+  const turningOn = !formsAutoOn();
+  if (turningOn && !geminiKeys().length) {
+    alert("Filling in forms needs a Gemini key — add one at the top of Settings.");
+    return;
+  }
+  lsSet(FORMS_AUTO_KEY, turningOn ? "1" : "0");
+  paintFormsAutoBtn();
+});
+
+/* ---- filtering ----
+   Twenty-one rows is past the point where scanning beats typing. Matches on the row's
+   whole text, disclosure included, so "quota" finds the auto-forms row even though the
+   word only appears in its expanded detail. */
+function setFilterApply() {
+  const q = (document.getElementById("setFilter").value || "").trim().toLowerCase();
+  const groups = document.querySelectorAll("#settingsModal .setgroup");
+  let shown = 0, total = 0;
+  groups.forEach(g => {
+    let anyInGroup = 0;
+    g.querySelectorAll(".setrow").forEach(r => {
+      /* A row hidden for its own reasons — Undo re-filing, which only exists after a
+         re-file — must stay hidden regardless of what's typed. */
+      if (r.id === "undoRebaseRow" && r.dataset.reallyHidden === "1") return;
+      total++;
+      const hit = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
+      r.style.display = hit ? "" : "none";
+      if (hit) { anyInGroup++; shown++; }
+    });
+    g.style.display = anyInGroup ? "" : "none";
+  });
+  document.getElementById("setFilterCount").textContent = q ? shown + " of " + total : "";
+  document.getElementById("setNoMatch").style.display = (q && !shown) ? "" : "none";
+}
+document.getElementById("setFilter").addEventListener("input", setFilterApply);
+/* Escape clears the filter before it closes anything — otherwise a filtered panel
+   reopens still filtered and looks like settings have gone missing. */
+document.getElementById("setFilter").addEventListener("keydown", e => {
+  if (e.key === "Escape" && e.target.value) { e.stopPropagation(); e.target.value = ""; setFilterApply(); }
+});
+
 /* ---- what voices this key can actually reach ----
    A read-only ListModels call. Generates nothing, spends no TTS quota, and replaces a
    guess with Google's own answer about whether the model name is the problem. */
@@ -4981,7 +5147,13 @@ document.getElementById("retireBatchBtn").onclick = settingsAction(() => {
    immediately before anything moves. */
 function paintUndoRebaseRow() {
   const row = document.getElementById("undoRebaseRow");
-  if (row) row.style.display = hasRebaseSnapshot() ? "" : "none";
+  if (!row) return;
+  const show = hasRebaseSnapshot();
+  /* Recorded as well as applied: the settings filter also writes style.display, and
+     without a flag saying WHY this row is hidden, clearing the filter would reveal an
+     Undo button for a re-filing that never happened. */
+  row.dataset.reallyHidden = show ? "0" : "1";
+  row.style.display = show ? "" : "none";
 }
 
 document.getElementById("rebaseBtn").onclick = settingsAction(async () => {
@@ -9195,7 +9367,19 @@ function pcmToWavBlob(base64pcm, sampleRate, channels, bitsPerSample) {
    "the one name we ask for stopped existing" were never separated. Settings →
    "Check which Hebrew voices work" now answers that with the real API rather than a
    guess; ordered newest-first so a working model is found before a retired one. */
+/* Confirmed live from George's own key on 2026-08-20 via the Check button below:
+   all three of these are reachable. So the 2.5 names were never the problem — the
+   original single-name theory was wrong, and the persistent failures since 07 Aug are
+   coming from the account or the per-model quota, not from asking for something that
+   no longer exists.
+
+   3.1 leads anyway. It is newer, and Google's free tiers are pooled PER MODEL — the
+   text path already exploits exactly this, where flash-lite answers while flash is
+   returning 429. A model this app has never called has, by definition, an untouched
+   allowance. Ordered newest-first so the freshest pool is tried before the two that
+   have been failing. */
 const GEMINI_TTS_MODELS = [
+  "gemini-3.1-flash-tts-preview",
   "gemini-2.5-flash-preview-tts",
   "gemini-2.5-pro-preview-tts"
 ];

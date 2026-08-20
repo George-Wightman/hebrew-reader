@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Hebrew Voice Note Reader</title>
+<!-- Installable on a phone. All four of these are inert when the file is opened by
+     double-click (file:// has no manifest handling and no service workers), so the
+     double-click habit is completely unaffected — they only do anything once the page
+     is served over https. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#f5f0e7">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
   /* ---- Paper & Ink ----
      Warm paper, teal for anything you can act on, gold reserved exclusively for
@@ -233,6 +242,41 @@
   .setrow .btn { flex: 0 0 auto; white-space: nowrap; }
   .setreassure { margin-top: 10px; font-size: .8rem; background: var(--accent-soft);
     color: var(--accent); border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+
+  /* ---- update offer ----
+     Teal like the resume bar, and for the same reason: this is an offer, not a fault,
+     so it must not borrow the alarm's red. */
+  .updatebar {
+    position: sticky; top: 0; z-index: 499;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 9px 16px; font-size: .84rem;
+    background: var(--accent-soft); color: var(--accent);
+    border-bottom: 1px solid rgba(13,110,110,.25);
+  }
+  .updatebar span { flex: 1 1 auto; min-width: 0; }
+  .updatebar .alarm-x { border-color: var(--accent); color: var(--accent); }
+  .updatebar .alarm-x:hover { background: var(--accent); color: #fff; }
+
+  .migratebar { background: var(--gold-soft); color: #8c5a1a;
+                border-bottom-color: rgba(179,128,58,.35); }
+  .migratebar .alarm-x { border-color: #8c5a1a; color: #8c5a1a; }
+  .migratebar .alarm-x:hover { background: #8c5a1a; color: #fff; }
+  .migratebar b { display: block; }
+
+  /* ---- resume ----
+     Teal, not gold: gold is reserved for achievement and this is an offer, not a
+     reward. Sits above Start because if you were mid-session it is what you came
+     back for. */
+  .lresume {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 0 0 14px; padding: 12px 14px;
+    background: var(--accent-soft); border: 1px solid rgba(13,110,110,.22);
+    border-radius: var(--radius);
+  }
+  .lresume-text { flex: 1 1 220px; min-width: 0; }
+  .lresume b { display: block; font-size: .9rem; color: var(--accent); }
+  .lresume p { margin: 2px 0 0; font-size: .8rem; color: var(--muted); line-height: 1.4; }
+  .lresume-btns { display: flex; gap: 8px; flex: 0 0 auto; }
 
   /* ---- filter, disclosure, per-row risk ----
      Risk used to be the grouping axis. At 21 rows that stopped working — you cannot
@@ -1392,6 +1436,23 @@
   <button class="alarm-x" id="alarmClose" aria-label="Dismiss">✕</button>
 </div>
 
+<!-- First run on the hosted copy, with nothing brought across yet. -->
+<div class="updatebar migratebar" id="migrateBar" style="display:none">
+  <span><b>Your words aren't here yet.</b> This is the web copy — it starts empty, because a
+    browser keeps each address's data separately. Export from the version you double-click,
+    then import the file here.</span>
+  <button class="btn secondary" id="migrateImport">Import a backup</button>
+  <button class="alarm-x" id="migrateDismiss" aria-label="Not now">✕</button>
+</div>
+
+<!-- A new version is cached and ready. Never applied on its own: a reload mid-drill
+     would throw away the card you were on. -->
+<div class="updatebar" id="updateBar" style="display:none">
+  <span>A newer version of the app is ready.</span>
+  <button class="btn secondary" id="updateNow">Reload to update</button>
+  <button class="alarm-x" id="updateLater" aria-label="Not now">✕</button>
+</div>
+
 <nav class="topnav">
   <span class="navbrand">שלום</span>
   <button class="navbtn" id="navLearn">Learn<span id="learnBadge" class="navbadge" style="display:none"></span></button>
@@ -1577,6 +1638,19 @@
         <p class="lsub" id="lStartSub"></p>
         <div class="lchips" id="lStartChips"></div>
         <p class="lgate" id="lGate" style="display:none"></p>
+        <!-- Above Start, because if you were mid-session that's what you came back
+             for. Offered, never automatic: dropping someone straight into a card they
+             don't remember choosing is worse than asking. -->
+        <div class="lresume" id="lResume" style="display:none">
+          <div class="lresume-text">
+            <b>Pick up where you left off?</b>
+            <p id="lResumeText"></p>
+          </div>
+          <div class="lresume-btns">
+            <button class="btn" id="lResumeBtn">Resume</button>
+            <button class="btn secondary" id="lResumeDrop">Start fresh</button>
+          </div>
+        </div>
         <button class="btn big" id="lStartBtn">Start session</button>
         <div class="lshapes" id="lShapes"></div>
         <p class="lhint" id="lStartHint"></p>
@@ -2039,6 +2113,35 @@ document.getElementById("alarmCopy").addEventListener("click", async (e) => {
   catch (err) { e.target.textContent = "Press Ctrl+C"; window.prompt("Copy this:", alarmDetail); }
   setTimeout(() => { e.target.textContent = "Copy detail"; }, 1600);
 });
+
+/* =====================  INSTALLED ON A PHONE  =====================
+   Registering the worker is what makes the app installable and what makes it open
+   without a connection. Everything here no-ops on file://, so double-clicking the file
+   behaves exactly as it always has.
+
+   The update prompt is the part worth being careful about. A service worker that
+   reloads the page the moment new bytes arrive would be capable of destroying a drill
+   session mid-card, so it never reloads on its own — it offers, and only when it is
+   safe to say yes. */
+let shellUpdateReady = false;
+function shellOfferUpdate() {
+  shellUpdateReady = true;
+  /* Mid-session the offer waits. learnRenderStart calls this again on the way out,
+     so the update surfaces at the next natural break instead of over a card. */
+  if (learnSession) return;
+  const bar = document.getElementById("updateBar");
+  if (bar) bar.style.display = "flex";
+}
+function shellUpdateCheck() { if (shellUpdateReady) shellOfferUpdate(); }
+
+if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data && e.data.type === "shell-updated") shellOfferUpdate();
+  });
+}
 
 /* =====================  EXPORT / IMPORT  =====================
    Everything this app knows lives in ~60 independent localStorage keys on one origin,
@@ -4929,6 +5032,27 @@ function vnotesRenderStatus() {
     + "practice. They're stored outside the main save, so they aren't in the export file.";
 }
 
+/* Landing on the hosted copy for the first time looks exactly like the app having
+   wiped itself: localStorage is per-origin, so the library built up on file:// is not
+   here and never will be. The seed runs and you get 178 starter words where you had
+   241 of your own, with nothing on screen explaining why.
+
+   Detects that specific situation — a served origin, a library that is only the seed,
+   and no practice history — and points at Import rather than letting it be a mystery.
+   Deliberately narrow: anyone with real history has migrated already, or never had
+   any, and must not be nagged. */
+function migrationHintCheck() {
+  const bar = document.getElementById("migrateBar");
+  if (!bar) return;
+  if (location.protocol.indexOf("http") !== 0) return;   // file:// is the old home
+  if (lsGet("hvr_migrated") === "1") return;
+  const st = statsAll();
+  const practised = Object.keys((st && st.days) || {}).length;
+  const drilled = Object.keys(srsAll()).length;
+  if (practised || drilled) { lsSet("hvr_migrated", "1"); return; }
+  bar.style.display = "flex";
+}
+
 /* ---- export / import ---- */
 function setDataStatus(msg, bad) {
   const el = document.getElementById("dataStatus");
@@ -4986,6 +5110,7 @@ document.getElementById("importAllFile").onchange = async (ev) => {
   }
   try {
     const n = applyImport(r.data);
+    lsSet("hvr_migrated", "1");
     setDataStatus("Imported " + n + " stores. Reloading…");
     /* A reload rather than re-rendering in place: every in-memory cache, the running
        session and the view state were all built from the data we just replaced
@@ -11843,6 +11968,71 @@ function learnVoiceBanner() {
   document.getElementById("lVoiceBanner").style.display =
     (hasHeVoice() || lsGet("hvr_voicebanner") === "0") ? "none" : "block";
 }
+/* =====================  SESSION SURVIVAL  =====================
+   learnSession was memory-only. It survived switching tabs inside the app (learnEnter
+   resumes rather than restarts) but not a reload, a crash, or the tab being closed —
+   and per-card stats are written as you go, so nothing was ever MIS-counted; you just
+   couldn't pick the session back up.
+
+   That was a laptop-shaped assumption. A phone discards backgrounded tabs whenever it
+   feels like it: take a call in the middle of a session and the session is gone. So it
+   is written to storage on every advance.
+
+   Only what cannot be rebuilt is stored. Cards carry their own text, so a resumed
+   session is exactly the one that was interrupted rather than a fresh draw — a session
+   that quietly re-deals on resume would drop whatever you were mid-way through. */
+const SESSION_KEY = "hvr_session";
+const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;   // half a day
+
+function sessionStash() {
+  const s = learnSession;
+  if (!s || s.i >= s.cards.length) { sessionClear(); return; }
+  lsSet(SESSION_KEY, JSON.stringify({
+    ts: Date.now(), i: s.i, got: s.got, cards: s.cards,
+    strengthened: s.strengthened, back: s.back, path: s.path || null
+  }));
+}
+function sessionClear() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+/* Resolves to a usable session or null. Anything malformed, finished or stale is
+   discarded rather than repaired — a half-understood session is worse than a fresh
+   one, and the cost of being wrong is re-drilling fifteen cards. */
+/* Pure: takes the parsed blob and the current time, returns a session or null. Kept
+   separate from the storage read so the suite can test what it accepts and refuses
+   without touching a real store. */
+function sessionValidate(d, now) {
+  if (!d || !Array.isArray(d.cards) || !d.cards.length) return null;
+  if (typeof d.i !== "number" || d.i < 0 || d.i >= d.cards.length) return null;
+  /* Stale sessions are not offered. Yesterday's half-finished fifteen cards are not
+     what you came back for, and resuming one silently would make the streak and the
+     due dates describe a day that has already been counted. */
+  if (!d.ts || ((now || Date.now()) - d.ts) > SESSION_MAX_AGE_MS) return null;
+  /* Every card must still be renderable. A kind that no longer exists, or a card whose
+     word has since been deleted from the library, would throw on render — and a crash
+     on resume is a far worse failure than not offering to resume. */
+  if (!d.cards.every(c => c && c.kind && LEARN_KINDS[c.kind])) return null;
+  return { cards: d.cards, i: d.i, got: d.got || 0,
+           strengthened: d.strengthened || {}, back: d.back || {},
+           path: d.path || undefined, ts: d.ts };
+}
+function sessionRestore() {
+  let d = null;
+  try { d = JSON.parse(lsGet(SESSION_KEY)); } catch (e) { return null; }
+  return sessionValidate(d, Date.now());
+}
+function sessionResumeOffer() {
+  const d = sessionRestore();
+  const box = document.getElementById("lResume");
+  if (!box) return;
+  if (!d) { box.style.display = "none"; return; }
+  const mins = Math.round((Date.now() - d.ts) / 60000);
+  document.getElementById("lResumeText").textContent =
+    "You were " + d.i + " cards into a session" +
+    (mins < 2 ? " a moment ago" : mins < 60 ? ", " + mins + " minutes ago"
+      : ", " + Math.round(mins / 60) + " hour" + (Math.round(mins / 60) === 1 ? "" : "s") + " ago") +
+    ". Everything you'd already answered is counted either way.";
+  box.style.display = "";
+}
+
 function learnEnter() {
   learnVoiceBanner();
   if (learnSession) { learnShow("lRun"); return; }   // resume, don't restart
@@ -11898,6 +12088,8 @@ function learnRenderStart() {
     return;
   }
   document.getElementById("lStatsPane").style.display = "";
+  sessionResumeOffer();
+  shellUpdateCheck();      // an update deferred mid-session surfaces here
 
   /* Said out loud rather than done silently. A wipe he asked for is still a wipe,
      and he should be able to see that it happened rather than infer it from an
@@ -12007,6 +12199,48 @@ function learnRenderShapes() {
     SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
 }
 
+document.getElementById("migrateImport").onclick = () => {
+  document.getElementById("migrateBar").style.display = "none";
+  openSettings();
+  document.getElementById("importAllFile").click();
+};
+document.getElementById("migrateDismiss").onclick = () => {
+  /* Dismissing means "I know, this one starts empty" — asked once, never again. */
+  lsSet("hvr_migrated", "1");
+  document.getElementById("migrateBar").style.display = "none";
+};
+
+document.getElementById("updateNow").onclick = () => {
+  /* Ask the waiting worker to take over, then reload. Guarded so a worker that never
+     answers can't leave the button dead. */
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.ready.then(r => {
+        if (r.waiting) r.waiting.postMessage({ type: "skip-waiting" });
+      });
+    }
+  } catch (e) {}
+  location.reload();
+};
+document.getElementById("updateLater").onclick = () => {
+  shellUpdateReady = false;
+  document.getElementById("updateBar").style.display = "none";
+};
+
+document.getElementById("lResumeBtn").onclick = () => {
+  const d = sessionRestore();
+  if (!d) { document.getElementById("lResume").style.display = "none"; return; }
+  learnSession = d;
+  learnShow("lRun");
+  learnRenderCard();
+};
+document.getElementById("lResumeDrop").onclick = () => {
+  /* Dropped, not finished. The cards already answered kept their grades when they
+     were answered — this only discards the ones still ahead. */
+  sessionClear();
+  document.getElementById("lResume").style.display = "none";
+};
+
 document.getElementById("lStartBtn").onclick = async () => {
   const btn = document.getElementById("lStartBtn");
   const hint = document.getElementById("lStartHint");
@@ -12041,6 +12275,7 @@ document.getElementById("lStartBtn").onclick = async () => {
       : "Nothing to drill yet — add some words first.";
     return;
   }
+  sessionClear();          // a new draw replaces whatever was stashed
   learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {} };
   statsBump({ sessions: 1 });
   if (!/new practice|limit|Couldn't|conversation/.test(hint.textContent)) hint.textContent = before;
@@ -13008,7 +13243,8 @@ function learnAdvance(clean) {
               spokenOk: (learnSpoken && clean) ? 1 : 0 });
   if (clean) s.got++;
   s.i++;
-  if (s.i >= s.cards.length) learnFinish(); else learnRenderCard();
+  if (s.i >= s.cards.length) learnFinish();
+  else { sessionStash(); learnRenderCard(); }
 }
 
 /* Written at the END of a session, when the day's drilling has actually moved the
@@ -13030,6 +13266,7 @@ function statsSnapshotBands() {
 let lastFinishedPath = null;
 function learnFinish() {
   const s = learnSession;
+  sessionClear();          // finished is not resumable
   micRelease();
   statsSnapshotBands();
   document.getElementById("lProgBar").style.width = "100%";
@@ -13355,6 +13592,9 @@ renderHistory();
 archSetOpen(lsGet(ARCH_OPEN_KEY) === "1");   // closed unless explicitly opened
 learnBadge();
 setView(lsGet(VIEW_KEY) || "learn");
+/* Last, so a hint about an empty library is only shown once the library has actually
+   been seeded and rendered. */
+migrationHintCheck();
 syncPadOffset();
 
 /* Automatic top-up: only once enough words have piled up to be worth a call, and
@@ -14485,6 +14725,67 @@ T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
                 "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
   assertEq(srsDeflateCount(srs), 2);
   assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
+});
+
+/* ---- surviving a phone killing the tab ----
+   sessionValidate is the gate on resuming. It is tested for what it REFUSES, because
+   every refusal is a crash it prevents: a card kind that no longer exists throws on
+   render, and a crash on resume is far worse than not offering to resume at all. */
+const NOW = 1787000000000;
+const SCARDS = [{ kind: "word", key: "א", words: ["א"] },
+                { kind: "chunk", key: "ma nishma", words: ["ma nishma"] },
+                { kind: "word", key: "ב", words: ["ב"] }];
+const SESS = (over) => Object.assign(
+  { ts: NOW, i: 1, got: 1, cards: SCARDS, strengthened: {}, back: {} }, over || {});
+
+T("sessionValidate: accepts a session interrupted a moment ago", () => {
+  const r = sessionValidate(SESS(), NOW + 60000);
+  assertTrue(!!r, "should resume");
+  assertEq(r.i, 1);
+  assertEq(r.cards.length, 3);
+});
+T("sessionValidate: refuses one older than half a day", () => {
+  assertNull(sessionValidate(SESS(), NOW + SESSION_MAX_AGE_MS + 1));
+});
+T("sessionValidate: accepts one right on the age limit", () => {
+  assertTrue(!!sessionValidate(SESS(), NOW + SESSION_MAX_AGE_MS));
+});
+T("sessionValidate: refuses a session with no timestamp", () => {
+  assertNull(sessionValidate(SESS({ ts: 0 }), NOW));
+  assertNull(sessionValidate(SESS({ ts: undefined }), NOW));
+});
+T("sessionValidate: refuses a finished session", () => {
+  assertNull(sessionValidate(SESS({ i: 3 }), NOW), "index past the last card");
+  assertNull(sessionValidate(SESS({ i: 99 }), NOW));
+});
+T("sessionValidate: refuses a nonsense index", () => {
+  assertNull(sessionValidate(SESS({ i: -1 }), NOW));
+  assertNull(sessionValidate(SESS({ i: "2" }), NOW), "a string is not a position");
+  assertNull(sessionValidate(SESS({ i: null }), NOW));
+});
+T("sessionValidate: refuses a card kind this build cannot render", () => {
+  /* The real hazard: a kind removed in a later version would throw on render, because
+     the card strip reads meta.glyph straight off LEARN_KINDS. */
+  const bad = SCARDS.concat([{ kind: "kind-that-no-longer-exists", words: [] }]);
+  assertNull(sessionValidate(SESS({ cards: bad }), NOW));
+});
+T("sessionValidate: refuses malformed or empty card lists", () => {
+  assertNull(sessionValidate(SESS({ cards: [] }), NOW));
+  assertNull(sessionValidate(SESS({ cards: null }), NOW));
+  assertNull(sessionValidate(SESS({ cards: [null] }), NOW));
+  assertNull(sessionValidate(SESS({ cards: [{ words: [] }] }), NOW), "a card with no kind");
+});
+T("sessionValidate: refuses nothing at all", () => {
+  assertNull(sessionValidate(null, NOW));
+  assertNull(sessionValidate(undefined, NOW));
+  assertNull(sessionValidate({}, NOW));
+});
+T("sessionValidate: fills in missing bookkeeping rather than refusing", () => {
+  const r = sessionValidate({ ts: NOW, i: 0, cards: SCARDS }, NOW);
+  assertTrue(!!r);
+  assertEq(r.got, 0);
+  assertEq(r.strengthened, {});
+  assertEq(r.back, {});
 });
 
 /* ---- kept voice notes ---- */

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Hebrew Reader">
+  <!-- The app's own identity: warm paper, teal ink, and the letter it opens with.
+       Authored as SVG rather than exported as PNG so it stays crisp at every size a
+       launcher asks for, and stays a few hundred bytes. The glyph sits inside the
+       central 80% so it survives a maskable crop on Android. -->
+  <rect width="512" height="512" fill="#f5f0e7"/>
+  <line x1="112" y1="410" x2="400" y2="410" stroke="#0d6e6e" stroke-opacity=".18" stroke-width="6" stroke-linecap="round"/>
+  <text x="256" y="256" fill="#0d6e6e"
+        font-family="David, 'Times New Roman', serif" font-size="236" font-weight="700"
+        text-anchor="middle" dominant-baseline="central">&#1513;</text>
+</svg>

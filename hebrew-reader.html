@@ -1352,8 +1352,22 @@
        the nodes stay legible. This is the honest cost of branching over a spine. */
     .pathboard { padding: 14px 0 30px; }
     .pathhead, .pathnote { padding-left: 13px; padding-right: 13px; }
-    .pathtree { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .pathtree svg { width: 900px; max-width: none; }
+    /* ONE scroller, both axes. This used to scroll horizontally on .pathtree while
+       the page scrolled vertically — two different containers on two different axes,
+       so a diagonal drag was always captured by one of them and the other stayed put.
+       George: "cant move diagonally, only up or down not both at the same time".
+
+       Giving .pathtree a bounded height makes it the only scroller involved, and
+       touch then pans both ways at once for free, with no gesture code at all. */
+    .pathtree {
+      overflow: auto; -webkit-overflow-scrolling: touch;
+      height: calc(100vh - 190px); min-height: 320px;
+      overscroll-behavior: contain;      /* don't hand a flick to the page behind it */
+      touch-action: pan-x pan-y;
+    }
+    .pathtree svg { width: 900px; max-width: none; height: auto; }
+    /* The board must not scroll as well, or the two fight for the same drag. */
+    .pathboard { overflow: hidden; }
     /* Nearly full height on a phone, which is the natural form for a sheet there. */
     .pathsheet { max-height: 78vh; padding: 12px 14px 20px; }
 
@@ -1570,7 +1584,6 @@
             aria-hidden="true">saying it to</span></span>
       <span id="lensLive" class="visually-hidden" aria-live="polite"></span>
       <button id="fillFormsBtn" class="fillforms" style="display:none"></button>
-      <button class="btn" id="exportBtn">Export .xlsx</button>
       <span class="status" id="libStatus"></span>
     </div>
   </div>
@@ -1855,6 +1868,12 @@
           <p><b>Replaces</b> everything currently in this browser with a backup file. It doesn't merge.</p>
           <details><summary>What happens when you press it</summary><p>You'll see what's in the file and what it's about to replace, and have to confirm, before anything is written. Merging two drill histories has no correct answer — which due date would win? — so replacing is the honest behaviour. This is also how you move your progress to another browser, another computer, or a phone.</p></details></div>
         <button class="btn secondary" id="importAllBtn">Choose file</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Export a spreadsheet</b>
+          <p>Your words as <b>Hebrew Vocabulary.xlsx</b> — one sheet laid out like your original table, one row-per-word sheet for sorting and filtering.</p>
+          <details><summary>Not a backup</summary><p>This is for reading and printing, not for moving your progress. It holds the words alone — no schedules, streak, banked sentences or path progress. <b>Export everything</b> above is the one that can restore you.</p></details></div>
+        <button class="btn secondary" id="exportBtn">Save .xlsx</button>
       </div>
       <input type="file" id="importAllFile" accept="application/json,.json" style="display:none">
       <p class="note" id="dataStatus"></p>
@@ -8284,24 +8303,118 @@ function wireClusterDrag(el, head, name) {
   });
 }
 
-/* Pan on empty space; wheel zooms to the cursor so the point under it stays put. */
+/* Pan on empty space; wheel zooms to the cursor so the point under it stays put.
+
+   TOUCH. The original was mouse-shaped: one pointer for pan, `wheel` for zoom. A
+   finger fires pointer events so panning happened to work, but a phone never fires
+   `wheel`, and `touch-action: none` (needed to stop the page stealing the drag) also
+   suppresses the browser's own pinch — so on the Pixel the map could be dragged and
+   could not be zoomed by any means at all.
+
+   Tracked per pointer id rather than as a single drag: two fingers pinch to zoom
+   about their midpoint and pan by that midpoint at the same time, which is the
+   gesture people actually make. One pointer still pans exactly as before, so the
+   mouse path is untouched. */
 (function wireMapViewport() {
   const wrap = document.getElementById("mapwrap");
-  wrap.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    if (ev.target.closest(".mapcluster")) return;   // cluster drags/row clicks handle themselves
+  const live = new Map();          // pointerId -> {x, y}
+  let gesture = null;              // the reference frame the current gesture started from
+
+  const centreOf = (pts) => {
+    let x = 0, y = 0;
+    pts.forEach(p => { x += p.x; y += p.y; });
+    return { x: x / pts.length, y: y / pts.length };
+  };
+  const spreadOf = (pts) =>
+    pts.length < 2 ? 0 : Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+
+  /* Re-anchors on every pointer change, so adding or lifting a finger mid-gesture
+     doesn't make the map jump — the new finger count simply continues from where
+     the map already is. */
+  function reanchor() {
+    const pts = Array.from(live.values());
+    if (!pts.length) { gesture = null; return; }
     const v = mapViewLoad();
-    const startX = ev.clientX - v.x, startY = ev.clientY - v.y;
-    wrap.classList.add("panning");
-    const move = (e) => { v.x = e.clientX - startX; v.y = e.clientY - startY; applyMapTransform(); };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      wrap.classList.remove("panning");
-      mapViewSave();
+    const rect = wrap.getBoundingClientRect();
+    const c = centreOf(pts);
+    gesture = {
+      cx: c.x - rect.left, cy: c.y - rect.top,
+      spread: spreadOf(pts),
+      vx: v.x, vy: v.y, vs: v.s
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+  }
+
+  wrap.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    if (ev.target.closest(".mapcluster")) return;   // cluster drags/row clicks handle themselves
+    live.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
+    reanchor();
+    wrap.classList.add("panning");
+  });
+
+  wrap.addEventListener("pointermove", (ev) => {
+    if (!live.has(ev.pointerId) || !gesture) return;
+    ev.preventDefault();
+    live.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    const pts = Array.from(live.values());
+    const rect = wrap.getBoundingClientRect();
+    const c = centreOf(pts);
+    const cx = c.x - rect.left, cy = c.y - rect.top;
+    const v = mapViewLoad();
+    const wasFar = v.s < MAP_FAR;
+
+    if (pts.length >= 2 && gesture.spread > 0) {
+      /* Zoom about the midpoint: the point under the fingers stays under them. */
+      const s2 = Math.min(MAP_MAX_S, Math.max(MAP_MIN_S,
+        gesture.vs * (spreadOf(pts) / gesture.spread)));
+      v.s = s2;
+      v.x = cx - (gesture.cx - gesture.vx) * (s2 / gesture.vs);
+      v.y = cy - (gesture.cy - gesture.vy) * (s2 / gesture.vs);
+      wrap.classList.add("zooming");
+    } else {
+      v.x = gesture.vx + (cx - gesture.cx);
+      v.y = gesture.vy + (cy - gesture.cy);
+    }
+    applyMapTransform();
+    if (wasFar !== (v.s < MAP_FAR)) paintLibAudioButtons();
+  }, { passive: false });
+
+  const endPointer = (ev) => {
+    if (!live.has(ev.pointerId)) return;
+    live.delete(ev.pointerId);
+    try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {}
+    if (live.size) { reanchor(); return; }          // fingers still down: carry on
+    gesture = null;
+    wrap.classList.remove("panning", "zooming");
+    mapViewSave();
+  };
+  wrap.addEventListener("pointerup", endPointer);
+  wrap.addEventListener("pointercancel", endPointer);
+
+  /* Double-tap to zoom in a step, and again past the top to come back out — the
+     one-handed equivalent of a pinch, which is how a phone is actually held. */
+  let lastTap = 0, lastTapX = 0, lastTapY = 0;
+  wrap.addEventListener("pointerup", (ev) => {
+    if (ev.pointerType === "mouse") return;
+    const now = Date.now();
+    const near = Math.abs(ev.clientX - lastTapX) < 30 && Math.abs(ev.clientY - lastTapY) < 30;
+    if (now - lastTap < 300 && near) {
+      lastTap = 0;
+      const rect = wrap.getBoundingClientRect();
+      const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+      const v = mapViewLoad();
+      const wasFar = v.s < MAP_FAR;
+      const s2 = v.s >= MAP_MAX_S - 0.01 ? MAP_MIN_S : Math.min(MAP_MAX_S, v.s * 1.8);
+      v.x = mx - (mx - v.x) * (s2 / v.s);
+      v.y = my - (my - v.y) * (s2 / v.s);
+      v.s = s2;
+      applyMapTransform();
+      if (wasFar !== (v.s < MAP_FAR)) paintLibAudioButtons();
+      mapViewSave();
+      return;
+    }
+    lastTap = now; lastTapX = ev.clientX; lastTapY = ev.clientY;
   });
   /* A wheel gesture is a burst of many events, not one — the "zooming" class needs
      to survive the gaps between them and only drop once the burst actually ends. */
@@ -10001,15 +10114,34 @@ function hasHeVoice() { return !!HE_VOICE; }
    speed, but slower buys real clarity. 0.85 was barely off full pace; this Learn
    audio is synthetic practice material rather than grandad's real speech, so
    there's no reason it needs to run at conversational speed. */
-const LEARN_RATE = 0.65;
-const LEARN_SLOW_RATE = 0.45;
+/* THE RATE DEPENDS ON THE VOICE, which it did not used to.
+
+   0.65 was tuned against the only Hebrew voice Windows ships — Asaf, the SAPI voice,
+   which is robotic at any speed and genuinely needs slowing to stay intelligible.
+   Android supplies a far better neural voice, and at 0.65 it drags: George, on the
+   Pixel, "the current normal speed is what I would expect the slow speed to be".
+
+   He is right, and the old constant was never a property of the app — it was a
+   property of one bad voice. A good voice at 0.9 is clearer than a flat one at 0.65,
+   so the pair moves with the voice rather than being fixed. Unknown voices get the
+   natural rate: the phone is where the practice happens now, and a voice good enough
+   to not announce itself as Microsoft is a voice that does not need the crutch. */
+const SPEECH_RATE_FLAT    = { normal: 0.65, slow: 0.45 };   // Windows SAPI (Asaf)
+const SPEECH_RATE_NATURAL = { normal: 0.90, slow: 0.65 };   // Google, Apple, anything neural
+function speechIsFlatVoice(name) {
+  return /microsoft|asaf|sapi/i.test(String(name || ""));
+}
+function speechRateFor(voiceName, slow) {
+  const r = speechIsFlatVoice(voiceName) ? SPEECH_RATE_FLAT : SPEECH_RATE_NATURAL;
+  return slow ? r.slow : r.normal;
+}
 function speakHe(text, slow) {
   if (!HE_VOICE || !text) return false;
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(String(text));
     u.voice = HE_VOICE; u.lang = HE_VOICE.lang;
-    u.rate = slow ? LEARN_SLOW_RATE : LEARN_RATE;
+    u.rate = speechRateFor(HE_VOICE.name, slow);
     speechSynthesis.speak(u);
     return true;
   } catch (e) { return false; }
@@ -15403,6 +15535,36 @@ T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
                 "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
   assertEq(srsDeflateCount(srs), 2);
   assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
+});
+
+/* ---- speech rate follows the voice ----
+   0.65 was tuned against the one Hebrew voice Windows ships, which is robotic at any
+   speed. Android supplies a neural voice that drags at that rate. The pair moves with
+   the voice now, so neither device is stuck with the other device's compromise. */
+T("speechRateFor: the flat Windows voice keeps its slower pace", () => {
+  assertEq(speechRateFor("Microsoft Asaf - Hebrew (Israel)", false), 0.65);
+  assertEq(speechRateFor("Microsoft Asaf - Hebrew (Israel)", true), 0.45);
+});
+T("speechRateFor: a neural voice runs closer to natural", () => {
+  assertEq(speechRateFor("Google עברית", false), 0.90);
+  assertEq(speechRateFor("Google עברית", true), 0.65);
+});
+T("speechRateFor: an unknown voice is assumed good, not assumed flat", () => {
+  /* The phone is where the practice happens now, and a voice that does not announce
+     itself as Microsoft is a voice that does not need the crutch. */
+  assertEq(speechRateFor("", false), 0.90);
+  assertEq(speechRateFor(undefined, false), 0.90);
+});
+T("speechRateFor: slow is always slower than normal, whichever voice", () => {
+  ["Microsoft Asaf", "Google Hebrew", ""].forEach(v => {
+    assertTrue(speechRateFor(v, true) < speechRateFor(v, false), v || "(unnamed)");
+  });
+});
+T("speechIsFlatVoice: matches the SAPI naming, not everything", () => {
+  assertTrue(speechIsFlatVoice("Microsoft Asaf - Hebrew (Israel)"));
+  assertTrue(speechIsFlatVoice("asaf"));
+  assertEq(speechIsFlatVoice("Google Hebrew"), false);
+  assertEq(speechIsFlatVoice("Carmit"), false);          // Apple's Hebrew voice
 });
 
 /* ---- the microphone hold ----

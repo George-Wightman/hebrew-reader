@@ -1791,6 +1791,11 @@
         <button class="btn secondary" id="newSentencesBtn">Run</button>
       </div>
       <div class="setrow">
+        <div class="setrow-text"><b>Correct inflated review dates</b>
+          <p id="deflateDesc">Until 20 Aug 2026 the scheduler counted a word twice when a session showed it twice — as a card and again inside a sentence — so some words were pushed months or years out on a single evening's practice. This pulls any interval longer than two months back to two months, measured from when you last actually answered that word. Nothing else changes: your library, strengths, marks and sentences are untouched, and words already inside two months are left exactly as they are.</p></div>
+        <button class="btn secondary" id="deflateBtn">Run</button>
+      </div>
+      <div class="setrow">
         <div class="setrow-text"><b>Reset drill schedule</b>
           <p>This is the one that resets progress, not your words: every word becomes due for review again, as if freshly added. Nothing is deleted — your library, marks and banked sentences are untouched.</p></div>
         <button class="btn secondary" id="resetSrsBtn">Run</button>
@@ -4570,6 +4575,18 @@ function openSettings() {
   document.getElementById("dictStats").textContent =
     "Built-in dictionary: " + Object.keys(DICT).length + " words + " + Object.keys(PHRASES).length +
     " phrases. Words you've taught it: " + n + ".";
+  /* States the real number before you press it, like every other row here. */
+  const infl = srsDeflateCount(srsAll());
+  const dfl = document.getElementById("deflateDesc");
+  dfl.textContent = (infl
+    ? infl + " review date" + (infl === 1 ? " is" : "s are") + " currently scheduled further "
+      + "out than your practice supports. "
+    : "Nothing is currently scheduled more than two months out, so this would do nothing. ")
+    + "Until 20 Aug 2026 the scheduler counted a word twice when a session showed it twice — "
+    + "as a card and again inside a sentence — so some words were pushed months or years out "
+    + "on a single evening's practice. This pulls any interval longer than two months back to "
+    + "two months, measured from when you last actually answered that word. Your library, "
+    + "strengths, marks and sentences are untouched.";
   const custom = customOppositesCount(libAll());
   document.getElementById("fixOppositesDesc").textContent = custom
     ? "Resets every opposite pairing to the curated built-in set — this would discard " + custom +
@@ -4600,6 +4617,32 @@ function settingsAction(fn) {
     catch (e) { alert("Couldn't complete that — " + e.message); }
   };
 }
+/* ---- correcting inflated schedules ----
+   Deliberately a button rather than a migration that runs on open. Every other row on
+   this page states its effect before you press it; a scheduler rewrite that happened
+   silently the first time you opened a new build would be the one action on your
+   irreplaceable data you never got to refuse. It also means it can be run after taking
+   a backup, which is the whole point of the group above. */
+document.getElementById("deflateBtn").onclick = settingsAction(() => {
+  const srs = srsAll();
+  const n = srsDeflateCount(srs);
+  if (!n) {
+    alert("Nothing to correct — no word is scheduled more than two months out.");
+    return;
+  }
+  if (!confirm("Correct " + n + " inflated review date" + (n === 1 ? "" : "s") + "?\n\n" +
+               "Each one is scheduled further out than your practice can support. They'll " +
+               "come back within two months of when you last answered them — some " +
+               "immediately, if it's already been that long.\n\n" +
+               "Nothing is deleted. Your library, word strengths, marks and banked " +
+               "sentences are not touched.")) return;
+  const fixed = srsDeflate(srs);
+  srsSave(srs);
+  learnBadge();
+  if (lsGet(VIEW_KEY) === "learn") learnRenderStart();
+  alert("Corrected " + fixed + " review date" + (fixed === 1 ? "" : "s") + ".");
+});
+
 /* ---- export / import ---- */
 function setDataStatus(msg, bad) {
   const el = document.getElementById("dataStatus");
@@ -9497,9 +9540,39 @@ function srsSide(srs, key, side) {
 
    Mutates the passed-in map: a sentence grades every word it contains, and parsing
    the whole store once per word is the same O(n) trap the library harvest hit. */
-function srsApply(srs, key, grade, side) {
+/* Scatter an interval by ±15%. Without this, everything learned in one session comes
+   due on the same future day, then the same day again, forever — building review days
+   three times heavier than their neighbours, which the 50% overdue cap then defers into
+   a growing backlog. `rnd` is injectable so the suite can assert exact numbers. */
+function srsFuzz(days, rnd) {
+  if (days < 3) return days;          // 1 and 2 have nowhere to scatter to
+  return Math.max(1, Math.round(days * (0.85 + (rnd || Math.random)() * 0.30)));
+}
+
+function srsApply(srs, key, grade, side, todayOverride) {
   const r = srsSide(srs, key, side || "prod");
-  const today = todayISO();
+  const today = todayOverride || todayISO();
+
+  /* ---- F3: a first meeting is an introduction, not a failed recall ----------
+     There is no "meet the word" card outside the Path, so a word's first ever
+     appearance is a production test for something never shown, defined or spoken.
+     Grading that as a lapse pushed difficulty to 7.145 after two sittings, which
+     reads as "weak", which bars the word from sentence generation until four more
+     correct answers claw it back. The user was being punished for not knowing a
+     word the app had not yet taught him.
+
+     So: no difficulty change, no lapse, nothing against the miss ratio. Just a
+     short interval, because whatever happened, he has now seen it. A first answer
+     he genuinely knew earns a slightly longer one — but never the full 2.6x chain,
+     because one correct answer is not yet evidence that it stuck. */
+  if (!r.n) {
+    r.n = 1;
+    r.stab = grade === 2 ? 2 : 1;
+    r.due = addDays(today, r.stab);
+    r.last = today;
+    return r;
+  }
+
   /* Asymmetric on purpose, and measured: a symmetric ±1.1 made difficulty fall so
      fast that five clean answers compounded to an 86-day interval. Failure should
      move the needle harder than success does.
@@ -9508,6 +9581,19 @@ function srsApply(srs, key, grade, side) {
   const dd = grade === 0 ? 1.1 : grade === 1 ? 0.1 : -0.6;
   r.diff = Math.min(10, Math.max(1, r.diff + dd + (5 - r.diff) * 0.05));
   r.n = (r.n || 0) + 1;
+
+  /* ---- F1: one day is worth one step ---------------------------------------
+     Nothing used to check whether the review was actually DUE. `last` was written
+     and never read, so every answer multiplied stability again — and the session
+     builder hands the same word over two or three times in one sitting (as a bare
+     card and again inside a sentence). Measured on real data after six days of
+     practice: "hayom" answered seven times, parked until August 2027.
+
+     Succeeding twice in one sitting is not new evidence that a word has stuck — it
+     is the same evidence, read twice. Failing twice in one sitting IS new evidence,
+     so a miss still shortens the interval below. */
+  const repeat = r.last === today;
+
   if (grade === 0) {
     r.miss = (r.miss || 0) + 1;
     r.lapses = (r.lapses || 0) + 1;
@@ -9523,16 +9609,81 @@ function srsApply(srs, key, grade, side) {
     r.due = addDays(today, Math.min(7, Math.max(0, (r.lapses || 1) - 1)));
   } else if (grade === 1) {
     r.miss = (r.miss || 0) + 0.5;
-    r.stab = Math.max(1, (r.stab || 0) * 0.9);
-    r.due = addDays(today, Math.max(1, Math.round(r.stab)));
+    if (!repeat) {
+      r.stab = Math.max(1, (r.stab || 0) * 0.9);
+      r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
+    }
   } else {
-    /* Easy words stretch out fast, hard ones stay close. Tuned so that at baseline
-       difficulty the sequence runs ~1 → 2 → 5 → 12 → 28 days. */
-    r.stab = Math.min(365, !r.stab ? 1 : r.stab * (2.6 - (r.diff - 1) * 0.12));
-    r.due = addDays(today, Math.max(1, Math.round(r.stab)));
+    /* ---- F4: the miss ratio has to be able to recover --------------------
+       `miss` used to be a lifetime counter that only ever rose, so srsStrength's
+       miss/n test could only be escaped by piling up answers. Two fumbles in week
+       one still weighed on a word months later. A clean answer now forgives a
+       little of it, which is what makes "weak" a description of where you are
+       rather than of where you once were. */
+    r.miss = (r.miss || 0) * 0.9;
+    if (!repeat) {
+      /* Easy words stretch out fast, hard ones stay close. Tuned so that at baseline
+         difficulty the sequence runs ~1 → 2 → 5 → 12 → 28 days. */
+      r.stab = Math.min(365, !r.stab ? 1 : r.stab * (2.6 - (r.diff - 1) * 0.12));
+      r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
+    }
   }
   r.last = today;
   return r;
+}
+
+/* ---- correcting schedules earned under the old rule --------------------------
+   Existing records were built by a scheduler that compounded same-day repeats, so
+   their due dates describe practice that never happened: six days of real use
+   produced words parked until August 2027.
+
+   The rule is deliberately blunt rather than clever. An earlier attempt tried to
+   derive an "honest ceiling" from the answer count — 2.6^(n-1) — but that reaches
+   803 days by the eighth answer, so it caught nothing at all. The reachable version
+   of the same idea needs the calendar, and a schedule record does not carry the date
+   the word was first practised.
+
+   So: cap the interval, and touch nothing below the cap. Two months is longer than
+   this app has existed, so nothing under it can be the pathological case, and the
+   deliberate band-setting from "Mark Duolingo batch as known" (30 days) is left
+   completely alone — undoing a user's own declaration of what they know would be a
+   worse bug than the one being fixed.
+
+   The new due date is measured from when the word was ACTUALLY last answered, not
+   from today, so a word neglected for a month comes back straight away rather than
+   being given another two months it hasn't earned. */
+const DEFLATE_MAX_STAB = 60;
+function srsDeflate(srs, todayOverride, capOverride) {
+  const today = todayOverride || todayISO();
+  const cap = capOverride || DEFLATE_MAX_STAB;
+  let fixed = 0;
+  Object.keys(srs || {}).forEach(k => {
+    ["prod", "recv"].forEach(side => {
+      const r = srs[k] && srs[k][side];
+      if (!r || !r.n || !r.stab) return;
+      if (r.stab <= cap) return;
+      r.stab = cap;
+      /* Never later than it already was. A record can carry a big stability AND a due
+         date already in the past — "toda" in the real backup had stab 110 and was due
+         four days ago — and recomputing from `last` alone would push an overdue word
+         two months into the future. A correction that delays revision is the bug it
+         is meant to fix, wearing the other hat. */
+      const recomputed = addDays(r.last || today, cap);
+      r.due = (r.due && r.due < recomputed) ? r.due : recomputed;
+      fixed++;
+    });
+  });
+  return fixed;
+}
+/* How much this would change, for a Settings row that states its effect before it
+   runs rather than only in the confirm that follows. */
+function srsDeflateCount(srs, cap) {
+  let n = 0;
+  Object.keys(srs || {}).forEach(k => ["prod", "recv"].forEach(side => {
+    const r = srs[k] && srs[k][side];
+    if (r && r.n && r.stab > (cap || DEFLATE_MAX_STAB)) n++;
+  }));
+  return n;
 }
 
 /* "Weak" means the app has EVIDENCE of struggle — high difficulty or a bad hit
@@ -10842,10 +10993,22 @@ function learnBuild() {
   targets.filter(k => !covered[k]).slice(0, Math.max(0, room))
          .forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
   /* Small library: rather than cut the session short, come back to a word already
-     used in a sentence — isolated recall is a different exercise anyway. */
-  for (let i = 0; cards.length < size - (replyPick ? 1 : 0) && i < targets.length; i++) {
-    if (!cards.some(c => c.kind === "word" && c.key === targets[i]))
-      cards.push({ kind: "word", key: targets[i], words: [targets[i]] });
+     used in a sentence — isolated recall is a different exercise anyway.
+
+     This used to check only against other WORD cards, not against `covered`, so a
+     word already met inside a sentence or a shadow card got a second card in the same
+     session. Measured on an 8-word library: a 13-card session repeated four of the
+     eight words. Every one of those repeats was a second srsApply call, and under the
+     old scheduler each one multiplied the interval again.
+
+     srsApply now refuses to compound a same-day repeat, so this is no longer a
+     scoring bug — but two goes at one word inside fifteen cards is still thin
+     practice when there is other material available, so prefer uncovered words and
+     only fall back to a repeat once genuinely out of options. */
+  const fill = targets.filter(k => !covered[k]).concat(targets);
+  for (let i = 0; cards.length < size - (replyPick ? 1 : 0) && i < fill.length; i++) {
+    if (!cards.some(c => c.kind === "word" && c.key === fill[i]))
+      cards.push({ kind: "word", key: fill[i], words: [fill[i]] });
   }
 
   shuffleArr(cards);
@@ -13712,6 +13875,199 @@ T("applyFormsResult: records a clitic suggestion without acting on it", () => {
   assertEq(e.formsMeta.lemma, "הזדמנות");
   assertEq(e.formsMeta.clitic, "ha");
   assertEq(e.gender, "f");
+});
+
+/* ---- the scheduler ----
+   These are the tests that should have existed from the start. srsApply is pure — a
+   plain object in, the same object mutated out — and the two worst bugs in the app
+   lived in it undetected for two weeks because nothing here ever looked.
+
+   Every test passes an explicit `today` rather than letting it read the clock, so the
+   suite asserts real dates instead of relative ones. */
+const DAY1 = "2026-08-20", DAY2 = "2026-08-21", DAY9 = "2026-08-28";
+/* A record as it would be after real, honest practice: answered on a previous day. */
+const seasoned = (over) => Object.assign(
+  { due: DAY1, last: "2026-08-13", stab: 10, diff: 5, n: 4, miss: 0, lapses: 0 }, over || {});
+
+T("srsFuzz: scatters an interval by ±15%", () => {
+  assertEq(srsFuzz(100, () => 0), 85, "lowest roll is -15%");
+  assertEq(srsFuzz(100, () => 1), 115, "highest roll is +15%");
+  assertEq(srsFuzz(100, () => 0.5), 100, "middle roll is unchanged");
+});
+T("srsFuzz: leaves short intervals alone — 1 and 2 days have nowhere to scatter", () => {
+  assertEq(srsFuzz(1, () => 0), 1);
+  assertEq(srsFuzz(2, () => 1), 2);
+});
+T("srsFuzz: never returns less than a day", () => {
+  assertEq(srsFuzz(3, () => 0), 3);
+  assertTrue(srsFuzz(4, () => 0) >= 1, "must stay in the future");
+});
+
+/* ---- F3: a first exposure is an introduction, not a failed recall ---- */
+T("srsApply: a missed first exposure is not a lapse", () => {
+  const s = {};
+  const r = srsApply(s, "מילה", 0, "prod", DAY1);
+  assertEq(r.diff, 5, "difficulty must stay at baseline — there was nothing to recall");
+  assertEq(r.lapses, 0, "an introduction is not a lapse");
+  assertEq(r.miss, 0, "and must not count against the miss ratio");
+  assertEq(r.n, 1);
+  assertEq(r.stab, 1);
+  assertEq(r.due, DAY2, "comes back tomorrow");
+});
+T("srsApply: a word missed cold twice recovers in one answer, not four", () => {
+  /* The exact sequence measured in the audit: met cold and missed, met again and
+     missed again. That used to reach diff 7.145, which reads as "weak", which bars
+     the word from sentence generation until FOUR more correct answers claw it back.
+
+     It still reads as weak after the second miss — by then he genuinely has seen it
+     once and failed it, which is real evidence and should show. What changed is the
+     hole's depth: difficulty never went to 7, and one clean answer is now enough. */
+  const s = {};
+  srsApply(s, "מילה", 0, "prod", DAY1);        // introduction — no penalty
+  srsApply(s, "מילה", 0, "prod", DAY2);        // a real failed recall
+  assertTrue(s["מילה"].prod.diff < 6.5,
+             "must not be driven into difficulty hell, got " + s["מילה"].prod.diff);
+  srsApply(s, "מילה", 2, "prod", DAY9);
+  assertEq(srsStrength(s["מילה"].prod), "progressing", "one clean answer should clear it");
+  assertTrue(wordReady("מילה", s), "and unbar it from sentences");
+});
+T("srsApply: a first exposure you already knew starts a little longer", () => {
+  const s = {};
+  const r = srsApply(s, "מילה", 2, "prod", DAY1);
+  assertEq(r.stab, 2);
+  assertEq(r.due, "2026-08-22");
+  assertEq(r.diff, 5, "still no difficulty change on a first meeting");
+});
+
+/* ---- F1: the same day cannot be counted twice ---- */
+T("srsApply: a repeat on the same day does not grow the interval", () => {
+  const s = { "מילה": { prod: seasoned(), recv: srsBlank() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  const afterFirst = Object.assign({}, s["מילה"].prod);
+  srsApply(s, "מילה", 2, "prod", DAY1);          // same word, same day, same session
+  assertEq(s["מילה"].prod.stab, afterFirst.stab, "stability must not compound");
+  assertEq(s["מילה"].prod.due, afterFirst.due, "and the due date must not move");
+});
+T("srsApply: a same-day repeat still records the evidence", () => {
+  const s = { "מילה": { prod: seasoned(), recv: srsBlank() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  const n = s["מילה"].prod.n;
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertEq(s["מילה"].prod.n, n + 1, "it was still answered — count it");
+});
+T("srsApply: failing twice in one day DOES shorten the interval", () => {
+  /* Asymmetric on purpose. Succeeding twice in one sitting is not new evidence that
+     the word has stuck; failing twice in one sitting is real evidence it hasn't. */
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  const afterFirst = s["מילה"].prod.stab;
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  assertTrue(s["מילה"].prod.stab < afterFirst, "a second failure must still count against it");
+});
+T("srsApply: eight correct answers in one day cannot park a word for a year", () => {
+  /* The audit's reproduction, which reached a 365-day interval. */
+  const s = { "מילה": { prod: seasoned({ stab: 1, diff: 1 }), recv: srsBlank() } };
+  for (let i = 0; i < 8; i++) srsApply(s, "מילה", 2, "prod", DAY1);
+  assertTrue(s["מילה"].prod.stab <= 4,
+             "one day of practice is worth one step, got " + s["מילה"].prod.stab);
+});
+
+/* ---- F4: the miss ratio has to be able to recover ---- */
+T("srsApply: a clean answer decays the lifetime miss count", () => {
+  const s = { "מילה": { prod: seasoned({ miss: 2, n: 5, last: "2026-08-13" }), recv: srsBlank() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertTrue(s["מילה"].prod.miss < 2, "miss must decay, not stand forever");
+});
+T("srsApply: a word drilled clean for a fortnight stops reading as weak", () => {
+  const s = { "מילה": { prod: seasoned({ miss: 2, n: 2, diff: 7 }), recv: srsBlank() } };
+  assertEq(srsStrength(s["מילה"].prod), "weak", "starts weak, as it should");
+  let day = DAY1;
+  for (let i = 0; i < 6; i++) { srsApply(s, "מילה", 2, "prod", day); day = addDays(day, 30); }
+  assertEq(srsStrength(s["מילה"].prod), "strong", "six clean answers must clear it");
+});
+
+/* ---- what must NOT change ---- */
+T("srsApply: an ordinary due review still grows the interval", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 10, diff: 5 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertTrue(s["מילה"].prod.stab > 10, "the scheduler must still schedule");
+  assertTrue(s["מילה"].prod.stab < 40, "but not wildly");
+});
+T("srsApply: a genuine lapse still shrinks stability rather than zeroing it", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 35 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  assertTrue(s["מילה"].prod.stab > 5 && s["מילה"].prod.stab < 15,
+             "a 35-day word comes back at ~10 days, not back to the start");
+});
+T("srsApply: prod and recv stay independent", () => {
+  const s = {};
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertEq(s["מילה"].recv.n, 0, "answering by mouth must not schedule the ear");
+});
+T("srsApply: repeats are tracked per side, not per word", () => {
+  const s = { "מילה": { prod: seasoned(), recv: seasoned() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  const recvDue = s["מילה"].recv.due;
+  srsApply(s, "מילה", 2, "recv", DAY1);
+  assertTrue(s["מילה"].recv.due !== recvDue, "recv had not been answered today — it should move");
+});
+
+/* ---- the migration off inflated schedules ---- */
+/* The real "hayom" record out of George's own 2026-08-20 backup: answered seven
+   times across six days of practice, parked until August 2027. */
+const HAYOM = () => ({ due: "2027-08-16", last: "2026-08-16", stab: 365,
+                       diff: 1, n: 7, miss: 0, lapses: 0 });
+
+T("srsDeflate: pulls back an interval the calendar cannot justify", () => {
+  const srs = { "היום": { prod: HAYOM(), recv: srsBlank() } };
+  assertEq(srsDeflate(srs, DAY1), 1, "one record corrected");
+  assertEq(srs["היום"].prod.stab, 60, "capped at two months");
+  assertEq(srs["היום"].prod.due, "2026-10-15", "measured from when it was last answered");
+});
+T("srsDeflate: leaves the deliberate Duolingo band-setting alone", () => {
+  /* srsBandRecord("strong") — the user's own declaration that they know a word.
+     Undoing that would be a worse bug than the one being fixed. */
+  const srs = { "א": { prod: srsBandRecord("strong"), recv: srsBlank() } };
+  const before = srs["א"].prod.stab;
+  assertEq(srsDeflate(srs, DAY1), 0, "nothing to correct");
+  assertEq(srs["א"].prod.stab, before);
+});
+T("srsDeflate: leaves everything at or below the cap alone", () => {
+  const srs = { "א": { prod: { due: DAY1, last: "2026-08-01", stab: 60, diff: 3, n: 9, miss: 0, lapses: 0 }, recv: srsBlank() } };
+  assertEq(srsDeflate(srs, DAY1), 0, "60 is the cap, not over it");
+});
+T("srsDeflate: never touches a word with no history", () => {
+  const srs = { "א": { prod: srsBlank(), recv: srsBlank() } };
+  assertEq(srsDeflate(srs, DAY1), 0);
+  assertEq(srs["א"].prod.stab, 0);
+});
+T("srsDeflate: counts both sides independently", () => {
+  const srs = { "א": { prod: HAYOM(), recv: HAYOM() } };
+  assertEq(srsDeflate(srs, DAY1), 2);
+});
+T("srsDeflate: a long-neglected word comes back now, not in two more months", () => {
+  const srs = { "א": { prod: { due: "2027-06-01", last: "2026-03-01", stab: 300, diff: 2, n: 6, miss: 0, lapses: 0 }, recv: srsBlank() } };
+  srsDeflate(srs, DAY1);
+  assertTrue(srs["א"].prod.due < DAY1, "last answered in March + 60 days is already past");
+});
+T("srsDeflate: never pushes an already-due word further away", () => {
+  /* The real "toda" record: stability 110 but already overdue. Recomputing from
+     `last` alone would have delayed it by two months — the bug in a mirror. */
+  const srs = { "תודה": { prod: { due: "2026-08-16", last: "2026-08-16", stab: 110, diff: 2, n: 11, miss: 0, lapses: 0 }, recv: srsBlank() } };
+  srsDeflate(srs, DAY1);
+  assertEq(srs["תודה"].prod.due, "2026-08-16", "an overdue word stays overdue");
+  assertEq(srs["תודה"].prod.stab, 60, "the interval is still corrected");
+});
+T("srsDeflate: is idempotent — running it twice changes nothing the second time", () => {
+  const srs = { "א": { prod: HAYOM(), recv: srsBlank() } };
+  assertEq(srsDeflate(srs, DAY1), 1);
+  assertEq(srsDeflate(srs, DAY1), 0, "a second run must be a no-op");
+});
+T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
+  const srs = { "א": { prod: HAYOM(), recv: HAYOM() },
+                "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
+  assertEq(srsDeflateCount(srs), 2);
+  assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
 });
 
 /* ---- export / import ----

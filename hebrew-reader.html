@@ -243,6 +243,12 @@
   .setreassure { margin-top: 10px; font-size: .8rem; background: var(--accent-soft);
     color: var(--accent); border-radius: 8px; padding: 8px 12px; font-weight: 600; }
 
+  .navsync.syncing i { background: var(--accent); animation: syncpulse 1s ease-in-out infinite; }
+  .navsync.syncbad i { background: var(--bad); }
+  .navsync.syncbad { color: var(--bad); }
+  @keyframes syncpulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .navsync.syncing i { animation: none; } }
+
   /* ---- update offer ----
      Teal like the resume bar, and for the same reason: this is an offer, not a fault,
      so it must not borrow the alarm's red. */
@@ -1461,7 +1467,7 @@
   <span class="navsp"></span>
   <!-- Honest placeholder. Devices don't share anything yet, so it says so rather than
        claiming a sync that doesn't exist. This is the slot that reports it when they do. -->
-  <span class="navsync" id="navSync" title="Your data lives in this browser only. Cross-device sync isn't built yet."><i></i>on this device</span>
+  <span class="navsync" id="navSync" title="Your data lives in this browser only. Turn on sync in Settings."><i></i><span>on this device</span></span>
   <button class="navgear" id="settingsBtn">⚙ Settings</button>
 </nav>
 
@@ -1855,6 +1861,40 @@
       <p class="note" id="notesStatus"></p>
     </div>
 
+    <div class="setgroup" data-group="Sync">
+      <h3 class="setgroup-title">Sync<span class="setgroup-sub">Keep your progress the same on every device.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>Sync across devices</b>
+          <p id="syncDesc">Off. Your progress lives only in this browser.</p>
+          <details><summary>How it works, and what travels</summary><p>Your progress is kept in a <b>private</b> GitHub repository that only you can read, and merged rather than overwritten — practise on the phone and the laptop and you keep both. Every sync is a commit, so you also get a versioned history you can go back through. <b>Your API keys never leave the device</b>, and neither do your layout, zoom or an in-progress session. Kept voice notes stay on the device that received them: the recordings are too large to travel this way.</p></details></div>
+        <button class="btn secondary" id="syncToggleBtn">Set up</button>
+      </div>
+      <div id="syncSetup" style="display:none">
+        <label style="font-size:.85rem">Private repository (owner/name)</label>
+        <input type="text" id="syncRepoInput" placeholder="George-Wightman/hebrew-reader-sync" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <label style="font-size:.85rem">GitHub token</label>
+        <input type="password" id="syncTokenInput" placeholder="github_pat_…">
+        <p class="note">Make an <b>empty private</b> repo, then a fine-grained token at
+          <b>github.com/settings/personal-access-tokens</b> — give it access to that one
+          repository only, with <b>Contents: Read and write</b>. Nothing else.</p>
+        <div class="btnrow">
+          <button class="btn" id="syncConnectBtn">Connect</button>
+          <button class="btn secondary" id="syncCancelBtn">Cancel</button>
+        </div>
+      </div>
+      <div class="setrow" id="syncNowRow" style="display:none">
+        <div class="setrow-text"><b>Sync now</b>
+          <p>Normally it syncs on its own when you open the app and when you finish a session. This forces it — useful if you pick up the phone straight after the laptop.</p></div>
+        <button class="btn secondary" id="syncNowBtn">Sync</button>
+      </div>
+      <div class="setrow" id="syncOffRow" style="display:none">
+        <div class="setrow-text"><b>Turn sync off</b>
+          <p>Forgets the token on this device. Nothing is deleted — your progress stays here and stays in the repository.</p></div>
+        <button class="btn secondary" id="syncOffBtn">Turn off</button>
+      </div>
+      <p class="note" id="syncStatus"></p>
+    </div>
+
     <div class="setgroup" data-group="Your library">
       <h3 class="setgroup-title">Your library<span class="setgroup-sub">Which words you're working on, and how well you know them.</span></h3>
       <div class="setrow">
@@ -2123,12 +2163,20 @@ document.getElementById("alarmCopy").addEventListener("click", async (e) => {
    reloads the page the moment new bytes arrive would be capable of destroying a drill
    session mid-card, so it never reloads on its own — it offers, and only when it is
    safe to say yes. */
+/* Is a drill running? Wrapped because `learnSession` is a `let` declared far below,
+   and a service-worker message or a sync can arrive while it is still in the temporal
+   dead zone — where even `typeof` throws. During boot there is no session by
+   definition, so "not yet initialised" and "no session" mean the same thing. */
+function sessionBusy() {
+  try { return !!learnSession; } catch (e) { return false; }
+}
+
 let shellUpdateReady = false;
 function shellOfferUpdate() {
   shellUpdateReady = true;
   /* Mid-session the offer waits. learnRenderStart calls this again on the way out,
      so the update surfaces at the next natural break instead of over a card. */
-  if (learnSession) return;
+  if (sessionBusy()) return;
   const bar = document.getElementById("updateBar");
   if (bar) bar.style.display = "flex";
 }
@@ -2141,6 +2189,239 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   navigator.serviceWorker.addEventListener("message", (e) => {
     if (e.data && e.data.type === "shell-updated") shellOfferUpdate();
   });
+}
+
+/* =====================  SYNC — MERGE  =====================
+   See docs/superpowers/specs/2026-08-20-cross-device-sync-design.md.
+
+   Everything in this block is PURE: plain objects in, a plain object out, no storage
+   and no network. That is deliberate — this is the code that decides what survives
+   when two devices disagree, so it is the code that most needs to be testable, and
+   the audit's F12 lesson was that the app's worst bugs lived in exactly this kind of
+   pure function precisely because nothing ever looked at them.
+
+   Three properties are what make a merge trustworthy, and all three are tested:
+     - COMMUTATIVE: merging A into B gives the same answer as B into A. Without this,
+       which device happened to sync first would silently change your history.
+     - IDEMPOTENT: merging twice changes nothing. Without this, every sync would drift.
+     - LOSSLESS: no word, sentence or schedule is ever dropped. */
+
+/* Later of two ISO dates, treating missing as "unknown, lose the comparison". */
+function laterISO(a, b) {
+  if (!a) return b || "";
+  if (!b) return a;
+  return a > b ? a : b;
+}
+function earlierISO(a, b) {
+  if (!a) return b || "";
+  if (!b) return a;
+  return a < b ? a : b;
+}
+/* Union of two objects' keys, SORTED. Order matters more than it looks: the merged
+   result is serialised and pushed, so if two devices emitted the same data in a
+   different key order the file would differ byte-for-byte on every sync and commit
+   forever. Sorting makes the output canonical — same data, same bytes, no churn. */
+function unionKeys(a, b) {
+  return Object.keys(Object.assign({}, a || {}, b || {})).sort();
+}
+function maxNum(a, b) {
+  const x = typeof a === "number" ? a : 0, y = typeof b === "number" ? b : 0;
+  return x > y ? x : y;
+}
+
+/* Word -> entry. Union, because a word either device has met is a word he has met.
+   `forms` is unioned rather than replaced: the two devices may each have generated
+   different halves of a bank, and dropping either would cost real API calls. */
+function mergeLibrary(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(k => {
+    const mine = (a || {})[k], theirs = (b || {})[k];
+    if (!mine) { out[k] = theirs; return; }
+    if (!theirs) { out[k] = mine; return; }
+    const e = Object.assign({}, mine, theirs);
+    e.added = earlierISO(mine.added, theirs.added);      // first met wins
+    e.seen = maxNum(mine.seen, theirs.seen);
+    if (mine.forms || theirs.forms) {
+      e.forms = Object.assign({}, theirs.forms || {}, mine.forms || {});
+    }
+    if (mine.formsMeta || theirs.formsMeta) {
+      e.formsMeta = Object.assign({}, theirs.formsMeta || {}, mine.formsMeta || {});
+    }
+    /* An empty gloss must never overwrite a real one. */
+    e.tr = mine.tr || theirs.tr;
+    e.en = mine.en || theirs.en;
+    out[k] = e;
+  });
+  return out;
+}
+
+/* The one that matters most. Per word AND per side, because prod and recv are
+   scheduled independently — merging them as a unit would let a listening answer on
+   one device overwrite a speaking answer on the other. */
+function mergeSrsSide(x, y) {
+  if (!x) return y;
+  if (!y) return x;
+  if ((x.last || "") !== (y.last || "")) return (x.last || "") > (y.last || "") ? x : y;
+  /* Same day on both: the one with more answers behind it is the fuller record. */
+  return maxNum(x.n, y.n) === (x.n || 0) ? x : y;
+}
+function mergeSrs(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(k => {
+    const mine = (a || {})[k] || {}, theirs = (b || {})[k] || {};
+    out[k] = {
+      prod: mergeSrsSide(mine.prod, theirs.prod) || srsBlank(),
+      recv: mergeSrsSide(mine.recv, theirs.recv) || srsBlank()
+    };
+  });
+  return out;
+}
+
+/* Per day, per field, the higher number. See the spec: this undercounts a day
+   practised on both devices, and that is the accepted direction to be wrong in —
+   summing is correct once and then double-counts on every later merge, because the
+   merged total is written back to both devices. */
+function mergeStats(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(d => {
+    const mine = (a || {})[d] || {}, theirs = (b || {})[d] || {};
+    const rec = {};
+    unionKeys(mine, theirs).forEach(f => {
+      rec[f] = maxNum(mine[f], theirs[f]);
+    });
+    out[d] = rec;
+  });
+  return out;
+}
+
+/* Arrays keyed by id: the bank and the conversations. Union, higher `seen` wins.
+   Order is by id so the result does not depend on which side was called `a` — a
+   merge whose OUTPUT ORDER flips between devices would produce a different file
+   every sync and commit forever. */
+function mergeById(a, b, cap) {
+  const byId = {};
+  (Array.isArray(a) ? a : []).forEach(it => { if (it && it.id) byId[it.id] = it; });
+  (Array.isArray(b) ? b : []).forEach(it => {
+    if (!it || !it.id) return;
+    const mine = byId[it.id];
+    if (!mine) { byId[it.id] = it; return; }
+    byId[it.id] = Object.assign({}, mine, { seen: maxNum(mine.seen, it.seen) });
+  });
+  const out = Object.keys(byId).sort().map(k => byId[k]);
+  return cap ? out.slice(-cap) : out;
+}
+
+function mergeArchive(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(k => {
+    const mine = (a || {})[k], theirs = (b || {})[k];
+    if (!mine) { out[k] = theirs; return; }
+    if (!theirs) { out[k] = mine; return; }
+    out[k] = Object.assign({}, mine, theirs, {
+      seen: maxNum(mine.seen, theirs.seen),
+      first: earlierISO(mine.first, theirs.first),
+      last: laterISO(mine.last, theirs.last),
+      tr: mine.tr || theirs.tr,
+      en: mine.en || theirs.en
+    });
+  });
+  return out;
+}
+
+/* Section -> lesson -> record. Higher pass mark wins: you did once do that well. */
+function mergePathScores(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(s => {
+    const mine = (a || {})[s] || {}, theirs = (b || {})[s] || {};
+    const rec = {};
+    unionKeys(mine, theirs).forEach(n => {
+      const x = mine[n], y = theirs[n];
+      if (!x) { rec[n] = y; return; }
+      if (!y) { rec[n] = x; return; }
+      rec[n] = maxNum(x.pct, y.pct) === (x.pct || 0) ? x : y;
+    });
+    out[s] = rec;
+  });
+  return out;
+}
+
+/* Saved messages, keyed by timestamp. Newest first, same as the app writes them. */
+function mergeHistory(a, b, cap) {
+  const byTs = {};
+  (Array.isArray(a) ? a : []).forEach(it => { if (it && it.ts) byTs[it.ts] = it; });
+  (Array.isArray(b) ? b : []).forEach(it => { if (it && it.ts && !byTs[it.ts]) byTs[it.ts] = it; });
+  return Object.keys(byTs).sort((x, y) => Number(y) - Number(x))
+    .slice(0, cap || 100).map(k => byTs[k]);
+}
+
+/* Plain number maps — exposure counts, struggle tallies. Higher wins. */
+function mergeMaxNums(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(k => {
+    out[k] = maxNum((a || {})[k], (b || {})[k]);
+  });
+  return out;
+}
+
+/* Objects with no smarter rule: union, and on a genuine collision the blob written
+   more recently wins. `mineIsNewer` is decided once for the whole merge from the two
+   blobs' `updated` stamps, never per key — a per-key coin flip is how two devices
+   end up each convinced they are newer. */
+function mergeObjUnion(a, b, mineIsNewer) {
+  return mineIsNewer
+    ? Object.assign({}, b || {}, a || {})
+    : Object.assign({}, a || {}, b || {});
+}
+
+/* Which rule each store gets. Anything absent falls through to the generic handling
+   in mergeKeyMap: objects union, arrays and scalars take the newer blob's value. */
+const MERGE_RULES = {
+  "hvr_library":    (a, b) => mergeLibrary(a, b),
+  "hvr_srs":        (a, b) => mergeSrs(a, b),
+  "hvr_stats":      (a, b) => mergeStats(a, b),
+  "hvr_archive":    (a, b) => mergeArchive(a, b),
+  "hvr_bank":       (a, b) => mergeById(a, b, BANK_MAX),
+  "hvr_convo":      (a, b) => mergeById(a, b, CONVO_MAX),
+  "hvr_pathscores": (a, b) => mergePathScores(a, b),
+  "hvr_history":    (a, b) => mergeHistory(a, b, 100),
+  "hvr_struggle":   (a, b) => mergeMaxNums(a, b),
+  "hvr_recency":    (a, b) => mergeMaxNums(a, b)
+};
+
+/* Merges one key's PARSED values. Returns the merged value, never a string. */
+function mergeOneKey(key, mine, theirs, mineIsNewer) {
+  if (mine === undefined || mine === null) return theirs;
+  if (theirs === undefined || theirs === null) return mine;
+  const rule = MERGE_RULES[key];
+  if (rule) return rule(mine, theirs);
+  if (Array.isArray(mine) || Array.isArray(theirs)) return mineIsNewer ? mine : theirs;
+  if (typeof mine === "object" && typeof theirs === "object")
+    return mergeObjUnion(mine, theirs, mineIsNewer);
+  return mineIsNewer ? mine : theirs;             // scalars and flags
+}
+
+/* The whole thing. Takes two {key: rawString} maps plus their blob timestamps, and
+   returns a merged {key: rawString} map ready to write back.
+
+   Values are JSON strings in storage, so each is parsed, merged, re-stringified. A
+   value that will not parse is treated as a scalar rather than throwing: one corrupt
+   store must not be able to block the sync of every other store. */
+function mergeKeyMap(mineKeys, theirKeys, mineUpdated, theirUpdated) {
+  const mineIsNewer = String(mineUpdated || "") >= String(theirUpdated || "");
+  const out = {};
+  unionKeys(mineKeys, theirKeys).forEach(k => {
+    const rawA = (mineKeys || {})[k], rawB = (theirKeys || {})[k];
+    if (rawA === undefined) { out[k] = rawB; return; }
+    if (rawB === undefined) { out[k] = rawA; return; }
+    if (rawA === rawB) { out[k] = rawA; return; }        // identical, nothing to do
+    let a = null, b = null, parsed = true;
+    try { a = JSON.parse(rawA); b = JSON.parse(rawB); }
+    catch (e) { parsed = false; }
+    if (!parsed) { out[k] = mineIsNewer ? rawA : rawB; return; }
+    try { out[k] = JSON.stringify(mergeOneKey(k, a, b, mineIsNewer)); }
+    catch (e) { out[k] = mineIsNewer ? rawA : rawB; }
+  });
+  return out;
 }
 
 /* =====================  EXPORT / IMPORT  =====================
@@ -4844,6 +5125,7 @@ function openSettings() {
     " phrases. Words you've taught it: " + n + ".";
   vnotesRenderStatus();
   paintSpeakerBtn();
+  syncPaintSettings();
   paintFormsAutoBtn();
   paintUndoRebaseRow();
   /* Opened fresh every time. A panel that reopens still filtered looks like settings
@@ -4936,9 +5218,11 @@ function setFilterApply() {
   groups.forEach(g => {
     let anyInGroup = 0;
     g.querySelectorAll(".setrow").forEach(r => {
-      /* A row hidden for its own reasons — Undo re-filing, which only exists after a
-         re-file — must stay hidden regardless of what's typed. */
-      if (r.id === "undoRebaseRow" && r.dataset.reallyHidden === "1") return;
+      /* A row hidden for its own reasons must stay hidden regardless of what is
+         typed. Undo re-filing only exists after a re-file; the sync rows only exist
+         once sync is on. Any row can opt in by setting data-really-hidden, which is
+         cheaper than the filter knowing every id that might hide itself. */
+      if (r.dataset.reallyHidden === "1") { r.style.display = "none"; return; }
       total++;
       const hit = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
       r.style.display = hit ? "" : "none";
@@ -4989,6 +5273,85 @@ document.getElementById("ttsCheckBtn").onclick = async () => {
     el.textContent = "Couldn't reach Google — " + e.message;
   }
 };
+
+/* ---- sync controls ---- */
+function syncPaintSettings() {
+  const on = syncConfigured();
+  const desc = document.getElementById("syncDesc");
+  const btn = document.getElementById("syncToggleBtn");
+  if (!desc || !btn) return;
+  if (on) {
+    const last = syncMeta().last;
+    desc.textContent = "On, to " + syncRepo() + "." +
+      (last ? " Last synced " + syncAgo(last) + "." : " Not synced yet.") +
+      " Your API keys are not included.";
+    btn.textContent = "Change";
+  } else {
+    desc.textContent = "Off. Your progress lives only in this browser, and a second device "
+                     + "would start empty.";
+    btn.textContent = "Set up";
+  }
+  ["syncNowRow", "syncOffRow"].forEach(id => {
+    const row = document.getElementById(id);
+    /* Recorded as well as applied: the settings filter also writes style.display, and
+       without this it would reveal a Sync now button for sync that is switched off. */
+    row.dataset.reallyHidden = on ? "0" : "1";
+    row.style.display = on ? "" : "none";
+  });
+  syncPaint();
+}
+document.getElementById("syncToggleBtn").onclick = settingsAction(() => {
+  const box = document.getElementById("syncSetup");
+  const opening = box.style.display === "none";
+  box.style.display = opening ? "" : "none";
+  if (opening) {
+    document.getElementById("syncRepoInput").value = syncRepo();
+    document.getElementById("syncTokenInput").value = syncToken();
+  }
+});
+document.getElementById("syncCancelBtn").onclick = () => {
+  document.getElementById("syncSetup").style.display = "none";
+};
+document.getElementById("syncConnectBtn").onclick = async (ev) => {
+  const btn = ev.target;
+  const repo = document.getElementById("syncRepoInput").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, "");
+  const tok = document.getElementById("syncTokenInput").value.trim();
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { syncSetStatus("That doesn’t look like owner/name.", true); return; }
+  if (!tok) { syncSetStatus("Paste a token first.", true); return; }
+  btn.disabled = true; btn.textContent = "Checking…";
+  /* Written before the check so syncPull can read them, and rolled back if the check
+     fails — half-configured sync that silently does nothing is worse than none. */
+  const prevRepo = syncRepo(), prevTok = syncToken();
+  lsSet(SYNC_REPO_KEY, repo); lsSet(SYNC_TOKEN_KEY, tok);
+  try {
+    await syncPull();                       // 404 is fine; 401/403 throws
+    syncSetStatus("Connected. Syncing…");
+    document.getElementById("syncSetup").style.display = "none";
+    await syncRun("setup", { force: true });
+    syncPaintSettings();
+    syncSetStatus("Connected to " + repo + ".");
+  } catch (e) {
+    if (prevRepo) lsSet(SYNC_REPO_KEY, prevRepo); else localStorage.removeItem(SYNC_REPO_KEY);
+    if (prevTok) lsSet(SYNC_TOKEN_KEY, prevTok); else localStorage.removeItem(SYNC_TOKEN_KEY);
+    syncSetStatus(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "Connect";
+  }
+};
+document.getElementById("syncNowBtn").onclick = async (ev) => {
+  ev.target.disabled = true;
+  await syncRun("manual", { force: true });
+  syncPaintSettings();
+  ev.target.disabled = false;
+};
+document.getElementById("syncOffBtn").onclick = settingsAction(() => {
+  if (!confirm("Turn sync off on this device?\n\nNothing is deleted. Your progress stays " +
+               "here, and stays in the repository — this only forgets the token.")) return;
+  localStorage.removeItem(SYNC_TOKEN_KEY);
+  localStorage.removeItem(SYNC_REPO_KEY);
+  syncPaintSettings();
+  syncSetStatus("Sync turned off on this device.");
+});
 
 /* ---- correcting inflated schedules ----
    Deliberately a button rather than a migration that runs on open. Every other row on
@@ -5051,6 +5414,237 @@ function migrationHintCheck() {
   const drilled = Object.keys(srsAll()).length;
   if (practised || drilled) { lsSet("hvr_migrated", "1"); return; }
   bar.style.display = "flex";
+}
+
+/* =====================  SYNC — TRANSPORT  =====================
+   GitHub Pages serves bytes and cannot store anything, so the store is a second,
+   PRIVATE repo written through the Contents API. No new third party, and the file's
+   `sha` gives optimistic concurrency: if it moved since we read it, GitHub answers
+   409 and we re-merge rather than overwrite. That is precisely the guarantee manual
+   export/import never had.
+
+   Every failure path here ends in "carry on working locally and say so". Sync is a
+   convenience layered on an offline-first app; it must never be able to block it. */
+const SYNC_TOKEN_KEY = "hvr_synctoken";
+const SYNC_REPO_KEY  = "hvr_syncrepo";     // "owner/name"
+const SYNC_META_KEY  = "hvr_syncmeta";     // { sha, last, deviceId }
+const SYNC_FILE      = "progress.json";
+const SYNC_SCHEMA    = 1;
+const SYNC_MIN_GAP_MS = 60 * 1000;         // automatic syncs, at most once a minute
+
+/* Built on first use, not at parse time. Every name below is a `const` declared
+   further down the file, and a const cannot be read before its own declaration runs —
+   referencing them from a top-level Set here threw "Cannot access 'GEMINI_KEY' before
+   initialization" and took the whole script with it. Lazy also means these stay
+   correct however the file is later reordered. */
+let _syncNever = null, _syncLocal = null;
+/* Secrets never leave the device. They are already on both. */
+function SYNC_NEVER_SET() {
+  return _syncNever || (_syncNever = new Set([
+    GEMINI_KEY, GEMINI_KEY2, SYNC_TOKEN_KEY, SYNC_REPO_KEY, SYNC_META_KEY
+  ]));
+}
+/* Genuinely device-local: an in-flight session belongs to the device running it, and
+   the phone and the laptop SHOULD have different layouts and zoom levels. */
+function SYNC_LOCAL_SET() {
+  return _syncLocal || (_syncLocal = new Set([
+    SESSION_KEY, BLOCK_KEY, ZOOM_KEY, HE_KEY, LIBVIEW_KEY, MAPPOS_KEY, MAPVIEW_KEY,
+    COLLAPSE_KEY, VIEW_KEY, PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY, PAD_KEY,
+    AUDIO_CONSENT_KEY, "hvr_migrated", "hvr_voicebanner",
+    /* The index would list notes whose audio lives in another device's IndexedDB. */
+    VNOTES_KEY
+  ]));
+}
+
+function syncKeys() {
+  const never = SYNC_NEVER_SET(), local = SYNC_LOCAL_SET();
+  return exportKeys().filter(k => !never.has(k) && !local.has(k));
+}
+function syncToken() { return (lsGet(SYNC_TOKEN_KEY) || "").trim(); }
+function syncRepo()  { return (lsGet(SYNC_REPO_KEY) || "").trim(); }
+function syncConfigured() { return !!(syncToken() && syncRepo()); }
+function syncMeta() {
+  try { return JSON.parse(lsGet(SYNC_META_KEY)) || {}; } catch (e) { return {}; }
+}
+function syncMetaSave(v) { lsSet(SYNC_META_KEY, JSON.stringify(v)); }
+/* A stable per-device id, so a commit message can say which device wrote it. */
+function syncDeviceId() {
+  const m = syncMeta();
+  if (m.deviceId) return m.deviceId;
+  m.deviceId = Math.random().toString(36).slice(2, 8);
+  syncMetaSave(m);
+  return m.deviceId;
+}
+
+/* base64 that survives Hebrew. btoa() throws on anything above U+00FF, so the JSON
+   is encoded to UTF-8 bytes first — without this, sync breaks on the very first word
+   with a Hebrew character in it, which is all of them. */
+function b64encodeUtf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  const CHUNK = 0x8000;                    // avoid blowing the argument limit
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+function b64decodeUtf8(b64) {
+  const bin = atob(String(b64 || "").replace(/\s/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function syncSnapshot() {
+  const keys = {};
+  syncKeys().forEach(k => { keys[k] = lsGet(k); });
+  return { app: "hebrew-reader", schema: SYNC_SCHEMA,
+           updated: new Date().toISOString(), device: syncDeviceId(), keys: keys };
+}
+
+function ghURL(path) {
+  return "https://api.github.com/repos/" + syncRepo() + "/contents/" + path;
+}
+function ghHeaders() {
+  return { "Authorization": "Bearer " + syncToken(),
+           "Accept": "application/vnd.github+json",
+           "X-GitHub-Api-Version": "2022-11-28" };
+}
+
+/* Returns { blob, sha } — or { blob: null, sha: null } when the file does not exist
+   yet, which is the normal state on the very first sync and not an error. */
+async function syncPull() {
+  const resp = await fetch(ghURL(SYNC_FILE) + "?ref=HEAD", { headers: ghHeaders(), cache: "no-store" });
+  if (resp.status === 404) return { blob: null, sha: null };
+  if (resp.status === 401 || resp.status === 403)
+    throw new Error("GitHub refused the token — check it hasn't expired, and that it has Contents access to " + syncRepo());
+  if (!resp.ok) throw new Error("GitHub returned " + resp.status);
+  const j = await resp.json();
+  let blob = null;
+  try { blob = JSON.parse(b64decodeUtf8(j.content)); }
+  catch (e) { throw new Error("the synced file couldn't be read"); }
+  if (!blob || blob.app !== "hebrew-reader") throw new Error("that file isn't a Hebrew Reader sync file");
+  return { blob: blob, sha: j.sha };
+}
+
+async function syncPush(blob, sha) {
+  const body = { message: "practice from " + blob.device + " · " + blob.updated.slice(0, 16).replace("T", " "),
+                 content: b64encodeUtf8(JSON.stringify(blob)) };
+  if (sha) body.sha = sha;
+  const resp = await fetch(ghURL(SYNC_FILE), {
+    method: "PUT", headers: ghHeaders(), body: JSON.stringify(body) });
+  if (resp.status === 409 || resp.status === 422) return null;     // moved under us — caller retries
+  if (!resp.ok) throw new Error("GitHub returned " + resp.status + " saving");
+  const j = await resp.json();
+  return (j.content && j.content.sha) || null;
+}
+
+let syncInFlight = false;
+let syncLastRun = 0;
+
+/* The whole cycle. `opts.force` skips the rate limit (the manual button); `opts.quiet`
+   keeps a routine background run from shouting about a missing network. */
+async function syncRun(reason, opts) {
+  opts = opts || {};
+  if (!syncConfigured() || syncInFlight) return false;
+  /* Never mid-session: applying a merged hvr_srs under a running drill could change
+     the card on screen and the grade about to be written to it. */
+  if (sessionBusy() && !opts.force) return false;
+  if (!opts.force && Date.now() - syncLastRun < SYNC_MIN_GAP_MS) return false;
+  if (!navigator.onLine) { if (!opts.quiet) syncSetStatus("offline — will sync later"); return false; }
+
+  syncInFlight = true;
+  syncSetStatus("syncing…");
+  try {
+    let sha = null, merged = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const remote = await syncPull();
+      const mine = syncSnapshot();
+      merged = remote.blob
+        ? { app: "hebrew-reader", schema: SYNC_SCHEMA, updated: new Date().toISOString(),
+            device: mine.device,
+            keys: mergeKeyMap(mine.keys, remote.blob.keys, mine.updated, remote.blob.updated) }
+        : mine;
+      sha = await syncPush(merged, remote.sha);
+      if (sha !== null || !remote.sha) break;     // pushed, or nothing to collide with
+    }
+    /* Applied only after a successful push, so a failed sync never half-rewrites
+       local data with a merge that was never agreed. */
+    let changed = 0;
+    Object.keys(merged.keys).forEach(k => {
+      const v = merged.keys[k];
+      if (v === null || v === undefined) return;
+      if (lsGet(k) !== v) { lsSet(k, v); changed++; }
+    });
+    const m = syncMeta();
+    m.sha = sha; m.last = new Date().toISOString();
+    syncMetaSave(m);
+    syncLastRun = Date.now();
+    syncSetStatus("");
+    if (changed) syncAfterApply();
+    return true;
+  } catch (e) {
+    syncSetStatus(e.message || "sync failed", true);
+    return false;
+  } finally {
+    syncInFlight = false;
+    syncPaint();
+  }
+}
+
+/* Merged data arrived — repaint everything that reads from storage. Not a reload:
+   the app is usable while this happens and a reload would lose the view you're on. */
+function syncAfterApply() {
+  try {
+    renderLibrary();
+    learnBadge();
+    if (lsGet(VIEW_KEY) === "learn" && !learnSession) learnRenderStart();
+    if (lsGet(VIEW_KEY) === "path") pathRender();
+  } catch (e) { /* a repaint must never break the sync that succeeded */ }
+}
+
+function syncSetStatus(msg, bad) {
+  const el = document.getElementById("syncStatus");
+  if (el) { el.textContent = msg || ""; el.style.color = bad ? "var(--bad)" : "var(--muted)"; }
+  syncPaint(msg, bad);
+}
+
+/* The nav indicator. It has said "on this device" since the app was built, with a
+   comment calling it an honest placeholder for when devices actually share a brain.
+   They do now. */
+function syncPaint(msg, bad) {
+  const el = document.getElementById("navSync");
+  if (!el) return;
+  const label = el.querySelector("span") || el;
+  if (!syncConfigured()) {
+    el.title = "Your data lives in this browser only. Turn on sync in Settings.";
+    label.textContent = "on this device";
+    el.classList.remove("syncing", "syncbad");
+    return;
+  }
+  if (bad) {
+    el.classList.add("syncbad"); el.classList.remove("syncing");
+    label.textContent = "sync problem";
+    el.title = msg || "Sync failed";
+    return;
+  }
+  if (msg === "syncing…") {
+    el.classList.add("syncing"); el.classList.remove("syncbad");
+    label.textContent = "syncing…";
+    return;
+  }
+  el.classList.remove("syncing", "syncbad");
+  const last = syncMeta().last;
+  label.textContent = last ? "synced " + syncAgo(last) : "sync on";
+  el.title = last ? "Last synced " + new Date(last).toLocaleString() : "Sync is on";
+}
+function syncAgo(iso) {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  const h = Math.round(mins / 60);
+  if (h < 24) return h + "h ago";
+  return Math.round(h / 24) + "d ago";
 }
 
 /* ---- export / import ---- */
@@ -13267,6 +13861,9 @@ let lastFinishedPath = null;
 function learnFinish() {
   const s = learnSession;
   sessionClear();          // finished is not resumable
+  /* A finished session is the single best moment to sync: the day’s grades are
+     written, and nothing is on screen that a merge could pull out from under. */
+  setTimeout(() => syncRun("session", { quiet: true }), 400);
   micRelease();
   statsSnapshotBands();
   document.getElementById("lProgBar").style.width = "100%";
@@ -13595,6 +14192,10 @@ setView(lsGet(VIEW_KEY) || "learn");
 /* Last, so a hint about an empty library is only shown once the library has actually
    been seeded and rendered. */
 migrationHintCheck();
+syncPaint();
+/* On open, but never in the way: deferred so first paint is never waiting on a
+   network call, and quiet so a plane-mode launch says nothing. */
+setTimeout(() => syncRun("open", { quiet: true }), 1200);
 syncPadOffset();
 
 /* Automatic top-up: only once enough words have piled up to be worth a call, and
@@ -14725,6 +15326,214 @@ T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
                 "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
   assertEq(srsDeflateCount(srs), 2);
   assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
+});
+
+/* ---- merging two devices ----
+   This is the code that decides what survives when the phone and the laptop disagree,
+   so it is tested for the three properties that make a merge trustworthy rather than
+   merely plausible: COMMUTATIVE (the answer cannot depend on which device synced
+   first), IDEMPOTENT (syncing twice changes nothing), and LOSSLESS (nothing is ever
+   dropped). All pure — plain objects in, plain object out, no storage touched. */
+
+const SRSREC = (over) => Object.assign(
+  { due: "2026-08-25", last: "2026-08-20", stab: 10, diff: 4, n: 3, miss: 0, lapses: 0 }, over || {});
+
+T("mergeSrs: the more recent answer wins, per side", () => {
+  const a = { "א": { prod: SRSREC({ last: "2026-08-20", n: 5 }), recv: SRSREC({ last: "2026-08-10" }) } };
+  const b = { "א": { prod: SRSREC({ last: "2026-08-18", n: 9 }), recv: SRSREC({ last: "2026-08-19" }) } };
+  const m = mergeSrs(a, b);
+  assertEq(m["א"].prod.n, 5, "prod: the 20th beats the 18th even with fewer reps");
+  assertEq(m["א"].recv.last, "2026-08-19", "recv is judged separately");
+});
+T("mergeSrs: same day, the fuller record wins", () => {
+  const a = { "א": { prod: SRSREC({ last: "2026-08-20", n: 2 }), recv: srsBlank() } };
+  const b = { "א": { prod: SRSREC({ last: "2026-08-20", n: 7 }), recv: srsBlank() } };
+  assertEq(mergeSrs(a, b)["א"].prod.n, 7);
+});
+T("mergeSrs: a word on only one device still survives", () => {
+  const a = { "א": { prod: SRSREC(), recv: srsBlank() } };
+  const b = { "ב": { prod: SRSREC(), recv: srsBlank() } };
+  assertEq(Object.keys(mergeSrs(a, b)).sort(), ["א", "ב"]);
+});
+T("mergeSrs: commutative", () => {
+  const a = { "א": { prod: SRSREC({ last: "2026-08-20" }), recv: srsBlank() },
+              "ב": { prod: SRSREC({ last: "2026-08-01" }), recv: srsBlank() } };
+  const b = { "א": { prod: SRSREC({ last: "2026-08-15" }), recv: srsBlank() },
+              "ג": { prod: SRSREC(), recv: srsBlank() } };
+  assertEq(mergeSrs(a, b), mergeSrs(b, a));
+});
+T("mergeSrs: idempotent", () => {
+  const a = { "א": { prod: SRSREC({ last: "2026-08-20" }), recv: srsBlank() } };
+  const b = { "א": { prod: SRSREC({ last: "2026-08-15" }), recv: srsBlank() } };
+  const once = mergeSrs(a, b);
+  assertEq(mergeSrs(once, b), once, "re-merging the same remote must change nothing");
+});
+
+T("mergeLibrary: union, keeping the earliest meeting and the highest count", () => {
+  const a = { "א": { tr: "a", en: "one", added: "2026-08-10", seen: 5 } };
+  const b = { "א": { tr: "a", en: "one", added: "2026-08-01", seen: 2 },
+              "ב": { tr: "b", en: "two", added: "2026-08-05", seen: 1 } };
+  const m = mergeLibrary(a, b);
+  assertEq(m["א"].added, "2026-08-01", "first met wins");
+  assertEq(m["א"].seen, 5, "highest exposure wins");
+  assertTrue(!!m["ב"], "a word only the other device has must survive");
+});
+T("mergeLibrary: form banks are unioned, not replaced", () => {
+  /* Each device may have generated a different half, and each cost API calls. */
+  const a = { "א": { tr: "a", forms: { "ms": { he: "x" } } } };
+  const b = { "א": { tr: "a", forms: { "fs": { he: "y" } } } };
+  assertEq(Object.keys(mergeLibrary(a, b)["א"].forms).sort(), ["fs", "ms"]);
+});
+T("mergeLibrary: an empty gloss never overwrites a real one", () => {
+  const a = { "א": { tr: "", en: "" } };
+  const b = { "א": { tr: "aleph", en: "ox" } };
+  const m = mergeLibrary(a, b);
+  assertEq(m["א"].tr, "aleph");
+  assertEq(m["א"].en, "ox");
+});
+T("mergeLibrary: commutative on the fields that matter", () => {
+  const a = { "א": { tr: "a", added: "2026-08-10", seen: 5 } };
+  const b = { "א": { tr: "a", added: "2026-08-01", seen: 2 } };
+  const x = mergeLibrary(a, b), y = mergeLibrary(b, a);
+  assertEq([x["א"].added, x["א"].seen], [y["א"].added, y["א"].seen]);
+});
+
+T("mergeStats: per day and per field, the higher number", () => {
+  const a = { "2026-08-20": { sec: 300, cards: 15, clean: 10 } };
+  const b = { "2026-08-20": { sec: 120, cards: 20, clean: 5 }, "2026-08-19": { sec: 60, cards: 4 } };
+  const m = mergeStats(a, b);
+  /* Fields come back alphabetically: unionKeys sorts, so the pushed file is byte-stable
+     whichever device did the merging. */
+  assertEq(m["2026-08-20"], { cards: 20, clean: 10, sec: 300 });
+  assertTrue(!!m["2026-08-19"], "a day only one device has must survive");
+});
+T("mergeStats: commutative and idempotent", () => {
+  const a = { "2026-08-20": { sec: 300, cards: 15 } };
+  const b = { "2026-08-20": { sec: 120, cards: 20 } };
+  assertEq(mergeStats(a, b), mergeStats(b, a));
+  assertEq(mergeStats(mergeStats(a, b), b), mergeStats(a, b));
+});
+
+T("mergeById: union by id, higher seen, stable order", () => {
+  const a = [{ id: "s2", he: "x", seen: 3 }, { id: "s1", he: "y", seen: 0 }];
+  const b = [{ id: "s1", he: "y", seen: 4 }, { id: "s3", he: "z", seen: 1 }];
+  const m = mergeById(a, b);
+  assertEq(m.map(x => x.id), ["s1", "s2", "s3"], "sorted, so the file is stable between devices");
+  assertEq(m[0].seen, 4);
+});
+T("mergeById: order does not depend on which side is first", () => {
+  const a = [{ id: "s2", seen: 1 }], b = [{ id: "s1", seen: 1 }];
+  assertEq(mergeById(a, b).map(x => x.id), mergeById(b, a).map(x => x.id));
+});
+T("mergeById: respects a cap", () => {
+  const a = [{ id: "a1" }, { id: "a2" }], b = [{ id: "a3" }];
+  assertEq(mergeById(a, b, 2).length, 2);
+});
+T("mergeById: ignores entries with no id rather than throwing", () => {
+  assertEq(mergeById([{ id: "a" }, null, {}], [undefined]).length, 1);
+});
+
+T("mergeArchive: widest possible span, highest count", () => {
+  const a = { "א": { seen: 3, first: "2026-08-10", last: "2026-08-15", tr: "a", en: "x" } };
+  const b = { "א": { seen: 5, first: "2026-08-01", last: "2026-08-12", tr: "a", en: "x" } };
+  const m = mergeArchive(a, b)["א"];
+  assertEq([m.seen, m.first, m.last], [5, "2026-08-01", "2026-08-15"]);
+});
+
+T("mergePathScores: the better attempt is the one that counts", () => {
+  const a = { "hello": { 3: { pct: 80 } } };
+  const b = { "hello": { 3: { pct: 40 }, 4: { pct: 70 } } };
+  const m = mergePathScores(a, b);
+  assertEq(m["hello"][3].pct, 80);
+  assertEq(m["hello"][4].pct, 70);
+});
+
+T("mergeHistory: union by timestamp, newest first, capped", () => {
+  const a = [{ ts: 300, source: "c" }, { ts: 100, source: "a" }];
+  const b = [{ ts: 200, source: "b" }];
+  assertEq(mergeHistory(a, b, 10).map(x => x.ts), [300, 200, 100]);
+  assertEq(mergeHistory(a, b, 2).length, 2);
+});
+
+T("mergeMaxNums: higher count wins, union of keys", () => {
+  assertEq(mergeMaxNums({ a: 3, b: 1 }, { a: 1, c: 9 }), { a: 3, b: 1, c: 9 });
+});
+
+/* ---- the whole key map ---- */
+const KM = (o) => { const r = {}; Object.keys(o).forEach(k => { r[k] = JSON.stringify(o[k]); }); return r; };
+
+T("mergeKeyMap: applies the right rule per store", () => {
+  const mine = KM({ "hvr_library": { "א": { tr: "a", seen: 5 } }, "hvr_stats": { "2026-08-20": { cards: 10 } } });
+  const theirs = KM({ "hvr_library": { "ב": { tr: "b", seen: 1 } }, "hvr_stats": { "2026-08-20": { cards: 3 } } });
+  const m = mergeKeyMap(mine, theirs, "2026-08-20T10:00:00Z", "2026-08-20T09:00:00Z");
+  assertEq(Object.keys(JSON.parse(m["hvr_library"])).sort(), ["א", "ב"]);
+  assertEq(JSON.parse(m["hvr_stats"])["2026-08-20"].cards, 10);
+});
+T("mergeKeyMap: a key only one device has survives untouched", () => {
+  const m = mergeKeyMap(KM({ "hvr_shape": "quick" }), KM({ "hvr_lens": "f" }), "b", "a");
+  assertEq(JSON.parse(m["hvr_shape"]), "quick");
+  assertEq(JSON.parse(m["hvr_lens"]), "f");
+});
+T("mergeKeyMap: scalars follow the newer blob, both directions", () => {
+  const mine = KM({ "hvr_shape": "quick" }), theirs = KM({ "hvr_shape": "balanced" });
+  assertEq(JSON.parse(mergeKeyMap(mine, theirs, "2026-08-20T10:00Z", "2026-08-20T09:00Z")["hvr_shape"]), "quick");
+  assertEq(JSON.parse(mergeKeyMap(mine, theirs, "2026-08-20T08:00Z", "2026-08-20T09:00Z")["hvr_shape"]), "balanced");
+});
+T("mergeKeyMap: identical values are passed through untouched", () => {
+  const same = KM({ "hvr_library": { "א": { tr: "a" } } });
+  assertEq(mergeKeyMap(same, same, "a", "a")["hvr_library"], same["hvr_library"]);
+});
+T("mergeKeyMap: one corrupt store cannot block every other store", () => {
+  const mine = { "hvr_library": JSON.stringify({ "א": { tr: "a" } }), "hvr_bad": "{not json" };
+  const theirs = { "hvr_library": JSON.stringify({ "ב": { tr: "b" } }), "hvr_bad": "also bad" };
+  const m = mergeKeyMap(mine, theirs, "2026-08-20T10:00Z", "2026-08-20T09:00Z");
+  assertEq(Object.keys(JSON.parse(m["hvr_library"])).sort(), ["א", "ב"], "the good store still merged");
+  assertEq(m["hvr_bad"], "{not json", "the corrupt one fell back to the newer side");
+});
+T("mergeKeyMap: idempotent across a full round trip", () => {
+  const mine = KM({ "hvr_library": { "א": { tr: "a", seen: 5, added: "2026-08-10" } },
+                    "hvr_srs": { "א": { prod: SRSREC({ last: "2026-08-20" }), recv: srsBlank() } },
+                    "hvr_stats": { "2026-08-20": { cards: 10, sec: 300 } } });
+  const theirs = KM({ "hvr_library": { "א": { tr: "a", seen: 2, added: "2026-08-01" } },
+                      "hvr_srs": { "א": { prod: SRSREC({ last: "2026-08-18" }), recv: srsBlank() } },
+                      "hvr_stats": { "2026-08-20": { cards: 3, sec: 100 } } });
+  const once = mergeKeyMap(mine, theirs, "2026-08-20T10:00Z", "2026-08-20T09:00Z");
+  const twice = mergeKeyMap(once, theirs, "2026-08-20T11:00Z", "2026-08-20T09:00Z");
+  assertEq(twice, once, "a second sync against the same remote must change nothing");
+});
+T("mergeKeyMap: never loses a word, whichever side it came from", () => {
+  const mine = KM({ "hvr_library": { "א": {}, "ב": {} } });
+  const theirs = KM({ "hvr_library": { "ב": {}, "ג": {} } });
+  const fwd = Object.keys(JSON.parse(mergeKeyMap(mine, theirs, "b", "a")["hvr_library"])).sort();
+  const rev = Object.keys(JSON.parse(mergeKeyMap(theirs, mine, "b", "a")["hvr_library"])).sort();
+  assertEq(fwd, ["א", "ב", "ג"]);
+  assertEq(rev, fwd, "and the same set either way round");
+});
+
+T("b64: survives Hebrew, which btoa alone does not", () => {
+  const s = JSON.stringify({ he: "שלום חבר", n: 1 });
+  assertEq(b64decodeUtf8(b64encodeUtf8(s)), s);
+});
+T("b64: survives an empty string and plain ASCII", () => {
+  assertEq(b64decodeUtf8(b64encodeUtf8("")), "");
+  assertEq(b64decodeUtf8(b64encodeUtf8("hello")), "hello");
+});
+
+/* ---- what travels, and what must never ---- */
+T("SYNC_NEVER: API keys and the sync credential itself never sync", () => {
+  assertTrue(SYNC_NEVER_SET().has(GEMINI_KEY), "the Gemini key must never leave the device");
+  assertTrue(SYNC_NEVER_SET().has(GEMINI_KEY2), "nor the backup key");
+  assertTrue(SYNC_NEVER_SET().has(SYNC_TOKEN_KEY), "nor the GitHub token");
+});
+T("SYNC_LOCAL: layout, zoom and an in-flight session stay on their device", () => {
+  assertTrue(SYNC_LOCAL_SET().has(BLOCK_KEY), "the phone and laptop should have different layouts");
+  assertTrue(SYNC_LOCAL_SET().has(ZOOM_KEY));
+  assertTrue(SYNC_LOCAL_SET().has(SESSION_KEY), "a running session belongs to the device running it");
+  assertTrue(SYNC_LOCAL_SET().has(VNOTES_KEY), "note index without its blobs would list unplayable cards");
+});
+T("SYNC lists do not overlap — a key cannot be both secret and merely local", () => {
+  const both = [...SYNC_NEVER_SET()].filter(k => SYNC_LOCAL_SET().has(k));
+  assertEq(both, []);
 });
 
 /* ---- surviving a phone killing the tab ----

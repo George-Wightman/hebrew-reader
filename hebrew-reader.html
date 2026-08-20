@@ -1229,6 +1229,11 @@
   /* =====================  NARROW SCREENS  =====================
      Nothing is removed at any width — controls that need a mouse or a lot of room step
      aside, and everything else reflows. */
+  /* What's on and what's off, in the same place and the same voice. Muted rather
+     than alarming: a missing voice is a limitation to know about, not a fault. */
+  .lshapeoff { color: var(--warn); }
+  .lshapeon  { color: var(--accent); }
+
   @media (max-width: 860px) {
     .lhero { flex-direction: column-reverse; align-items: stretch; gap: 16px; padding-top: 16px; }
     /* Streak above the headline on a small screen: the thing that gets you to open the
@@ -1706,6 +1711,7 @@
       </div>
       <input type="file" id="importAllFile" accept="application/json,.json" style="display:none">
       <p class="note" id="dataStatus"></p>
+      <p class="note" id="notesStatus"></p>
     </div>
 
     <div class="setgroup">
@@ -1719,6 +1725,11 @@
         <div class="setrow-text"><b>Clear all marks</b>
           <p>Unstars every word. The words themselves aren't touched.</p></div>
         <button class="btn secondary" id="clearFocusBtn">Run</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Check which Hebrew voices work</b>
+          <p id="ttsCheckDesc">Asks Google which models your key can actually reach, and lists the ones that can speak. Real Hebrew audio has been failing since 7 Aug, and the app was only ever asking for one model by an exact dated name — this says whether that name still exists or the account is genuinely blocked. Uses one request and generates nothing.</p></div>
+        <button class="btn secondary" id="ttsCheckBtn">Check</button>
       </div>
       <div class="setrow">
         <div class="setrow-text"><b>Re-file under dictionary forms</b>
@@ -4341,6 +4352,58 @@ function readAsBase64(file) {
   });
 }
 
+/* =====================  VOICE NOTES KEPT  =====================
+   The app used to read a voice note to base64, send it to Google, take the transcript,
+   and let the audio fall out of scope. It was never stored.
+
+   Meanwhile it spent real effort trying to MANUFACTURE Hebrew audio: a TTS integration
+   that has been failing since 2026-08-07, an IndexedDB cache built for it, a background
+   generation queue, a rate-limit pacer, and a fallback to the one flat Windows voice.
+
+   So it was discarding authentic native-speaker Hebrew — correct prosody, real
+   conversational speed, the actual accent that has to be understood, saying things that
+   actually matter to him — and then spending quota to approximate it badly.
+
+   The blob costs one audioPut. The index is what makes it findable later: the history
+   store only holds messages he explicitly SAVED, and a note is worth drilling whether
+   or not he thought to press Save. Kept small — the index is metadata, the audio lives
+   in IndexedDB where size doesn't threaten the localStorage ceiling. */
+const VNOTES_KEY = "hvr_voicenotes";
+const VNOTES_MAX = 60;
+function vnotesAll() { try { return JSON.parse(lsGet(VNOTES_KEY)) || []; } catch (e) { return []; } }
+function vnotesSave(v) { lsSet(VNOTES_KEY, JSON.stringify(v.slice(0, VNOTES_MAX))); }
+function noteAudioKey(id) { return "note:" + id; }
+
+/* Content words from a transcript that are actually in the library, so a note card
+   feeds the same receptive scores every other listening drill does. Grammar words are
+   skipped for the same reason they are everywhere else. */
+function noteUses(he, lib) {
+  const out = [];
+  String(he || "").split(/\s+/).forEach(tok => {
+    const k = libKeyFor(tok.replace(/[^֐-׿]/g, ""), lib);
+    if (k && !STOPLIST.has(k) && out.indexOf(k) === -1) out.push(k);
+  });
+  return out;
+}
+
+/* Recorded after a successful transcription. Failure to store the blob is not worth
+   interrupting anything over — the transcript is the thing he asked for, and a missing
+   clip costs a future drill, not this one. */
+async function noteRecord(file, he, en) {
+  if (!he) return null;
+  const id = String(Date.now());
+  const ok = await audioPut(noteAudioKey(id), file);
+  if (!ok) return null;
+  const notes = vnotesAll();
+  notes.unshift({ id: id, ts: Date.now(), he: he, en: en || "",
+                  size: file.size || 0, type: file.type || "" });
+  /* Anything trimmed off the end loses its blob too, or IndexedDB grows without
+     bound behind an index that no longer mentions it. */
+  notes.slice(VNOTES_MAX).forEach(n => { audioDel(noteAudioKey(n.id)); });
+  vnotesSave(notes);
+  return id;
+}
+
 async function transcribeAudio(file) {
   if (!file) return;
   /* Every route into transcription funnels through here — the picker, a drop on the
@@ -4386,7 +4449,12 @@ async function transcribeAudio(file) {
     let data = null;
     try { data = extractJSON(text); } catch (e) {}
     if (data && data.transcript) {
-      document.getElementById("input").value = String(data.transcript).trim();
+      const transcript = String(data.transcript).trim();
+      document.getElementById("input").value = transcript;
+      /* Keep the recording. Deliberately not awaited before rendering — the
+         breakdown is what he is waiting for, and storing a blob must never sit
+         between him and it. */
+      const kept = noteRecord(file, transcript, String(data.translation || "").trim());
       if (Array.isArray(data.words) && data.words.length) {
         /* renderAIWords reads #input for result.source, so the transcript must be
            in place before this runs. */
@@ -4395,6 +4463,7 @@ async function transcribeAudio(file) {
       } else {
         setStatus("Transcribed — hit “Read message” to break it down.");
       }
+      kept.then(id => { if (id) { learnBadge(); vnotesRenderStatus(); } });
     } else {
       /* Salvage: an 8-second call shouldn't be lost to a parse error. */
       document.getElementById("input").value = text;
@@ -4575,6 +4644,7 @@ function openSettings() {
   document.getElementById("dictStats").textContent =
     "Built-in dictionary: " + Object.keys(DICT).length + " words + " + Object.keys(PHRASES).length +
     " phrases. Words you've taught it: " + n + ".";
+  vnotesRenderStatus();
   /* States the real number before you press it, like every other row here. */
   const infl = srsDeflateCount(srsAll());
   const dfl = document.getElementById("deflateDesc");
@@ -4617,6 +4687,40 @@ function settingsAction(fn) {
     catch (e) { alert("Couldn't complete that — " + e.message); }
   };
 }
+/* ---- what voices this key can actually reach ----
+   A read-only ListModels call. Generates nothing, spends no TTS quota, and replaces a
+   guess with Google's own answer about whether the model name is the problem. */
+document.getElementById("ttsCheckBtn").onclick = async () => {
+  const el = document.getElementById("ttsCheckDesc");
+  const keys = geminiKeys();
+  if (!keys.length) { el.textContent = "Add a Gemini key above first."; return; }
+  el.textContent = "Asking Google which models this key can reach…";
+  try {
+    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" +
+                             encodeURIComponent(keys[0]) + "&pageSize=200");
+    if (!resp.ok) { el.textContent = "Google refused the request — HTTP " + resp.status +
+                    ". That's a key or account problem, not a model-name one."; return; }
+    const json = await resp.json();
+    const all = (json.models || []).map(m => String(m.name || "").replace(/^models\//, ""));
+    const tts = all.filter(n => /tts/i.test(n));
+    const wanted = GEMINI_TTS_MODELS.filter(m => all.indexOf(m) !== -1);
+    el.textContent =
+      (tts.length
+        ? "Speech models your key can reach: " + tts.join(", ") + ". "
+        : "Your key cannot reach ANY speech model — this is an account limitation, not a "
+          + "stale model name, so real Hebrew audio isn't available on this key. ") +
+      (wanted.length
+        ? "The app asks for " + wanted.join(" and ") + ", which " +
+          (wanted.length === 1 ? "is" : "are") + " on that list, so the name is fine — any "
+          + "failure is coming from the account or the quota."
+        : "The app currently asks for " + GEMINI_TTS_MODELS.join(" and ") +
+          ", none of which are on that list — that is very likely the whole problem. " +
+          (tts.length ? "Tell Claude the names above and it can point the app at them." : ""));
+  } catch (e) {
+    el.textContent = "Couldn't reach Google — " + e.message;
+  }
+};
+
 /* ---- correcting inflated schedules ----
    Deliberately a button rather than a migration that runs on open. Every other row on
    this page states its effect before you press it; a scheduler rewrite that happened
@@ -4642,6 +4746,22 @@ document.getElementById("deflateBtn").onclick = settingsAction(() => {
   if (lsGet(VIEW_KEY) === "learn") learnRenderStart();
   alert("Corrected " + fixed + " review date" + (fixed === 1 ? "" : "s") + ".");
 });
+
+/* Kept recordings, reported where the rest of the audio numbers live. */
+function vnotesRenderStatus() {
+  const el = document.getElementById("notesStatus");
+  if (!el) return;
+  const n = vnotesAll();
+  if (!n.length) {
+    el.textContent = "No voice notes kept yet. Transcribe one and its recording is saved "
+      + "here automatically, then used for listening practice.";
+    return;
+  }
+  const kb = Math.round(n.reduce((a, x) => a + (x.size || 0), 0) / 1024);
+  el.textContent = n.length + " voice note" + (n.length === 1 ? "" : "s") + " kept ("
+    + (kb > 1024 ? (kb / 1024).toFixed(1) + "MB" : kb + "KB") + "), used for listening "
+    + "practice. They're stored outside the main save, so they aren't in the export file.";
+}
 
 /* ---- export / import ---- */
 function setDataStatus(msg, bad) {
@@ -9064,7 +9184,21 @@ function pcmToWavBlob(base64pcm, sampleRate, channels, bitsPerSample) {
    alone isn't enough of a constraint on its own; the model still needs to be told
    in plain language that its only job is reading the transcript aloud, verbatim,
    never answering or commenting on it. */
-const GEMINI_TTS_MODELS = ["gemini-2.5-flash-preview-tts"];
+/* A LIST, and never a single dated name again. This was
+   `["gemini-2.5-flash-preview-tts"]` — one dated PREVIEW model with no fallback — while
+   1500 lines below, the text path states the rule this violates: "Always use -latest
+   aliases; dated names get retired underneath you", learned when exactly that happened
+   to a text model.
+
+   The README concluded on 2026-08-07 that Google's TTS was broken for this account. No
+   other model name was tried before that conclusion, so "the account is broken" and
+   "the one name we ask for stopped existing" were never separated. Settings →
+   "Check which Hebrew voices work" now answers that with the real API rather than a
+   guess; ordered newest-first so a working model is found before a retired one. */
+const GEMINI_TTS_MODELS = [
+  "gemini-2.5-flash-preview-tts",
+  "gemini-2.5-pro-preview-tts"
+];
 const GEMINI_TTS_VOICE = "Kore";
 const GEMINI_TTS_SYSTEM =
   "You are a text-to-speech engine. Your only job is to read the user's text aloud, exactly as " +
@@ -9201,6 +9335,8 @@ async function audioEnsure(cacheKey, text) {
    model answer) are genuinely different text. */
 function cardAudioKey(c, which) {
   if (c.kind === "word") return which === "answer" ? "word:" + c.key : null;
+  /* A note's audio IS the note — one real recording, no synthesised half. */
+  if (c.kind === "note") return c.item ? noteAudioKey(c.item.noteId) : null;
   if (!c.item) return null;
   if (which === "prompt") {
     if (c.kind === "listen") return "sentence:" + c.item.id + ":a";
@@ -9234,6 +9370,19 @@ async function playHe(cacheKey, text, slow) {
     audioEnsure(cacheKey, text);
   }
   speakHe(text, slow);
+}
+
+/* A note has exactly one recording and no synthetic alternative — never fall through
+   to audioEnsure (which would spend quota synthesising a whole voice note) or to the
+   Windows voice (which would read the transcript, quietly replacing the real thing
+   with the imitation this whole feature exists to stop using). If the blob is gone,
+   say so. */
+async function playNote(cacheKey, slow) {
+  const blob = cacheKey ? await audioGet(cacheKey) : null;
+  if (blob) { playAudioBlob(blob, slow); return true; }
+  const hint = document.getElementById("lHint");
+  if (hint) hint.textContent = "That recording isn't on this device any more.";
+  return false;
 }
 
 /* Every library word plus every bank item's audio needs, in one list — the same
@@ -10880,6 +11029,28 @@ function learnShape() {
   return SHAPES[s] ? s : "balanced";
 }
 
+/* How many real voice notes a full session may include. Two, not more: they are the
+   most valuable cards in the app but also the longest, and a session that is mostly
+   grandad talking stops being the vocabulary practice the rest of the page is for. */
+const NOTES_PER_SESSION = 2;
+
+/* Least-recently-drilled first, so the same note isn't the one that always comes up,
+   and notes whose words he actually has ahead of ones he can't touch yet. A note with
+   no library words in it at all is still worth hearing — comprehension of the gist is
+   the skill — so it isn't excluded, just ranked last. */
+function noteTargets(limit) {
+  const lib = libAll();
+  const notes = vnotesAll();
+  if (!notes.length) return [];
+  const scored = notes.map(n => {
+    const uses = noteUses(n.he, lib);
+    return { id: n.id, he: n.he, en: n.en, tr: n.tr || "", uses: uses,
+             known: uses.length, seen: n.seen || 0, ts: n.ts || 0 };
+  });
+  scored.sort((a, b) => (a.seen - b.seen) || (b.known - a.known) || (b.ts - a.ts));
+  return scored.slice(0, limit);
+}
+
 /* Phrases whose words he already has come first — all 60 are common spoken Hebrew,
    but one built from words he knows is the one most likely to come out of his
    mouth this week. Due-then-never-drilled, same ordering rule as words. */
@@ -10982,6 +11153,23 @@ function learnBuild() {
   if (shape !== "weak") {
     learnChunkTargets(shape === "quick" ? 1 : 3)
       .forEach(p => cards.push({ kind: "chunk", key: p, words: [p] }));
+  }
+
+  /* Real voice notes. Their own slice for the same reason chunks get one: this is a
+     different exercise, not a variant of the generated listening drill, and it must
+     not have to out-rank generated material to appear.
+
+     Crucially NOT gated on hasHeVoice() — the recording already exists, so this is
+     the one listening drill that works on a stock Windows machine with nothing
+     installed. "Speaking" shape skips it because it asks for English back. */
+  if (shape !== "weak" && shape !== "speaking") {
+    noteTargets(shape === "quick" ? 1 : NOTES_PER_SESSION)
+      .forEach(n => cards.push({
+        kind: "note",
+        item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
+                uses: n.uses || [] },
+        words: n.uses || []
+      }));
   }
 
   const covered = {};
@@ -11296,12 +11484,21 @@ const LEARN_KINDS = {
   /* Same audio as Hear-and-answer, opposite skill: that one asks what it MEANT,
      this asks him to reproduce it. Comprehension vs production. */
   shadow:   { glyph: "🔁", label: "Say it back, exactly",   dir: "עב → עב", flow: "in",
-              ask: "Repeat what you heard — same words, same order." }
+              ask: "Repeat what you heard — same words, same order." },
+  /* The real thing. Not a generated sentence read by a synthetic voice, but the
+     actual recording that arrived — right speed, right accent, right person. This is
+     the drill the whole app exists to make possible, and it costs nothing to serve. */
+  note:     { glyph: "📩", label: "What did they say?",     dir: "עב → EN", flow: "in",
+              ask: "A real voice note. Listen, then write what you think it means." }
 };
 /* Which strength record a card feeds. Listening is receptive knowledge; everything
    else is production — including shadowing, where he is producing Hebrew. */
 const KIND_SIDE = { word: "prod", sentence: "prod", listen: "recv", reply: "prod",
-                    chunk: "prod", shadow: "prod", conversation: "prod" };
+                    chunk: "prod", shadow: "prod", conversation: "prod", note: "recv" };
+/* Kinds that play Hebrew at you and ask what it meant. `note` differs from `listen`
+   only in where the audio comes from, so everything downstream treats them alike
+   rather than growing a parallel set of branches. */
+function isHearKind(k) { return k === "listen" || k === "note"; }
 
 let learnSession = null;
 let learnRevealed = false;
@@ -11593,6 +11790,35 @@ function learnRenderShapes() {
   note.textContent = SHAPES[current].note +
     (current === "speaking" && !speechSupported() ? " — no microphone here, so still graded by hand" : "");
   box.append(note);
+
+  /* Which drills are actually going to run, and which aren't.
+     Two of the six used to vanish in silence: `listen` and `shadow` are gated on
+     hasHeVoice(), and Windows ships no Hebrew voice, so on a stock machine half the
+     listening practice simply didn't appear and nothing on this screen said so. The
+     banner explained how to install a voice; it never said what you were missing
+     without one.
+     Real voice notes need no installed voice at all, so once any are kept, listening
+     practice happens regardless — which is worth saying just as plainly. */
+  const notesN = vnotesAll().length;
+  const off = [];
+  if (!hasHeVoice() && !notesN) off.push("Hear and answer", "Say it back");
+  else if (!hasHeVoice()) off.push("Say it back");
+  if (off.length) {
+    const warn = document.createElement("div");
+    warn.className = "lshapenote lshapeoff";
+    warn.textContent = off.length + " drill" + (off.length === 1 ? "" : "s") + " off — " +
+      off.join(" and ") + " need" + (off.length === 1 ? "s" : "") +
+      " a Hebrew voice this computer doesn't have.";
+    box.append(warn);
+  }
+  if (notesN && current !== "weak" && current !== "speaking") {
+    const good = document.createElement("div");
+    good.className = "lshapenote lshapeon";
+    good.textContent = notesN === 1
+      ? "1 real voice note in the mix — listening practice in the actual voice."
+      : notesN + " real voice notes in the mix — listening practice in the actual voice.";
+    box.append(good);
+  }
   document.getElementById("lStartSub").textContent =
     SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
 }
@@ -11644,7 +11870,8 @@ document.getElementById("lStartBtn").onclick = async () => {
 function learnSpeakPrompt(slow) {
   const s = learnSession; if (!s) return;
   const c = s.cards[s.i];
-  if (c.kind === "listen" || c.kind === "shadow") playHe(cardAudioKey(c, "prompt"), c.item.he, slow);
+  if (c.kind === "note") playNote(cardAudioKey(c, "prompt"), slow);
+  else if (c.kind === "listen" || c.kind === "shadow") playHe(cardAudioKey(c, "prompt"), c.item.he, slow);
   else if (c.kind === "reply" || c.kind === "conversation")
     playHe(cardAudioKey(c, "prompt"), c.item.qhe || c.item.he, slow);
 }
@@ -11773,7 +12000,7 @@ function learnRenderCard() {
     /* Conversation is spoken end to end — George: "I want this all to be speaking...
        but I will just be speaking." A textarea mid-exchange would break that, and
        there's nothing to hold in your head anyway because the target is on screen. */
-    if (c.kind === "listen" || c.kind === "reply") {
+    if (isHearKind(c.kind) || c.kind === "reply") {
     const lab = document.createElement("div"); lab.className = "lnoteslabel";
     const ta = document.createElement("textarea");
     ta.className = "lnotes"; ta.id = "lNotes";
@@ -11783,7 +12010,7 @@ function learnRenderCard() {
        definetly keep both of htem jsut add hte box getting marked." Reply: there's
        no single correct reply (learnMicGrades already excludes it for the same
        reason), so its box stays honest scratch space, never graded. */
-    if (c.kind === "listen") {
+    if (isHearKind(c.kind)) {
       lab.textContent = "What do you think it means? I'll check it against the real meaning.";
       ta.placeholder = "e.g. his back hurts today…";
     } else {
@@ -11837,8 +12064,8 @@ function learnRenderCard() {
    right answer to "reply to grandad" — the bank holds one natural answer, not the
    only one — so scoring what he said against it would mark a perfectly good reply
    wrong. He gets to see both and judge. */
-function learnMicKinds(c) { return c.kind !== "listen"; }
-function learnMicGrades(c) { return c.kind !== "listen" && c.kind !== "reply"; }
+function learnMicKinds(c) { return !isHearKind(c.kind); }
+function learnMicGrades(c) { return !isHearKind(c.kind) && c.kind !== "reply"; }
 function learnExpectedHe(c) {
   return (c.kind === "word" || c.kind === "chunk") ? c.key : (c.item ? c.item.he : "");
 }
@@ -12019,7 +12246,7 @@ function learnHintSteps(c) {
     if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true });
     const p = PHRASES[c.key];
     if (p && p[0]) steps.push({ label: "How it sounds", text: p[0], rtl: false });
-  } else if (c.kind === "listen" || c.kind === "shadow") {
+  } else if (isHearKind(c.kind) || c.kind === "shadow") {
     steps.push({ label: "", text: "", slow: true });
     if (c.item.tr) steps.push({ label: "What he said, in English letters", text: c.item.tr, rtl: false });
   } else if (c.kind === "reply") {
@@ -12143,7 +12370,7 @@ function learnReveal() {
       /* Kind-aware, matching what was actually asked pre-reveal — listen's box
          asks for MEANING now, not a transliteration, and the frozen label should
          say what it was actually checking, not the old generic wording. */
-      if (lab) lab.textContent = c.kind === "listen" ? "What you thought it meant" : "What you thought you heard";
+      if (lab) lab.textContent = isHearKind(c.kind) ? "What you thought it meant" : "What you thought you heard";
     }
   }
 
@@ -12165,7 +12392,7 @@ function learnReveal() {
      and a no-op, correctly, when chips ARE present: word-level recognition and
      whole-sentence comprehension are different signals, and this never overrides
      the finer-grained one. */
-  if (c.kind === "listen" && noteEl && noteEl.value.trim()) {
+  if (isHearKind(c.kind) && noteEl && noteEl.value.trim()) {
     const verdict = matchMeaning(noteEl.value, en);
     if (verdict) {
       const v = document.createElement("div");
@@ -12287,7 +12514,7 @@ function learnReveal() {
   }
   /* For word and sentence cards the English WAS the prompt — repeating it back is
      noise. For listen and reply it's the answer, so it's the point. */
-  if ((c.kind === "listen" || c.kind === "reply" || c.kind === "conversation") && en) {
+  if ((isHearKind(c.kind) || c.kind === "reply" || c.kind === "conversation") && en) {
     const enEl = document.createElement("div"); enEl.className = "len"; enEl.textContent = en;
     card.append(enEl);
   }
@@ -12578,7 +12805,13 @@ function learnCommit() {
 function learnAdvance(clean) {
   const s = learnSession;
   const c = s.cards[s.i];
-  if (c.item) {
+  if (c.kind === "note" && c.item) {
+    /* Notes rotate on their own counter — they aren't bank items and share none of
+       the bank's ranking. Without this the same note leads every session. */
+    const notes = vnotesAll();
+    const n = notes.filter(x => x.id === c.item.noteId)[0];
+    if (n) { n.seen = (n.seen || 0) + 1; vnotesSave(notes); }
+  } else if (c.item) {
     const bank = bankAll();
     const b = bank.filter(x => x.id === c.item.id)[0];
     if (b) { b.seen = (b.seen || 0) + 1; bankSave(bank); }
@@ -14068,6 +14301,54 @@ T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
                 "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
   assertEq(srsDeflateCount(srs), 2);
   assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
+});
+
+/* ---- kept voice notes ---- */
+const NLIB = { "אבא": { tr: "aba", en: "dad" }, "היום": { tr: "hayom", en: "today" },
+               "כואב": { tr: "koev", en: "hurts" } };
+
+T("noteUses: picks out the library words a note actually contains", () => {
+  assertEq(noteUses("אבא כואב היום", NLIB), ["אבא", "כואב", "היום"]);
+});
+T("noteUses: skips grammar words, same as every other drill", () => {
+  const u = noteUses("אני אבא של היום", NLIB);
+  assertTrue(u.indexOf("אני") === -1, "pronouns are not vocabulary");
+  assertTrue(u.indexOf("של") === -1, "nor is shel");
+});
+T("noteUses: ignores words that aren't in the library yet", () => {
+  assertEq(noteUses("אבא מסטוריאלי", NLIB), ["אבא"]);
+});
+T("noteUses: never repeats a word said twice", () => {
+  assertEq(noteUses("היום היום היום", NLIB), ["היום"]);
+});
+T("noteUses: strips punctuation off the token before matching", () => {
+  assertEq(noteUses("אבא, היום!", NLIB), ["אבא", "היום"]);
+});
+T("noteUses: survives empty and missing input", () => {
+  assertEq(noteUses("", NLIB), []);
+  assertEq(noteUses(null, NLIB), []);
+});
+T("isHearKind: listen and note are the same exercise from different sources", () => {
+  assertTrue(isHearKind("listen"));
+  assertTrue(isHearKind("note"));
+  assertTrue(!isHearKind("shadow"), "shadowing asks for Hebrew back, not English");
+  assertTrue(!isHearKind("word"));
+});
+T("a note card feeds the receptive score, not the productive one", () => {
+  assertEq(KIND_SIDE.note, "recv");
+});
+T("every card kind the builder can emit has a label and a side", () => {
+  /* A kind added to learnBuild without a LEARN_KINDS entry throws on render - the
+     card strip reads meta.glyph straight off it. Cheap guard against the next one. */
+  ["word", "sentence", "listen", "reply", "conversation", "chunk", "shadow", "note"]
+    .forEach(k => {
+      assertTrue(!!LEARN_KINDS[k], k + " needs a LEARN_KINDS entry");
+      assertTrue(!!LEARN_KINDS[k].label, k + " needs a label");
+      assertTrue(!!KIND_SIDE[k], k + " needs a side");
+    });
+});
+T("GEMINI_TTS_MODELS is a list, so one retired name can't kill the feature", () => {
+  assertTrue(GEMINI_TTS_MODELS.length > 1, "a single dated preview name is what broke it");
 });
 
 /* ---- export / import ----

@@ -1,0 +1,9 @@
+# Google Drive artefacts
+desktop.ini
+.tmp.drivedownload/
+.tmp.driveupload/
+*.lnk
+
+# OS
+Thumbs.db
+.DS_Store

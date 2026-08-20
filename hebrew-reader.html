@@ -1286,6 +1286,39 @@
     .padstrip-body { padding: 0 13px 12px; }
   }
 
+  /* ---- the alarm ----
+     Sticky rather than fixed so it pushes the nav down instead of covering it: the
+     one message that must never be mistaken for a dismissible overlay sitting on top
+     of a working app. --bad on a pale ground rather than a solid red bar, which reads
+     as decoration at this size. */
+  .alarm {
+    position: sticky; top: 0; z-index: 500;
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 11px 16px;
+    background: #fdecea; border-bottom: 2px solid var(--bad);
+    color: #6d2a22;
+  }
+  .alarm-body { flex: 1; min-width: 0; }
+  .alarm b { display: block; font-size: .9rem; }
+  .alarm p { margin: 2px 0 0; font-size: .82rem; line-height: 1.45; }
+  .alarm-copy, .alarm-x {
+    flex: none; border: 1px solid var(--bad); background: transparent; color: var(--bad);
+    font: inherit; font-size: .78rem; font-weight: 600; padding: 4px 9px;
+    border-radius: 6px; cursor: pointer;
+  }
+  .alarm-x { padding: 4px 8px; }
+  .alarm-copy:hover, .alarm-x:hover { background: var(--bad); color: #fff; }
+  .alarm-copy:focus-visible, .alarm-x:focus-visible { outline: 2px solid var(--bad); outline-offset: 2px; }
+  /* On a phone the buttons squeezing the paragraph into a narrow column cost ~60px of
+     wrapped text — a fifth of the screen, permanently, on a sticky bar. Full-width text
+     with the controls beneath it is shorter and reads better. */
+  @media (max-width: 560px) {
+    .alarm { flex-wrap: wrap; padding: 10px 12px; }
+    .alarm-body { flex: 1 0 100%; }
+    .alarm-copy, .alarm-x { margin-top: 8px; }
+    .alarm-x { margin-left: auto; }
+  }
+
   @media (max-width: 560px) {
     .lhero-main h2 { font-size: 1.5rem; }
     .btn.big { width: 100%; }
@@ -1296,6 +1329,25 @@
 </style>
 </head>
 <body>
+
+<!-- The alarm. Two things used to fail in total silence: a localStorage write that
+     threw (lsSet swallowed every exception, including QuotaExceededError, so a full
+     store looked exactly like a healthy one while nothing was saved) and any uncaught
+     throw mid-render (which leaves a half-drawn screen and no message, in an app
+     opened by double-click where DevTools is never open).
+
+     Deliberately NOT a toast: both of these mean "what you are looking at may be a
+     lie", and that must not fade after four seconds. It stays until dismissed, and
+     dismissing it does not mark the problem solved. -->
+<div class="alarm" id="alarmBar" style="display:none" role="alert" aria-live="assertive">
+  <div class="alarm-body">
+    <b id="alarmTitle"></b>
+    <p id="alarmText"></p>
+  </div>
+  <button class="alarm-copy" id="alarmCopy">Copy detail</button>
+  <button class="alarm-x" id="alarmClose" aria-label="Dismiss">✕</button>
+</div>
+
 <nav class="topnav">
   <span class="navbrand">שלום</span>
   <button class="navbtn" id="navLearn">Learn<span id="learnBadge" class="navbadge" style="display:none"></span></button>
@@ -1638,6 +1690,24 @@
          something scarier or vaguer than what they actually do. -->
     <div class="setreassure">None of the actions on this page can delete a word from your library.</div>
 
+    <!-- First group on the page on purpose. Everything below it is an action on your
+         data; this is the one that means you can undo any of them. -->
+    <div class="setgroup">
+      <h3 class="setgroup-title">Your data<span class="setgroup-sub">The only copy of your progress is in this browser.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>Export everything</b>
+          <p>Saves one file holding your whole library, every word's drill schedule and strength, your streak and practice history, banked sentences, path progress, conversations, marks and settings. This is the only backup that exists — the .xlsx export is words alone. Cached audio isn't included (it's regenerated on demand). The file contains your API keys, so keep it somewhere private.</p></div>
+        <button class="btn secondary" id="exportAllBtn">Save file</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Import a backup</b>
+          <p><b>Replaces</b> everything currently in this browser with the contents of a backup file — it doesn't merge. You'll see what's in the file and what it's about to replace, and have to confirm, before anything is written. This is also how you move your progress to another browser, another computer, or a phone.</p></div>
+        <button class="btn secondary" id="importAllBtn">Choose file</button>
+      </div>
+      <input type="file" id="importAllFile" accept="application/json,.json" style="display:none">
+      <p class="note" id="dataStatus"></p>
+    </div>
+
     <div class="setgroup">
       <h3 class="setgroup-title">Housekeeping<span class="setgroup-sub">Safe. Nothing here loses anything.</span></h3>
       <div class="setrow">
@@ -1793,9 +1863,167 @@
    case, it fails silently and completely.
 
    Every boot-time read and the view write go through these, so a restricted environment
-   costs you your saved preferences and nothing else. */
+   costs you your saved preferences and nothing else.
+
+   THAT COMMENT WAS TRUE WHEN THESE GUARDED PREFERENCES. It stopped being true a long
+   time ago: lsSet now guards the drill history, the sentence bank, the path progress
+   and the whole library. Swallowing the exception meant a full store looked exactly
+   like a healthy one — the app carried on rendering perfectly while nothing at all was
+   being written. So lsSet still never throws (the boot sequence genuinely depends on
+   that), but it now REPORTS. */
+
+/* The alarm. Deliberately not a toast: both callers mean "what you're looking at may
+   not be saved", which must not fade on its own. `detail` is the raw technical text,
+   kept aside for the Copy button rather than shown — the bar says what it means for
+   George, the clipboard carries what a developer needs. */
+let alarmDetail = "";
+function alarmShow(title, text, detail) {
+  alarmDetail = detail || (title + " — " + text);
+  const bar = document.getElementById("alarmBar");
+  if (!bar) return;                                  // thrown before the DOM parsed
+  document.getElementById("alarmTitle").textContent = title;
+  document.getElementById("alarmText").textContent = text;
+  bar.style.display = "flex";
+}
+
+/* Storage failure is reported ONCE per page load. A failing write is almost never
+   alone — a full store fails on every subsequent save too — and re-showing the bar on
+   each one would make the app unusable on top of being broken. */
+let storageBroken = false;
+function storageFailed(k, e) {
+  if (storageBroken) return;
+  storageBroken = true;
+  const full = e && (e.name === "QuotaExceededError" ||
+                     e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22);
+  alarmShow(
+    full ? "Storage is full — nothing is being saved" : "Couldn't save to this browser",
+    full
+      ? "This browser's storage for the page is full, so practice grades, new words and "
+      + "settings are no longer being kept. Open Settings → Export everything to get a "
+      + "copy of what's still here before closing the tab."
+      : "A save failed, so changes made from now on may not survive a reload. Open "
+      + "Settings → Export everything to get a copy of what's still here.",
+    "storage write failed on key '" + k + "': " + (e && (e.name + ": " + e.message)));
+}
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+/* Returns whether the write actually landed. Most callers ignore it — they have no
+   better plan than carrying on — but the alarm above fires regardless, so a silent
+   failure is no longer possible. */
+function lsSet(k, v) {
+  try { localStorage.setItem(k, v); return true; }
+  catch (e) { storageFailed(k, e); return false; }
+}
+
+/* An uncaught throw mid-render leaves a half-drawn screen and no explanation. Installed
+   here rather than later because everything below it is what might throw. */
+window.addEventListener("error", function (ev) {
+  const e = ev && ev.error;
+  alarmShow("Something went wrong on this page",
+    "Part of the app stopped working. Reloading usually clears it — your saved data "
+    + "isn't affected. If it keeps happening, copy the detail and it can be fixed.",
+    "Uncaught " + ((e && e.stack) || (ev && ev.message) || "error") +
+    "\n  at " + ((ev && ev.filename) || "?") + ":" + ((ev && ev.lineno) || "?"));
+});
+window.addEventListener("unhandledrejection", function (ev) {
+  const r = ev && ev.reason;
+  alarmShow("Something went wrong in the background",
+    "A background task failed. What's on screen may be out of date — reloading usually "
+    + "clears it, and your saved data isn't affected.",
+    "Unhandled rejection: " + ((r && r.stack) || String(r)));
+});
+document.getElementById("alarmClose").addEventListener("click", () => {
+  document.getElementById("alarmBar").style.display = "none";
+});
+document.getElementById("alarmCopy").addEventListener("click", async (e) => {
+  try { await navigator.clipboard.writeText(alarmDetail); e.target.textContent = "Copied"; }
+  catch (err) { e.target.textContent = "Press Ctrl+C"; window.prompt("Copy this:", alarmDetail); }
+  setTimeout(() => { e.target.textContent = "Copy detail"; }, 1600);
+});
+
+/* =====================  EXPORT / IMPORT  =====================
+   Everything this app knows lives in ~60 independent localStorage keys on one origin,
+   with no backup and no way out. One "clear browsing data", one profile reset or one
+   new laptop took months of drill history with it. The .xlsx export covers words only
+   — not the schedule, the streak, the sentence bank, the path or the conversations.
+
+   Keys are enumerated from localStorage at export time rather than from a hardcoded
+   list, so a feature added later is included automatically and can never be forgotten
+   here. That's the whole reason this is a prefix scan and not a constant.
+
+   NOT included: cached audio. It lives in IndexedDB, it's regenerable, and base64ing
+   it would turn a 200KB file into tens of megabytes. The UI says so rather than
+   letting the omission be a surprise. */
+const EXPORT_PREFIX = "hvr_";
+const EXPORT_SCHEMA = 1;
+
+function exportKeys() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(EXPORT_PREFIX) === 0) out.push(k);
+    }
+  } catch (e) { return []; }
+  return out.sort();
+}
+
+function buildExport() {
+  const keys = {};
+  exportKeys().forEach(k => { keys[k] = lsGet(k); });
+  return {
+    app: "hebrew-reader",
+    schema: EXPORT_SCHEMA,
+    exported: new Date().toISOString(),
+    /* Counts are for the human reading the file or the import preview — never read
+       back as truth. The keys themselves are the data. */
+    summary: {
+      words: Object.keys(libAll()).length,
+      archived: Object.keys(archiveAll()).length,
+      scheduled: Object.keys(srsAll()).length,
+      sentences: bankAll().length,
+      keyCount: Object.keys(keys).length
+    },
+    keys: keys
+  };
+}
+
+/* Validates shape before anything is written. Returns {ok, error, data, summary}. A
+   file that isn't ours, or is from a newer schema this build can't read, is refused
+   with a reason rather than half-applied. */
+function parseImport(text) {
+  let d = null;
+  try { d = JSON.parse(text); }
+  catch (e) { return { ok: false, error: "That isn't a readable JSON file." }; }
+  if (!d || typeof d !== "object" || Array.isArray(d))
+    return { ok: false, error: "That file doesn't look like a Hebrew Reader backup." };
+  if (d.app !== "hebrew-reader")
+    return { ok: false, error: "That's a JSON file, but not one this app wrote." };
+  if (typeof d.schema !== "number" || d.schema > EXPORT_SCHEMA)
+    return { ok: false, error: "That backup was written by a newer version of the app "
+                              + "(format " + d.schema + ", this build reads " + EXPORT_SCHEMA
+                              + "). Update the app first." };
+  if (!d.keys || typeof d.keys !== "object")
+    return { ok: false, error: "That backup has no data in it." };
+  const keys = {};
+  Object.keys(d.keys).forEach(k => {
+    /* Never write anything outside our own namespace, whatever the file claims. */
+    if (k.indexOf(EXPORT_PREFIX) === 0 && typeof d.keys[k] === "string") keys[k] = d.keys[k];
+  });
+  if (!Object.keys(keys).length)
+    return { ok: false, error: "That backup has no Hebrew Reader data in it." };
+  d.keys = keys;
+  return { ok: true, data: d, summary: d.summary || {} };
+}
+
+/* REPLACES rather than merges, and says so before it runs. Merging two drill histories
+   has no correct answer — which due date wins? — and pretending otherwise would quietly
+   corrupt the one store the app can't rebuild. */
+function applyImport(d) {
+  exportKeys().forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  let written = 0;
+  Object.keys(d.keys).forEach(k => { if (lsSet(k, d.keys[k])) written++; });
+  return written;
+}
 
 /* =====================  DICTIONARY  ===================== */
 /* word: [transliteration, english] — unpointed conversational Hebrew */
@@ -4372,6 +4600,73 @@ function settingsAction(fn) {
     catch (e) { alert("Couldn't complete that — " + e.message); }
   };
 }
+/* ---- export / import ---- */
+function setDataStatus(msg, bad) {
+  const el = document.getElementById("dataStatus");
+  el.textContent = msg || "";
+  el.style.color = bad ? "var(--bad)" : "var(--muted)";
+}
+document.getElementById("exportAllBtn").onclick = settingsAction(() => {
+  const d = buildExport();
+  const blob = new Blob([JSON.stringify(d, null, 1)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  /* Dated filename: these accumulate in a downloads folder and "which one is newer"
+     has to be answerable without opening them. */
+  a.href = url;
+  a.download = "hebrew-reader-backup-" + todayISO() + ".json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const s = d.summary;
+  setDataStatus("Saved " + s.keyCount + " stores — " + s.words + " words, " + s.scheduled +
+                " with a schedule, " + s.sentences + " banked sentences. Keep it somewhere private.");
+});
+
+document.getElementById("importAllBtn").onclick = () =>
+  document.getElementById("importAllFile").click();
+
+document.getElementById("importAllFile").onchange = async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  /* Cleared immediately so choosing the SAME file twice in a row still fires change —
+     otherwise a failed import can't be retried without picking something else first. */
+  ev.target.value = "";
+  if (!f) return;
+  let text = "";
+  try { text = await f.text(); }
+  catch (e) { setDataStatus("Couldn't read that file — " + e.message, true); return; }
+
+  const r = parseImport(text);
+  if (!r.ok) { setDataStatus(r.error, true); return; }
+
+  const now = buildExport().summary;
+  const inc = r.summary;
+  const num = v => (typeof v === "number" ? v : "?");
+  if (!confirm(
+      "Import this backup?\n\n" +
+      "The file was saved " + String(r.data.exported || "").slice(0, 10) + " and holds:\n" +
+      "  " + num(inc.words) + " words, " + num(inc.scheduled) + " with a drill schedule, " +
+      num(inc.sentences) + " banked sentences\n\n" +
+      "This browser currently has:\n" +
+      "  " + now.words + " words, " + now.scheduled + " with a drill schedule, " +
+      now.sentences + " banked sentences\n\n" +
+      "Everything currently here will be REPLACED, not merged. If you haven't already " +
+      "exported what's in this browser, cancel and do that first.\n\n" +
+      "The page reloads straight afterwards.")) {
+    setDataStatus("Import cancelled — nothing was changed.");
+    return;
+  }
+  try {
+    const n = applyImport(r.data);
+    setDataStatus("Imported " + n + " stores. Reloading…");
+    /* A reload rather than re-rendering in place: every in-memory cache, the running
+       session and the view state were all built from the data we just replaced
+       underneath them, and there is no re-entry point that refreshes all of it. */
+    setTimeout(() => location.reload(), 400);
+  } catch (e) {
+    setDataStatus("Import failed — " + e.message, true);
+  }
+};
+
 document.getElementById("clearDismissedBtn").onclick = settingsAction(() => {
   const n = dismissedCount();
   if (!n) { alert("You haven't dismissed any words."); return; }
@@ -13417,6 +13712,68 @@ T("applyFormsResult: records a clitic suggestion without acting on it", () => {
   assertEq(e.formsMeta.lemma, "הזדמנות");
   assertEq(e.formsMeta.clitic, "ha");
   assertEq(e.gender, "f");
+});
+
+/* ---- export / import ----
+   parseImport is the gate between an arbitrary file on disk and the one store the app
+   cannot rebuild, so it's tested for what it REFUSES at least as hard as for what it
+   accepts. It's pure — text in, verdict out — and touches no real storage. */
+const OKFILE = (over) => JSON.stringify(Object.assign({
+  app: "hebrew-reader", schema: 1, exported: "2026-08-20T10:00:00.000Z",
+  summary: { words: 3 }, keys: { "hvr_library": "{}" }
+}, over || {}));
+
+T("parseImport: accepts a well-formed backup", () => {
+  const r = parseImport(OKFILE());
+  assertTrue(r.ok, "should accept our own format");
+  assertEq(Object.keys(r.data.keys), ["hvr_library"]);
+  assertEq(r.summary.words, 3);
+});
+T("parseImport: rejects text that isn't JSON", () => {
+  assertEq(parseImport("not json at all").ok, false);
+  assertEq(parseImport("").ok, false);
+});
+T("parseImport: rejects JSON that isn't an object", () => {
+  assertEq(parseImport("[1,2,3]").ok, false);
+  assertEq(parseImport("null").ok, false);
+  assertEq(parseImport("\"a string\"").ok, false);
+});
+T("parseImport: rejects another app's JSON", () => {
+  const r = parseImport(JSON.stringify({ app: "something-else", schema: 1, keys: {} }));
+  assertEq(r.ok, false);
+  assertTrue(/not one this app wrote/.test(r.error), "should say whose file it is");
+});
+T("parseImport: refuses a schema newer than this build reads", () => {
+  const r = parseImport(OKFILE({ schema: EXPORT_SCHEMA + 1 }));
+  assertEq(r.ok, false);
+  assertTrue(/newer version/.test(r.error), "should name the version problem");
+});
+T("parseImport: accepts an older schema", () => {
+  assertTrue(parseImport(OKFILE({ schema: 0 })).ok, "older formats stay readable");
+});
+T("parseImport: never lets a file write outside the hvr_ namespace", () => {
+  const r = parseImport(OKFILE({ keys: {
+    "hvr_library": "{}", "evil": "x", "": "x", "hvr": "x", "otherapp_data": "x" } }));
+  assertTrue(r.ok);
+  assertEq(Object.keys(r.data.keys), ["hvr_library"]);
+});
+T("parseImport: drops non-string values rather than storing them", () => {
+  const r = parseImport(OKFILE({ keys: { "hvr_library": "{}", "hvr_bad": { a: 1 }, "hvr_n": 5 } }));
+  assertTrue(r.ok);
+  assertEq(Object.keys(r.data.keys), ["hvr_library"]);
+});
+T("parseImport: rejects a file with no usable keys left", () => {
+  assertEq(parseImport(OKFILE({ keys: {} })).ok, false);
+  assertEq(parseImport(OKFILE({ keys: { "evil": "x" } })).ok, false);
+});
+T("parseImport: rejects a file with no keys object at all", () => {
+  const r = parseImport(JSON.stringify({ app: "hebrew-reader", schema: 1 }));
+  assertEq(r.ok, false);
+});
+T("parseImport: tolerates a missing summary", () => {
+  const r = parseImport(OKFILE({ summary: undefined }));
+  assertTrue(r.ok, "summary is a convenience, not a requirement");
+  assertEq(r.summary, {});
 });
 
 if (location.search.indexOf("selftest") !== -1) {

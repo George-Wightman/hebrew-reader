@@ -2013,6 +2013,12 @@
     <div class="setgroup" data-group="Audio">
       <h3 class="setgroup-title">Audio<span class="setgroup-sub">Hebrew voices, and what this key can reach.</span></h3>
       <div class="setrow">
+        <div class="setrow-text"><b>Test the microphone</b>
+          <p id="micTestDesc">Listens for five seconds and reports exactly what happened — whether the browser can listen at all, whether it heard you, and what it thought you said.</p>
+          <details><summary>What it checks</summary><p>Speech recognition is the one part of the app that behaves differently on a phone and a laptop, and when it fails it usually fails silently. This says which of the steps went wrong rather than leaving you guessing: whether the browser supports listening, whether the microphone is held by something else, whether Hebrew recognition is available on this device, and what came back.</p></details></div>
+        <button class="btn secondary" id="micTestBtn">Test</button>
+      </div>
+      <div class="setrow">
         <div class="setrow-text"><b>Check which Hebrew voices work</b>
           <p id="ttsCheckDesc">Asks Google which speech models your key can actually reach. Uses one request and generates nothing.</p>
           <details><summary>Why you'd check</summary><p>Real Hebrew audio has been failing since 7 Aug. This says whether the app is asking for a model that no longer exists, or the account itself is blocked — rather than guessing.</p></details></div>
@@ -5243,6 +5249,47 @@ document.getElementById("setFilter").addEventListener("keydown", e => {
 /* ---- what voices this key can actually reach ----
    A read-only ListModels call. Generates nothing, spends no TTS quota, and replaces a
    guess with Google's own answer about whether the model name is the problem. */
+/* Speech recognition is the one part of this app that behaves differently on a phone
+   and a laptop, and when it fails it fails silently — the recogniser starts, reports
+   no error, hears nothing. This reports each step separately so a failure names itself
+   instead of needing another round of guessing. */
+document.getElementById("micTestBtn").onclick = async (ev) => {
+  const btn = ev.target;
+  const say = (m, bad) => {
+    const el = document.getElementById("micTestDesc");
+    el.textContent = m;
+    el.style.color = bad ? "var(--bad)" : "var(--muted)";
+  };
+  btn.disabled = true; btn.textContent = "Listening…";
+  const lines = [];
+  lines.push("origin " + location.protocol);
+  lines.push("holds mic: " + (micNeedsStreamHold() ? "yes (file://)" : "no"));
+  lines.push(speechCtor() ? "recogniser: available" : "recogniser: MISSING");
+  if (!speechCtor()) { say(lines.join(" · ") + " — this browser cannot listen.", true); btn.disabled = false; btn.textContent = "Test"; return; }
+  try {
+    const perm = navigator.permissions && await navigator.permissions.query({ name: "microphone" });
+    if (perm) lines.push("permission: " + perm.state);
+  } catch (e) { /* Firefox and older Chrome do not expose this; not a failure */ }
+  say("Say something in Hebrew now…");
+  let heard = "";
+  const res = await Promise.race([
+    micListen({ onInterim: t => { heard = t; say("hearing: “" + t + "”"); } }),
+    new Promise(r => setTimeout(() => r({ ok: false, error: "timeout" }), 8000))
+  ]);
+  micStop();
+  if (res.ok) {
+    lines.push("heard: “" + res.text + "”");
+    say(lines.join(" · ") + " — working.");
+  } else {
+    lines.push("result: " + res.error);
+    if (heard) lines.push("partial: “" + heard + "”");
+    say(lines.join(" · ") + (res.error === "no-speech"
+      ? " — it listened but heard nothing. If the recording light was on, something else is holding the microphone."
+      : ""), true);
+  }
+  btn.disabled = false; btn.textContent = "Test";
+};
+
 document.getElementById("ttsCheckBtn").onclick = async () => {
   const el = document.getElementById("ttsCheckDesc");
   const keys = geminiKeys();
@@ -10368,7 +10415,30 @@ function speechSupported() { return !!speechCtor() && !!(navigator.mediaDevices 
    between have nothing left to ask about. Released when the session ends, so the
    recording indicator never outlives the practice. */
 let micStream = null;
+
+/* WHO NEEDS THE HOLD, AND WHO IS BROKEN BY IT.
+
+   Holding the stream was a file:// workaround, and on Android it is actively fatal.
+   Chrome on Android does not share the input device the way desktop does: the speech
+   recogniser hands off to the platform speech service, which wants the microphone
+   itself. With a getUserMedia capture already open, the recogniser is handed silence
+   — it starts cleanly, reports no error, hears nothing, and ends with "no-speech".
+   That is exactly what George saw on the Pixel: the recording light on, the card
+   pulsing "listening", and nothing ever recognised.
+
+   On any served origin Chrome persists a mic grant per origin, so there is nothing
+   for the hold to solve. It is therefore file:// only — where it was the lesser of
+   two evils and where the recogniser tolerates it. */
+function micNeedsStreamHold(proto) {
+  return (proto || location.protocol) === "file:";
+}
+
 async function micAcquire() {
+  /* Served origin: do NOT take the microphone. Returning true is not a claim that
+     permission was granted — it is deferring that question to the recogniser, which
+     reports "not-allowed" and is already handled by the caller. One fewer gate, and
+     crucially one fewer thing holding the device. */
+  if (!micNeedsStreamHold()) return true;
   if (micStream) return true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
   try {
@@ -13096,11 +13166,18 @@ async function learnSpeakAttempt(btn, c) {
   const old = card.querySelector(".lmicerr"); if (old) old.remove();
   btn.disabled = true; btn.classList.add("listening"); btn.textContent = "Listening…";
 
-  const got = await micAcquire();
-  if (!got) {
-    btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Say it";
-    learnMicError(card, "Microphone blocked — grade it by hand instead.");
-    return;
+  /* No await between the click and start() unless one is genuinely needed. Starting a
+     recogniser is gesture-gated, and Android enforces that harder than desktop — an
+     awaited getUserMedia in front of it spends the activation before the recogniser
+     ever asks for it. On a served origin there is nothing to acquire, so there is
+     nothing to wait for. */
+  if (micNeedsStreamHold()) {
+    const got = await micAcquire();
+    if (!got) {
+      btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Say it";
+      learnMicError(card, "Microphone blocked — grade it by hand instead.");
+      return;
+    }
   }
   const res = await micListen({});
   btn.classList.remove("listening"); btn.textContent = "🎤 Say it"; btn.disabled = false;
@@ -15326,6 +15403,24 @@ T("srsDeflateCount: reports exactly what srsDeflate would change", () => {
                 "ב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
   assertEq(srsDeflateCount(srs), 2);
   assertEq(srsDeflateCount(srs), srsDeflate(srs, DAY1), "the count must not lie");
+});
+
+/* ---- the microphone hold ----
+   Android reported the mic listening but never hearing anything. Root cause: the app
+   held a getUserMedia stream open for the whole session, and on Android the speech
+   recogniser needs the microphone ITSELF - Chrome there hands off to the platform
+   speech service rather than sharing the input device the way desktop does. So the
+   recogniser was handed silence and ended with no-speech, every time.
+
+   The hold only ever existed to keep a file:// permission grant alive, which HTTPS
+   makes unnecessary. These tests pin the decision so the workaround cannot creep back
+   in on origins that do not need it. */
+T("micNeedsStreamHold: only file:// needs the workaround", () => {
+  assertTrue(micNeedsStreamHold("file:"), "file:// cannot persist a mic grant");
+});
+T("micNeedsStreamHold: never on a served origin", () => {
+  assertEq(micNeedsStreamHold("https:"), false, "https persists the grant");
+  assertEq(micNeedsStreamHold("http:"), false, "localhost counts as secure");
 });
 
 /* ---- merging two devices ----

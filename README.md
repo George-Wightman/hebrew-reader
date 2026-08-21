@@ -2,10 +2,14 @@
 
 Open **`hebrew-reader.html`** in any browser (double-click it — no internet needed for the basics).
 
-> **Working on the code?** Start with [`docs/audit-2026-08-20.md`](docs/audit-2026-08-20.md) — a
-> full critical review of the app with 20 numbered findings and a six-phase plan. It is the
-> agreed shape of the current development cycle. For the quest map specifically, see
+> **Working on the code?** Start with [`docs/handoff-2026-08-21.md`](docs/handoff-2026-08-21.md) —
+> where the app stands, what the last cycle changed, and what to pick up next. Behind it sits
+> [`docs/audit-2026-08-20.md`](docs/audit-2026-08-20.md), the full critical review with 20
+> numbered findings that the work is measured against. For the quest map specifically, see
 > [`docs/path-handoff.md`](docs/path-handoff.md).
+>
+> The app is live at **https://george-wightman.github.io/hebrew-reader/** and installs to a
+> phone. Progress syncs between devices through a private GitHub repo.
 
 ## How to use it
 

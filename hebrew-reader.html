@@ -7976,7 +7976,8 @@ const VIEWS = {
   words:      { view: "viewWords",      nav: "navWords" },
   /* The pad is for replying to a real message; the map is neither reading nor
      writing one, so it stands down here as it does on Learn. */
-  path:       { view: "viewPath",       nav: "navPath", hidePad: true, enter: () => pathRender() }
+  path:       { view: "viewPath",       nav: "navPath", hidePad: true,
+                enter: () => { pathRender(); pathWarmNext(); } }
 };
 /* Anyone opening this after the redesign has "translator" or "library" saved as their
    last view. Both are now one page, so both land on Words. */
@@ -11159,7 +11160,7 @@ function addDays(iso, n) {
    automatically from comprehension. Sharing one schedule between them would let a
    word drilled by ear push out its production due date and read as finished while
    George still can't say it — which is the exact failure the app exists to avoid. */
-function srsBlank() { return { due: "", last: "", stab: 0, diff: 5, n: 0, miss: 0, lapses: 0 }; }
+function srsBlank() { return { due: "", last: "", stab: 0, diff: 5, n: 0, miss: 0, lapses: 0, streak: 0 }; }
 function srsSide(srs, key, side) {
   let r = srs[key];
   if (!r || !r.prod) r = srs[key] = { prod: srsBlank(), recv: srsBlank() };
@@ -11184,6 +11185,10 @@ function srsFuzz(days, rnd) {
   return Math.max(1, Math.round(days * (0.85 + (rnd || Math.random)() * 0.30)));
 }
 
+/* Three clean answers before a miss is forgiven. Low enough that it reaches words
+   he actually knows within a few days, high enough that a word he has merely
+   guessed right twice does not qualify. */
+const FORGIVE_STREAK = 3;
 function srsApply(srs, key, grade, side, todayOverride) {
   const r = srsSide(srs, key, side || "prod");
   const today = todayOverride || todayISO();
@@ -11205,6 +11210,7 @@ function srsApply(srs, key, grade, side, todayOverride) {
     r.stab = grade === 2 ? 2 : 1;
     r.due = addDays(today, r.stab);
     r.last = today;
+    r.streak = grade === 2 ? 1 : 0;
     return r;
   }
 
@@ -11213,9 +11219,28 @@ function srsApply(srs, key, grade, side, todayOverride) {
      move the needle harder than success does.
      The (5 - diff) term is mean reversion: it pulls a punished word back toward
      baseline so repeated success RECOVERS it, instead of leaving it damaged forever. */
-  const dd = grade === 0 ? 1.1 : grade === 1 ? 0.1 : -0.6;
+  /* ---- forgiving an isolated miss ------------------------------------------
+     George, after a morning's real use: "getting something (right, right, right,
+     wrong, right) doesnt punish and treats the wrong as a one off."
+
+     A miss used to cost 70% of the interval no matter what came before it, so four
+     clean answers could be undone by one fumble on a word he plainly knows. That is
+     the wrong reading of the evidence: one bad answer against a good record is a
+     stumble — noise, a mis-hearing, a tired moment — while a bad answer against a
+     shaky record is the word genuinely slipping.
+
+     `streak` counts consecutive answers that were not misses, so the two cases can
+     be told apart. The forgiveness is deliberately ONE-SHOT: the streak resets
+     whichever branch runs, so a second consecutive miss gets the full lapse
+     treatment. At that point it isn't noise any more. */
+  const forgiven = grade === 0 && (r.streak || 0) >= FORGIVE_STREAK;
+  const dd = grade === 0 ? (forgiven ? 0.5 : 1.1) : grade === 1 ? 0.1 : -0.6;
   r.diff = Math.min(10, Math.max(1, r.diff + dd + (5 - r.diff) * 0.05));
   r.n = (r.n || 0) + 1;
+  /* Nearly is deliberately neutral — it neither earns progress toward forgiveness
+     nor throws it away. Only a clean answer builds, only a miss spends. */
+  if (grade === 2) r.streak = (r.streak || 0) + 1;
+  else if (grade === 0) r.streak = 0;
 
   /* ---- F1: one day is worth one step ---------------------------------------
      Nothing used to check whether the review was actually DUE. `last` was written
@@ -11229,7 +11254,17 @@ function srsApply(srs, key, grade, side, todayOverride) {
      so a miss still shortens the interval below. */
   const repeat = r.last === today;
 
-  if (grade === 0) {
+  if (forgiven) {
+    /* The miss is still RECORDED — srsStrength must keep seeing the evidence, or
+       "forgiving" would quietly mean "pretending it didn't happen". Only the
+       schedule softens: a gentler cut, no lapse on the record, and crucially no
+       `due = today`, so the word rejoins the rotation on its own merit instead of
+       leading tomorrow's overdue block. That last part is half the reason the same
+       material kept coming back. */
+    r.miss = (r.miss || 0) + 1;
+    r.stab = Math.max(1, (r.stab || 0) * 0.6);
+    r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
+  } else if (grade === 0) {
     r.miss = (r.miss || 0) + 1;
     r.lapses = (r.lapses || 0) + 1;
     /* Shrink, never zero. A 35-day word fumbled once comes back at ~10 days, so
@@ -11846,6 +11881,38 @@ function markShown(keys) {
   recencySave(rec);
 }
 
+/* ---- keeping the bank in rotation -------------------------------------------
+   The bank sort is `diff, then hits, then seen` — and `bankDifficulty` is
+   `worst * 10 + words`, fine-grained enough that an exact tie on BOTH diff and hits
+   is rare. So `seen` was incremented every single session and then effectively
+   never read: the easiest servable sentences won permanently. George, after a
+   morning's use: "I seem to be getting the same words/ sentences on loop."
+
+   Voice notes already hit this exact bug and were fixed with their own counter —
+   "Without this the same note leads every session." Bank sentences never got the
+   equivalent. This is it.
+
+   Deliberately a SPLIT rather than a new sort key: the ordering inside each pool is
+   well-reasoned (easiest first, so a perfectly targeted sentence he cannot say never
+   wins) and is preserved exactly. Cooldown only decides which pool is drawn from
+   first. Falling back to `recent` means a small bank still fills a session instead
+   of running dry.
+
+   Shares markShown's sequence counter above rather than keeping its own — one clock
+   for "how many sessions ago", whether the thing counted is a word or a sentence. */
+const BANK_COOLDOWN_SESSIONS = 3;
+function bankCooldownSplit(items, rec, seq, cooldown, idOf) {
+  const fresh = [], recent = [];
+  const gap = Math.max(1, Number(cooldown) || BANK_COOLDOWN_SESSIONS);
+  const getId = idOf || (x => x && x.id);
+  (items || []).forEach(it => {
+    const last = (rec || {})[getId(it)];
+    if (last === undefined || (seq - last) >= gap) fresh.push(it);
+    else recent.push(it);
+  });
+  return { fresh: fresh, recent: recent };
+}
+
 /* =====================  THE PATH  =====================
    A hand-authored BLUEPRINT (sections, their backbone words, what unlocks what) with
    AI-generated CONTENT filled in on arrival and cached. Exactly the split that already
@@ -12431,6 +12498,68 @@ async function pathStartLesson(id, n, btn) {
   }
 }
 
+/* ---- pre-warming, so Start lesson doesn't make you wait ----------------------
+   George: "when I unlock a level it should generate the content, not wait untill I
+   click start lesson." Content was only ever generated by pathStartLesson, so every
+   first visit to a section paid the full latency at the moment he had already
+   committed to practising.
+
+   PURE, and it answers one question only: which section is next in line. It reads no
+   storage and knows nothing about quota — the guards that decide whether to spend a
+   request live in the caller, so this stays testable without a network. "Next" means
+   first in blueprint order among unlocked, unfinished sections, which is the order
+   the map already draws, so the warmed section is the one visibly next rather than
+   an arbitrary pick.
+
+   An EMPTY items array counts as unwarmed on purpose: that is a generation that
+   produced nothing, and retrying it is correct. */
+function pathWarmTarget(sections, content, stateOf) {
+  const store = content || {};
+  const list = sections || [];
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (!s) continue;
+    const st = stateOf ? stateOf(s) : "open";
+    if (st === "done" || st === "locked") continue;
+    const rec = store[s.id];
+    if (!rec || !(rec.items || []).length) return { sec: s, what: "content" };
+    if (!rec.convo) return { sec: s, what: "convo" };
+  }
+  return null;
+}
+
+/* Session-scoped, deliberately not persisted: a new tab should try again, but a dead
+   quota must not mean one wasted attempt on every single path open for the rest of
+   the day. */
+let pathWarmInFlight = false, pathWarmGaveUp = false;
+/* Fire-and-forget. Never touches pathStatus, never surfaces an error, never throws
+   into the view — a background spend the user did not ask for has no business
+   reporting anything. Success is invisible except that Start lesson stops saying
+   "Getting ready…". */
+function pathWarmNext() {
+  if (pathWarmInFlight || pathWarmGaveUp) return;
+  if (!geminiKeys().length) return;
+  /* The ledger already knows the strong pool is gone. An attempt that can only 429
+     spends a request to learn something we were told this morning. */
+  try {
+    const q = aiQRoll(aiQAll(), todayISO());
+    if (q.spent.strong) return;
+  } catch (e) { /* a ledger that cannot be read is not a reason to skip the warm */ }
+  let target = null;
+  try { target = pathWarmTarget(PATH_SECTIONS, pathContentAll(), pathStateOf); }
+  catch (e) { return; }
+  if (!target) return;
+  pathWarmInFlight = true;
+  const done = () => { pathWarmInFlight = false; };
+  const fail = () => { pathWarmInFlight = false; pathWarmGaveUp = true; };
+  try {
+    const job = target.what === "convo"
+      ? pathConversation(target.sec)
+      : pathGenerateContent(target.sec);
+    Promise.resolve(job).then(done, fail);
+  } catch (e) { fail(); }
+}
+
 /* The closing conversation, scoped to the section's own situation and words. */
 async function pathConversation(sec) {
   const store = pathContentAll();
@@ -12598,7 +12727,7 @@ function learnBuild() {
   const size = SHAPES[shape].cards;
 
   const srsNow = srsAll();
-  const ranked = bank
+  const rankedAll = bank
     /* Without a Hebrew voice, "hear and answer" isn't a degraded listening drill,
        it's a reading drill wearing its coat. Withhold it rather than fake it. */
     .filter(it => wantListen || it.type !== "listen")
@@ -12613,6 +12742,16 @@ function learnBuild() {
        matches today's target words. Reach beats relevance — a perfectly targeted
        sentence he can't say is worth nothing. */
     .sort((a, b) => (a.diff - b.diff) || (b.hits - a.hits) || ((a.it.seen || 0) - (b.it.seen || 0)));
+
+  /* Rotation, applied AFTER the sort and without disturbing it: anything served in
+     the last few sessions moves to the back of the queue, keeping its relative order.
+     Every consumer below (the reply pick, the shadow picks, the main slice) therefore
+     prefers unseen material and falls back to recent only when there isn't enough —
+     which is what stops the same four sentences leading every session. */
+  const bankSeq = parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0;
+  const bankSplit = bankCooldownSplit(rankedAll, recencyAll(), bankSeq,
+                                      BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
+  const ranked = bankSplit.fresh.concat(bankSplit.recent);
 
   const replyPick = (shape === "weak") ? null : (ranked.filter(x => x.it.type === "reply")[0] || null);
 
@@ -12696,6 +12835,10 @@ function learnBuild() {
      the whole card or just embedded in a sentence, counts as "had a turn". */
   const shownNow = {};
   cards.forEach(c => (c.words || []).forEach(w => { shownNow[w] = true; }));
+  /* Bank items ride the same counter, keyed by id — that is what bankCooldownSplit
+     reads next session. Without this the cooldown pool would never fill and the
+     split would be a no-op. */
+  cards.forEach(c => { if (c.item && c.item.id) shownNow[c.item.id] = true; });
   markShown(Object.keys(shownNow));
 
   return cards;
@@ -13492,12 +13635,21 @@ function convoThread(c, cards) {
   for (let i = 0; i < c.ti; i++) {
     const t = c.convo.turns[i];
     list.append(convoBubble("them", t.qhe, t.qtr));
-    /* Whichever answer that turn actually matched, if it went through the mic —
-       the thread should show what you genuinely said your way to credit for, not
-       silently substitute the scripted line every time. Falls back to the scripted
-       line for a turn graded by hand, where there's nothing to have matched. */
-    const said = (cards && cards[i] && cards[i]._matched) || t;
-    list.append(convoBubble("you", said.he, said.tr));
+    /* What he actually said, word for word, whenever the mic heard him. This used
+       to render `_matched` — the candidate the attempt was GRADED against — which is
+       a different sentence from the one he spoke and made the transcript fiction.
+
+       No transliteration with it, deliberately: none exists for speech the recogniser
+       returned, and pairing his Hebrew with the scripted line's `tr` would reprint
+       the exact mismatch this fixes. A mishearing therefore shows AS a mishearing —
+       that is the honest record of what the app heard, and the only way to find out
+       the recogniser is mishearing you.
+
+       Falls back to the matched candidate, then the scripted line, for turns graded
+       by hand where no mic attempt exists to quote. */
+    const c2 = cards && cards[i];
+    if (c2 && c2._said) list.append(convoBubble("you", c2._said, ""));
+    else { const said = (c2 && c2._matched) || t; list.append(convoBubble("you", said.he, said.tr)); }
   }
   /* THE BUG: the line he's actually replying to right now was never added here —
      it only ever existed as audio and the English gloss below. He'd see the
@@ -13769,6 +13921,11 @@ function learnScoreSpoken(c, text) {
   if (c.kind === "conversation") {
     const m = convoBestMatch(c.item, said, lib);
     c._matched = m.cand;         // which candidate this attempt is graded against
+    /* What he ACTUALLY said, kept for the thread. It was already here and thrown
+       away after grading, so the chat showed a plausible sentence he never uttered.
+       George: "it says what the conversation is modelled to expect, which is often
+       not at all what I said." */
+    c._said = String(text || "").trim();
     convoCoverage = m.coverage;
     expected = heWords(m.cand.he);
     a = m.align;
@@ -14182,7 +14339,18 @@ function learnReveal() {
     card.append(why);
   }
 
-  playHe(answerKey, he);
+  /* NOT on conversation cards. The reveal used to speak the matched candidate — a
+     synthesised reading of the line you had just said yourself — and then the 1100ms
+     auto-advance below cut it off mid-word to start the next speaker. George: "for a
+     second it starts saying my answer back to me, then it cuts and says its real
+     responce."
+
+     Suppressed rather than given more time: a real exchange does not read your own
+     line back at you at all, so waiting for it would make the unwanted playback
+     longer, not better. Removing it also removes the cut-off outright instead of
+     hiding it. The replay buttons above still speak it on demand, and repair still
+     speaks when the other side re-explains — both are things someone ELSE says. */
+  if (c.kind !== "conversation") playHe(answerKey, he);
   document.getElementById("lRunHint").textContent =
     (learnCardTokens ? "Space to continue"
       : c.kind === "conversation" && learnSuggested !== null ? "Continuing…"
@@ -16490,6 +16658,151 @@ T("storageSummary: states the words, the banks and the headroom in plain English
   assertTrue(/2 words/.test(s), s);
   assertTrue(/1 with form banks/.test(s), s);
   assertTrue(/%/.test(s), "must say how much of the allowance is gone: " + s);
+});
+
+/* ---- Morning-use fixes: forgiving an isolated miss ---- */
+/* A clean run has to actually build the streak, or nothing below can ever fire. */
+T("srsApply: consecutive clean answers build the streak", () => {
+  const srs = {};
+  srsApply(srs, "א", 2, "prod", "2026-08-01");
+  srsApply(srs, "א", 2, "prod", "2026-08-02");
+  srsApply(srs, "א", 2, "prod", "2026-08-03");
+  assertEq(srsSide(srs, "א", "prod").streak, 3);
+});
+T("srsApply: a miss after three clean answers is a stumble, not a lapse", () => {
+  const srs = {};
+  ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"].forEach(d =>
+    srsApply(srs, "א", 2, "prod", d));
+  const before = srsSide(srs, "א", "prod").stab;
+  const lapsesBefore = srsSide(srs, "א", "prod").lapses || 0;
+  srsApply(srs, "א", 0, "prod", "2026-08-05");
+  const r = srsSide(srs, "א", "prod");
+  assertEq(r.lapses || 0, lapsesBefore, "a forgiven miss must not count as a lapse");
+  assertEq(r.streak, 0, "the streak resets either way");
+  assertTrue(r.stab > before * 0.5, "0.6x, not the 0.3x a real lapse takes: " + r.stab);
+  assertTrue(r.stab < before, "it still costs something");
+});
+T("srsApply: a stumble still records the miss — only the schedule forgives", () => {
+  const srs = {};
+  ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"].forEach(d =>
+    srsApply(srs, "א", 2, "prod", d));
+  const missBefore = srsSide(srs, "א", "prod").miss || 0;
+  srsApply(srs, "א", 0, "prod", "2026-08-05");
+  assertTrue(srsSide(srs, "א", "prod").miss > missBefore,
+             "srsStrength must still see the evidence");
+});
+T("srsApply: a second consecutive miss gets the full lapse treatment", () => {
+  const srs = {};
+  ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"].forEach(d =>
+    srsApply(srs, "א", 2, "prod", d));
+  srsApply(srs, "א", 0, "prod", "2026-08-05");     // forgiven
+  const mid = srsSide(srs, "א", "prod").stab;
+  const lapsesMid = srsSide(srs, "א", "prod").lapses || 0;
+  srsApply(srs, "א", 0, "prod", "2026-08-06");     // the streak is gone — full lapse
+  const r = srsSide(srs, "א", "prod");
+  assertEq(r.lapses, lapsesMid + 1, "the second miss IS a lapse");
+  assertTrue(r.stab <= mid * 0.31, "and takes the full 0.3x cut: " + r.stab + " from " + mid);
+});
+T("srsApply: a miss on a young word is unchanged — no streak to spend", () => {
+  const srs = {};
+  srsApply(srs, "א", 2, "prod", "2026-08-01");     // first exposure
+  srsApply(srs, "א", 2, "prod", "2026-08-02");     // streak 2, below the threshold
+  const before = srsSide(srs, "א", "prod").stab;
+  srsApply(srs, "א", 0, "prod", "2026-08-03");
+  const r = srsSide(srs, "א", "prod");
+  assertEq(r.lapses, 1, "under the threshold this is a real lapse");
+  assertTrue(r.stab <= before * 0.31, "and the full cut applies");
+});
+T("srsApply: Nearly neither builds nor breaks the streak", () => {
+  const srs = {};
+  srsApply(srs, "א", 2, "prod", "2026-08-01");
+  srsApply(srs, "א", 1, "prod", "2026-08-02");
+  assertEq(srsSide(srs, "א", "prod").streak, 1, "Nearly leaves it where it was");
+});
+/* The whole point of forgiving: the word must NOT land back in tomorrow's overdue
+   pile, because leading every session is the loop George actually complained about. */
+T("srsApply: a forgiven miss does not force the word due today", () => {
+  const srs = {};
+  ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"].forEach(d =>
+    srsApply(srs, "א", 2, "prod", d));
+  srsApply(srs, "א", 0, "prod", "2026-08-05");
+  assertTrue(srsSide(srs, "א", "prod").due > "2026-08-05",
+             "a stumble reschedules on merit, not to the front of the queue");
+});
+
+/* ---- Morning-use fixes: sentence rotation ---- */
+const CDI = (id) => ({ id: id, he: "x", tr: "x" });
+T("bankCooldownSplit: an item never served is fresh", () => {
+  const r = bankCooldownSplit([CDI("a")], {}, 10, 3);
+  assertEq(r.fresh.map(x => x.id), ["a"]);
+  assertEq(r.recent, []);
+});
+T("bankCooldownSplit: an item served this session is recent", () => {
+  const r = bankCooldownSplit([CDI("a")], { a: 10 }, 10, 3);
+  assertEq(r.fresh, []);
+  assertEq(r.recent.map(x => x.id), ["a"]);
+});
+/* The boundary asserted explicitly — off by one here is the difference between a
+   cooldown of three sessions and one of four. */
+T("bankCooldownSplit: the boundary is exactly the cooldown length", () => {
+  assertEq(bankCooldownSplit([CDI("a")], { a: 8 }, 10, 3).recent.length, 1, "gap of 2 is still recent");
+  assertEq(bankCooldownSplit([CDI("a")], { a: 7 }, 10, 3).fresh.length, 1, "gap of 3 is fresh again");
+});
+T("bankCooldownSplit: preserves the order it was given", () => {
+  const items = [CDI("a"), CDI("b"), CDI("c"), CDI("d")];
+  const r = bankCooldownSplit(items, { b: 10, d: 9 }, 10, 3);
+  assertEq(r.fresh.map(x => x.id), ["a", "c"], "the sort above it must survive");
+  assertEq(r.recent.map(x => x.id), ["b", "d"]);
+});
+T("bankCooldownSplit: a bank smaller than the cooldown still yields everything", () => {
+  const items = [CDI("a"), CDI("b")];
+  const r = bankCooldownSplit(items, { a: 10, b: 10 }, 10, 3);
+  assertEq(r.fresh, [], "nothing is fresh");
+  assertEq(r.fresh.concat(r.recent).length, 2, "but nothing is lost either");
+});
+T("bankCooldownSplit: junk inputs are empty pools, not a crash", () => {
+  assertEq(bankCooldownSplit(null, null, 0, 3), { fresh: [], recent: [] });
+});
+
+/* ---- Morning-use fixes: which path section to warm ---- */
+const PWSEC = (id, req) => ({ id: id, name: id, requires: req || [] });
+T("pathWarmTarget: warms the first unlocked section with no content", () => {
+  const secs = [PWSEC("a"), PWSEC("b")];
+  const t = pathWarmTarget(secs, {}, () => "open");
+  assertEq(t.sec.id, "a");
+  assertEq(t.what, "content");
+});
+T("pathWarmTarget: skips locked and finished sections", () => {
+  const secs = [PWSEC("done"), PWSEC("locked"), PWSEC("next")];
+  const stateOf = s => s.id === "done" ? "done" : s.id === "locked" ? "locked" : "open";
+  assertEq(pathWarmTarget(secs, {}, stateOf).sec.id, "next");
+});
+T("pathWarmTarget: once content is cached it warms that section's conversation", () => {
+  const secs = [PWSEC("a")];
+  const content = { a: { items: [{ he: "x" }] } };
+  const t = pathWarmTarget(secs, content, () => "open");
+  assertEq(t.sec.id, "a");
+  assertEq(t.what, "convo");
+});
+T("pathWarmTarget: a fully warm section is skipped for the next one", () => {
+  const secs = [PWSEC("a"), PWSEC("b")];
+  const content = { a: { items: [{ he: "x" }], convo: { turns: [] } } };
+  const t = pathWarmTarget(secs, content, () => "open");
+  assertEq(t.sec.id, "b");
+  assertEq(t.what, "content");
+});
+T("pathWarmTarget: nothing to warm returns null, not a section", () => {
+  const secs = [PWSEC("a")];
+  const content = { a: { items: [{ he: "x" }], convo: { turns: [] } } };
+  assertNull(pathWarmTarget(secs, content, () => "open"));
+  assertNull(pathWarmTarget(secs, {}, () => "locked"), "everything locked warms nothing");
+  assertNull(pathWarmTarget([], {}, () => "open"), "no sections at all");
+});
+/* An empty items array is not cached content — it is a generation that produced
+   nothing, and re-warming it is the correct behaviour. */
+T("pathWarmTarget: an empty items array counts as unwarmed", () => {
+  const t = pathWarmTarget([PWSEC("a")], { a: { items: [] } }, () => "open");
+  assertEq(t.what, "content");
 });
 
 if (location.search.indexOf("selftest") !== -1) {

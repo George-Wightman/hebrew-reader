@@ -130,6 +130,19 @@ words are worth another look.
 Also fixed: the message you're actually replying to now appears in the thread as it arrives,
 instead of only ever existing as audio with nothing written down to reply to.
 
+**The thread shows what you actually said** *(2026-08-21)*. It used to show the scripted answer
+the app had graded you against — a plausible sentence you never uttered. George: *"it says what
+the conversation is modelled to expect, which is often not at all what I said."* Your own words
+go in the bubble now, word for word, with no transliteration beside them because none exists for
+speech the recogniser returned. If it misheard you, you'll see the mishearing — which is the only
+way to find out it's mishearing you.
+
+**It no longer reads your own answer back at you** *(2026-08-21)*. On reveal the app used to speak
+the scripted version of the line you'd just said, and then cut itself off mid-word 1.1 seconds
+later when the next speaker started. A real exchange doesn't echo you, so that playback is simply
+gone — the replay buttons still speak it on demand, and the repair line still speaks, because
+those are things someone *else* says.
+
 ### Conversations
 
 Pick **Conversation** as your session shape and you get one scripted exchange, start to finish,
@@ -241,6 +254,14 @@ Path lessons write to spaced repetition normally, so everything the path teaches
 starts appearing in your Balanced sessions. The path introduces; spaced repetition retains.
 Walking out of a lesson halfway leaves the section exactly where it was.
 
+**Content is written before you ask for it** *(2026-08-21)*. Opening the Path quietly generates
+the material for the next section you haven't started, so **Start lesson** opens straight into the
+lesson instead of showing "Getting ready…". Exactly one section is warmed per visit, and never
+when the day's strong-model requests are already spent — a background job you didn't ask for has
+no business eating the budget you need for transcribing a voice note. If it fails it gives up
+silently for the rest of the session rather than retrying on every visit. You'll never see it
+work; you'll only notice the wait is gone.
+
 ### Why the same words used to keep coming back
 
 Two separate fixes to how a session picks its words:
@@ -261,6 +282,16 @@ in once the untouched pool has actually had a full round.
 
 Deliberately left untouched: which overdue words come up for review. That's spaced repetition
 doing its actual job, not the bug.
+
+**Sentences rotate too, now** *(2026-08-21)*. They didn't, and the reason is worth recording:
+bank sentences were sorted easiest-first, then by how well they matched the day's target words,
+and only *then* by how often they'd been shown. Those first two keys are fine-grained enough that
+the third almost never got consulted — so the count was updated every session and effectively
+never read, and the easiest few sentences won permanently. George: *"I seem to be getting the same
+words/ sentences on loop."* Anything served in the last three sessions now moves to the back of
+the queue, keeping its order, and is only reached for when there isn't enough fresh material to
+fill the session. The easiest-first ordering that keeps sentences sayable is unchanged — it just
+applies within each pool.
 
 ### Choosing what kind of session
 
@@ -346,6 +377,13 @@ Every word carries two separate numbers: how long it **sticks**, and how **hard*
 Keeping those apart is what stops one bad day wiping out five weeks of progress — miss a
 35-day word and it comes back at around 10 days, not back to the start. Get it right repeatedly and
 its difficulty **recovers**, rather than being punished forever.
+
+**One wrong answer against a good record is treated as a stumble** *(2026-08-21)*. Three clean
+answers in a row earn a word some credit, and the next miss costs it much less — a smaller cut,
+no lapse on its record, and no jumping to the front of tomorrow's queue. Right, right, right,
+wrong, right no longer undoes the week. The miss is still *recorded*, so a word that's genuinely
+slipping still shows as weak; and the forgiveness is one-shot — miss it twice in a row and the
+full penalty applies, because at that point it isn't a stumble.
 
 That gives each word a standing you can see: a coloured dot on every Library row, and a running
 count on the Learn page — *"12 strong · 30 progressing · 8 weak."* **Weak words go to the front of

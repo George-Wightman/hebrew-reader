@@ -309,6 +309,11 @@
   .setrow-text details[open] summary::before { content: "▾ "; }
   .setrow-text summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
   .setrow-text details p { margin-top: 4px; }
+  .aboutentry { margin-top: 8px; }
+  .aboutentry:first-child { margin-top: 4px; }
+  .aboutentry b { display: block; font-size: .78rem; color: var(--ink); }
+  .aboutentry span { display: block; font-size: .76rem; color: var(--muted); }
+  .aboutentry p { margin: 2px 0 0; font-size: .78rem; color: var(--muted); line-height: 1.4; }
   .setwarn {
     display: inline-block; margin-left: 6px; font-size: .64rem; font-weight: 700;
     letter-spacing: .06em; text-transform: uppercase; vertical-align: 1px;
@@ -1845,6 +1850,16 @@
     <div class="setreassure">None of the actions on this page can delete a word from your library.</div>
     <p class="note setnomatch" id="setNoMatch" style="display:none">Nothing matches that.</p>
 
+    <div class="setgroup" data-group="About">
+      <h3 class="setgroup-title">About<span class="setgroup-sub">What build you're on, so you can tell whether an update has reached this device.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>This build</b>
+          <p id="aboutBuild">—</p>
+          <details><summary>Recent changes</summary><div id="aboutHistory"></div></details>
+        </div>
+      </div>
+    </div>
+
     <div class="setgroup" data-group="You">
       <h3 class="setgroup-title">You<span class="setgroup-sub">Who the app thinks is speaking.</span></h3>
       <div class="setrow">
@@ -2115,6 +2130,35 @@
 
 <script>
 "use strict";
+
+/* =====================  CHANGELOG  =====================
+   The only "have I got the update yet" signal this app has ever had was the update
+   bar, which only appears if you happen to have the page open when a new version
+   lands underneath you. There's no build step and no CI, so there's no natural place
+   a version number would come from — this array IS the version number: most recent
+   entry first, one line each, in words a user reads rather than a commit log. Add one
+   entry here for anything a user would notice, at the top, whenever a change ships. */
+const APP_CHANGELOG = [
+  { date: "2026-08-21",
+    title: "Fixed words getting stuck on repeat",
+    detail: "A scheduling bug could pin an already-strong word to “due today” " +
+      "forever, however many times you got it right — which is why katan and kar " +
+      "kept coming back as single-word cards no matter how well you knew them. Also " +
+      "fixed: setting a word's strength by hand in Settings could accidentally push it " +
+      "back into rotation instead of leaving it alone." },
+  { date: "2026-08-21",
+    title: "Four things a morning's real use found",
+    detail: "The Path now opens straight into the next lesson instead of a wait. " +
+      "Conversation mode stops echoing your own answer back at you. The chat thread " +
+      "shows what you actually typed. And review dates that had been pushed months or " +
+      "years out by an old scheduling bug can be corrected from Settings." },
+  { date: "2026-08-21",
+    title: "AI quota, storage and audio diagnosis",
+    detail: "Settings now shows today's AI request count and how much storage room is " +
+      "left, and can tell you exactly why real Hebrew audio generation is or isn't " +
+      "working on your key." }
+];
+function appLatestBuild() { return APP_CHANGELOG[0] || null; }
 
 /* =====================  SAFE STORAGE  =====================
    localStorage doesn't return null when it's unavailable — it throws. A browser with
@@ -5260,7 +5304,29 @@ function customOppositesCount(lib) {
    just because storage is unavailable — worse here than the migrations above,
    since this runs on every open, not once, and a crash would leave the user
    staring at a gear icon that does nothing with no explanation. */
+/* Static content — the list never changes while the page is open — but painted
+   rather than baked into the HTML, so the changelog lives in one place (the array
+   above) and adding an entry there is the only edit a future change needs. */
+function paintAboutRow() {
+  const build = document.getElementById("aboutBuild");
+  const hist = document.getElementById("aboutHistory");
+  if (!build || !hist) return;
+  const latest = appLatestBuild();
+  build.textContent = latest
+    ? "You're on the " + latest.date + " build — " + latest.title + "."
+    : "No changelog recorded yet.";
+  hist.innerHTML = "";
+  APP_CHANGELOG.forEach(e => {
+    const row = document.createElement("div"); row.className = "aboutentry";
+    const b = document.createElement("b"); b.textContent = e.title;
+    const span = document.createElement("span"); span.textContent = e.date;
+    const p = document.createElement("p"); p.textContent = e.detail;
+    row.append(b, span, p);
+    hist.append(row);
+  });
+}
 function openSettings() {
+  paintAboutRow();
   try { document.getElementById("geminiKey").value = lsGet(GEMINI_KEY) || ""; } catch (e) {}
   try { document.getElementById("geminiKey2").value = lsGet(GEMINI_KEY2) || ""; } catch (e) {}
   const n = Object.keys(store.userDict).length;

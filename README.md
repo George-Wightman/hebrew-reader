@@ -455,15 +455,40 @@ sentences* runs the same reviewer retroactively over everything currently stored
 removes only what fails the same bar — everything that passes keeps its history. Different from
 *Bin the practice sentences* (which throws everything away unread): this one judges first.
 
-## Settings, organised by what could actually go wrong
+## Settings, organised by subject
 
-Settings is grouped into three tiers, and every action states its real effect before you press it,
-not just in the confirm dialog after: **Housekeeping** (fully reversible, nothing lost), **Resets**
-(clears something specific and named, your library is never touched), and **Overwrites custom
-data** (the one place — *Fix opposites* — where a mis-click can discard a pairing you made
-yourself, and it now tells you exactly how many before you confirm).
+Settings is grouped by what each row is *about* — You, Your data, Sync, Your library, Words and
+their forms, Practice and scheduling, Reading and the pad, Audio, AI requests — with a filter box
+at the top, because two dozen rows is past the point where scanning beats typing. Risk is a
+per-row badge rather than the organising principle: sorting by danger meant that finding the thing
+you wanted required knowing how dangerous it was first.
+
+Every action states its real effect before you press it, not just in the confirm dialog after —
+*Fix opposites* tells you how many of your own pairings it would discard, *Pull back inflated
+review dates* tells you how many dates it would move.
 
 One promise holds across all of it: **nothing in Settings can delete a word from your library.**
+
+Two rows just report, and are worth knowing about:
+
+**Your data → How much room you're using.** A browser gives each site a fixed allowance, around
+5MB, and when it fills the next save simply fails with no warning. This says where you are:
+*"241 words, 197 with form banks. Everything saved in this browser comes to 482KB — 9% of what it
+allows."* Form banks are the one thing that grows without limit as you add words, so they are
+called out separately. It turns red if you ever reach the point where something needs doing.
+
+**AI requests → Today's quota.** Google's free tier gives two models with separate daily
+allowances — **Flash** at 20 requests a day and **Flash-Lite** at 500 — and until now nothing told
+you which one a feature spent or how much was left, so "it stopped working" arrived mid-sentence.
+This reads *"Flash: 4 of 20 used · Flash-Lite: 12 of 500 used"*. Transcribing a voice note,
+building a conversation, generating a path section and topping up a session use Flash; explaining
+a word, *why is it phrased like that?*, the Sentence pad and filling in verb forms use Flash-Lite.
+When Flash runs out the app falls back to Flash-Lite on its own rather than failing.
+
+It counts what *this* browser spent, and Google counts per key — so requests from your phone come
+out of the same allowance and won't show here until the two have synced. It can therefore say you
+have more left than you do, never less. The moment Google actually refuses, the row says *used up
+for today*, because that answer comes from Google rather than from counting.
 
 *"Build up audio library" was removed* — it called Google's real-voice TTS, which has been
 confirmed broken since the neural-audio work earlier in this project. It was a live-looking button
@@ -471,22 +496,47 @@ wired to nothing. The underlying code is untouched and dormant, in case that eve
 
 No key, no quota left, or no internet? It runs on your library alone and says so. It never blocks.
 
-### Real Hebrew voices, cached forever *(currently unavailable — see below)*
+### Real Hebrew voices, cached forever
 
-As of 2026-08-07 this doesn't actually work: Google's TTS model is returning persistent server
-errors for this account, and the consumer Gemini chat app isn't a working alternative either — it
+As of 2026-08-07 this stopped working: Google's TTS model was returning persistent server errors
+for this account, and the consumer Gemini chat app wasn't a working alternative either — it
 returned a fake "success" (a generic chime dressed up as a WAV, not real Hebrew speech) rather than
-an honest failure. The Windows voice below is the real experience for now. The scaffolding stays
-in the code because it costs nothing sitting idle and would start working the moment Google's side
-recovers, but don't expect **Build up audio library** to produce anything today.
+an honest failure. That verdict blamed the account. It never separated "the account is blocked"
+from "the one model name asked for stopped existing" — no other name had been tried.
 
-The Windows voice is a fallback now, not the ceiling. Give it a Gemini key and the Learn page
-generates genuine neural Hebrew audio, and **keeps it forever** — the first time a word or
-sentence is ever played, the Windows voice plays immediately as always while a real recording
-generates quietly in the background; the next time you meet that same word or sentence, you hear
-the real one instead. Nothing ever waits, and nothing is ever silent while it upgrades.
+**Settings → Audio → *Check which Hebrew voices work*** answers that half for free: it asks Google
+which speech models your key can actually reach, spends one request and generates nothing.
+Confirmed on this key, 2026-08-21: `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-preview-tts`
+and `gemini-2.5-pro-preview-tts` are all reachable, and all three are exactly what the app asks
+for. **The model-name theory is dead — if generation still fails, it's the account or the quota,
+not a stale name.**
 
-**Settings → Build up audio library** front-loads this — it walks every word in your library and
+That left one question *Check* can't answer, because it deliberately spends no TTS quota: does a
+real clip actually come back. **Settings → Audio → *Generate a test clip*** is that test, and it's
+been pressed: it currently fails, with a real named reason rather than a generic timeout —
+
+```
+HTTP 400: "Developer instruction is not enabled for this model"
+```
+
+That's Google rejecting the `systemInstruction` field itself, on every model this app can reach —
+not the model name (confirmed fine above), not the account, not the daily quota. **So this is now
+a known, specific, currently-unfixed bug**, not an open question. Fixing it means moving the
+read-verbatim instruction that field carries into the prompt text instead, which is untested and
+risks reintroducing the exact "replied instead of vocalised" bug that instruction exists to
+prevent — deliberately shelved rather than attempted live, since day-to-day use is moving to
+phone, where this doesn't matter as much as getting it wrong would.
+
+**For now: the Windows voice is the real experience, same as before.** Give it a Gemini key and
+the Learn page still tries to upgrade to genuine neural Hebrew audio in the background and
+**keeps it forever** once it can — the first time a word or sentence is ever played, the Windows
+voice plays immediately as always while a real recording attempts to generate quietly behind it;
+today that attempt fails silently and the Windows voice keeps being the one you hear. Nothing ever
+waits, and nothing ever blocks on it.
+
+**Settings → Build up audio library** front-loads this once it works — *(removed from Settings on
+2026-08-13 while TTS was believed dead; the code is intact and dormant, and this describes what it
+does if it is put back once the bug above is fixed)* — it walks every word in your library and
 every sentence in your bank, skips anything already recorded, and generates the rest one at a
 time. **The real limit, confirmed from Google: about 3 recordings a minute, 10 a day**, per
 Google account — smaller than you'd expect, so a full run is deliberately paced to stay under

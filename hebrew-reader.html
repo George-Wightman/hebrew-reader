@@ -1875,6 +1875,11 @@
           <details><summary>Not a backup</summary><p>This is for reading and printing, not for moving your progress. It holds the words alone — no schedules, streak, banked sentences or path progress. <b>Export everything</b> above is the one that can restore you.</p></details></div>
         <button class="btn secondary" id="exportBtn">Save .xlsx</button>
       </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>How much room you're using</b>
+          <p id="storageDesc">Counting…</p>
+          <details><summary>What happens if this storage space fills up</summary><p>A browser gives each site a fixed storage allowance — around 5MB here — and when it runs out it doesn't warn you: the next save simply fails. Form banks (every conjugation of every verb) are the one thing in the app that grows without limit as you add words, so this is the number to watch. If it ever reaches the ceiling the fix is to move the banks into the browser's larger store, IndexedDB, which is a code change rather than something you can do from this page. <b>Export everything</b> above is the protection in the meantime.</p></details></div>
+      </div>
       <input type="file" id="importAllFile" accept="application/json,.json" style="display:none">
       <p class="note" id="dataStatus"></p>
       <p class="note" id="notesStatus"></p>
@@ -2042,6 +2047,23 @@
           <p id="ttsCheckDesc">Asks Google which speech models your key can actually reach. Uses one request and generates nothing.</p>
           <details><summary>Why you'd check</summary><p>Real Hebrew audio has been failing since 7 Aug. This says whether the app is asking for a model that no longer exists, or the account itself is blocked — rather than guessing.</p></details></div>
         <button class="btn secondary" id="ttsCheckBtn">Check</button>
+      </div>
+      <div class="setrow">
+        <div class="setrow-text"><b>Generate a test clip</b>
+          <p id="ttsGenTestDesc">Asks Google to actually speak one short test sentence and plays it back. This is the real thing — unlike Check above, it spends real TTS quota.</p>
+          <details><summary>Why this and not "Check" above</summary><p>Checking which models a key can reach only proves the model NAME is valid — it says nothing about whether generation itself succeeds. This is the one test that answers that: if a real voice plays back, real Hebrew audio is working on this key right now, and every Listen / Say-it-back card in Learn will start recording real audio for the words you meet from here on. If it fails, the message is Google's own error text, not a guess.</p></details>
+          <details><summary>What it costs</summary><p>One request against the confirmed real limit — about 3 a minute, 10 a day, per key. It doesn't touch your library or bank; the clip plays once and isn't kept.</p></details></div>
+        <button class="btn secondary" id="ttsGenTestBtn">Generate</button>
+      </div>
+    </div>
+
+    <div class="setgroup" data-group="AI requests">
+      <h3 class="setgroup-title">AI requests<span class="setgroup-sub">What Google's free tier has left today.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>Today's quota</b>
+          <p id="aiQuotaDesc">Nothing asked yet today.</p>
+          <details><summary>Which features spend which pool</summary><p>Google gives two free models with separate daily allowances: <b>Flash</b> is the stronger one at only 20 requests a day, and <b>Flash-Lite</b> is nearly as good for short answers at 500. Transcribing a voice note, building a conversation, generating a path section and topping up a session use Flash, because those are the jobs where the stronger model earns its cost. Explaining a word, "why is it phrased like that?", the Sentence pad and filling in verb forms all use Flash-Lite. When Flash runs out the app falls back to Flash-Lite by itself rather than failing.</p></details>
+          <details><summary>Why this can undercount</summary><p>This counts requests made in <em>this</em> browser. Google counts them per key, so requests from your phone come out of the same allowance and aren't included here unless the two have synced. It can therefore say you have more left than you do — but never less. The moment Google actually refuses, this says so, because that answer comes from Google rather than from counting.</p></details></div>
       </div>
     </div>
 
@@ -2388,6 +2410,27 @@ function mergeMaxNums(a, b) {
   return out;
 }
 
+/* The AI request ledger. Both devices spend the SAME Google quota — one key, one
+   pool — so the generic "newer blob wins" rule would report 3 of 20 gone on an
+   evening that spent 3 on each. Per pool the higher count wins, and `spent` is
+   sticky: if Google refused one device for the day it will refuse the other.
+
+   Undercounts a day used on both devices, exactly as hvr_stats does and for the
+   same reason: summing is right once and then double-counts on every sync after.
+   Erring low is the honest direction for a warning. */
+function mergeAiQ(a, b) {
+  a = a || {}; b = b || {};
+  const dayA = String(a.day || ""), dayB = String(b.day || "");
+  /* Yesterday's count is not today's — no field of it is worth keeping. */
+  if (dayA !== dayB) return dayA > dayB ? a : b;
+  return {
+    day: dayA,
+    strong: maxNum(a.strong, b.strong),
+    fast: maxNum(a.fast, b.fast),
+    spent: Object.assign({}, a.spent || {}, b.spent || {})
+  };
+}
+
 /* Objects with no smarter rule: union, and on a genuine collision the blob written
    more recently wins. `mineIsNewer` is decided once for the whole merge from the two
    blobs' `updated` stamps, never per key — a per-key coin flip is how two devices
@@ -2409,6 +2452,7 @@ const MERGE_RULES = {
   "hvr_convo":      (a, b) => mergeById(a, b, CONVO_MAX),
   "hvr_pathscores": (a, b) => mergePathScores(a, b),
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
+  "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
   "hvr_struggle":   (a, b) => mergeMaxNums(a, b),
   "hvr_recency":    (a, b) => mergeMaxNums(a, b)
 };
@@ -3833,6 +3877,72 @@ function formsSizeGuard(lib) {
   return bytes;
 }
 
+/* ---- the same ceiling, somewhere it can actually be read ----
+   The guard above fires console.warn, from one call site, in an app opened by
+   double-click and now by a home-screen icon on a phone. A warning nobody can
+   receive is not a warning. This is the same question answered as a number the
+   Settings panel can print, whether or not anything is wrong yet.
+
+   Measured against George's own backup on 2026-08-21, at 241 words: everything
+   the app has saved is 247K characters, of which hvr_library is 146K, and 117K of
+   THAT is form banks — 51K of forms and 67K of the formsMeta describing them. So
+   the growth the original finding predicted is real and is already the majority of
+   the biggest key. It is also, at ~10% of the allowance, nowhere near urgent. Both
+   halves of that only become sayable once it is on screen. */
+/* Browsers charge localStorage in UTF-16 code units, so a Hebrew character costs
+   exactly what an ASCII one does — two bytes, key name included. Counting
+   characters and calling them bytes halves the answer. */
+const LS_BUDGET_BYTES = 5 * 1024 * 1024;
+function fmtBytes(bytes) {
+  const n = Math.max(0, Number(bytes) || 0);
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.round(n / 1024) + "KB";
+}
+/* `keys` is the {name: rawString} map storage actually holds; `lib` is the parsed
+   library. Both are passed in rather than read here so this stays a pure function —
+   the audit's F12 lesson was that this app's worst bugs lived in untested pure code. */
+function storageReport(keys, lib) {
+  keys = keys || {}; lib = lib || {};
+  let total = 0;
+  Object.keys(keys).forEach(k => {
+    total += (k.length + String(keys[k] == null ? "" : keys[k]).length) * 2;
+  });
+  let formsBytes = 0, banked = 0;
+  Object.keys(lib).forEach(k => {
+    const e = lib[k] || {};
+    if (!e.forms && !e.formsMeta) return;
+    if (e.forms) banked++;
+    try {
+      formsBytes += JSON.stringify({ forms: e.forms, formsMeta: e.formsMeta }).length * 2;
+    } catch (x) { /* one unserialisable entry must not cost the whole report */ }
+  });
+  const libBytes = String(keys[LIB_KEY] == null ? "" : keys[LIB_KEY]).length * 2;
+  return {
+    totalBytes: total,
+    libBytes: libBytes,
+    formsBytes: formsBytes,
+    banked: banked,
+    words: Object.keys(lib).length,
+    budget: LS_BUDGET_BYTES,
+    pct: total / LS_BUDGET_BYTES,
+    /* The same threshold the guard uses, so Settings and the console can never
+       disagree about whether there is a problem. Measured in characters there, so
+       compared in characters here. */
+    over: libBytes / 2 > FORMS_SIZE_WARN_BYTES
+  };
+}
+/* One sentence, no jargon, and the share of the allowance rather than a raw number —
+   "146KB" means nothing without knowing what the ceiling is. */
+function storageSummary(r) {
+  const pct = r.pct < 0.01 ? "under 1%" : Math.round(r.pct * 100) + "%";
+  return r.words + " words, " + r.banked + " with form banks. Everything saved in this "
+    + "browser comes to " + fmtBytes(r.totalBytes) + " — " + pct + " of what it allows. "
+    + "Form banks are " + fmtBytes(r.formsBytes) + " of that"
+    + (r.over
+      ? ", and your library has passed the size this app was measured at. Tell Claude: "
+        + "the form banks need moving out of localStorage."
+      : ", and they are the part that grows as you add words.");
+}
+
 /* A generated form must be written in Hebrew. Sounds too obvious to check — but
    the first live run returned תהي� for "you (f) will be", with U+064A ARABIC
    LETTER YEH twice where יod belongs. Best-of-three did catch it, at the cost of
@@ -5149,6 +5259,8 @@ function openSettings() {
     "Built-in dictionary: " + Object.keys(DICT).length + " words + " + Object.keys(PHRASES).length +
     " phrases. Words you've taught it: " + n + ".";
   vnotesRenderStatus();
+  paintStorageRow();
+  paintAiQuotaRow();
   paintSpeakerBtn();
   syncPaintSettings();
   paintFormsAutoBtn();
@@ -5206,6 +5318,36 @@ function settingsAction(fn) {
    is worse: the entire background queue behind it is implemented and working, gated on
    `lsGet(FORMS_AUTO_KEY) !== "1"` — a key that nothing in the app could set. A complete
    feature, unreachable by one missing line. */
+/* Reads storage at paint time rather than caching a number: this panel is where you
+   look precisely when you suspect something has changed. */
+function paintStorageRow() {
+  const el = document.getElementById("storageDesc");
+  if (!el) return;
+  try {
+    const keys = {};
+    exportKeys().forEach(k => { keys[k] = lsGet(k); });
+    const r = storageReport(keys, libAll());
+    el.textContent = storageSummary(r);
+    el.style.color = r.over ? "var(--bad)" : "";
+  } catch (e) {
+    el.textContent = "Couldn't measure it — " + e.message;
+  }
+}
+
+function paintAiQuotaRow() {
+  const el = document.getElementById("aiQuotaDesc");
+  if (!el) return;
+  try {
+    const q = aiQRoll(aiQAll(), todayISO());
+    el.textContent = (q.strong || q.fast)
+      ? aiQSummary(q, todayISO())
+      : "Nothing asked yet today. " + aiQSummary(q, todayISO()) + ".";
+    el.style.color = (q.spent.strong && q.spent.fast) ? "var(--bad)" : "";
+  } catch (e) {
+    el.textContent = "Couldn't read the count — " + e.message;
+  }
+}
+
 function paintSpeakerBtn() {
   const b = document.getElementById("speakerBtn");
   if (b) b.textContent = speakerLabel();
@@ -5340,6 +5482,38 @@ document.getElementById("ttsCheckBtn").onclick = async () => {
   }
 };
 
+/* The one Settings action that spends real money-equivalent quota rather than
+   just reading. Deliberately not run automatically or by anything else — same
+   reasoning as the Check button above: this is George's key and his quota, so
+   pressing it has to be his decision each time, not something the app does on
+   his behalf. A fixed sentence rather than a library word: long enough that the
+   model reads it as prose to vocalise rather than a greeting to reply to (see
+   the note on geminiTTS above — a bare "shalom" once got answered, not spoken),
+   and unrelated to any real word so a failure here can never be misread as
+   "this specific word is somehow broken". */
+const TTS_TEST_PHRASE = "זהו קטע בדיקה קצר, כדי לבדוק אם הקול האמיתי עובד.";
+document.getElementById("ttsGenTestBtn").onclick = async () => {
+  const el = document.getElementById("ttsGenTestDesc");
+  const btn = document.getElementById("ttsGenTestBtn");
+  if (!geminiKeys().length) { el.textContent = "Add a Gemini key above first."; return; }
+  btn.disabled = true; btn.textContent = "Generating…";
+  el.textContent = "Asking Google to speak one real sentence — this spends real TTS quota…";
+  el.style.color = "";
+  try {
+    const b64 = await geminiTTS(TTS_TEST_PHRASE);
+    const blob = pcmToWavBlob(b64, 24000, 1, 16);
+    playAudioBlob(blob, false);
+    el.textContent = "Real audio came back and is playing now — Hebrew TTS is working on "
+      + "this key. Every Listen and Say-it-back card from here on will start recording the "
+      + "real voice for words you meet.";
+  } catch (e) {
+    el.textContent = "No audio came back — " + e.message;
+    el.style.color = "var(--bad)";
+  } finally {
+    btn.disabled = false; btn.textContent = "Generate";
+  }
+};
+
 /* ---- sync controls ---- */
 function syncPaintSettings() {
   const on = syncConfigured();
@@ -5455,9 +5629,9 @@ function vnotesRenderStatus() {
       + "here automatically, then used for listening practice.";
     return;
   }
-  const kb = Math.round(n.reduce((a, x) => a + (x.size || 0), 0) / 1024);
+  const bytes = n.reduce((a, x) => a + (x.size || 0), 0);
   el.textContent = n.length + " voice note" + (n.length === 1 ? "" : "s") + " kept ("
-    + (kb > 1024 ? (kb / 1024).toFixed(1) + "MB" : kb + "KB") + "), used for listening "
+    + fmtBytes(bytes) + "), used for listening "
     + "practice. They're stored outside the main save, so they aren't in the export file.";
 }
 
@@ -9027,6 +9201,72 @@ function geminiURLFor(model, key) {
          ":generateContent?key=" + encodeURIComponent(key);
 }
 
+/* ---- what the day has actually cost ----
+   The two pools above differ by 25x, and until now nothing said which one a feature
+   spends or how much of it was left. "It stopped working" was the only signal, and it
+   arrived mid-sentence. Counted inside geminiRequest() rather than at each call site,
+   because that is the one place every generateContent request goes through — a
+   per-feature counter would drift the first time a call site was added and this was
+   forgotten. Speech generation is deliberately outside this: geminiTTS() has its own
+   loop against its own model pool, so folding it in would report one number for two
+   unrelated allowances.
+
+   Two honest limits, both deliberate. It counts what THIS browser spent today, which
+   is at most what Google counted: a request from the phone, or from before this
+   existed, is invisible to it (sync narrows that — see mergeAiQ). And Google's own
+   ledger is the only one that decides, so a refusal is recorded as fact and outranks
+   the count. Same shape as formsQAll(): one key, rolled on the date, no history. */
+const AI_Q_KEY = "hvr_ai_q";
+const AI_POOL_CAPS = { strong: 20, fast: 500 };
+const AI_POOL_LABELS = { strong: "Flash", fast: "Flash-Lite" };
+/* -lite is the only alias in the fast pool, and an unknown name is assumed to be the
+   scarce one — guessing "500 left" about a model nobody has measured is the guess
+   that misleads. */
+function aiPoolFor(model) { return /-lite-/.test(String(model || "")) ? "fast" : "strong"; }
+function aiQBlank() { return { day: "", strong: 0, fast: 0, spent: {} }; }
+function aiQAll() {
+  try { return aiQTidy(JSON.parse(lsGet(AI_Q_KEY))); }
+  catch (e) { return aiQBlank(); }
+}
+function aiQTidy(q) {
+  const out = aiQBlank();
+  if (!q || typeof q !== "object") return out;
+  out.day = String(q.day || "");
+  out.strong = Math.max(0, Number(q.strong) || 0);
+  out.fast = Math.max(0, Number(q.fast) || 0);
+  out.spent = (q.spent && typeof q.spent === "object") ? Object.assign({}, q.spent) : {};
+  return out;
+}
+function aiQRoll(q, today) {
+  q = aiQTidy(q);
+  if (q.day !== today) { q.day = today; q.strong = 0; q.fast = 0; q.spent = {}; }
+  return q;
+}
+/* outcome: "ok" for an answered request, "spent" for Google refusing the day. Both
+   count — a refusal is still a request, and it is the one that proves the pool is
+   gone. A per-minute 429 is NOT passed here: it is throttling, not spending. */
+function aiQRecord(q, today, model, outcome) {
+  q = aiQRoll(q, today);
+  const pool = aiPoolFor(model);
+  q[pool] = (q[pool] || 0) + 1;
+  if (outcome === "spent") q.spent[pool] = true;
+  return q;
+}
+function aiQSave(q) { try { lsSet(AI_Q_KEY, JSON.stringify(q)); } catch (e) {} }
+/* Fire-and-forget from inside the request loop: a ledger that could throw would be a
+   ledger that broke the feature it was measuring. */
+function aiQNote(model, outcome) {
+  try { aiQSave(aiQRecord(aiQAll(), todayISO(), model, outcome)); } catch (e) {}
+}
+function aiQSummary(q, today) {
+  q = aiQRoll(q, today);
+  return ["strong", "fast"].map(pool =>
+    AI_POOL_LABELS[pool] + ": " + (q.spent[pool]
+      ? "used up for today (" + q[pool] + " of " + AI_POOL_CAPS[pool] + " counted here)"
+      : q[pool] + " of " + AI_POOL_CAPS[pool] + " used")
+  ).join(" · ");
+}
+
 /* Measured 2026-08-06 on the real prompt: the default call spent 2021 tokens on
    invisible "thinking" to produce 281 tokens of answer, and took 10.2s. Asking
    for minimal thinking gives 0 thinking tokens and 2.25s — a 4.5x speedup, with
@@ -9092,7 +9332,7 @@ async function geminiRequest(parts, models, opts) {
       for (const cfg of [GEMINI_THINKING, null]) {
         const body = { contents: [{ parts: parts }] };
         if (cfg) body.generationConfig = cfg;
-        let resp = null, text = "", waits = 0, spent = false;
+        let resp = null, text = "", waits = 0, spent = false, dayGone = false;
         /* Retry the SAME model while the 429 is a per-minute limit. Falling
            through to the next model on a minute-limit — which is what this used
            to do — burns every model and both keys, then reports the daily quota
@@ -9104,9 +9344,16 @@ async function geminiRequest(parts, models, opts) {
           if (resp.status !== 429) break;
           const wait = text.match(/retry in ([\d.]+)s/i);
           lastWaitHint = wait ? "in about " + Math.ceil(Number(wait[1])) + "s" : null;
-          if (rateLimitWaitMs(text, 0) !== null) sawRateHint = true;
+          /* Asked with waitsSoFar 0, so this is "does Google offer a short retry?" and
+             not "have we waited enough times already" — the same question sawRateHint
+             asks. `spent` below cannot answer it: an interactive caller passes no
+             waitOnRateLimit, so a per-minute throttle sets spent too. Telling the two
+             apart is the whole difference between "come back in 8 seconds" and
+             "come back tomorrow". */
+          const minuteLimit = rateLimitWaitMs(text, 0) !== null;
+          if (minuteLimit) sawRateHint = true;
           const ms = opts.waitOnRateLimit ? rateLimitWaitMs(text, waits) : null;
-          if (ms === null) { spent = true; break; }
+          if (ms === null) { spent = true; dayGone = !minuteLimit; break; }
           waits++;
           await new Promise(r => setTimeout(r, ms));
         }
@@ -9117,11 +9364,18 @@ async function geminiRequest(parts, models, opts) {
           if (out) {
             lastGeminiTiming = { ms: Date.now() - started, model: model,
                                  thinking: !!cfg };
+            aiQNote(model, "ok");
             return out;
           }
           throw new Error("empty reply");
         }
-        if (spent) break;                           // this model is spent — next model
+        /* Recorded before moving on, and only here: `spent` means the 429 carried no
+           short retry hint, which is the day's quota rather than the last few seconds.
+           A per-minute throttle loops above and never reaches this line. */
+        /* Recorded before moving on. "spent" is claimed only when the 429 carried no
+           short retry hint: a throttled request was still a request and is counted,
+           but it is not evidence that the day is gone. */
+        if (spent) { aiQNote(model, dayGone ? "spent" : "ok"); break; }
         if (resp.status === 400 && cfg) continue;   // the config was the problem — retry plain
         throw new Error("HTTP " + resp.status);      // not a quota problem — don't blame the key
       }
@@ -10358,10 +10612,8 @@ function pcmToWavBlob(base64pcm, sampleRate, channels, bitsPerSample) {
 /* Sibling to geminiRequest(): same key-then-model fallback shape, but a
    different request body (asks for AUDIO output, not text) and a different
    response shape (inlineData.data, base64 PCM, not .text). Built from Google's
-   published TTS docs — genuinely NOT verified against a live call in this
-   environment, so if the shape has drifted this throws, which the caller treats
-   exactly like a quota failure: falls back to the Windows voice, never breaks
-   the page.
+   published TTS docs, and the caller treats any throw here exactly like a quota
+   failure: falls back to the Windows voice, never breaks the page.
 
    Confirmed live (George's error text, 2026-08-07): sending the bare word as the
    whole prompt gets read as an open conversational turn, and the model tries to
@@ -10369,7 +10621,20 @@ function pcmToWavBlob(base64pcm, sampleRate, channels, bitsPerSample) {
    words this hit first ("shalom" invites a response). responseModalities:["AUDIO"]
    alone isn't enough of a constraint on its own; the model still needs to be told
    in plain language that its only job is reading the transcript aloud, verbatim,
-   never answering or commenting on it. */
+   never answering or commenting on it. That instruction is carried below as
+   `systemInstruction` — which is exactly the field the next note found broken.
+
+   VERIFIED LIVE 2026-08-21, via Settings → Generate a test clip, and currently
+   BROKEN: every model in GEMINI_TTS_MODELS returns
+     HTTP 400: "Developer instruction is not enabled for this model"
+   That is Google naming `systemInstruction` itself as the rejected field — not the
+   model name (confirmed reachable the same day, see the note below), not quota, not
+   the account. Fixing this means moving the read-verbatim instruction above out of
+   `systemInstruction` and into the `contents` prompt text instead — untested, and
+   exactly the kind of change that could reintroduce the "replied instead of
+   vocalised" bug this comment opens with. Deliberately NOT attempted this session:
+   George is moving to phone-first use and asked to shelve this avenue rather than
+   chase it further. Start the next attempt from the error above, not from scratch. */
 /* A LIST, and never a single dated name again. This was
    `["gemini-2.5-flash-preview-tts"]` — one dated PREVIEW model with no fallback — while
    1500 lines below, the text path states the rule this violates: "Always use -latest
@@ -13996,8 +14261,11 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
   panel.append(grades);
 }
 
-/* Flash-Lite first, deliberately: this is the one AI call in the app George can
-   fire repeatedly by hand, and lite's allowance is 500/day against Flash's 20. */
+/* Flash-Lite first, deliberately, here and in learnWhy below: these are the two AI
+   calls in the app George can fire repeatedly by hand, and lite's allowance is 500/day
+   against Flash's 20. Both are short teaching notes — the same job padAskExplain
+   already sends to the lite pool — so the strong pool was never buying anything here,
+   and two taps on a card used to cost a tenth of the day's transcription budget. */
 async function learnExplainWord(btn, panel, tok, c) {
   btn.disabled = true; btn.textContent = "Asking…";
   busy(true);
@@ -14039,7 +14307,7 @@ async function learnWhy(btn, c) {
       "Explain briefly, to an English speaker learning to SPEAK conversational Hebrew, why this " +
       "is phrased the way it is:\n\n" + c.item.he + "\n" + c.item.tr + "\n\"" + (c.item.en || "") +
       "\"\n\nTwo or three sentences. Give the rule behind it so it carries into his next sentence. " +
-      "Plain text, no markdown, no preamble." }]);
+      "Plain text, no markdown, no preamble." }], GEMINI_MODELS_FAST);
     const box = document.createElement("div"); box.className = "lwhy"; box.textContent = out.trim();
     btn.replaceWith(box);
   } catch (e) {
@@ -16078,6 +16346,150 @@ T("parseImport: tolerates a missing summary", () => {
   const r = parseImport(OKFILE({ summary: undefined }));
   assertTrue(r.ok, "summary is a convenience, not a requirement");
   assertEq(r.summary, {});
+});
+
+/* ---- Phase 4: the AI request ledger (F8) ---- */
+T("aiPoolFor: only the lite alias is the big pool", () => {
+  assertEq(aiPoolFor("gemini-flash-lite-latest"), "fast");
+  assertEq(aiPoolFor("gemini-flash-latest"), "strong");
+  assertEq(aiPoolFor(""), "strong");
+  assertEq(aiPoolFor(null), "strong");
+});
+T("aiQRoll: a new day zeroes both counts and forgets yesterday's refusal", () => {
+  const q = aiQRoll({ day: "2026-08-20", strong: 20, fast: 300, spent: { strong: true } },
+                    "2026-08-21");
+  assertEq(q.day, "2026-08-21");
+  assertEq(q.strong, 0);
+  assertEq(q.fast, 0);
+  assertEq(q.spent, {});
+});
+T("aiQRoll: the same day is left exactly as it was", () => {
+  const q = aiQRoll({ day: "2026-08-21", strong: 4, fast: 9, spent: {} }, "2026-08-21");
+  assertEq(q.strong, 4);
+  assertEq(q.fast, 9);
+});
+T("aiQRoll: junk in is a usable blank out, not a crash", () => {
+  const q = aiQRoll(null, "2026-08-21");
+  assertEq(q, { day: "2026-08-21", strong: 0, fast: 0, spent: {} });
+});
+T("aiQRecord: counts against the pool the model belongs to", () => {
+  let q = aiQRecord(null, "2026-08-21", "gemini-flash-latest", "ok");
+  q = aiQRecord(q, "2026-08-21", "gemini-flash-lite-latest", "ok");
+  q = aiQRecord(q, "2026-08-21", "gemini-flash-lite-latest", "ok");
+  assertEq(q.strong, 1);
+  assertEq(q.fast, 2);
+});
+T("aiQRecord: a daily refusal is recorded as spent, and still counted", () => {
+  const q = aiQRecord({ day: "2026-08-21", strong: 19, fast: 0, spent: {} },
+                      "2026-08-21", "gemini-flash-latest", "spent");
+  assertEq(q.strong, 20);
+  assertTrue(q.spent.strong, "the strong pool should be marked spent");
+  assertTrue(!q.spent.fast, "the other pool is untouched");
+});
+T("aiQRecord: rolls the day itself rather than adding to yesterday", () => {
+  const q = aiQRecord({ day: "2026-08-20", strong: 20, fast: 0, spent: { strong: true } },
+                      "2026-08-21", "gemini-flash-latest", "ok");
+  assertEq(q.strong, 1);
+  assertEq(q.spent, {});
+});
+T("aiQSummary: gives the numbers, and says so plainly once Google has refused", () => {
+  const plain = aiQSummary({ day: "2026-08-21", strong: 4, fast: 12, spent: {} }, "2026-08-21");
+  assertTrue(/4 of 20/.test(plain), "should state the strong pool: " + plain);
+  assertTrue(/12 of 500/.test(plain), "should state the fast pool: " + plain);
+  const done = aiQSummary({ day: "2026-08-21", strong: 20, fast: 0, spent: { strong: true } },
+                          "2026-08-21");
+  assertTrue(/used up/.test(done), "a refused pool should say so: " + done);
+});
+T("aiQSummary: yesterday's ledger reads as a fresh day", () => {
+  const s = aiQSummary({ day: "2026-08-20", strong: 20, fast: 400, spent: { strong: true } },
+                       "2026-08-21");
+  assertTrue(/0 of 20/.test(s), "should have rolled: " + s);
+  assertTrue(!/used up/.test(s), "yesterday's refusal is not today's: " + s);
+});
+
+/* Both devices spend one Google quota, so this store has to merge like hvr_stats,
+   not like a device-local setting. */
+T("mergeAiQ: on the same day the higher count per pool wins", () => {
+  const m = mergeAiQ({ day: "2026-08-21", strong: 3, fast: 40, spent: {} },
+                     { day: "2026-08-21", strong: 5, fast: 12, spent: {} });
+  assertEq(m.strong, 5);
+  assertEq(m.fast, 40);
+});
+T("mergeAiQ: a newer day replaces an older one outright", () => {
+  const old = { day: "2026-08-20", strong: 20, fast: 500, spent: { strong: true } };
+  const now = { day: "2026-08-21", strong: 1, fast: 0, spent: {} };
+  assertEq(mergeAiQ(old, now).day, "2026-08-21");
+  assertEq(mergeAiQ(old, now).strong, 1);
+  assertEq(mergeAiQ(now, old).strong, 1, "and the same whichever way round");
+});
+T("mergeAiQ: a refusal seen on either device sticks", () => {
+  const m = mergeAiQ({ day: "2026-08-21", strong: 20, fast: 0, spent: { strong: true } },
+                     { day: "2026-08-21", strong: 2, fast: 0, spent: {} });
+  assertTrue(m.spent.strong, "if Google refused one device it will refuse the other");
+});
+T("mergeAiQ: commutative and idempotent, like every other merge here", () => {
+  const a = { day: "2026-08-21", strong: 3, fast: 40, spent: { fast: true } };
+  const b = { day: "2026-08-21", strong: 5, fast: 12, spent: {} };
+  assertEq(mergeAiQ(a, b), mergeAiQ(b, a), "argument order must not matter");
+  assertEq(mergeAiQ(a, a), a, "merging a store with itself must change nothing");
+});
+
+/* ---- Phase 4: making the storage ceiling visible (F7) ---- */
+T("fmtBytes: KB below a megabyte, MB above it", () => {
+  assertEq(fmtBytes(0), "0KB");
+  assertEq(fmtBytes(146000), "143KB");
+  assertEq(fmtBytes(3 * 1024 * 1024), "3.0MB");
+});
+T("storageReport: separates form banks from the rest of the library", () => {
+  const lib = {
+    "גדול": { tr: "gadol", forms: { ms: { he: "גדול", tr: "gadol" } },
+               formsMeta: { src: { ms: "dict" } } },
+    "שלום": { tr: "shalom" }
+  };
+  const keys = { "hvr_library": JSON.stringify(lib), "hvr_srs": "{}" };
+  const r = storageReport(keys, lib);
+  assertEq(r.words, 2);
+  assertEq(r.banked, 1, "only one word has a bank");
+  assertTrue(r.formsBytes > 0, "the bank must be counted");
+  assertTrue(r.formsBytes < r.libBytes, "banks are part of the library, not all of it");
+  assertTrue(r.totalBytes >= r.libBytes, "the library is part of the total");
+});
+T("storageReport: an empty library is zeroes, not a crash", () => {
+  const r = storageReport({}, {});
+  assertEq(r.words, 0);
+  assertEq(r.banked, 0);
+  assertEq(r.formsBytes, 0);
+  assertEq(r.libBytes, 0);
+});
+/* localStorage is charged in UTF-16 code units, so a Hebrew word costs the same as
+   an English one. Measuring in characters and halving the answer is the mistake this
+   pins down. */
+T("storageReport: counts two bytes a character, as the browser does", () => {
+  const keys = { "hvr_x": "abcd" };            // 5 chars of name + 4 of value = 9
+  assertEq(storageReport(keys, {}).totalBytes, 18);
+});
+T("storageReport: reports the share of the browser's allowance used", () => {
+  const keys = { "hvr_x": new Array(1001).join("x") };   // 1000 chars => 2000 bytes
+  const r = storageReport(keys, {});
+  assertTrue(r.pct > 0 && r.pct < 0.01, "2KB of 5MB is a fraction of a percent: " + r.pct);
+  assertTrue(!r.over, "nowhere near the guard");
+});
+T("storageReport: flags a library past the guard", () => {
+  const lib = {};
+  for (let i = 0; i < 1100; i++) {
+    const forms = {};
+    FORM_TAGS.verb.forEach(t => { forms[t] = { he: "אבגדהוזחט", tr: "abcdefghij" }; });
+    lib["word" + i] = { tr: "x", forms: forms };
+  }
+  const r = storageReport({ "hvr_library": JSON.stringify(lib) }, lib);
+  assertTrue(r.over, "past FORMS_SIZE_WARN_BYTES the report must say so");
+});
+T("storageSummary: states the words, the banks and the headroom in plain English", () => {
+  const lib = { "א": { tr: "a", forms: { ms: { he: "א", tr: "a" } } }, "ב": { tr: "b" } };
+  const s = storageSummary(storageReport({ "hvr_library": JSON.stringify(lib) }, lib));
+  assertTrue(/2 words/.test(s), s);
+  assertTrue(/1 with form banks/.test(s), s);
+  assertTrue(/%/.test(s), "must say how much of the allowance is gone: " + s);
 });
 
 if (location.search.indexOf("selftest") !== -1) {

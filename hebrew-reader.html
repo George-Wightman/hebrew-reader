@@ -4493,6 +4493,15 @@ const STOPLIST = new Set([
   "מה","מי","זה","יש","אין","הרבה","עוד","כבר","פה","כאן","שם"
 ]);
 
+/* The single authority on what the scheduler will record — and therefore on what a
+   session is allowed to ASK. These two had drifted apart: learnTargets walked the
+   whole library, while learnGrade quietly refused to write a schedule for any
+   STOPLIST word. Six of George's seeded words are on both lists (yesh, ein, lo, ken,
+   po, harbe), so they were served as cards forever and their due date could never
+   move at all — not merely for a day, as with the same-day guard, but permanently.
+   A word the grader will not record must not reach the queue. */
+function srsGradable(key, lib) { return !!(lib && lib[key]) && !STOPLIST.has(key); }
+
 /* =====================  SEED — George's Hebrew Table.xlsx  =====================
    ~90 entries imported once. Hebrew script reconstructed (his table had none) and
    transliteration normalised to the app's scheme. [heb, translit, english, category, opposite] */
@@ -11298,6 +11307,22 @@ function srsApply(srs, key, grade, side, todayOverride) {
       r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
     }
   }
+  /* ---- the same-day guard must not PIN a word to today -----------------------
+     `repeat` above exists to stop a word met twice in one session from compounding
+     its interval, and that part is right. But it also skipped the `due` write, and a
+     record can be sitting at due <= today when the repeat happens — a miss earlier in
+     the day puts it there deliberately, and so does setting a band by hand. From that
+     moment nothing could move it: every clean answer was a "repeat", so due stayed on
+     today, learnTargets re-served it, and the loop never closed. Measured on George's
+     own backup: seven clean answers in a row, still due today, still leading the queue.
+     George: "they keep coming up... just as repeat the single word back to me".
+
+     Stability is still left alone — the same evidence read twice is not new evidence —
+     so this only spends the interval the word has ALREADY earned. Misses are excluded
+     because a first lapse is meant to come back today; that is the repair, not the bug. */
+  if (grade !== 0 && (!r.due || r.due <= today)) {
+    r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab || 1))));
+  }
   r.last = today;
   return r;
 }
@@ -11383,6 +11408,14 @@ function srsBandRecord(band) {
 }
 function srsSetBand(srs, key, side, band) {
   const r = srs[key] || (srs[key] = { prod: srsBlank(), recv: srsBlank() });
+  side = side || "prod";
+  if (!r[side]) r[side] = srsBlank();
+  /* Already in that band: leave the real history alone. srsBandRecord writes a record
+     at the BOTTOM of the band, so clicking the dot that is already lit on a word
+     scheduled a year out rewrote it to stab 30 / due +14 — telling the app you know a
+     word cold pulled it straight back into rotation, which is the exact opposite of
+     what the click means. Same guard srsMarkKnown already applies for the same reason. */
+  if (srsStrength(r[side]) === band) return;
   r[side] = srsBandRecord(band);
 }
 /* Production drives the queue and the badge — it's what the app is for. */
@@ -11390,6 +11423,9 @@ function srsDueCount() {
   const lib = libAll(), srs = srsAll(), today = todayISO();
   let due = 0, fresh = 0;
   Object.keys(lib).forEach(k => {
+    /* Counted the same way they are queued, or the badge advertises a backlog that
+       no amount of practice can clear. */
+    if (!srsGradable(k, lib)) return;
     const r = srs[k] && srs[k].prod;
     if (!r || !r.n) fresh++;
     else if (r.due && r.due <= today) due++;
@@ -12577,6 +12613,8 @@ function learnTargets(limit) {
   const arch = archiveAll();
   const overdue = [], fresh = [], starred = [], rest = [];
   Object.keys(lib).forEach(k => {
+    /* Anything the grader will not record must not be asked — see srsGradable. */
+    if (!srsGradable(k, lib)) return;
     const r = srs[k] && srs[k].prod;
     if (!r || !r.n) fresh.push(k);
     else if (r.due && r.due <= today) overdue.push(k);
@@ -14502,7 +14540,7 @@ function learnGrade(grade) {
      the schedule would look like it was working while recording nothing. */
   const freeKey = (c.kind === "chunk");
   (c.words || []).forEach(k => {
-    if (!freeKey && (!lib[k] || STOPLIST.has(k))) return;
+    if (!freeKey && !srsGradable(k, lib)) return;
     srsApply(srs, k, grade, side);
     if (grade === 2) s.strengthened[k] = true; else s.back[k] = true;
   });
@@ -14550,6 +14588,7 @@ function learnCommit() {
   const s = learnSession; if (!s || !learnRevealed || !learnCardTokens) return;
   const c = s.cards[s.i];
   const side = KIND_SIDE[c.kind] || "prod";
+  const lib = libAll();
   const srs = srsAll();
   const str = struggleAll();
   const pending = pendingAll();
@@ -14560,7 +14599,7 @@ function learnCommit() {
     const grade = learnCapGrade(m === 0 ? 2 : m === 1 ? 0 : 1);   // mark 1 = missed, 2 = nearly
     if (grade !== 2) clean = false;
     if (t.key) {
-      if (STOPLIST.has(t.key)) return;
+      if (!srsGradable(t.key, lib)) return;
       srsApply(srs, t.key, grade, side);
       if (grade === 2) s.strengthened[t.key] = true; else s.back[t.key] = true;
     } else if (grade !== 2) {
@@ -16728,6 +16767,93 @@ T("srsApply: a forgiven miss does not force the word due today", () => {
   srsApply(srs, "א", 0, "prod", "2026-08-05");
   assertTrue(srsSide(srs, "א", "prod").due > "2026-08-05",
              "a stumble reschedules on merit, not to the front of the queue");
+});
+
+/* ---- the stuck-word loop -----------------------------------------------------
+   George: "it keeps pushing Katan and Kar, words that are already very strong, its
+   fixated on this... I know these words inside and out but they keep coming up."
+
+   Reproduced on his own backup: a word answered correctly seven sessions running
+   still carried due = today and led the queue every time. Three separate faults
+   converged on the same symptom, and each one gets its own tests below. */
+
+/* FAULT 1 — the same-day guard suppressed the DUE DATE as well as the stability.
+   `repeat` exists so a word met twice in one session (once as a card, again inside
+   a sentence) cannot compound its interval. But it also skipped the `due` write, so
+   a record sitting at due <= today could never be moved off today, however many
+   times he got it right. One miss puts a word in exactly that state. */
+T("srsApply: a clean answer clears a word missed earlier the same day", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  assertEq(s["מילה"].prod.due, DAY1, "a first lapse is meant to come back today");
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertTrue(s["מילה"].prod.due > DAY1,
+             "getting it right must lift it out of today's queue");
+});
+T("srsApply: no number of clean answers can leave a word stuck in today's queue", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  for (let i = 0; i < 5; i++) srsApply(s, "מילה", 2, "prod", DAY1);
+  assertTrue(s["מילה"].prod.due > DAY1,
+             "five right answers in a row and it was still due today");
+});
+T("srsApply: a Nearly also lifts a word out of today's queue", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  srsApply(s, "מילה", 1, "prod", DAY1);
+  assertTrue(s["מילה"].prod.due > DAY1, "half-right is still not a reason to re-ask today");
+});
+T("srsApply: clearing a stuck word does NOT compound its stability", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  const after = s["מילה"].prod.stab;
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  assertEq(s["מילה"].prod.stab, after, "the same evidence read twice must not grow it");
+});
+T("srsApply: a miss still comes back the same day, so the repair is on the spot", () => {
+  const s = { "מילה": { prod: seasoned({ stab: 30 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 0, "prod", DAY1);
+  assertEq(s["מילה"].prod.due, DAY1, "a first lapse must still be re-asked today");
+});
+
+/* FAULT 2 — the queue and the grader disagreed about what is drillable.
+   learnTargets walks the whole library; learnGrade refuses to write a schedule for
+   any STOPLIST word. Six of his seeded words are on both lists, so they were served
+   forever and could never be rescheduled at all — not merely for a day. */
+T("srsGradable: a STOPLIST word is not gradable, even when filed in the library", () => {
+  assertTrue(!srsGradable("יש", { "יש": { tr: "yesh" } }),
+             "the grader refuses it, so the queue must not serve it");
+});
+T("srsGradable: an ordinary library word is gradable", () => {
+  assertTrue(srsGradable("קטן", { "קטן": { tr: "katan" } }));
+});
+T("srsGradable: a word that is not in the library is not gradable", () => {
+  assertTrue(!srsGradable("קטן", {}));
+});
+
+/* FAULT 3 — saying "I know this" pulled the word BACK into rotation.
+   srsBandRecord writes a fresh record at the bottom of the band, so clicking the
+   already-lit dot on a word scheduled into 2027 rewrote it to stab 30, due +14. */
+T("srsSetBand: setting the band a word is already in leaves its schedule alone", () => {
+  const srs = { "מילה": { prod: { due: "2027-08-06", last: DAY1, stab: 365, diff: 1,
+                                  n: 10, miss: 0, lapses: 0 }, recv: srsBlank() } };
+  assertEq(srsStrengthOf(srs, "מילה", "prod"), "strong", "precondition");
+  srsSetBand(srs, "מילה", "prod", "strong");
+  assertEq(srs["מילה"].prod.due, "2027-08-06",
+           "agreeing with the app must not shorten the schedule");
+  assertEq(srs["מילה"].prod.stab, 365);
+});
+T("srsSetBand: a genuine change still applies", () => {
+  const srs = { "מילה": { prod: { due: "2027-08-06", last: DAY1, stab: 365, diff: 1,
+                                  n: 10, miss: 0, lapses: 0 }, recv: srsBlank() } };
+  srsSetBand(srs, "מילה", "prod", "weak");
+  assertEq(srs["מילה"].prod.stab, 3, "demoting a word must still take effect");
+  assertEq(srsStrengthOf(srs, "מילה", "prod"), "weak");
+});
+T("srsSetBand: the other side is untouched", () => {
+  const srs = { "מילה": { prod: srsBlank(), recv: srsBlank() } };
+  srsSetBand(srs, "מילה", "prod", "strong");
+  assertEq(srsStrengthOf(srs, "מילה", "recv"), "new");
 });
 
 /* ---- Morning-use fixes: sentence rotation ---- */

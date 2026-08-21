@@ -8344,17 +8344,74 @@ function wireClusterDrag(el, head, name) {
     };
   }
 
+  /* WHEN IS A TOUCH A GESTURE, AND WHEN IS IT A TAP?
+
+     This used to be answered at pointerdown — anything landing on a cluster was
+     surrendered entirely, on the theory that clusters and rows "handle themselves".
+     On a phone that means you can only pinch from the white space BETWEEN boxes, and
+     zoomed in there is barely any: George, "I have to have both fingers in the white
+     space between boxes, which can be hard when zoomed in and the boxes are
+     overlapping".
+
+     The question cannot be answered at pointerdown, because a finger landing on a
+     word is the start of both gestures. So it is answered at pointerUP instead: track
+     from anywhere, and only claim the gesture once the finger has actually MOVED (or a
+     second one has landed, which is never a tap). Under the threshold nothing is
+     claimed at all and the tap reaches the word exactly as before.
+
+     Panning is the common act and tapping the rare one, so the threshold is small.
+     Nothing is captured until we have committed, because capturing a pointer retargets
+     the click that follows — capture on touchdown would eat every word tap. */
+  const MOVE_SLOP = 8;             // px of finger wobble tolerated before it's a drag
+  let moved = false;               // has this gesture committed to pan/zoom?
+  let downX = 0, downY = 0;
+  /* Set when a gesture commits, read once by the click listener at the bottom of this
+     block. A pan that began on a word must not also play that word when it lifts. */
+  let swallowNextClick = false;
+
   wrap.addEventListener("pointerdown", (ev) => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
-    if (ev.target.closest(".mapcluster")) return;   // cluster drags/row clicks handle themselves
+    /* A mouse keeps the old rule: rows carry HTML5 drag-to-recategorise, and starting
+       a pan under that would fight it. A mouse also has a wheel and can hit a 4px gap,
+       so it never needed this. */
+    if (ev.pointerType === "mouse" && ev.target.closest(".mapcluster")) return;
     live.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
+    if (live.size === 1) {
+      /* Slop exists to tell a tap from a pan, and a mouse press on empty space is
+         never that question — a mouse that reaches this handler has already been
+         filtered past clusters above, so it can only mean "pan". Committing it
+         immediately keeps the mouse behaving exactly as it did before any of this,
+         instead of quietly losing its first move event. */
+      moved = (ev.pointerType === "mouse");
+      downX = ev.clientX; downY = ev.clientY;
+      /* Clear any suppression left over from the previous gesture. A touch pan often
+         produces no click at all, so a flag that waits to be consumed by one goes
+         stale and eats the NEXT genuine tap — the word you then press does nothing,
+         once, unpredictably. It belongs to the gesture that set it and to nothing
+         after it. */
+      swallowNextClick = false;
+    }
+    else { moved = true; }         // a second finger is never a tap
     reanchor();
-    wrap.classList.add("panning");
+    if (moved) wrap.classList.add("panning");
+    /* A mouse pan committed on press needs its capture now; touch waits until it has
+       actually moved, because capturing retargets the click that would follow. */
+    if (moved && ev.pointerType === "mouse") { try { wrap.setPointerCapture(ev.pointerId); } catch (e) {} }
   });
 
   wrap.addEventListener("pointermove", (ev) => {
     if (!live.has(ev.pointerId) || !gesture) return;
+    if (!moved) {
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) < MOVE_SLOP) return;
+      /* Committing now. Re-anchor first so the map starts from where it is rather
+         than jumping by the slop distance already travelled. */
+      moved = true;
+      wrap.classList.add("panning");
+      live.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      reanchor();
+      try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
+      return;
+    }
     ev.preventDefault();
     live.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     const pts = Array.from(live.values());
@@ -8387,16 +8444,30 @@ function wireClusterDrag(el, head, name) {
     if (live.size) { reanchor(); return; }          // fingers still down: carry on
     gesture = null;
     wrap.classList.remove("panning", "zooming");
-    mapViewSave();
+    if (moved) { swallowNextClick = true; mapViewSave(); }
+    moved = false;
   };
   wrap.addEventListener("pointerup", endPointer);
   wrap.addEventListener("pointercancel", endPointer);
+
+  /* Capture phase, so it runs before the row's own handler rather than after it. */
+  wrap.addEventListener("click", (ev) => {
+    if (!swallowNextClick) return;
+    swallowNextClick = false;
+    ev.stopPropagation();
+    ev.preventDefault();
+  }, true);
 
   /* Double-tap to zoom in a step, and again past the top to come back out — the
      one-handed equivalent of a pinch, which is how a phone is actually held. */
   let lastTap = 0, lastTapX = 0, lastTapY = 0;
   wrap.addEventListener("pointerup", (ev) => {
     if (ev.pointerType === "mouse") return;
+    /* Empty space only. Double-tapping a word should play it twice, which is a
+       reasonable thing to want; hijacking that to zoom would make the rows feel
+       booby-trapped. Pinch still works over anything. */
+    if (ev.target.closest(".mapcluster")) { lastTap = 0; return; }
+    if (moved) return;                       // that was a pan, not a tap
     const now = Date.now();
     const near = Math.abs(ev.clientX - lastTapX) < 30 && Math.abs(ev.clientY - lastTapY) < 30;
     if (now - lastTap < 300 && near) {

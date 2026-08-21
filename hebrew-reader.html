@@ -8272,16 +8272,37 @@ function buildArchGhostRow(key, a) {
    math divides by the scale so the cluster tracks the cursor exactly. Word rows
    keep their existing HTML5 drag (drop targets are DOM elements, which the
    transform doesn't confuse). */
+/* Set by wireMapViewport below. Lets a cancelled cluster drag hand its finger over to
+   the map gesture, so a pinch that began on a box is a real two-finger pinch rather
+   than degenerating into a one-finger pan. */
+let mapAdoptPointer = null;
+
 function wireClusterDrag(el, head, name) {
   head.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
     ev.stopPropagation();          // don't start a pan underneath
     ev.preventDefault();
+    /* WHICH finger. The move/up handlers listen on window and used to respond to ANY
+       pointer, so during a pinch the SECOND finger drove this drag and the box flew
+       across the map towards it — George, zoomed out: "that box spazzes out and moves
+       to near the opposite finger". A window listener in a multi-touch world has to
+       say which pointer it is for. */
+    const id = ev.pointerId;
     const v = mapViewLoad();
     const startX = ev.clientX, startY = ev.clientY;
     const origL = parseFloat(el.style.left), origT = parseFloat(el.style.top);
-    let moved = false;
+    let moved = false, lastX = startX, lastY = startY;
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("pointerdown", secondFinger, true);
+      el.classList.remove("dragging");
+    };
     const move = (e) => {
+      if (e.pointerId !== id) return;
+      lastX = e.clientX; lastY = e.clientY;
       const dx = (e.clientX - startX) / v.s, dy = (e.clientY - startY) / v.s;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
       moved = true;
@@ -8289,17 +8310,32 @@ function wireClusterDrag(el, head, name) {
       el.style.left = Math.max(0, Math.min(MAP_W - 100, origL + dx)) + "px";
       el.style.top = Math.max(0, Math.min(MAP_H - 60, origT + dy)) + "px";
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      el.classList.remove("dragging");
+    const up = (e) => {
+      if (e.pointerId !== id) return;
+      cleanup();
       if (!moved) return;
       const pos = mapPosAll();
       pos[name] = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
       lsSet(MAPPOS_KEY, JSON.stringify(pos));
     };
+    /* A second finger means the intent was a pinch, not a move. Put the box back
+       where it was — it was never committed, and a box that shifts because you
+       happened to start a zoom on top of it is worse than one that stays put — then
+       hand this finger to the map so the pinch has both.
+       Capture phase, so this runs before the viewport's own pointerdown and the
+       adopted finger is already there when it re-anchors with both. */
+    const secondFinger = (e) => {
+      if (e.pointerId === id) return;
+      el.style.left = origL + "px";
+      el.style.top = origT + "px";
+      cleanup();
+      if (mapAdoptPointer) mapAdoptPointer(id, lastX, lastY);
+    };
+
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("pointerdown", secondFinger, true);
   });
 }
 
@@ -8365,6 +8401,15 @@ function wireClusterDrag(el, head, name) {
   const MOVE_SLOP = 8;             // px of finger wobble tolerated before it's a drag
   let moved = false;               // has this gesture committed to pan/zoom?
   let downX = 0, downY = 0;
+
+  /* A cluster drag that has just cancelled itself hands its finger here, so the pinch
+     it was interrupting has both. Deliberately no reanchor: the pointerdown that
+     triggered this is still propagating and will add the second finger and reanchor
+     with the pair a moment later. */
+  mapAdoptPointer = (id, x, y) => {
+    live.set(id, { x: x, y: y });
+    moved = true;                  // adopted mid-gesture is never a tap
+  };
   /* Set when a gesture commits, read once by the click listener at the bottom of this
      block. A pan that began on a word must not also play that word when it lifts. */
   let swallowNextClick = false;

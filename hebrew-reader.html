@@ -1044,6 +1044,21 @@
   .lmicinline:disabled { opacity: .55; cursor: default; }
   .lmicinline.listening { background: #b3403a; border-color: #b3403a; color: #fff;
     animation: lmicpulse 1.1s infinite; }
+
+  /* What it is hearing, live, WHILE it listens. Not a nicety: from the outside, a
+     recogniser hearing nothing and one hearing everything but never deciding you
+     stopped look exactly the same — an empty card and a pulsing button. This is the
+     only thing that tells the two apart, and it is what makes the manual stop
+     usable, because you can see when it has got what you said. */
+  .lmiclivelab { font-size: .72rem; color: var(--muted); margin-top: 12px; }
+  .lmiclive { margin-top: 4px; font-size: 1.05rem; color: var(--ink); background: #fff;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; min-height: 1.4em; }
+  .lmiclive.empty { color: var(--muted); font-style: italic; font-size: .9rem; direction: ltr; }
+
+  /* A touch device has no keyboard, so the little per-key badges on the grade
+     buttons name controls the device cannot offer. The buttons already read
+     Missed / Nearly / Got it on their own. */
+  @media (pointer: coarse) { .lgrade i { display: none; } }
   .lheard { margin-top: 12px; font-size: 1.15rem; direction: rtl; color: var(--ink);
     background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
     min-height: 1.4em; }
@@ -11011,6 +11026,14 @@ if (window.speechSynthesis) {
 function speechCtor() { return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
 function speechSupported() { return !!speechCtor() && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); }
 
+/* Is the primary input a finger? Used only to decide whether to name keyboard
+   shortcuts, and `pointer: coarse` is the honest test for that — a narrow desktop
+   window still has a keyboard, and a big tablet still does not, so neither screen
+   width nor a user-agent sniff answers the actual question. */
+function isTouchPrimary() {
+  return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+}
+
 /* Chrome will not PERSIST a mic grant for a file:// origin, so every start() would
    re-prompt — George hit that immediately on the test page. Holding one stream open
    for the whole session keeps the permission actively granted, so the starts in
@@ -11113,6 +11136,13 @@ function micListen(opts) {
 }
 function micStop() { if (micRecInstance) { try { micRecInstance.stop(); } catch (e) {} } }
 function micRecTeardown() {
+  /* Resolve whoever is waiting BEFORE abandoning the instance. This used to just null
+     micRecBusy, which left the pending micListen promise unresolved forever — so a
+     caller awaiting it never reached its own cleanup, and any "am I listening?" state
+     it held stayed stuck on. Leaving Learn mid-listen (setView calls micRelease) is
+     the everyday way to hit that. Cleared before abort() so the instance's own onend
+     finds nothing left to resolve and cannot double-settle it. */
+  if (micRecBusy) { const b = micRecBusy; micRecBusy = null; b.resolve({ ok: false, error: "aborted" }); }
   if (micRecInstance) { try { micRecInstance.abort(); } catch (e) {} }
   micRecInstance = null; micRecBusy = null;
 }
@@ -13588,9 +13618,14 @@ function learnRenderStart() {
   learnRenderShapes();
   learnRenderStats();
 
-  hint.textContent = hasHeVoice()
-    ? "Space reveals · 1 / 2 / 3 grades · R replays the audio"
-    : "Space reveals · 1 / 2 / 3 grades · no Hebrew voice yet, so you'll read the pronunciation";
+  /* Naming keyboard shortcuts on a phone is worse than saying nothing: it advertises
+     controls the device cannot offer. The no-voice warning is a real fact about the
+     session rather than a shortcut, so it survives on both. */
+  hint.textContent = isTouchPrimary()
+    ? (hasHeVoice() ? "" : "No Hebrew voice yet, so you'll read the pronunciation")
+    : hasHeVoice()
+      ? "Space reveals · 1 / 2 / 3 grades · R replays the audio"
+      : "Space reveals · 1 / 2 / 3 grades · no Hebrew voice yet, so you'll read the pronunciation";
 }
 
 function learnRenderShapes() {
@@ -13815,6 +13850,11 @@ function learnRenderCard() {
   learnCardTokens = null; learnMarks = null;   // stale marks must never carry over
   learnHints = 0; learnNote = "";              // and neither must a previous card's help
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
+  /* A listen must never span two cards. Stopping it is not enough on its own — the
+     in-flight attempt also checks the card hasn't moved before it scores anything,
+     because its result arrives after this point. */
+  if (learnMicBusy) micStop();
+  learnMicBusy = false;
   if (learnAutoAdvanceTimer) { clearTimeout(learnAutoAdvanceTimer); learnAutoAdvanceTimer = null; }
   document.getElementById("lProgBar").style.width = Math.round((s.i / s.cards.length) * 100) + "%";
   statsCardBegin();
@@ -13939,8 +13979,9 @@ function learnRenderCard() {
   }
   card.append(act);
 
-  document.getElementById("lRunHint").textContent =
-    "Say it out loud first · Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : "");
+  document.getElementById("lRunHint").textContent = isTouchPrimary()
+    ? "Say it out loud first"
+    : "Say it out loud first · Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : "");
   learnSpeakPrompt();
 }
 
@@ -13963,35 +14004,95 @@ let learnSuggested = null;       // grade the mic suggests on a whole-card grade
    this is just hygiene so an old timer isn't sitting there pointlessly. */
 let learnAutoAdvanceTimer = null;
 
+/* PRESS ONCE TO START, PRESS AGAIN TO STOP — and this is a fix, not a convenience.
+   Chrome ends a listen when its endpointer decides you have stopped talking, and that
+   decision is made from the audio: in a room with music playing it may never come at
+   all. George, on a noisy morning: "its not cutting off, I wonder if its picking it up
+   its just not stopping... I can just manually end it", which is exactly how Gboard's
+   mic behaves. The button used to disable itself for the duration, so there was no way
+   to end a listen that had stopped listening for an ending.
+
+   Auto-stop is deliberately left ON (continuous stays false), so the quiet case is
+   unchanged and still ends by itself; this only adds a way out when it doesn't. */
+let learnMicBusy = false;      // a listen is starting or running
+let learnMicStopped = false;   // ...and it was ended by hand, not by the endpointer
+
+/* One wording table for both mics. The tail differs because the two have different
+   escape routes — a production card can be hand-graded, a meaning box can be typed. */
+function learnMicErrorText(res, stopped, fallback) {
+  return res.error === "no-speech"
+      ? (stopped
+          ? "Stopped, but nothing was recognised — check the mic is hearing you, or " + fallback + "."
+          : "Didn't catch anything — try again, or " + fallback + ".")
+    : res.error === "not-allowed" ? "Microphone blocked — " + fallback + "."
+    : res.error === "network" ? "No connection to the speech service — " + fallback + "."
+    : res.error === "unsupported" ? "This browser can't listen — " + fallback + "."
+    : res.error === "aborted" ? ""      // you left the card; not a failure worth reporting
+    : "Couldn't listen (" + res.error + ") — " + fallback + ".";
+}
+
+function learnMicLiveBox(card) {
+  let box = card.querySelector(".lmiclive");
+  if (box) return box;
+  const lab = document.createElement("div");
+  lab.className = "lmiclivelab";
+  lab.textContent = "Listening — press Stop when you've finished";
+  box = document.createElement("div");
+  box.className = "lmiclive empty"; box.dir = "rtl";
+  box.textContent = "listening…";
+  const act = card.querySelector(".lactions");
+  if (act) { card.insertBefore(lab, act); card.insertBefore(box, act); }
+  else card.append(lab, box);
+  return box;
+}
+function learnMicLiveSet(box, txt) {
+  box.textContent = txt || "listening…";
+  box.classList.toggle("empty", !txt);
+}
+function learnMicLiveClear(card) {
+  const b = card.querySelector(".lmiclive"); if (b) b.remove();
+  const l = card.querySelector(".lmiclivelab"); if (l) l.remove();
+}
+
 async function learnSpeakAttempt(btn, c) {
+  if (learnMicBusy) { learnMicStopped = true; micStop(); return; }
   const card = document.getElementById("lCard");
   const old = card.querySelector(".lmicerr"); if (old) old.remove();
-  btn.disabled = true; btn.classList.add("listening"); btn.textContent = "Listening…";
+  learnMicBusy = true; learnMicStopped = false;
+  btn.classList.add("listening"); btn.textContent = "⏹ Stop";
+  /* Which card asked. The result lands after an await, by which time an auto-advance
+     (conversation) or any other move may have replaced the card — and scoring the old
+     card's speech against the new one on screen would be silently, confusingly wrong. */
+  const askedAt = learnSession ? learnSession.i : -1;
 
   /* No await between the click and start() unless one is genuinely needed. Starting a
      recogniser is gesture-gated, and Android enforces that harder than desktop — an
      awaited getUserMedia in front of it spends the activation before the recogniser
      ever asks for it. On a served origin there is nothing to acquire, so there is
      nothing to wait for. */
-  if (micNeedsStreamHold()) {
-    const got = await micAcquire();
-    if (!got) {
-      btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Say it";
-      learnMicError(card, "Microphone blocked — grade it by hand instead.");
-      return;
+  let res;
+  try {
+    if (micNeedsStreamHold()) {
+      const got = await micAcquire();
+      if (!got) { learnMicError(card, "Microphone blocked — grade it by hand."); return; }
     }
+    const live = learnMicLiveBox(card);
+    res = await micListen({ onInterim: t => learnMicLiveSet(live, t) });
+  } finally {
+    /* Every exit goes through here, including the blocked-mic return above and any
+       throw — the button must never be left reading Stop with nothing listening. */
+    learnMicBusy = false;
+    btn.classList.remove("listening"); btn.textContent = "🎤 Say it";
+    learnMicLiveClear(card);
   }
-  const res = await micListen({});
-  btn.classList.remove("listening"); btn.textContent = "🎤 Say it"; btn.disabled = false;
+  if (!res) return;   // never got as far as listening
+  if (!learnSession || learnSession.i !== askedAt) return;   // moved on; this result is stale
 
   if (!res.ok) {
     /* Silence is NOT a wrong answer — revealing and marking everything missed
        because the mic heard nothing would punish a hesitation as a failure. */
-    learnMicError(card, res.error === "no-speech" ? "Didn't catch anything — try again."
-      : res.error === "not-allowed" ? "Microphone blocked — grade it by hand instead."
-      : res.error === "network" ? "No connection to the speech service — grade it by hand."
-      : res.error === "unsupported" ? "This browser can't listen — grade it by hand."
-      : "Couldn't listen (" + res.error + ") — grade it by hand.");
+    const msg = learnMicErrorText(res, learnMicStopped, "grade it by hand");
+    if (msg) learnMicError(card, msg);
     return;
   }
   learnScoreSpoken(c, res.text);
@@ -14017,36 +14118,43 @@ function learnMicError(card, msg) {
    dead silence that made the delay noticeable in the first place: words appear as
    they're heard instead of the box sitting empty until onend fires. */
 async function learnHearSpeakAttempt(btn, ta) {
+  if (learnMicBusy) { learnMicStopped = true; micStop(); return; }
   const card = document.getElementById("lCard");
   const old = card.querySelector(".lmicerr"); if (old) old.remove();
   const base = ta.value.trim();
   const prefix = base ? base + " " : "";
-  btn.disabled = true; btn.classList.add("listening"); btn.textContent = "Listening…";
+  learnMicBusy = true; learnMicStopped = false;
+  btn.classList.add("listening"); btn.textContent = "⏹ Stop";
+  const askedAt = learnSession ? learnSession.i : -1;   // see learnSpeakAttempt
 
-  if (micNeedsStreamHold()) {
-    const got = await micAcquire();
-    if (!got) {
-      btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
-      learnMicError(card, "Microphone blocked — type it instead.");
-      return;
+  /* No live box here — the textarea IS the live box, filling as the words arrive,
+     which is the same thing the Hebrew mic needs a separate element for. */
+  let res;
+  try {
+    if (micNeedsStreamHold()) {
+      const got = await micAcquire();
+      if (!got) { learnMicError(card, "Microphone blocked — type it instead."); return; }
     }
+    res = await micListen({
+      lang: "en-GB",
+      onInterim: t => { ta.value = prefix + t; learnNote = ta.value; }
+    });
+  } finally {
+    learnMicBusy = false;
+    btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
   }
-  const res = await micListen({
-    lang: "en-GB",
-    onInterim: t => { ta.value = prefix + t; learnNote = ta.value; }
-  });
-  btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
+  if (!res) { ta.value = base; learnNote = base; return; }
+  /* Stale: the box on screen belongs to a different card now, and learnNote is the
+     NEW card's note — writing this card's speech into it would corrupt it. */
+  if (!learnSession || learnSession.i !== askedAt) return;
 
   if (!res.ok) {
     /* Roll back to whatever was there before this attempt — leaving a half-heard
        interim guess in the box would look like a real (wrong) answer rather than a
        failed listen. */
     ta.value = base; learnNote = ta.value;
-    learnMicError(card, res.error === "no-speech" ? "Didn't catch anything — try again or type it."
-      : res.error === "not-allowed" ? "Microphone blocked — type it instead."
-      : res.error === "network" ? "No connection to the speech service — type it instead."
-      : res.error === "unsupported" ? "This browser can't listen — type it instead."
-      : "Couldn't listen (" + res.error + ") — type it instead.");
+    const msg = learnMicErrorText(res, learnMicStopped, "type it instead");
+    if (msg) learnMicError(card, msg);
     return;
   }
   ta.value = prefix + res.text;
@@ -14536,12 +14644,16 @@ function learnReveal() {
      hiding it. The replay buttons above still speak it on demand, and repair still
      speaks when the other side re-explains — both are things someone ELSE says. */
   if (c.kind !== "conversation") playHe(answerKey, he);
-  document.getElementById("lRunHint").textContent =
-    (learnCardTokens ? "Space to continue"
-      : c.kind === "conversation" && learnSuggested !== null ? "Continuing…"
-      : learnSuggested !== null ? "Space accepts what it heard · 1 Missed · 2 Nearly · 3 Got it"
-      : "1 Missed · 2 Nearly · 3 Got it") +
-    (hasHeVoice() ? " · R replays · Shift+R slower" : "");
+  /* On touch every branch of this except "Continuing…" is naming a key. The Continue
+     button and the Missed / Nearly / Got it buttons are already on screen saying the
+     same thing, so the line is pure noise there. */
+  document.getElementById("lRunHint").textContent = isTouchPrimary()
+    ? (c.kind === "conversation" && learnSuggested !== null ? "Continuing…" : "")
+    : (learnCardTokens ? "Space to continue"
+        : c.kind === "conversation" && learnSuggested !== null ? "Continuing…"
+        : learnSuggested !== null ? "Space accepts what it heard · 1 Missed · 2 Nearly · 3 Got it"
+        : "1 Missed · 2 Nearly · 3 Got it") +
+      (hasHeVoice() ? " · R replays · Shift+R slower" : "");
 }
 
 /* ---- the tapped word --------------------------------------------------------
@@ -16617,6 +16729,27 @@ T("noteUses: survives empty and missing input", () => {
   assertEq(noteUses("", NLIB), []);
   assertEq(noteUses(null, NLIB), []);
 });
+T("learnMicErrorText: a hand-stopped silent listen reads differently from a timed-out one", () => {
+  /* The whole point of the manual stop is diagnosing a mic that is not reaching the
+     speech service, so these two must not collapse into one message. */
+  const stopped = learnMicErrorText({ error: "no-speech" }, true, "grade it by hand");
+  const timedOut = learnMicErrorText({ error: "no-speech" }, false, "grade it by hand");
+  assertTrue(stopped !== timedOut, "stopped and auto-ended silence must read differently");
+  assertTrue(/Stopped/.test(stopped), "hand-stopped message should say so: " + stopped);
+});
+T("learnMicErrorText: leaving the card mid-listen is silent, not an error", () => {
+  /* micRecTeardown resolves pending listens with "aborted" so they cannot hang; that
+     is a navigation, and reporting it as a mic failure would be a lie. */
+  assertEq(learnMicErrorText({ error: "aborted" }, false, "type it instead"), "");
+});
+T("learnMicErrorText: the fallback names the escape route the card actually has", () => {
+  assertTrue(/type it instead/.test(learnMicErrorText({ error: "not-allowed" }, false, "type it instead")));
+  assertTrue(/grade it by hand/.test(learnMicErrorText({ error: "network" }, false, "grade it by hand")));
+});
+T("isTouchPrimary returns a boolean, never a matchMedia object", () => {
+  assertTrue(typeof isTouchPrimary() === "boolean");
+});
+
 T("isHearKind: listen and note are the same exercise from different sources", () => {
   assertTrue(isHearKind("listen"));
   assertTrue(isHearKind("note"));

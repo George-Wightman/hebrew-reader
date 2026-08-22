@@ -1031,6 +1031,19 @@
   .lmic.listening { background: #b3403a; border-color: #b3403a; animation: lmicpulse 1.1s infinite; }
   @keyframes lmicpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(179,64,58,.45); }
                          50% { box-shadow: 0 0 0 8px rgba(179,64,58,0); } }
+
+  /* The hear-box mic. Deliberately smaller and quieter than .lmic — that one is the
+     button that should be pressed on a production card; this is just an alternate
+     way to fill a text box, "Show me" is still the actual next step. */
+  .lnoteslabelrow { display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-top: 14px; }
+  .lnoteslabelrow .lnoteslabel { margin-top: 0; }
+  .lmicinline { border: 1px solid var(--accent); background: #fff; color: var(--accent);
+    border-radius: 7px; cursor: pointer; padding: 4px 10px; font-size: .78rem;
+    font-weight: 600; font-family: inherit; flex: 0 0 auto; white-space: nowrap; }
+  .lmicinline:disabled { opacity: .55; cursor: default; }
+  .lmicinline.listening { background: #b3403a; border-color: #b3403a; color: #fff;
+    animation: lmicpulse 1.1s infinite; }
   .lheard { margin-top: 12px; font-size: 1.15rem; direction: rtl; color: var(--ink);
     background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
     min-height: 1.4em; }
@@ -11088,6 +11101,11 @@ function micListen(opts) {
   const r = micRecGet();
   if (!r) return Promise.resolve({ ok: false, error: "unsupported" });
   if (micRecBusy) return Promise.resolve({ ok: false, error: "already-listening" });
+  /* .lang is read when start() is called, not when the instance was constructed, so
+     the one persistent recogniser (see micRecGet's comment on why it's reused rather
+     than rebuilt per card) can still switch between Hebrew production and the English
+     "what did it mean" box from one call to the next. */
+  r.lang = (opts && opts.lang) || "he-IL";
   return new Promise(resolve => {
     micRecBusy = { resolve: resolve, opts: opts };
     try { r.start(); } catch (e) { micRecBusy = null; resolve({ ok: false, error: "start-failed" }); }
@@ -13873,7 +13891,22 @@ function learnRenderCard() {
        and grabbing the keyboard would turn a speaking exercise into a typing one
        (and swallow the Space/R shortcuts the page is built around). */
     ta.oninput = () => { learnNote = ta.value; };
-    card.append(lab, ta);
+    /* Hear kinds answer in English, so this is the one box in the app where an
+       English mic makes sense — typing the gist by hand on a phone is slow enough
+       that George asked for a faster path. Small and inline, next to the label,
+       because unlike the production mic this isn't the button that SHOULD be
+       pressed — "Show me" still is. Speaking just fills the box faster than typing. */
+    if (isHearKind(c.kind) && speechSupported()) {
+      const labRow = document.createElement("div"); labRow.className = "lnoteslabelrow";
+      labRow.append(lab);
+      const emic = document.createElement("button");
+      emic.className = "lmicinline"; emic.type = "button"; emic.textContent = "🎤 Speak";
+      emic.onclick = () => learnHearSpeakAttempt(emic, ta);
+      labRow.append(emic);
+      card.append(labRow, ta);
+    } else {
+      card.append(lab, ta);
+    }
     }
     /* askEn used to render here unconditionally — the whole card handed you the
        English answer before you'd tried anything, which is the opposite of how
@@ -13970,6 +14003,54 @@ function learnMicError(card, msg) {
   const act = card.querySelector(".lactions");
   if (act) card.insertBefore(el, act); else card.append(el);
   syncPadOffset();
+}
+
+/* English mic for the hear-kind box ("what do you think it means?"). Separate from
+   learnSpeakAttempt because that one grades Hebrew production against a target and
+   reveals the card on success — this one is just a faster way to fill a text box,
+   nothing is graded until "Show me" is pressed same as if he'd typed it.
+
+   Interim results are wired straight into the textarea as they arrive, live, rather
+   than only on completion. This doesn't change how long the recogniser actually takes
+   to finalise (that's Android's speech-service endpointer on the other end of
+   SpeechRecognition, not something this API exposes a knob for) — but it removes the
+   dead silence that made the delay noticeable in the first place: words appear as
+   they're heard instead of the box sitting empty until onend fires. */
+async function learnHearSpeakAttempt(btn, ta) {
+  const card = document.getElementById("lCard");
+  const old = card.querySelector(".lmicerr"); if (old) old.remove();
+  const base = ta.value.trim();
+  const prefix = base ? base + " " : "";
+  btn.disabled = true; btn.classList.add("listening"); btn.textContent = "Listening…";
+
+  if (micNeedsStreamHold()) {
+    const got = await micAcquire();
+    if (!got) {
+      btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
+      learnMicError(card, "Microphone blocked — type it instead.");
+      return;
+    }
+  }
+  const res = await micListen({
+    lang: "en-GB",
+    onInterim: t => { ta.value = prefix + t; learnNote = ta.value; }
+  });
+  btn.disabled = false; btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
+
+  if (!res.ok) {
+    /* Roll back to whatever was there before this attempt — leaving a half-heard
+       interim guess in the box would look like a real (wrong) answer rather than a
+       failed listen. */
+    ta.value = base; learnNote = ta.value;
+    learnMicError(card, res.error === "no-speech" ? "Didn't catch anything — try again or type it."
+      : res.error === "not-allowed" ? "Microphone blocked — type it instead."
+      : res.error === "network" ? "No connection to the speech service — type it instead."
+      : res.error === "unsupported" ? "This browser can't listen — type it instead."
+      : "Couldn't listen (" + res.error + ") — type it instead.");
+    return;
+  }
+  ta.value = prefix + res.text;
+  learnNote = ta.value;
 }
 
 /* A conversation turn has real alternatives, not one script — so instead of aligning

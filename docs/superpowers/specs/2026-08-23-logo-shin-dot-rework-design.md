@@ -17,19 +17,27 @@ On a phone home screen this reads as a stray or glitched line rather than a deli
 
 ## Design
 
-Remove the `<line>` entirely. Add a small solid circle in the app's existing gold accent color (`--gold: #b3803a` in `hebrew-reader.html`), positioned at the upper-right stroke of the ש — the position of the real Hebrew *shin-dot* diacritic (the mark that distinguishes ש "shin" from שׂ "sin" in pointed text).
+Remove the `<line>` entirely. Add a small solid circle in the app's existing gold accent color (`--gold: #b3803a` in `hebrew-reader.html`), sitting **on the baseline, to the right of the ש** — reading as a full stop rather than a diacritic. In RTL, the position to the right of the word is the position *before* it, so the mark reads as ".shalom": one sentence ended, the next about to start.
 
 Rationale:
-- It's a real diacritic position, not an arbitrary decoration — it reads as authentic to anyone who's seen pointed Hebrew.
+- A full stop is a mark with an obvious job. The earlier line failed because it had no job the eye could name — it just looked broken.
 - Gold is already reserved exclusively for achievement/progress elsewhere in the app (see the `:root` comment in `hebrew-reader.html`: "gold reserved exclusively for achievement... keeping gold for one job is what stops the page turning into decoration"). Reusing it on the icon keeps that rule intact rather than introducing a new color for a new purpose.
 - It can't be confused with the nav's teal active-tab underline (`.navbtn.active { box-shadow: inset 0 -2px 0 var(--accent) }`), since it differs in color, shape, and location — that visual echo was part of why the old line read as unintentional.
 
-Exact dot size/position gets tuned visually against the rendered glyph (David/Times New Roman serif at the icon's font-size) rather than calculated up front — the implementation step should render the SVG and iterate until the dot sits convincingly on the stroke.
+Geometry, measured against the rendered glyph (David bold at `font-size: 236` in the 512 viewBox): ink spans x 184–320, y 179–309, so the baseline is y≈309. The dot is `r="19"` at `cx="356" cy="293"`, putting its base exactly on that baseline with a ~19-unit gap after the glyph's right edge. Both stay well inside the central 80% maskable safe zone.
 
-## Known follow-up work
+## Constraints learned during implementation
 
-`icons/icon-192.png` is a rasterized export of `icon.svg` and needs to be regenerated to match. No SVG→PNG CLI tool (ImageMagick, Inkscape, cairosvg) is available in this environment, so the export mechanism needs to be figured out during implementation — e.g. rendering the SVG in a browser and capturing it at 192×192, or another available path.
+Two things bit us and are worth recording:
+
+1. **No `--` inside SVG comments.** A double-hyphen is illegal in XML comments, and Chrome refuses to render the *entire file* with a parse error — it does not degrade gracefully. Writing `--gold` in a comment to name the CSS variable broke the icon completely. Refer to it as "the gold accent" in prose instead. Validate with an XML parser after editing, not just by eye.
+
+2. **Don't rasterize via the browser's canvas.** Exporting the SVG through `canvas.toDataURL()` in the in-app browser injected a 1px vertical artifact (a red-channel-only column) into the PNG. Generate `icon-192.png` with .NET GDI+ from PowerShell instead: render at 512 and downscale to 192 with `InterpolationMode.HighQualityBicubic` **plus `ImageAttributes.SetWrapMode(WrapMode.TileFlipXY)`** — without the wrap mode, bicubic sampling past the edge leaves a semi-transparent 2px border ring (alpha ~220–238).
 
 ## Testing
 
-Visual only — no automated tests. Verify by rendering `icon.svg` in a browser and checking the dot reads as intentional at both large size and shrunk to typical home-screen icon size (~60–80px), then confirm `icon-192.png` matches after regeneration.
+Visual only — no automated tests. Verification steps that actually catch the failures above:
+
+- Parse `icon.svg` with a real XML parser (`[System.Xml.XmlDocument]::Load`), don't just look at it.
+- Load `icon-192.png` via `System.Drawing.Bitmap` and assert: every pixel opaque (alpha 255), zero non-paper pixels in the empty region below the glyph, and the dot's lower bound equal to the glyph's lower bound.
+- Eyeball the mark at ~40px and ~64px, not just full size — the original problem was only obvious at home-screen scale.

@@ -1,14 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Hebrew Reader">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Hebrew Reader">
   <!-- The app's own identity: warm paper, teal ink, and the letter it opens with.
        Authored as SVG rather than exported as PNG so it stays crisp at every size a
        launcher asks for, and stays a few hundred bytes. The glyph sits inside the
        central 80% so it survives a maskable crop on Android. -->
   <rect width="512" height="512" fill="#f5f0e7"/>
-  <!-- The shin-dot: real Hebrew orthography marks ש as "shin" (vs שׂ "sin") with a dot
-       on this exact stroke. Reusing it here means the mark reads as authentic rather
-       than decorative, and in --gold it borrows the one color this app reserves for
-       achievement, rather than echoing the nav's teal active-tab underline. -->
-  <circle cx="313" cy="138" r="19" fill="#b3803a"/>
+  <!-- A full stop, not a diacritic: it sits on the baseline to the right of the
+       glyph, which in RTL is the position *before* the word, reading as ".shalom" —
+       one sentence ended, the next about to start. Gold because that is the one
+       colour this app reserves for progress, and because a teal mark down here would
+       read as another active-tab underline, which is what made the old line look
+       like a glitch. -->
+  <circle cx="356" cy="293" r="19" fill="#b3803a"/>
   <text x="256" y="256" fill="#0d6e6e"
         font-family="David, 'Times New Roman', serif" font-size="236" font-weight="700"
         text-anchor="middle" dominant-baseline="central">&#1513;</text>

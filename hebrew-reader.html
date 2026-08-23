@@ -1423,6 +1423,7 @@
   .pnode.stale .pnmbox { fill: var(--gold-soft); stroke: #e0c48c; }
   .pstale { fill: var(--warn); font-weight: 700; }
   .pfrom { fill: var(--accent); }
+  .pauto { fill: var(--gold); }
   /* The planner's one-line reason for a node, under its name in the live chapter
      only. On a generated path this is what makes it read as authored. */
   .pwhy { fill: #8b8271; font-style: italic; }
@@ -11820,6 +11821,21 @@ function srsStrengthOf(srs, key, side) {
   return r ? srsStrength(r[side || "prod"]) : "new";
 }
 const SRS_BANDS = ["new", "weak", "progressing", "strong"];
+/* How well he knows a word FULL STOP — both sides averaged, which is what a single
+   dot beside a word ought to mean. George: "this should reflect the average strength
+   of hte word accross comprehension and productionm".
+
+   A side with no history is left OUT of the average rather than counted as zero. Most
+   words are drilled on one side long before the other, and scoring an untested side as
+   a failure would show a word he says perfectly as amber — which is not an average, it
+   is a penalty for a test that never happened. */
+function srsStrengthBoth(srs, key) {
+  const r = (srs || {})[key];
+  const seen = ["prod", "recv"].map(side => r && r[side]).filter(x => x && x.n);
+  if (!seen.length) return "new";
+  const avg = seen.reduce((n, x) => n + SRS_BANDS.indexOf(srsStrength(x)), 0) / seen.length;
+  return SRS_BANDS[Math.round(avg)] || "new";
+}
 /* The reverse of srsStrength() — a concrete record landing squarely in the requested
    band by the same thresholds that function itself checks, not a fake 0-100 score.
    Strength here is genuinely categorical (four bands, nothing between them), so a
@@ -12528,17 +12544,23 @@ const CAMP_WORDS_PER_NODE = 6, CAMP_CARRY_PER_NODE = 3;
 function campPickWords(proposed, taken) {
   const lib = libAll(), srs = srsAll(), arch = archiveAll();
   const out = [];
+  /* A word he is already strong on teaches nothing — it belongs in `carry`, where it
+     makes the node's sentences possible, not in `words`, where it would be a lesson in
+     something he finished months ago. Without this the auto-pass above would keep
+     granting chapters and the planner would keep writing ones he has outgrown. */
   const ok = k => k && HEB.test(k) && !STOPLIST.has(k) && !taken[k] && out.indexOf(k) === -1 &&
-                  (DICT[k] || lib[k]);
+                  (DICT[k] || lib[k]) && srsStrengthBoth(srs, k) !== "strong";
   (proposed || []).forEach(k => { if (out.length < CAMP_WORDS_PER_NODE && ok(k)) out.push(k); });
-  /* Grandad's words first when the model under-delivers — they are the ones that will
-     actually turn up in a message next week. */
-  if (out.length < CAMP_WORDS_PER_NODE) {
-    Object.keys(arch)
-      .filter(k => ok(k) && (!lib[k] || !wordReady(k, srs)))
-      .sort((a, b) => ((arch[b] && arch[b].seen) || 0) - ((arch[a] && arch[a].seen) || 0))
-      .forEach(k => { if (out.length < CAMP_WORDS_PER_NODE) out.push(k); });
-  }
+  /* NO top-up. There used to be one, filling a thin node from grandad's most-heard
+     vocabulary, and it quietly made the map lie: an outgrown "Family & home" lost its
+     own words to the strong-word filter and came back holding גדול קטן גבוה נמוך — a
+     node about adjectives wearing the name of a node about houses.
+
+     A node's name and its words have to agree or the map is worthless, and the archive
+     already has a better place to exert its influence: campEvidence puts grandad's
+     words in front of the planner, which then picks a THEME that fits them. Influence
+     at proposal time, where the name is chosen; validation only, here. A node that
+     cannot keep three of its own words is dropped by campApplyPlan instead. */
   return out;
 }
 /* Carried vocabulary: words he already owns, freshest first — the ones most worth
@@ -12600,9 +12622,17 @@ function campApplyPlan(plan) {
 function campApplyFallback() {
   const c = campAll();
   const real = c.chapters.filter(ch => (ch.nodes || []).length);
-  const spec = CAMP_FALLBACK[(real.length - 1) % CAMP_FALLBACK.length];
-  if (!spec) return null;
-  return campApplyPlan({ theme: spec.theme, nodes: spec.nodes, sketch: null });
+  /* Every spec is tried, not just the one whose turn it is. campPickWords drops words
+     he is already strong on, so a fallback chapter can come back empty for a learner
+     who has outgrown it — and returning null there would leave an advanced user with
+     no key looking at a map that refuses to grow. */
+  for (let i = 0; i < CAMP_FALLBACK.length; i++) {
+    const spec = CAMP_FALLBACK[(real.length - 1 + i) % CAMP_FALLBACK.length];
+    if (!spec) continue;
+    const made = campApplyPlan({ theme: spec.theme, nodes: spec.nodes, sketch: null });
+    if (made) return made;
+  }
+  return null;
 }
 
 /* ---- the orchestrator -------------------------------------------------------
@@ -12610,32 +12640,47 @@ function campApplyFallback() {
    and if it fails he never learns that it was attempted. A background spend he did
    not ask for has no business surfacing an error. */
 let campPlanning = false, campPlanGaveUp = false;
+/* Someone arriving with a real library can be strong on everything the first few
+   chapters teach. One chapter per visit to the map would make him walk that off over
+   a week of openings; three lets him fast-forward through what he already knows in
+   one sitting, and the cap stops a very large library spinning the planner all day.
+   George: "lets give me a bit of progress in my sails, so I dont have to move through
+   weeds." */
+const CAMP_WARM_MAX_PER_RUN = 3;
 async function campWarmNext() {
   if (campPlanning || campPlanGaveUp) return;
-  const c = campAll(), srs = srsAll();
-  const real = c.chapters.filter(ch => (ch.nodes || []).length);
-  if (!real.length) return;
-  const last = real[real.length - 1];
-  /* Write the next one as soon as the last REAL chapter is complete — the fogged
-     sketch beyond it is not a chapter, it is a promise of one. */
-  if (!campChapterComplete(last, c, srs)) return;
-  if (!geminiKeys().length) { campApplyFallback(); return; }
   campPlanning = true;
   try {
-    const brief = await campSurvey();
-    const plan = await campCritique(await campPlan(brief));
-    const made = campApplyPlan(plan);
-    if (!made) { campApplyFallback(); return; }
-    campLogChapter(last, brief);
-    if (document.getElementById("lStart").style.display !== "none") {
-      pathRender(); learnRenderAct();
+    for (let round = 0; round < CAMP_WARM_MAX_PER_RUN; round++) {
+      /* Re-read every round: the chapter written last time round may have been passed
+         outright by campAutoPass, which is exactly the case this loop exists for. */
+      campAutoPass();
+      const c = campAll(), srs = srsAll();
+      const real = c.chapters.filter(ch => (ch.nodes || []).length);
+      if (!real.length) return;
+      const last = real[real.length - 1];
+      /* Write the next one as soon as the last REAL chapter is complete — the fogged
+         sketch beyond it is not a chapter, it is a promise of one. */
+      if (!campChapterComplete(last, c, srs)) return;
+      if (!geminiKeys().length) {
+        if (!campApplyFallback()) return;
+        continue;
+      }
+      const brief = await campSurvey();
+      const plan = await campCritique(await campPlan(brief));
+      const made = campApplyPlan(plan) || campApplyFallback();
+      if (!made) return;
+      campLogChapter(last, brief);
+      if (document.getElementById("lStart").style.display !== "none") {
+        campAutoPass(); pathRender(); learnRenderAct();
+      }
     }
   } catch (e) {
     /* One failure is a bad afternoon; three is a broken key or an exhausted quota, and
        retrying on every render would burn the rest of the day's allowance discovering
        that again. */
     campPlanGaveUp = true;
-    campApplyFallback();
+    try { campApplyFallback(); } catch (e2) {}
   } finally { campPlanning = false; }
 }
 
@@ -13242,6 +13287,47 @@ function campNodeDone(id, c, srs) {
   const n = campNode(id, c);
   return !!n && campNodeWordsReady(n, srs) && campConvoPassed(id);
 }
+/* ---- material he has already outgrown ---------------------------------------
+   George: "The current nodes that are showing are using words that are already strong
+   in my bank ... If hte words are strong already give me the pass on that level, dont
+   remove it just like do a 'hey app look at this these are strong lets make a next
+   node' ... Im not a complete beginner, so lets give me a bit of progress in my sails,
+   so I dont have to move through weeds."
+
+   STRONG is the bar, deliberately — not `wordReady`, which is `progressing` and up.
+   Meeting a word once puts it at progressing, so passing on that would auto-complete
+   every node the moment its first lesson ended. Strong means the SRS has watched him
+   hold it over weeks, which is the only evidence that walking the node would teach him
+   nothing. */
+function campNodeKnown(node, srs) {
+  const words = ((node && node.words) || []).filter(k => !STOPLIST.has(k));
+  if (!words.length) return false;
+  const s = srs || srsAll();
+  return words.every(k => srsStrengthBoth(s, k) === "strong");
+}
+/* Writes the pass rather than hiding the node — he asked for it to stay on the map,
+   and a chapter he skated through is still a chapter he walked. Marked `auto` so the
+   node can say it was granted rather than earned, and so nothing downstream mistakes
+   it for a conversation he actually had. */
+function campAutoPass(c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const store = pathScoresAll();
+  let n = 0;
+  cc.chapters.forEach(ch => (ch.nodes || []).forEach(node => {
+    if (campConvoPassed(node.id)) return;
+    if (!campNodeKnown(node, ss)) return;
+    store[node.id] = store[node.id] || {};
+    store[node.id][CAMP_CONVO_LESSON] = { pct: 100, ts: Date.now(), auto: true };
+    n++;
+  }));
+  if (n) pathScoresSave(store);
+  return n;
+}
+function campNodeAuto(id) {
+  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
+  return !!(r && r.auto);
+}
+
 /* Gold is not permanent. A node whose words have since decayed reopens with a marker
    — the SRS made visible. The map only REPORTS this; repair happens in ordinary quick
    sessions, because decayed words are overdue and learnTargets already leads with
@@ -13603,6 +13689,11 @@ function campRender() {
        "your grandad put this here", and worth being able to see at a glance. */
     else if (n.fromNote) svg += '<text class="pfrom" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
                                 '" text-anchor="middle" font-size="18">✉</text>';
+    /* Gold he was given rather than gold he earned. Shown, not hidden: skipping past
+       something is worth being able to see. */
+    if (state === "done" && campNodeAuto(n.id))
+      svg += '<text class="pauto" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
+             '" text-anchor="middle" font-size="17">⏭</text>';
     svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) + '" text-anchor="middle" font-size="14">' +
            campEscape(n.name) + '</text>';
     /* The reason the planner gave for this node, shown only in the chapter you are in.
@@ -13687,9 +13778,13 @@ function campPeek(id) {
 const CAMP_MEET_LESSON = 1, CAMP_PRACTISE_LESSON = 2;
 
 function campWordRow(k, lib, srs) {
-  const band = srsStrengthOf(srs, k, "prod");
+  /* `b-`, not `s-`. The dots were being given a class that does not exist anywhere in
+     the stylesheet, so every word in every node sheet has been showing the same bare
+     circle regardless of how well he knows it. */
+  const band = srsStrengthBoth(srs, k);
   const e = lib[k] || {};
-  return '<span class="cw"><i class="sdot s-' + band + '"></i>' +
+  return '<span class="cw" title="' + campEscape(TIER_LABEL[band] || band) +
+         '"><i class="sdot b-' + band + '"></i>' +
          '<b dir="rtl">' + campEscape(k) + '</b>' +
          '<u>' + campEscape(e.en || (DICT[k] ? DICT[k][1] : "")) + '</u></span>';
 }
@@ -15183,6 +15278,10 @@ function learnRenderStart() {
   document.getElementById("lHero").style.display = "none";
   /* The board is drawn, sized and scrolled to the current node before anything else
      paints, so the map never appears at the top-left and then jump. */
+  /* Before the board is drawn, so a node he has already outgrown is gold the first
+     time he sees it rather than after he opens it. Cascades on purpose: passing nodes
+     completes the chapter, which is what lets campWarmNext below write the next one. */
+  campAutoPass();
   pathRender();
   pathApplyZoom(false);
   pathWirePinch();
@@ -18997,17 +19096,60 @@ T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () =
    The three network calls cannot be tested here, but everything they hand back passes
    through these, and these are where a hallucinated answer would do real damage. */
 T("campPickWords: keeps only words that actually exist, and never re-teaches one", () => {
-  const taken = { "שלום": true };
-  const got = campPickWords(["שלום", "בית", "זzzz", "", null, "מחשב"], taken);
-  assertTrue(got.indexOf("שלום") === -1, "already taught by an earlier node");
-  assertTrue(got.indexOf("זzzz") === -1, "not a Hebrew word");
-  assertTrue(got.indexOf("בית") !== -1, "a real word it proposed survives");
-  assertTrue(got.length <= CAMP_WORDS_PER_NODE);
+  const before = lsGet(SRS_KEY);
+  try {
+    lsSet(SRS_KEY, JSON.stringify({}));
+    const got = campPickWords(["שלום", "בית", "זzzz", "", null, "מחשב"], { "שלום": true });
+    assertTrue(got.indexOf("שלום") === -1, "already taught by an earlier node");
+    assertTrue(got.indexOf("זzzz") === -1, "not a Hebrew word");
+    assertTrue(got.indexOf("בית") !== -1, "a real word it proposed survives");
+    assertTrue(got.length <= CAMP_WORDS_PER_NODE);
+  } finally { if (before === null) localStorage.removeItem(SRS_KEY); else lsSet(SRS_KEY, before); }
 });
-T("campPickWords: a model that returns nothing usable still yields a node", () => {
-  /* Falls through to grandad's own vocabulary, then to what is filed — the plan is a
-     proposal, and the app is what actually decides. */
-  assertTrue(campPickWords(["", "xx", null], {}).length >= 0);
+/* The point of the whole fast-forward: a word he has held for weeks teaches nothing,
+   so it belongs in `carry`, never in a lesson. */
+T("campPickWords: a word he is already strong on is not a lesson", () => {
+  const before = lsGet(SRS_KEY);
+  try {
+    lsSet(SRS_KEY, JSON.stringify({ "בית": { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") } }));
+    assertTrue(campPickWords(["בית", "שולחן"], {}).indexOf("בית") === -1);
+    assertTrue(campPickWords(["בית", "שולחן"], {}).indexOf("שולחן") !== -1);
+  } finally { if (before === null) localStorage.removeItem(SRS_KEY); else lsSet(SRS_KEY, before); }
+});
+/* A node is what it proposed, validated — never what was available to pad it out. */
+T("campPickWords: nothing usable proposed means nothing, not a node about something else", () => {
+  const before = lsGet(SRS_KEY);
+  try {
+    lsSet(SRS_KEY, JSON.stringify({}));
+    assertEq(campPickWords(["", "xx", null], {}), [],
+             "padding a thin node from elsewhere is what made a house node about adjectives");
+  } finally { if (before === null) localStorage.removeItem(SRS_KEY); else lsSet(SRS_KEY, before); }
+});
+
+/* ---- the fast-forward ---- */
+T("campNodeKnown: strong, not merely met — meeting a word once makes it progressing", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  const met = {}, held = {};
+  node.words.forEach(k => {
+    met[k] = { prod: srsBandRecord("progressing"), recv: srsBlank() };
+    held[k] = { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") };
+  });
+  assertTrue(!campNodeKnown(node, met), "one lesson must not auto-complete the node it just started");
+  assertTrue(campNodeKnown(node, held));
+});
+T("campAutoPass: passes what he has outgrown, marks it granted, and opens the chapter", () => {
+  const camp = campOneChapter();
+  const srs = {};
+  campNodes(camp).forEach(n => n.words.forEach(k => {
+    srs[k] = { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") };
+  }));
+  withCamp(camp, srs, {}, () => {
+    assertEq(campAutoPass(), 4);
+    assertTrue(campNodeDone("c1-hello"), "gold");
+    assertTrue(campNodeAuto("c1-hello"), "and visibly granted rather than earned");
+    assertTrue(campChapterComplete(campAll().chapters[0]), "so the next chapter opens");
+    assertEq(campAutoPass(), 0, "and it does not keep re-passing them");
+  });
 });
 
 T("campApplyPlan: builds a chapter, assigns carry, and derives its edges", () => {

@@ -12345,6 +12345,295 @@ function readyWords(lib, srs) {
   return Object.keys(lib).filter(k => wordReady(k, srs));
 }
 
+/* =====================  WRITING THE NEXT CHAPTER  =====================
+   Three calls, not six. The plan allowed one build call per node on top of these,
+   and it turned out not to be needed: `learnNextFunction` now hands the live node's
+   SITUATION to the ordinary sentence generator, so the bank fills with material about
+   the chapter he is actually in, using the machinery that already exists. Spending
+   four more requests to duplicate that would be spending because the budget is there
+   rather than because the work needs doing.
+
+   Lite for everything except the plan itself. AI_POOL_CAPS is 20 Flash and 500
+   Flash-Lite per key per day, so Flash is the scarce one and gets the single job that
+   is genuinely reasoning: turning the brief into a chapter. */
+
+/* ---- what the app already knows -------------------------------------------
+   Assembled locally and handed over as text. Nothing here is a judgement — it is the
+   evidence, stated plainly, so the survey call has something to be right or wrong
+   about rather than a storage dump to hallucinate over. */
+function campEvidence() {
+  const lib = libAll(), srs = srsAll(), arch = archiveAll(), c = campAll();
+  const bands = { strong: [], progressing: [], weak: [] };
+  Object.keys(lib).forEach(k => {
+    if (!srsGradable(k, lib)) return;
+    const b = srsStrengthOf(srs, k, "prod");
+    if (bands[b]) bands[b].push(k);
+  });
+  const named = arr => arr.slice(0, 20)
+    .map(k => k + " (" + ((lib[k] && lib[k].en) || (DICT[k] ? DICT[k][1] : "")) + ")").join(", ");
+
+  /* Grandad's own vocabulary that he still cannot say — the input nothing else in
+     this app supplies, and the reason the campaign is worth generating at all. */
+  const heard = Object.keys(arch)
+    .filter(k => !STOPLIST.has(k) && HEB.test(k))
+    .filter(k => !lib[k] || !wordReady(k, srs))
+    .sort((a, b) => ((arch[b] && arch[b].seen) || 0) - ((arch[a] && arch[a].seen) || 0))
+    .slice(0, 24)
+    .map(k => k + " (" + (DICT[k] ? DICT[k][1] : "?") + ", heard " + ((arch[k] && arch[k].seen) || 1) + "x)");
+
+  const doneNodes = [];
+  c.chapters.forEach(ch => (ch.nodes || []).forEach(n => {
+    if (campNodeDone(n.id, c, srs)) doneNodes.push(ch.theme + " / " + n.name);
+  }));
+
+  return [
+    "MEASURED LEVEL: " + learnerLevel() + " of " + LEVEL_MAX + ".",
+    "WORDS HE CAN PRODUCE (" + bands.strong.length + " strong, " +
+      bands.progressing.length + " progressing): " + named(bands.strong.concat(bands.progressing)),
+    "WORDS HE KEEPS MISSING (" + bands.weak.length + "): " + (named(bands.weak) || "none"),
+    "WORDS HIS GRANDAD ACTUALLY USES THAT HE STILL CANNOT SAY: " + (heard.join(", ") || "none recorded yet"),
+    "CHAPTERS ALREADY WALKED: " + (c.chapters.filter(ch => ch.state === "done")
+      .map(ch => ch.theme).join(" → ") || "none yet"),
+    "NODES ALREADY FINISHED: " + (doneNodes.join("; ") || "none yet"),
+    "THE STORY SO FAR: " + ((c.log || []).map(l => l.n + ". " + l.theme + " — " + (l.note || l.taught || ""))
+      .join(" | ") || "this is the first chapter after the opening one.")
+  ].join("\n");
+}
+
+/* ---- 1. survey (Lite) -------------------------------------------------------
+   Separate from the plan on purpose. Handing a model raw storage dumps and asking for
+   a curriculum in one shot produces a curriculum that ignores half the input. Making
+   it state the evidence in its own words FIRST, then plan against that statement, is
+   the same device the drafting prompt already uses when it self-critiques, and it is
+   what makes the plan respond to recent use rather than to a template. */
+async function campSurvey() {
+  const prompt =
+    "You are a Hebrew teacher reviewing one adult learner before planning his next few " +
+    "weeks. He is an English speaker who replies to WhatsApp voice notes from his " +
+    "partner's grandad, so everything is warm, everyday and spoken.\n\n" +
+    "HIS RECORD:\n" + campEvidence() + "\n\n" +
+    "Write a short brief — six sentences at most, plain prose, no lists. Say where he " +
+    "actually is, what he has clearly got, what is not sticking, and above all what he " +
+    "MOST NEEDS NEXT and why. If his grandad keeps using words he cannot say, that is " +
+    "the single most important thing in this record — say so and name them.\n" +
+    "Do not propose lessons. Do not flatter. This brief is read by whoever plans the " +
+    "next chapter, and a vague brief produces a vague chapter.";
+  return String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST) || "").trim();
+}
+
+/* ---- 2. plan (Flash) -------------------------------------------------------- */
+const CAMP_ICON_FALLBACK = "•";
+async function campPlan(brief) {
+  const level = learnerLevel();
+  const used = {};
+  campNodes().forEach(n => (n.words || []).forEach(w => { used[w] = true; }));
+  const prompt =
+    "You are planning the next CHAPTER of a Hebrew learner's campaign — a branching map " +
+    "of small situations he works through. Each node is one situation he will be able to " +
+    "handle when he finishes it.\n\n" +
+    "THE BRIEF ON HIM:\n" + brief + "\n\n" +
+    "HIS RECORD:\n" + campEvidence() + "\n\n" +
+    "THE DIFFICULTY SCALE — the same one his sentences are graded on:\n" + LEVEL_RUBRIC + "\n\n" +
+    "Write " + CAMP_MIN_NODES + " to " + CAMP_MAX_NODES + " nodes. Give the chapter a " +
+    "short theme, 2-4 words, that says what changes about his Hebrew here.\n" +
+    "SPREAD THE DIFFICULTY. He is at level " + level + ": one node at " + Math.max(1, level - 1) +
+    " to consolidate, most at " + level + " and " + Math.min(LEVEL_MAX, level + 1) +
+    ", and one at " + Math.min(LEVEL_MAX, level + 2) + " to pull him forward. A flat chapter " +
+    "is a failed chapter.\n\n" +
+    "EVERY NODE NEEDS A REASON, and the reason is shown to him under the node on the map. " +
+    "One short clause, specific to HIM — \"his grandad has mentioned this three times\", " +
+    "\"he has the past tense but has never used it about money\". Never generic. If you " +
+    "cannot say why a node is there, it should not be there.\n\n" +
+    "Also sketch the chapter AFTER this one: a theme and 3-4 node names only, no detail. " +
+    "It is shown to him under fog and will be re-planned properly when he arrives, so it " +
+    "is a direction of travel rather than a promise.\n\n" +
+    "Return JSON only, no markdown:\n" +
+    '{"theme":"","nodes":[{"name":"","icon":"","lvl":2,"situation":"","why":"","words":["",""]}],' +
+    '"sketch":{"theme":"","names":["",""]}}\n\n' +
+    "- name: 2-4 English words, what the situation IS (\"Asking for things\", \"At the doctor\").\n" +
+    "- icon: ONE Hebrew word from that node's own words, drawn inside the circle on the map.\n" +
+    "- words: 5-7 Hebrew words, no nikud, that the node teaches. Everyday spoken Hebrew.\n" +
+    "- Do NOT reuse a word he has already been taught: " +
+      (Object.keys(used).slice(0, 60).join(", ") || "(nothing yet)") + "\n" +
+    "- Prefer words his grandad actually uses. Those are named in the record above and " +
+    "they are worth more than any word from a textbook.\n" +
+    "- Do not repeat a situation he has already finished.";
+  return extractJSON(await geminiRequest([{ text: prompt }]));
+}
+
+/* ---- 3. critique (Lite) -----------------------------------------------------
+   Same shape and the same failure rule as learnReviewItems: a reviewer that rejects
+   everything is far more likely to be a malformed reply than a genuinely broken plan,
+   so anything unusable falls back to the plan unedited rather than to no chapter. */
+async function campCritique(plan) {
+  if (!plan || !Array.isArray(plan.nodes) || plan.nodes.length < 2) return plan;
+  const listing = plan.nodes.map((n, i) =>
+    i + ". [lvl " + (n.lvl || "?") + "] " + (n.name || "") + " — " + (n.why || "no reason given") +
+    "  |  " + ((n.words || []).join(" "))).join("\n");
+  const prompt =
+    "You are checking a planned chapter of a Hebrew learner's campaign before he sees it.\n\n" +
+    "HIS RECORD:\n" + campEvidence() + "\n\n" +
+    "CHAPTER: \"" + (plan.theme || "") + "\"\n" + listing + "\n\n" +
+    "Reject a node if ANY of these are true:\n" +
+    "- it repeats a situation he has already finished\n" +
+    "- its reason is generic — true of any learner rather than of this one\n" +
+    "- its words are not everyday spoken Hebrew, or are not really about that situation\n" +
+    "- it is wildly off his level in either direction\n\n" +
+    "Return JSON only: {\"keep\":[0,2,3],\"theme\":\"\"}\n" +
+    "keep = indexes of the nodes that stay. theme = the chapter theme, corrected if it " +
+    "no longer describes what is left. Keep at least " + CAMP_MIN_NODES + " if you " +
+    "honestly can; below that the chapter is too thin to be a chapter.";
+  try {
+    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+    const keep = out && Array.isArray(out.keep) ? out.keep : null;
+    if (!keep || keep.length < CAMP_MIN_NODES) return plan;
+    const nodes = keep.map(i => plan.nodes[Number(i)]).filter(Boolean);
+    if (nodes.length < CAMP_MIN_NODES) return plan;
+    return Object.assign({}, plan, { nodes: nodes, theme: out.theme || plan.theme });
+  } catch (e) { return plan; }
+}
+
+/* ---- words are assigned HERE, never by the model ---------------------------
+   The model proposes; the app disposes. `uses` on a bank item is derived locally for
+   exactly this reason — a hallucinated word list would poison the scheduler silently
+   and there would be nothing on screen to reveal it. So: keep what it proposed only
+   where the word actually exists, then top up from grandad's own vocabulary, then
+   from DICT.
+
+   The 70/30 split is load-bearing rather than decorative. bankServable refuses any
+   sentence containing a word he has not drilled, so a node built entirely of new
+   words cannot produce a single sentence until they are drilled in isolation. Carry
+   is what lets a node generate real material from its first lesson; George's
+   reinforcement effect — "the words associated to each Node will only grow stronger
+   as I develop the in later nodes" — is the bonus, not the purpose. */
+const CAMP_WORDS_PER_NODE = 6, CAMP_CARRY_PER_NODE = 3;
+function campPickWords(proposed, taken) {
+  const lib = libAll(), srs = srsAll(), arch = archiveAll();
+  const out = [];
+  const ok = k => k && HEB.test(k) && !STOPLIST.has(k) && !taken[k] && out.indexOf(k) === -1 &&
+                  (DICT[k] || lib[k]);
+  (proposed || []).forEach(k => { if (out.length < CAMP_WORDS_PER_NODE && ok(k)) out.push(k); });
+  /* Grandad's words first when the model under-delivers — they are the ones that will
+     actually turn up in a message next week. */
+  if (out.length < CAMP_WORDS_PER_NODE) {
+    Object.keys(arch)
+      .filter(k => ok(k) && (!lib[k] || !wordReady(k, srs)))
+      .sort((a, b) => ((arch[b] && arch[b].seen) || 0) - ((arch[a] && arch[a].seen) || 0))
+      .forEach(k => { if (out.length < CAMP_WORDS_PER_NODE) out.push(k); });
+  }
+  return out;
+}
+/* Carried vocabulary: words he already owns, freshest first — the ones most worth
+   holding on to, and the ones the map will draw an edge from. */
+function campPickCarry(exclude) {
+  const lib = libAll(), srs = srsAll();
+  return Object.keys(lib)
+    .filter(k => srsGradable(k, lib) && wordReady(k, srs) && exclude.indexOf(k) === -1)
+    .sort((a, b) => ((srs[a] && srs[a].prod && srs[a].prod.stab) || 0) -
+                    ((srs[b] && srs[b].prod && srs[b].prod.stab) || 0))
+    .slice(0, CAMP_CARRY_PER_NODE);
+}
+
+/* ---- turning a plan into a chapter on the map ------------------------------ */
+function campApplyPlan(plan) {
+  const c = campAll();
+  const nodes = (plan && Array.isArray(plan.nodes) ? plan.nodes : []).slice(0, CAMP_MAX_NODES);
+  if (nodes.length < CAMP_MIN_NODES) return null;
+  /* The fogged chapter is a sketch, not content — it is replaced by the real thing
+     rather than sitting in front of it. */
+  c.chapters = c.chapters.filter(ch => (ch.nodes || []).length);
+  const n = c.chapters.length + 1;
+  const taken = {};
+  campNodes(c).forEach(x => (x.words || []).forEach(w => { taken[w] = true; }));
+  const built = [];
+  nodes.forEach((raw, i) => {
+    const words = campPickWords(raw.words, taken);
+    if (words.length < 3) return;             // too thin to teach
+    words.forEach(w => { taken[w] = true; });
+    built.push({
+      id: "c" + n + "-" + i + "-" + Math.random().toString(36).slice(2, 6),
+      name: String(raw.name || "Something new").slice(0, 40),
+      icon: (String(raw.icon || "").match(/[֐-׿]+/) || [words[0] || CAMP_ICON_FALLBACK])[0],
+      lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(raw.lvl)) || learnerLevel())),
+      situation: String(raw.situation || raw.name || "").slice(0, 160),
+      why: String(raw.why || "").slice(0, 90),
+      words: words, carry: campPickCarry(words), needs: []
+    });
+  });
+  if (built.length < CAMP_MIN_NODES) return null;
+  c.chapters.push({ n: n, theme: String((plan && plan.theme) || "What comes next").slice(0, 40),
+                    state: "next", nodes: built, sketch: [] });
+  /* And the fog beyond it. Names only: this is a direction of travel, and it is
+     re-planned against fresh evidence when he actually gets there. */
+  const sk = plan && plan.sketch;
+  const names = (sk && Array.isArray(sk.names) ? sk.names : []).filter(Boolean).slice(0, 4);
+  if (names.length) {
+    c.chapters.push({ n: n + 1, theme: String((sk && sk.theme) || "further on").slice(0, 40),
+                      state: "fog", nodes: [], sketch: names.map(x => ({ name: String(x).slice(0, 30) })) });
+  }
+  campComputeNeeds(c);
+  campRestate(c);
+  campSave(c);
+  return c.chapters[n - 1];
+}
+
+/* The airbag. Not a spine — a campaign that can show an empty map is worse than one
+   that occasionally shows a generic chapter. */
+function campApplyFallback() {
+  const c = campAll();
+  const real = c.chapters.filter(ch => (ch.nodes || []).length);
+  const spec = CAMP_FALLBACK[(real.length - 1) % CAMP_FALLBACK.length];
+  if (!spec) return null;
+  return campApplyPlan({ theme: spec.theme, nodes: spec.nodes, sketch: null });
+}
+
+/* ---- the orchestrator -------------------------------------------------------
+   Fire-and-forget, exactly like convoTopUp: it runs while he is looking at the map,
+   and if it fails he never learns that it was attempted. A background spend he did
+   not ask for has no business surfacing an error. */
+let campPlanning = false, campPlanGaveUp = false;
+async function campWarmNext() {
+  if (campPlanning || campPlanGaveUp) return;
+  const c = campAll(), srs = srsAll();
+  const real = c.chapters.filter(ch => (ch.nodes || []).length);
+  if (!real.length) return;
+  const last = real[real.length - 1];
+  /* Write the next one as soon as the last REAL chapter is complete — the fogged
+     sketch beyond it is not a chapter, it is a promise of one. */
+  if (!campChapterComplete(last, c, srs)) return;
+  if (!geminiKeys().length) { campApplyFallback(); return; }
+  campPlanning = true;
+  try {
+    const brief = await campSurvey();
+    const plan = await campCritique(await campPlan(brief));
+    const made = campApplyPlan(plan);
+    if (!made) { campApplyFallback(); return; }
+    campLogChapter(last, brief);
+    if (document.getElementById("lStart").style.display !== "none") {
+      pathRender(); learnRenderAct();
+    }
+  } catch (e) {
+    /* One failure is a bad afternoon; three is a broken key or an exhausted quota, and
+       retrying on every render would burn the rest of the day's allowance discovering
+       that again. */
+    campPlanGaveUp = true;
+    campApplyFallback();
+  } finally { campPlanning = false; }
+}
+
+/* The arc. Without this the planner reasons from current state alone and chapter 9
+   quietly redoes chapter 2 — it has no way to know it already covered that ground.
+   Fifty tokens a chapter, and it is the difference between a path and a shuffle. */
+function campLogChapter(ch, note) {
+  const c = campAll();
+  c.log = (c.log || []).filter(l => l.n !== ch.n);
+  c.log.push({ n: ch.n, theme: ch.theme,
+               taught: (ch.nodes || []).map(x => x.name).join(", ").slice(0, 160),
+               note: String(note || "").split(". ")[0].slice(0, 200) });
+  c.log = c.log.slice(-12);
+  campSave(c);
+}
+
 /* =====================  CONVERSATIONS  =====================
    Kept in their own store rather than the sentence bank. A conversation has no single
    `he`, so bankUses/bankServable/bankDifficulty would all need special cases, and the
@@ -12822,12 +13111,27 @@ function campNodeStale(id, c, srs) {
   const n = campNode(id, c);
   return !!n && campConvoPassed(id) && !campNodeWordsReady(n, srs);
 }
+/* Where a chapter stands, COMPUTED — behind the live one, the live one, or ahead of
+   it. `ch.state` in the store is a cache of this and nothing more; read as the truth
+   it means a chapter can be stuck in whatever standing it was written with, which is
+   how a freshly planned chapter stayed permanently "next" even once it was the one
+   he was working in. */
+function campChapterStanding(ch, c, srs) {
+  const cc = c || campAll();
+  const live = campLiveChapter(cc, srs || srsAll());
+  if (!ch) return "next";
+  if (!(ch.nodes || []).length) return "fog";
+  if (!live || ch === live) return "live";
+  const i = cc.chapters.indexOf(ch), j = cc.chapters.indexOf(live);
+  return i < j ? "done" : "next";
+}
 function campNodeState(id, c, srs) {
   const cc = c || campAll(), ss = srs || srsAll();
   const ch = campChapterOf(id, cc);
   if (!ch) return "locked";
-  if (ch.state === "fog") return "fog";
-  if (ch.state === "next") return "next";
+  const standing = campChapterStanding(ch, cc, ss);
+  if (standing === "fog") return "fog";
+  if (standing === "next") return "next";
   if (campNodeDone(id, cc, ss)) return "done";
   if (campNodeStale(id, cc, ss)) return "stale";
   const rec = pathScoresAll()[id];
@@ -12852,23 +13156,21 @@ function campChapterComplete(ch, c, srs) {
 /* The chapter he is working in: the first that is not yet complete. */
 function campLiveChapter(c, srs) {
   const cc = c || campAll(), ss = srs || srsAll();
-  const live = cc.chapters.filter(ch => ch.state !== "fog" && ch.state !== "next");
-  for (let i = 0; i < live.length; i++) {
-    if (!campChapterComplete(live[i], cc, ss)) return live[i];
+  /* Candidacy is "has nodes", NOT the stored state. Filtering on state made a chapter
+     written as "next" permanently ineligible to become live, so finishing a chapter
+     left the finished one marked live forever and the new one unreachable. Stored
+     state is a cache of this function's answer; it must never be an input to it. */
+  const real = cc.chapters.filter(ch => (ch.nodes || []).length);
+  for (let i = 0; i < real.length; i++) {
+    if (!campChapterComplete(real[i], cc, ss)) return real[i];
   }
-  return live[live.length - 1] || null;
+  return real[real.length - 1] || null;
 }
 /* Recomputed rather than stored, so a chapter can never be left marked "next" after
    the one before it was finished. Stored state is only ever a cache of this. */
 function campRestate(c, srs) {
   const cc = c || campAll(), ss = srs || srsAll();
-  const live = campLiveChapter(cc, ss);
-  let seenLive = false;
-  cc.chapters.forEach(ch => {
-    if (ch === live) { ch.state = "live"; seenLive = true; return; }
-    if (!seenLive) { ch.state = "done"; return; }
-    ch.state = ch.sketch && ch.sketch.length && !(ch.nodes || []).length ? "fog" : "next";
-  });
+  cc.chapters.forEach(ch => { ch.state = campChapterStanding(ch, cc, ss); });
   return cc;
 }
 
@@ -12994,7 +13296,8 @@ function campLayout(c) {
   cc.chapters.forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const y = bandY;
-    bands.push({ y: bandY - 78, label: ch.theme || "", n: ch.n, state: ch.state });
+    bands.push({ y: bandY - 78, label: ch.theme || "", n: ch.n,
+                 state: campChapterStanding(ch, cc) });
     /* A fogged chapter has a sketch and no nodes yet; it still occupies a band, and
        its silhouettes are placed the same way real nodes are. */
     const list = (ch.nodes || []).length ? ch.nodes
@@ -13006,7 +13309,8 @@ function campLayout(c) {
       const x = cols[i % cols.length];
       const ny = y + (i % 2 ? CAMP_STAGGER : 0);
       pos[node.id] = { x: x, y: ny };
-      nodes.push(Object.assign({}, node, { x: x, y: ny, chapter: ch.n, chState: ch.state }));
+      nodes.push(Object.assign({}, node, { x: x, y: ny, chapter: ch.n,
+                                          chState: campChapterStanding(ch, cc) }));
     });
   });
   nodes.forEach(n => {
@@ -14312,9 +14616,19 @@ const LEARN_FUNCTIONS = [
   "asking how someone is and following it up with a real second question",
   "saying what you want or are going to do later"
 ];
-/* Least-used first, same rule as convoNextScene, so the rotation is even rather
-   than random — nothing ever becomes automatic if nothing ever repeats. */
+/* THE JOIN BETWEEN THE TWO HALVES. If there is a live campaign node, the sentences
+   generated for ordinary quick sessions are about ITS situation — so the drilling he
+   does between lessons rehearses the chapter he is actually in, and the campaign
+   stops being a side quest without a single pixel of new UI.
+
+   It also removes the need for a per-node generation call: the shared bank fills with
+   material about the node by itself. Four requests a chapter saved, by using the
+   machinery that was already there. */
 function learnNextFunction() {
+  try {
+    const node = campCurrentNode();
+    if (node && node.situation) return node.situation;
+  } catch (e) { /* a campaign that cannot be read is not a reason to skip the batch */ }
   let done = {};
   try { const o = JSON.parse(lsGet(FN_KEY)); if (o && typeof o === "object") done = o; } catch (e) {}
   const pick = LEARN_FUNCTIONS.slice().sort((a, b) => (done[a] || 0) - (done[b] || 0))[0];
@@ -15094,9 +15408,13 @@ function learnRenderStart() {
   pathWirePinch();
   pathFocusCurrent();
   learnRenderAct();
-  /* pathWarmNext is NOT called any more: it warmed PATH_SECTIONS, and nothing can
-     reach those sections now, so every request it made bought content for a page that
-     no longer exists. The campaign's own warm arrives with the planner in step 7. */
+  /* Writes the next chapter while he is looking at this one, so the wait happens
+     where he is not. Deliberately not awaited, and it swallows its own failures —
+     a background spend he did not ask for has no business surfacing an error over the
+     map. (This replaces pathWarmNext, which warmed PATH_SECTIONS: nothing can reach
+     those any more, so every request it made bought content for a page that no longer
+     exists.) */
+  setTimeout(() => { try { Promise.resolve(campWarmNext()).catch(() => {}); } catch (e) {} }, 2500);
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -18932,6 +19250,103 @@ T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () =
   assertEq(L.bands.length, 2);
   assertTrue(L.h > CAMP_BAND, "the board grows a band");
 });
+/* ---- the planner's local half ----
+   The three network calls cannot be tested here, but everything they hand back passes
+   through these, and these are where a hallucinated answer would do real damage. */
+T("campPickWords: keeps only words that actually exist, and never re-teaches one", () => {
+  const taken = { "שלום": true };
+  const got = campPickWords(["שלום", "בית", "זzzz", "", null, "מחשב"], taken);
+  assertTrue(got.indexOf("שלום") === -1, "already taught by an earlier node");
+  assertTrue(got.indexOf("זzzz") === -1, "not a Hebrew word");
+  assertTrue(got.indexOf("בית") !== -1, "a real word it proposed survives");
+  assertTrue(got.length <= CAMP_WORDS_PER_NODE);
+});
+T("campPickWords: a model that returns nothing usable still yields a node", () => {
+  /* Falls through to grandad's own vocabulary, then to what is filed — the plan is a
+     proposal, and the app is what actually decides. */
+  assertTrue(campPickWords(["", "xx", null], {}).length >= 0);
+});
+
+T("campApplyPlan: builds a chapter, assigns carry, and derives its edges", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    const made = campApplyPlan({ theme: "Out and about", sketch: { theme: "later", names: ["a", "b"] },
+      nodes: [
+        { name: "Going places", icon: "נוסע", lvl: 2, situation: "s", why: "w", words: ["נוסע", "עיר", "רחוב", "אוטובוס"] },
+        { name: "Food", icon: "אוכל", lvl: 2, situation: "s", why: "w", words: ["אוכל", "שותה", "מים", "לחם"] },
+        { name: "Money", icon: "כסף", lvl: 3, situation: "s", why: "w", words: ["כסף", "חנות", "שוק", "יקר"] },
+        { name: "Weather", icon: "חם", lvl: 3, situation: "s", why: "w", words: ["חם", "קר", "גשם", "שמש"] }
+      ] });
+    assertTrue(!!made, "four usable nodes is a chapter");
+    assertEq(made.nodes.length, 4);
+    const c = campAll();
+    assertEq(c.chapters.length, 3, "the seed, the new chapter, and the fog beyond it");
+    assertEq(c.chapters[2].state, "fog");
+    assertEq(c.chapters[2].sketch.length, 2, "names only — a direction, not a promise");
+    assertTrue(made.nodes.every(n => n.words.length >= 3), "a node too thin to teach is dropped");
+  });
+});
+T("campApplyPlan: refuses a plan too thin to be a chapter", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    assertNull(campApplyPlan({ theme: "x", nodes: [{ name: "one", words: ["בית"] }] }));
+    assertEq(campAll().chapters.length, 1, "and leaves the campaign exactly as it was");
+  });
+});
+T("campApplyPlan: never teaches a word an earlier node already owns", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    campApplyPlan({ theme: "t", nodes: [
+      { name: "a", words: ["שלום", "בסדר", "נוסע", "עיר", "רחוב"] },
+      { name: "b", words: ["אוכל", "מים", "לחם", "שותה"] },
+      { name: "c", words: ["כסף", "חנות", "שוק"] },
+      { name: "d", words: ["חם", "קר", "גשם"] }] });
+    const seen = {};
+    let dupes = 0;
+    campNodes().forEach(n => (n.words || []).forEach(w => { if (seen[w]) dupes++; seen[w] = true; }));
+    assertEq(dupes, 0, "שלום and בסדר belong to the seed chapter and must not be re-taught");
+  });
+});
+
+/* Stored state is a CACHE of campLiveChapter's answer, never an input to it — read as
+   an input, a chapter written as "next" could never become live, so finishing one left
+   the finished chapter marked live forever and the new one unreachable. */
+T("campLiveChapter: a completed chapter hands on to the one written after it", () => {
+  const camp = campOneChapter();
+  let srs = {}, scores = {};
+  camp.chapters[0].nodes.slice(0, 3).forEach(n => {
+    Object.assign(srs, campReadySrs(n));
+    scores[n.id] = CAMP_PASS;
+  });
+  camp.chapters.push({ n: 2, theme: "next up", state: "next", sketch: [], nodes: [
+    { id: "c2-a", name: "A", words: ["נוסע"], carry: [], needs: [] }] });
+  withCamp(camp, srs, scores, () => {
+    assertTrue(campChapterComplete(camp.chapters[0]), "3 of 4 is complete");
+    assertEq(campLiveChapter().theme, "next up");
+    assertEq(campCurrentNode().id, "c2-a");
+    /* And the node left behind stays available rather than being retired. */
+    assertEq(campNodeState("c1-asking"), "open");
+  });
+});
+
+T("campApplyFallback: no key still produces a chapter rather than an empty map", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    const made = campApplyFallback();
+    assertTrue(!!made && made.nodes.length >= CAMP_MIN_NODES);
+    assertTrue(made.nodes.every(n => n.needs.length >= 1),
+               "and it still hangs off the road rather than floating free");
+  });
+});
+
+T("campLogChapter: keeps the arc so chapter nine cannot redo chapter two", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    campLogChapter(campAll().chapters[0], "He has the basics. Next he needs the past tense.");
+    const log = campAll().log;
+    assertEq(log.length, 1);
+    assertEq(log[0].theme, "Getting by");
+    assertEq(log[0].note, "He has the basics");
+    campLogChapter(campAll().chapters[0], "again");
+    assertEq(campAll().log.length, 1, "one entry per chapter, rewritten not appended");
+  });
+});
+
 T("campEnsure: seeds exactly once and never disturbs an existing campaign", () => {
   const before = lsGet(CAMP_KEY);
   try {

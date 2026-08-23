@@ -1258,6 +1258,16 @@
     .lmapbar .lmaptot { display: none; }
     .lmaptop .lbanner { max-width: none; font-size: .72rem; }
   }
+  /* The week's observation, at the top of the progress room. The only thing on that
+     screen he could not have worked out from the numbers himself, so it leads. */
+  .lobs { background: var(--accent-soft); border: 1px solid rgba(13,110,110,.22);
+          border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; }
+  .lobs-k { font-size: .64rem; letter-spacing: .11em; text-transform: uppercase;
+            color: var(--accent); }
+  .lobs-t { margin: 4px 0 0; font-size: .95rem; }
+  .lobs-d { margin: 6px 0 0; font-size: .82rem; color: var(--muted); }
+  .lobs .pp-words { margin: 12px 0 12px; }
+  .lobs .btn { width: 100%; }
   .lstatshead { display: flex; align-items: baseline; justify-content: space-between; }
   .lstats { max-width: 760px; margin: 0 auto; padding: 8px 16px 40px; }
   .lstats::before { content: ""; display: block; height: 1px; background: var(--border);
@@ -1412,6 +1422,7 @@
   .pnode.stale .phe { fill: var(--warn); }
   .pnode.stale .pnmbox { fill: var(--gold-soft); stroke: #e0c48c; }
   .pstale { fill: var(--warn); font-weight: 700; }
+  .pfrom { fill: var(--accent); }
   /* The planner's one-line reason for a node, under its name in the live chapter
      only. On a generated path this is what makes it read as authored. */
   .pwhy { fill: #8b8271; font-style: italic; }
@@ -1905,6 +1916,7 @@
         <h3 class="lstats-sub">Your practice</h3>
         <button class="linkbtn" id="lStatsClose">Close</button>
       </div>
+      <div id="lObs"></div>
       <div class="lstatrow" id="lStatTiles"></div>
       <h3 class="lstats-sub">Minutes a day</h3>
       <div id="lStatMinutes"></div>
@@ -5331,6 +5343,12 @@ async function noteRecord(file, he, en) {
      bound behind an index that no longer mentions it. */
   notes.slice(VNOTES_MAX).forEach(n => { audioDel(noteAudioKey(n.id)); });
   vnotesSave(notes);
+  /* A message with enough new vocabulary in it earns a node on the map. Not awaited
+     and never surfaced: the transcript is what he asked for, and the campaign quietly
+     rearranging itself behind that is a bonus, not a step in the flow. */
+  setTimeout(() => {
+    try { Promise.resolve(campSpawnFromNote(notes[0])).catch(() => {}); } catch (e) {}
+  }, 1200);
   return id;
 }
 
@@ -12634,6 +12652,278 @@ function campLogChapter(ch, note) {
   campSave(c);
 }
 
+/* ---- a real message can put a node on the map -------------------------------
+   The one thing no other app can do, and the reason the campaign is worth generating
+   rather than authoring at all. A voice note arrives with five words he cannot say;
+   a node appears in the chapter he is standing in, marked as having come from a real
+   message, and the campaign is suddenly about his actual life rather than about a
+   syllabus that happens to live in his phone.
+
+   Deliberately conservative. It fires only when a message brings enough genuinely new
+   vocabulary to be worth a node of its own, only when the live chapter has room, and
+   at most once a day — a chapter that grows a node every time grandad says hello is
+   not a chapter, it is an inbox. */
+const SPAWN_MIN_NEW = 4, SPAWN_KEY = "hvr_spawned";
+function campSpawnable(he) {
+  const lib = libAll(), srs = srsAll();
+  const out = [];
+  String(he || "").split(/[^֐-׿]+/).forEach(tok => {
+    const k = libKeyFor(tok, lib) || tok;
+    if (!k || !HEB.test(k) || STOPLIST.has(k)) return;
+    if (out.indexOf(k) !== -1) return;
+    /* Unknown, or known and not yet his. Both are things this message says he needs. */
+    if (!lib[k] && !DICT[k]) return;
+    if (lib[k] && wordReady(k, srs)) return;
+    out.push(k);
+  });
+  return out;
+}
+function campSpawnAllowed(c) {
+  if (lsGet(SPAWN_KEY) === todayISO()) return false;      // one a day, at most
+  const cc = c || campAll();
+  const live = campLiveChapter(cc);
+  return !!live && (live.nodes || []).length < CAMP_MAX_NODES;
+}
+
+/* Named by the model, because "From a message on 23 August" is not a place on a map.
+   One Lite call, and if it cannot be made the node still appears with a plain name —
+   the vocabulary is the valuable part, the title is the polish. */
+async function campSpawnFromNote(note) {
+  try {
+    if (!note || !note.he) return null;
+    const c = campAll();
+    if (!campSpawnAllowed(c)) return null;
+    const taken = {};
+    campNodes(c).forEach(n => (n.words || []).forEach(w => { taken[w] = true; }));
+    const words = campSpawnable(note.he).filter(w => !taken[w]).slice(0, CAMP_WORDS_PER_NODE);
+    if (words.length < SPAWN_MIN_NEW) return null;
+
+    let name = "From his message", situation = "what his grandad was talking about", icon = words[0];
+    if (geminiKeys().length) {
+      try {
+        const prompt =
+          "A Hebrew learner just received this voice note from his partner's grandad:\n\n" +
+          note.he + "\n" + (note.en ? "(" + note.en + ")\n" : "") +
+          "\nThese are the words in it he cannot yet say: " + words.join(", ") + "\n\n" +
+          "Name the SITUATION this belongs to, as a node on his learning map.\n" +
+          'Return JSON only: {"name":"","situation":"","icon":""}\n' +
+          "- name: 2-4 English words (\"At the doctor\", \"Talking about the football\").\n" +
+          "- situation: one clause describing when he would need this.\n" +
+          "- icon: whichever ONE of the words above best stands for it.\n" +
+          "Name what it is ABOUT, not that it came from a message — he can see that.";
+        const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+        if (out && out.name) {
+          name = String(out.name).slice(0, 40);
+          situation = String(out.situation || situation).slice(0, 160);
+          if (out.icon && words.indexOf(out.icon) !== -1) icon = out.icon;
+        }
+      } catch (e) { /* the plain name is a fine node */ }
+    }
+
+    const c2 = campAll();
+    const live = campLiveChapter(c2);
+    if (!live || (live.nodes || []).length >= CAMP_MAX_NODES) return null;
+    live.nodes.push({
+      id: "sp" + Date.now().toString(36),
+      name: name, icon: icon, lvl: learnerLevel(),
+      situation: situation,
+      /* The reason writes itself, and it is the most honest one on the map. */
+      why: "he said this to you",
+      words: words, carry: campPickCarry(words), needs: [], fromNote: note.id || true
+    });
+    campComputeNeeds(c2);
+    campRestate(c2);
+    campSave(c2);
+    lsSet(SPAWN_KEY, todayISO());
+    return live.nodes[live.nodes.length - 1];
+  } catch (e) { return null; }
+}
+
+/* =====================  THE REVIEW  =====================
+   George, on the first sketch of this (one weekly call over the raw numbers):
+
+     "Im not sure how accurate this could be without data, so perhaps after every
+      block of practice ... there is a api call to light to sumarise/ evaluate teh
+      sessions performance. That way come hte end of hte week there is some sort of
+      log to work with, where we can use a higher level model to look over those and
+      hte data from the app to create that tailored strengthening lesson."
+
+   He is right, and the reason is worth stating: BY THE END OF A WEEK THE EVIDENCE IS
+   GONE. `hvr_srs` records that a word was missed, not HOW — the transcript of what he
+   actually said, the wrong gender, the dropped preposition, all of it is discarded the
+   moment the card advances. A weekly call would be guessing from tallies.
+
+   So two tiers, and the same shape as the campaign log one level down: summarise while
+   the evidence exists, reason over the summaries later.
+
+     tier 1  after each BLOCK of practice — a session or several in a day, whichever
+             way the day went — one Lite call reads what actually happened and writes
+             a couple of lines to a rolling log.
+     tier 2  weekly, one Flash call reads the accumulated log alongside the app's own
+             numbers and produces the observation and the words to go after. */
+const REVIEW_KEY = "hvr_review", REVIEW_PEND_KEY = "hvr_reviewpend";
+/* Long enough that three sessions in one sitting are one block, short enough that this
+   evening and tomorrow morning are not. */
+const REVIEW_BLOCK_GAP_MS = 25 * 60 * 1000;
+const REVIEW_MAX_BLOCKS = 20, REVIEW_MISSES_PER_BLOCK = 14;
+const REVIEW_WEEK_MS = 7 * 86400000, REVIEW_MIN_BLOCKS = 3;
+
+function reviewAll() {
+  try {
+    const o = JSON.parse(lsGet(REVIEW_KEY));
+    if (!o || typeof o !== "object") return { blocks: [], obs: null };
+    return { blocks: Array.isArray(o.blocks) ? o.blocks : [], obs: o.obs || null };
+  } catch (e) { return { blocks: [], obs: null }; }
+}
+function reviewSave(v) { lsSet(REVIEW_KEY, JSON.stringify(v)); }
+function reviewPend() {
+  try { const o = JSON.parse(lsGet(REVIEW_PEND_KEY)); return (o && typeof o === "object") ? o : null; }
+  catch (e) { return null; }
+}
+function reviewPendSave(v) { lsSet(REVIEW_PEND_KEY, JSON.stringify(v)); }
+
+/* Called from learnGrade, while `learnSpoken` still holds the transcript. This is the
+   whole point of the lower tier: what he SAID against what was wanted, which nothing
+   else in the app keeps for longer than one card. */
+function reviewNote(card, grade, spoken) {
+  if (!card) return;
+  let p = reviewPend();
+  const now = Date.now();
+  if (!p || (now - (p.ts || 0)) > REVIEW_BLOCK_GAP_MS) p = { start: now, ts: now, cards: 0, clean: 0, misses: [] };
+  p.ts = now;
+  p.cards = (p.cards || 0) + 1;
+  if (grade === 2) p.clean = (p.clean || 0) + 1;
+  if (grade !== 2 && p.misses.length < REVIEW_MISSES_PER_BLOCK) {
+    const want = card.kind === "word" || card.kind === "chunk"
+      ? card.key
+      : (card.item && (card.item.he || card.item.qhe)) || "";
+    p.misses.push({ k: card.kind, want: String(want).slice(0, 60),
+                    said: String((spoken && spoken.text) || "").slice(0, 80),
+                    en: String((card.item && card.item.en) || "").slice(0, 60) });
+  }
+  reviewPendSave(p);
+}
+
+/* A block is closed by TIME, not by a session ending — some days are three sessions
+   back to back and some are one, and a per-session call would be both noisier and
+   less useful than one that sees the whole sitting. */
+function reviewBlockDue() {
+  const p = reviewPend();
+  return !!(p && p.cards >= 5 && (Date.now() - (p.ts || 0)) > REVIEW_BLOCK_GAP_MS);
+}
+async function reviewCloseBlock() {
+  const p = reviewPend();
+  if (!p) return null;
+  localStorage.removeItem(REVIEW_PEND_KEY);
+  const rec = { d: new Date(p.start || Date.now()).toISOString().slice(0, 10),
+                cards: p.cards || 0, clean: p.clean || 0, note: "" };
+  /* Kept even when the call cannot be made. The numbers alone are still worth having
+     in the log, and the weekly pass can read a block with no note. */
+  const store = reviewAll();
+  if (geminiKeys().length && (p.misses || []).length) {
+    try {
+      const listing = p.misses.map((m, i) =>
+        (i + 1) + ". wanted: " + m.want + (m.en ? "  (" + m.en + ")" : "") +
+        "  |  he said: " + (m.said || "(nothing caught)")).join("\n");
+      const prompt =
+        "A Hebrew learner has just finished a block of speaking practice. Below is every " +
+        "answer he got wrong, with what was wanted and what he actually said.\n\n" +
+        listing + "\n\n" +
+        "He answered " + rec.cards + " cards and got " + rec.clean + " clean.\n\n" +
+        "Write AT MOST two short sentences naming the PATTERN, not the individual " +
+        "mistakes. A teacher's note to themselves: \"drops the preposition before " +
+        "places\", \"masculine forms for feminine nouns\", \"knows the words, loses the " +
+        "word order\". If there is genuinely no pattern — three unrelated slips — say " +
+        "exactly that in four words. Do not encourage, do not summarise the numbers, " +
+        "and do not repeat the sentences back.";
+      rec.note = String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST) || "").trim().slice(0, 300);
+    } catch (e) { /* a block with no note is still a block */ }
+  }
+  store.blocks.push(rec);
+  store.blocks = store.blocks.slice(-REVIEW_MAX_BLOCKS);
+  reviewSave(store);
+  return rec;
+}
+
+/* ---- tier two: the week --------------------------------------------------- */
+function reviewWeeklyDue() {
+  const r = reviewAll();
+  if (r.blocks.length < REVIEW_MIN_BLOCKS) return false;
+  return !r.obs || (Date.now() - (r.obs.ts || 0)) > REVIEW_WEEK_MS;
+}
+async function reviewWeekly() {
+  const r = reviewAll();
+  if (!geminiKeys().length) return null;
+  const notes = r.blocks.filter(b => b.note)
+    .map(b => b.d + ": " + b.note).join("\n");
+  if (!notes) return null;
+  const srs = srsAll(), lib = libAll();
+  const weak = Object.keys(lib)
+    .filter(k => srsGradable(k, lib) && srsStrengthOf(srs, k, "prod") === "weak")
+    .slice(0, 30);
+  const prompt =
+    "You are this Hebrew learner's teacher, looking back over his week. Each line below " +
+    "is a note written straight after a block of practice, while the mistakes were still " +
+    "in front of whoever wrote it.\n\n" + notes + "\n\n" +
+    "HIS RECORD:\n" + campEvidence() + "\n" +
+    "WORDS HE KEEPS MISSING: " + (weak.join(", ") || "none") + "\n\n" +
+    "Return JSON only:\n" +
+    '{"observation":"","targets":["",""],"drill":""}\n\n' +
+    "- observation: ONE thing, in two sentences at most, said to him directly. The thing " +
+    "that recurs across the week rather than the worst single mistake. If the honest " +
+    "answer is that he is simply getting on with it, say that — a manufactured problem " +
+    "is worse than no observation.\n" +
+    "- targets: 4-8 Hebrew words from his own vocabulary above that practising would " +
+    "actually fix this. Words only, no nikud, no invented ones.\n" +
+    "- drill: one short sentence telling him what to concentrate on while he practises them.";
+  try {
+    const out = extractJSON(await geminiRequest([{ text: prompt }]));
+    if (!out || !out.observation) return null;
+    const targets = (Array.isArray(out.targets) ? out.targets : [])
+      /* Validated against the library, never taken on trust — a target he does not have
+         filed would start a session with nothing in it. */
+      .filter(k => k && lib[k] && srsGradable(k, lib)).slice(0, 8);
+    const store = reviewAll();
+    store.obs = { ts: Date.now(), text: String(out.observation).slice(0, 400),
+                  drill: String(out.drill || "").slice(0, 200), targets: targets, seen: false };
+    reviewSave(store);
+    return store.obs;
+  } catch (e) { return null; }
+}
+
+/* Fire-and-forget, from the map. Both tiers are background spends he did not ask for,
+   so neither may surface an error over what he is looking at. */
+let reviewRunning = false;
+async function reviewTick() {
+  if (reviewRunning) return;
+  reviewRunning = true;
+  try {
+    if (reviewBlockDue()) await reviewCloseBlock();
+    if (reviewWeeklyDue()) await reviewWeekly();
+  } catch (e) { /* silent by design */ }
+  finally { reviewRunning = false; }
+}
+
+/* The strengthening session: an ordinary Learn session narrowed to the words the week
+   said were the problem. Same builder again — there is no third kind of session in
+   this app, and there should not be. */
+function reviewStartDrill() {
+  const r = reviewAll();
+  const t = (r.obs && r.obs.targets) || [];
+  if (!t.length) return false;
+  const cards = learnBuild({ only: t, size: 10 });
+  if (!cards || !cards.length) return false;
+  const store = reviewAll();
+  if (store.obs) { store.obs.seen = true; reviewSave(store); }
+  learnStatsOpen(false);
+  sessionClear();
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {} };
+  statsBump({ sessions: 1 });
+  learnShow("lRun");
+  learnRenderCard();
+  return true;
+}
+
 /* =====================  CONVERSATIONS  =====================
    Kept in their own store rather than the sentence bank. A conversation has no single
    `he`, so bankUses/bankServable/bankDifficulty would all need special cases, and the
@@ -13529,6 +13819,10 @@ function campRender() {
        quick sessions repair it. */
     if (state === "stale") svg += '<text class="pstale" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
                                   '" text-anchor="middle" font-size="21">↻</text>';
+    /* A node that grew out of a real voice note. The only mark on this map that means
+       "your grandad put this here", and worth being able to see at a glance. */
+    else if (n.fromNote) svg += '<text class="pfrom" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
+                                '" text-anchor="middle" font-size="18">✉</text>';
     svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) + '" text-anchor="middle" font-size="14">' +
            campEscape(n.name) + '</text>';
     /* The reason the planner gave for this node, shown only in the chapter you are in.
@@ -15087,7 +15381,38 @@ function fmtMins(sec) {
   if (m < 60) return m + "m";
   return Math.floor(m / 60) + "h " + (m % 60) + "m";
 }
+/* What the week actually said, above the numbers — because it is the only thing on
+   this screen that tells him something he could not have worked out himself. */
+function learnRenderObs() {
+  const box = document.getElementById("lObs");
+  if (!box) return;
+  box.innerHTML = "";
+  const obs = reviewAll().obs;
+  if (!obs || !obs.text) return;
+  const card = document.createElement("div"); card.className = "lobs";
+  const k = document.createElement("div"); k.className = "lobs-k";
+  k.textContent = "This week";
+  const t = document.createElement("p"); t.className = "lobs-t"; t.textContent = obs.text;
+  card.append(k, t);
+  if (obs.drill) {
+    const d = document.createElement("p"); d.className = "lobs-d"; d.textContent = obs.drill;
+    card.append(d);
+  }
+  if ((obs.targets || []).length) {
+    const lib = libAll(), srs = srsAll();
+    const row = document.createElement("div"); row.className = "pp-words";
+    row.innerHTML = obs.targets.map(k2 => campWordRow(k2, lib, srs)).join("");
+    card.append(row);
+    const b = document.createElement("button"); b.className = "btn";
+    b.textContent = "Practise these";
+    b.onclick = () => { if (!reviewStartDrill()) b.textContent = "Nothing to drill yet"; };
+    card.append(b);
+  }
+  box.append(card);
+}
+
 function learnRenderStats() {
+  learnRenderObs();
   const week = statsTotals(7);
   const all = statsTotals(0);
   const streak = statsStreak();
@@ -15415,6 +15740,9 @@ function learnRenderStart() {
      those any more, so every request it made bought content for a page that no longer
      exists.) */
   setTimeout(() => { try { Promise.resolve(campWarmNext()).catch(() => {}); } catch (e) {} }, 2500);
+  /* The review's two tiers, behind the planner so three requests never leave at once
+     on a phone that has just opened the app. */
+  setTimeout(() => { try { Promise.resolve(reviewTick()).catch(() => {}); } catch (e) {} }, 6000);
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -16675,6 +17003,10 @@ function learnGrade(grade) {
     if (grade === 2) s.strengthened[k] = true; else s.back[k] = true;
   });
   srsSave(srs);
+  /* Recorded HERE, while `learnSpoken` still holds the transcript. One card later it
+     is gone, and a weekly review reading nothing but tallies could only ever guess at
+     what went wrong — which is the whole reason the log is written per block. */
+  try { reviewNote(c, grade, learnSpoken); } catch (e) {}
   /* Repair, in character. A miss doesn't move the conversation on and it doesn't
      break out into a lesson — they simply say it again, more simply, feeding back the
      word that was missing, and you get one more go at the same idea. Exactly once:
@@ -19344,6 +19676,110 @@ T("campLogChapter: keeps the arc so chapter nine cannot redo chapter two", () =>
     assertEq(log[0].note, "He has the basics");
     campLogChapter(campAll().chapters[0], "again");
     assertEq(campAll().log.length, 1, "one entry per chapter, rewritten not appended");
+  });
+});
+
+/* ====================  A MESSAGE CAN MOVE THE MAP  ====================
+   The thing no other app can do. Kept deliberately conservative: a chapter that grows
+   a node every time grandad says hello is not a chapter, it is an inbox. */
+T("campSpawnable: only words that are real, unknown, and not filler", () => {
+  const before = lsGet(SRS_KEY);
+  try {
+    lsSet(SRS_KEY, JSON.stringify({}));
+    const got = campSpawnable("שלום, ראיתי את המשחק אתמול, כדורגל טוב");
+    assertTrue(got.indexOf("את") === -1, "STOPLIST filler is not a lesson");
+    assertTrue(got.indexOf("כדורגל") !== -1, "a real word he cannot say is");
+    assertEq(got.filter((k, i) => got.indexOf(k) !== i).length, 0, "no duplicates");
+  } finally { if (before === null) localStorage.removeItem(SRS_KEY); else lsSet(SRS_KEY, before); }
+});
+T("campSpawnable: a word he already owns is not news", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  withCamp(camp, campReadySrs(node), {}, () => {
+    assertTrue(campSpawnable(node.words.join(" ")).length === 0,
+               "a message made entirely of words he has spawns nothing");
+  });
+});
+T("campSpawnAllowed: at most one a day, and only into a chapter with room", () => {
+  const before = lsGet(SPAWN_KEY);
+  try {
+    withCamp(campOneChapter(), {}, {}, () => {
+      localStorage.removeItem(SPAWN_KEY);
+      assertTrue(campSpawnAllowed(), "four nodes leaves room for a fifth");
+      lsSet(SPAWN_KEY, todayISO());
+      assertTrue(!campSpawnAllowed(), "one already today");
+      localStorage.removeItem(SPAWN_KEY);
+      const full = campOneChapter();
+      while (full.chapters[0].nodes.length < CAMP_MAX_NODES)
+        full.chapters[0].nodes.push({ id: "x" + full.chapters[0].nodes.length, name: "x",
+                                      words: ["בית"], carry: [], needs: [] });
+      campSave(full);
+      assertTrue(!campSpawnAllowed(), "a full chapter takes no more");
+    });
+  } finally { if (before === null) localStorage.removeItem(SPAWN_KEY); else lsSet(SPAWN_KEY, before); }
+});
+
+/* ====================  THE REVIEW  ====================
+   Written per block because by the end of a week the evidence is gone: hvr_srs records
+   THAT a word was missed, never how. */
+function withReview(fn) {
+  const keys = [REVIEW_KEY, REVIEW_PEND_KEY];
+  const before = keys.map(k => lsGet(k));
+  try { keys.forEach(k => localStorage.removeItem(k)); fn(); }
+  finally { keys.forEach((k, i) => {
+    if (before[i] === null) localStorage.removeItem(k); else lsSet(k, before[i]); }); }
+}
+T("reviewNote: keeps what he SAID against what was wanted", () => {
+  withReview(() => {
+    reviewNote({ kind: "sentence", item: { he: "אני הולך הביתה", en: "I am going home" } },
+               0, { text: "ani holech bayit" });
+    const p = reviewPend();
+    assertEq(p.cards, 1);
+    assertEq(p.misses[0].want, "אני הולך הביתה");
+    assertEq(p.misses[0].said, "ani holech bayit",
+             "the transcript is the evidence a weekly-only review would have lost");
+  });
+});
+T("reviewNote: a clean answer counts but is not a mistake", () => {
+  withReview(() => {
+    reviewNote({ kind: "word", key: "שלום" }, 2, { text: "shalom" });
+    const p = reviewPend();
+    assertEq([p.cards, p.clean, p.misses.length], [1, 1, 0]);
+  });
+});
+/* Blocks are closed by TIME, not by a session ending — some days are three sessions
+   back to back and some are one. */
+T("reviewNote: a long gap starts a new block rather than extending the old one", () => {
+  withReview(() => {
+    reviewNote({ kind: "word", key: "שלום" }, 0, { text: "" });
+    const p = reviewPend();
+    p.ts = Date.now() - (REVIEW_BLOCK_GAP_MS + 60000);
+    reviewPendSave(p);
+    reviewNote({ kind: "word", key: "בית" }, 0, { text: "" });
+    assertEq(reviewPend().cards, 1, "this morning is not last night");
+  });
+});
+T("reviewBlockDue: needs a real block, aged", () => {
+  withReview(() => {
+    for (let i = 0; i < 6; i++) reviewNote({ kind: "word", key: "שלום" }, 2, { text: "x" });
+    assertTrue(!reviewBlockDue(), "he may still be mid-sitting");
+    const p = reviewPend(); p.ts = Date.now() - (REVIEW_BLOCK_GAP_MS + 60000); reviewPendSave(p);
+    assertTrue(reviewBlockDue());
+  });
+});
+T("reviewWeeklyDue: not on one block, and not twice in a week", () => {
+  withReview(() => {
+    reviewSave({ blocks: [{ d: "2026-08-20", note: "x" }], obs: null });
+    assertTrue(!reviewWeeklyDue(), "one block is not a week");
+    reviewSave({ blocks: [{ d: "1" }, { d: "2" }, { d: "3" }], obs: null });
+    assertTrue(reviewWeeklyDue());
+    reviewSave({ blocks: [{ d: "1" }, { d: "2" }, { d: "3" }], obs: { ts: Date.now() } });
+    assertTrue(!reviewWeeklyDue(), "already said its piece this week");
+  });
+});
+T("reviewStartDrill: no targets is a no-op, not a broken session", () => {
+  withReview(() => {
+    reviewSave({ blocks: [], obs: { ts: Date.now(), text: "x", targets: [] } });
+    assertTrue(!reviewStartDrill());
   });
 });
 

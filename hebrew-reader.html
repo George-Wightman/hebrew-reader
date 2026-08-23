@@ -1145,22 +1145,39 @@
      either time invested or words moved, nothing invented to look impressive.
      Sits under the Start button on the same screen: the practice you've done is
      context for the session you're about to start, not a separate report. */
-  /* ---- the map as the front door ----
-     A VIEWPORT with the board scrolling inside it, rather than the board scaled to
-     fit the page. Fitting the whole 1220x2130 map to a phone's width makes every
-     node an unreadable dot, which is why the map was a place you visited rather
-     than a place you were. A window onto it, opened at your own node, is legible at
-     any screen size — and "Whole map" is one tap away when you want the road. */
-  .lmap { position: relative; max-width: 980px; margin: 8px auto 0; }
-  .lmapview { position: relative; height: 62vh; min-height: 320px; max-height: 620px;
-              overflow: auto; background: #f2ebdd; border: 1px solid var(--border);
-              border-radius: 14px; -webkit-overflow-scrolling: touch; }
+  /* ---- THE MAP IS THE PAGE ----
+     First attempt made it a windowed panel inside the normal page flow. On a phone
+     that left a small letterbox of map above a screen and a half of empty cream,
+     with the action card covering most of what map there was. George: "the map being
+     a window on the page is not what I wanted, I pictured the whole page being hte
+     map in htebackground, the lesson window sitting above it in the bottom right.
+     There is a lot of wasted space here."
+
+     So the board is now the ground, pinned under the nav and bled to all four edges,
+     and every control floats on top of it. Nothing here is in the document flow —
+     which is also what stops the page scrolling behind the map while the map
+     scrolls inside itself. --navh is measured from the real nav (syncNavOffset)
+     rather than guessed, because it wraps to two rows on a narrow phone. */
+  .lmap { position: fixed; left: 0; right: 0; top: var(--navh, 57px); bottom: 0; z-index: 5; }
+  /* ONE scroller, both axes. Inherited wholesale from the Path's phone rules, and the
+     reasoning is unchanged: two containers scrolling on two different axes means a
+     diagonal drag is always captured by one and the other stays put. George, the first
+     time round: "cant move diagonally, only up or down not both at the same time".
+     A single bounded scroller with touch-action pan-x pan-y gets both for free, with
+     no gesture code at all. */
+  .lmapview { position: absolute; inset: 0; overflow: auto; background: #f2ebdd;
+              -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+              touch-action: pan-x pan-y;
+              scrollbar-width: none; -ms-overflow-style: none; }
+  .lmapview::-webkit-scrollbar { width: 0; height: 0; }
   .lmapview .pathtree { max-width: none; margin: 0; }
   .lmapview.fit { overflow: hidden; }
-  .lmapbar { position: absolute; left: 12px; top: 12px; display: flex; align-items: center;
-             gap: 14px; background: var(--panel); border: 1px solid var(--border);
-             border-radius: 99px; padding: 5px 14px; box-shadow: var(--shadow);
-             font-size: .76rem; color: var(--muted); pointer-events: none; }
+
+  .lmaptop { position: absolute; left: 12px; top: 12px; right: 128px; display: flex;
+             flex-direction: column; align-items: flex-start; gap: 8px; }
+  .lmapbar { display: flex; align-items: center; gap: 14px; background: var(--panel);
+             border: 1px solid var(--border); border-radius: 99px; padding: 5px 14px;
+             box-shadow: var(--shadow); font-size: .76rem; color: var(--muted); }
   .lmapbar b { font-size: .95rem; color: var(--ink); font-family: var(--display); }
   .lmapbar .gold b { color: var(--gold); }
   /* Seven bars, one per day. Deliberately tiny — it answers "have I been showing
@@ -1169,30 +1186,62 @@
   .lmapweek i { display: block; width: 5px; background: var(--accent); border-radius: 1px;
                 min-height: 2px; opacity: .85; }
   .lmapweek i.zero { background: var(--border); }
+  .lmaptop .lbanner { margin: 0; max-width: 340px; font-size: .76rem; padding: 8px 12px;
+                      box-shadow: var(--shadow); }
+
   .lmapzoom { position: absolute; right: 12px; top: 12px; background: var(--panel);
-              border: 1px solid var(--border); border-radius: 99px; padding: 3px 12px;
+              border: 1px solid var(--border); border-radius: 99px; padding: 4px 13px;
               box-shadow: var(--shadow); font-size: .76rem; }
-  /* The action sits ON the map, bottom-right, so the thing you came to do is never
-     more than one tap away however far you have scrolled. */
-  .lact { position: absolute; right: 12px; bottom: 12px; width: 262px; max-width: calc(100% - 24px);
-          background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-          padding: 12px 14px; box-shadow: 0 2px 10px rgba(34,48,60,.12); }
-  .lact-kicker { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase;
+
+  /* The action floats bottom-right so the thing you came to do is always reachable,
+     however far you have scrolled the board — and deliberately SMALL. The first
+     version was 205px tall and blotted out the map behind it. */
+  .lact { position: absolute; right: 14px; bottom: 14px; width: 268px;
+          background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+          padding: 12px 14px 10px; box-shadow: 0 3px 16px rgba(34,48,60,.16); }
+  .lact-kicker { font-size: .62rem; letter-spacing: .11em; text-transform: uppercase;
                  color: var(--muted); }
-  .lact-name { font-family: var(--display); font-size: 1.08rem; margin: 2px 0 4px; }
-  .lact-sub { font-size: .74rem; color: var(--muted); margin: 0 0 10px; }
-  .lact .btn { width: 100%; }
-  .lact-or { text-align: center; font-size: .72rem; color: var(--faint); margin: 9px 0 7px; }
-  .lact-quick { display: flex; gap: 6px; }
-  .lact-quick button { flex: 1; }
+  .lact-name { font-family: var(--display); font-size: 1.12rem; line-height: 1.2; margin: 1px 0 2px; }
+  .lact-sub { font-size: .72rem; color: var(--muted); margin: 0 0 9px; }
+  .lact .btn { width: 100%; padding: 9px 14px; font-size: .92rem; }
+  /* Text links, not a second row of buttons. Drilling is the secondary act here and
+     it should not compete with the campaign for weight. */
+  .lact-quick { display: flex; align-items: baseline; gap: 6px; margin-top: 8px;
+                font-size: .74rem; color: var(--muted); }
+  .lact-quick button { background: none; border: 0; padding: 0; font: inherit;
+                       color: var(--accent); cursor: pointer; }
+  .lact-quick button:hover { text-decoration: underline; }
+  .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
+  .lact .lhint:empty { display: none; }
+
+  /* Centred on the board, not pinned to the top — at the top it landed on the streak
+     bar, and more to the point this is a question that wants answering before you do
+     anything else. A dialog in the middle of the map reads as one; a strip along the
+     edge reads as a notification you can ignore. */
+  .lmap .lresume { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+                   width: min(420px, calc(100% - 28px)); z-index: 6;
+                   box-shadow: 0 6px 28px rgba(34,48,60,.22); }
+
+  /* Progress covers the board rather than sitting under it — it is a room you step
+     into from the stats node, and stepping back out should put you exactly where you
+     were on the map. */
+  .lstats.open { position: fixed; left: 0; right: 0; top: var(--navh, 57px); bottom: 0;
+                 z-index: 40; overflow: auto; background: var(--bg);
+                 max-width: none; padding: 18px 18px 60px; }
+  .lstats.open > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+
   @media (max-width: 620px) {
-    .lmapview { height: 54vh; }
-    .lact { left: 12px; right: 12px; width: auto; }
+    /* Full width at the bottom, because 268px on a 375px screen is nearly the width
+       anyway and a hugged edge reads as a mistake. Still short: the map must remain
+       the thing you are looking at. */
+    .lact { left: 10px; right: 10px; bottom: 10px; width: auto; padding: 11px 13px 9px; }
+    .lmaptop { right: 108px; gap: 6px; }
     .lmapbar { font-size: .72rem; gap: 10px; padding: 4px 11px; }
     /* The bar and the zoom control are both pinned to the top and collide on a phone.
        The week total is the part to drop: the seven bars beside it already say
        whether the week happened, which is the question this is answering. */
     .lmapbar .lmaptot { display: none; }
+    .lmaptop .lbanner { max-width: none; font-size: .72rem; }
   }
   .lstatshead { display: flex; align-items: baseline; justify-content: space-between; }
   .lstats { max-width: 760px; margin: 0 auto; padding: 8px 16px 40px; }
@@ -1307,15 +1356,11 @@
      A deliberately warmer, more map-like ground than the rest of the app — this is the
      one page that's meant to feel like a place rather than a tool. Still Paper & Ink:
      gold means finished and nothing else, exactly as on the streak card. */
-  .pathboard { background: #f2ebdd; min-height: 100%; padding: 18px 20px 40px; }
-  .pathhead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-              max-width: 980px; margin: 0 auto 6px; }
-  .pathhead h2 { font-family: var(--display); font-weight: 400; font-size: 1.7rem; margin: 0; }
-  .pathstats { margin-left: auto; font-size: .78rem; color: #8b8271; white-space: nowrap; }
-  .pathstats b { color: var(--gold); font-weight: 700; }
-  .pathtree { max-width: 980px; margin: 0 auto; }
+  /* .pathboard / .pathhead / .pathnote went with the page they belonged to. What is
+     left is the board itself, which is now sized in pixels by pathApplyZoom and filled
+     edge to edge by its svg. */
+  .pathtree { margin: 0; }
   .pathtree svg { width: 100%; height: auto; display: block; }
-  .pathnote { max-width: 980px; margin: 14px auto 0; font-size: .78rem; color: #8b8271; }
 
   .pnode { cursor: pointer; }
   .pnode.locked { cursor: default; }
@@ -1441,27 +1486,13 @@
     .inboxbar .ib-hint { display: none; }
     .boardhead { gap: 8px; }
     .zoomrow { display: none; }          /* a fiddly slider is a mouse control */
-    /* A branching tree can't reflow the way a list does — squeezing 940px of map into
-       360 makes every label unreadable. It scrolls sideways instead, at a width where
-       the nodes stay legible. This is the honest cost of branching over a spine. */
-    .pathboard { padding: 14px 0 30px; }
-    .pathhead, .pathnote { padding-left: 13px; padding-right: 13px; }
-    /* ONE scroller, both axes. This used to scroll horizontally on .pathtree while
-       the page scrolled vertically — two different containers on two different axes,
-       so a diagonal drag was always captured by one of them and the other stayed put.
-       George: "cant move diagonally, only up or down not both at the same time".
-
-       Giving .pathtree a bounded height makes it the only scroller involved, and
-       touch then pans both ways at once for free, with no gesture code at all. */
-    .pathtree {
-      overflow: auto; -webkit-overflow-scrolling: touch;
-      height: calc(100vh - 190px); min-height: 320px;
-      overscroll-behavior: contain;      /* don't hand a flick to the page behind it */
-      touch-action: pan-x pan-y;
-    }
-    .pathtree svg { width: 900px; max-width: none; height: auto; }
-    /* The board must not scroll as well, or the two fight for the same drag. */
-    .pathboard { overflow: hidden; }
+    /* The phone rules that used to live here — .pathtree as its own bounded scroller
+       at a fixed 900px SVG, plus .pathboard/.pathhead padding — belonged to the Path
+       when it was a page of its own. Left in place they did real damage: a second
+       scroller nested inside .lmapview (the exact "two containers fighting one drag"
+       bug the original comment was written to fix, recreated a level up), and a
+       hard-coded svg width that overrode the responsive board entirely. The board is
+       .lmapview's job now; the ONE-SCROLLER rule moved there with it. */
     /* Nearly full height on a phone, which is the natural form for a sheet there. */
     .pathsheet { max-height: 78vh; padding: 12px 14px 20px; }
 
@@ -1722,23 +1753,6 @@
 <!-- decorative fade behind the dock so content scrolling under it softens out -->
 <div class="learnwrap" id="viewLearn" style="display:none">
   <audio id="learnAudioEl" style="display:none"></audio>
-  <div class="lbanner" id="lVoiceBanner" style="display:none">
-    <div class="lbanner-head">
-      <span><b>No Hebrew voice yet</b> — everything works, you'll just read the pronunciation
-        instead of hearing it.</span>
-      <button class="linkbtn" id="lBannerMore">How to fix ▸</button>
-      <button class="linkbtn" id="lBannerHide">Hide</button>
-    </div>
-    <div id="lBannerSteps" style="display:none">
-      Free, one-off, and then it works offline forever:
-      <ol>
-        <li>Windows <b>Settings → Time &amp; Language → Language &amp; Region</b></li>
-        <li><b>Add a language</b> → Hebrew</li>
-        <li>Tick <b>Speech</b> / <b>Text-to-speech</b> in the optional features, then install</li>
-        <li>Restart Chrome and come back</li>
-      </ol>
-    </div>
-  </div>
 
   <!-- Start: the session you're about to do, then the practice behind it.
        One screen rather than two — the progress isn't a report you go and look up,
@@ -1759,19 +1773,6 @@
       </div>
     </div>
 
-    <!-- Above the map, because if you were mid-session that's what you came back for.
-         Offered, never automatic: dropping someone straight into a card they don't
-         remember choosing is worse than asking. -->
-    <div class="lresume" id="lResume" style="display:none">
-      <div class="lresume-text">
-        <b>Pick up where you left off?</b>
-        <p id="lResumeText"></p>
-      </div>
-      <div class="lresume-btns">
-        <button class="btn" id="lResumeBtn">Resume</button>
-        <button class="btn secondary" id="lResumeDrop">Start fresh</button>
-      </div>
-    </div>
 
     <!-- THE MAP IS THE FRONT DOOR. It used to be a separate tab, which made the
          campaign feel like a side quest and left this screen a dashboard. Opened
@@ -1782,16 +1783,56 @@
       <div class="lmapview" id="lMapView">
         <div class="pathtree" id="pathTree"></div>
       </div>
-      <!-- The only two numbers on the front door. Everything else lives behind the
-           stats node on the map, because a scoreboard is not a greeting. -->
-      <div class="lmapbar" id="lMapBar"></div>
+
+      <!-- Everything below floats ON the board. Nothing here is in the page's flow,
+           because the board IS the page — a windowed map with the controls stacked
+           underneath it was the first attempt and it wasted most of a phone screen. -->
+      <div class="lmaptop">
+        <!-- The only two numbers on the front door. Everything else lives behind the
+             stats node on the map, because a scoreboard is not a greeting. -->
+        <div class="lmapbar" id="lMapBar"></div>
+        <div class="lbanner" id="lVoiceBanner" style="display:none">
+          <div class="lbanner-head">
+            <span><b>No Hebrew voice yet</b> — you'll read the pronunciation instead of hearing it.</span>
+            <button class="linkbtn" id="lBannerMore">How to fix ▸</button>
+            <button class="linkbtn" id="lBannerHide">Hide</button>
+          </div>
+          <div id="lBannerSteps" style="display:none">
+            Free, one-off, and then it works offline forever:
+            <ol>
+              <li>Windows <b>Settings → Time &amp; Language → Language &amp; Region</b></li>
+              <li><b>Add a language</b> → Hebrew</li>
+              <li>Tick <b>Speech</b> / <b>Text-to-speech</b> in the optional features, then install</li>
+              <li>Restart Chrome and come back</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+
       <div class="lmapzoom"><button class="linkbtn" id="lMapFit">Whole map</button></div>
-      <div class="lact" id="lAct"></div>
+
+      <!-- Over the board, because if you were mid-session that's what you came back
+           for. Offered, never automatic: dropping someone straight into a card they
+           don't remember choosing is worse than asking. -->
+      <div class="lresume" id="lResume" style="display:none">
+        <div class="lresume-text">
+          <b>Pick up where you left off?</b>
+          <p id="lResumeText"></p>
+        </div>
+        <div class="lresume-btns">
+          <button class="btn" id="lResumeBtn">Resume</button>
+          <button class="btn secondary" id="lResumeDrop">Start fresh</button>
+        </div>
+      </div>
+
+      <div class="lact" id="lAct">
+        <div id="lActBody"></div>
+        <!-- A CHILD of the card but not of its body: learnRenderAct rebuilds the body
+             on every draw, and everything the session flow says ("Daily AI limit
+             reached", "Wrote 6 new practice items") is written here by id. -->
+        <p class="lhint" id="lStartHint"></p>
+      </div>
     </div>
-    <!-- Outside .lmap on purpose: learnRenderAct rebuilds the card's innerHTML, and
-         everything the session flow says ("Daily AI limit reached", "Wrote 6 new
-         practice items") is written here by id. -->
-    <p class="lhint" id="lStartHint"></p>
 
     <!-- Opened from the stats node, not shown on arrival. -->
     <div class="lstats" id="lStatsPane" style="display:none">
@@ -1835,7 +1876,6 @@
 <!-- The Path: a branching quest map. Its own view rather than a session shape, because
      a tree wants the full width and its own ground — wedged into the Learn start screen
      it reads as a list, which is exactly what it isn't. -->
-<span id="pathStats" style="display:none"></span>
 
 <!-- Raised from the bottom like the sentence pad, and for the same reason: the map
      stays visible behind it, so you keep your place instead of being moved elsewhere. -->
@@ -12734,12 +12774,8 @@ const PATH_W = 1220, PATH_H = 2130;
 function pathRender() {
   const tree = document.getElementById("pathTree");
   if (!tree) return;
-  const stats = document.getElementById("pathStats");
-  if (stats) {
-    stats.innerHTML = "<b>" + pathDoneCount() + "</b> / " + PATH_SECTIONS.length + " sections · <b>" +
-      PATH_SECTIONS.filter(s => pathDone(s.id)).reduce((n, s) => n + (s.words || []).length, 0) +
-      "</b> words taught";
-  }
+  /* The old page header's counter is gone with the page; the action card's kicker
+     carries "N of 32" now, where it is next to the thing it counts. */
   const st = {}; PATH_SECTIONS.forEach(s => { st[s.id] = pathStateOf(s); });
   let svg = '<svg viewBox="0 0 ' + PATH_W + ' ' + PATH_H + '" role="img" aria-label="The path">';
   /* Phase bands are labels, not gates — they say what changes about the language
@@ -12832,12 +12868,35 @@ function pathNextLesson(id) {
 /* The board is laid out at a FIXED pixel width and scrolled, rather than scaled to
    fit. Fitting 1220x2130 into a phone makes every node an unreadable dot — which is
    most of why the map was somewhere you visited rather than somewhere you were. */
-const MAP_BOARD_W = 900;
+/* 1.7x the screen: wide enough that a node is comfortably tappable, narrow enough
+   that two or three columns and their edges are visible at once — which is what makes
+   it read as a map rather than as a column of circles. Clamped so a phone doesn't get
+   a board it must scroll forever, and a desktop doesn't get one so wide the nodes
+   swim. */
+const MAP_BOARD_MIN = 620, MAP_BOARD_MAX = 1000;
 function pathBoardWidth(fit) {
   const view = document.getElementById("lMapView");
-  if (!view) return MAP_BOARD_W;
-  return fit ? Math.max(240, view.clientWidth) : Math.max(MAP_BOARD_W, view.clientWidth);
+  if (!view) return MAP_BOARD_MIN;
+  const w = view.clientWidth || MAP_BOARD_MIN;
+  if (fit) return Math.max(240, w);
+  return Math.round(Math.max(MAP_BOARD_MIN, Math.min(MAP_BOARD_MAX, w * 1.7)));
 }
+
+/* The nav wraps to two rows on a narrow phone, so its height is measured rather than
+   assumed — the map is pinned directly beneath it and a guess here either hides the
+   top of the board or leaves a stripe of page showing through. */
+function syncNavOffset() {
+  const nav = document.querySelector(".topnav");
+  if (!nav) return;
+  document.documentElement.style.setProperty("--navh", Math.round(nav.getBoundingClientRect().height) + "px");
+}
+window.addEventListener("resize", () => {
+  syncNavOffset();
+  const view = document.getElementById("lMapView");
+  if (!view || !view.offsetParent) return;
+  pathApplyZoom(view.classList.contains("fit"));
+  pathFocusCurrent();
+});
 function pathApplyZoom(fit) {
   const view = document.getElementById("lMapView");
   const tree = document.getElementById("pathTree");
@@ -14236,7 +14295,7 @@ function learnRenderMapBar() {
    rather just drill. Sits on the map so it is reachable however far you have
    scrolled. */
 function learnRenderAct() {
-  const box = document.getElementById("lAct");
+  const box = document.getElementById("lActBody");
   if (!box) return;
   box.innerHTML = "";
   const sec = pathCurrentSection();
@@ -14256,17 +14315,16 @@ function learnRenderAct() {
        did not choose is the same mistake the resume offer already refuses to make. */
     go.onclick = () => pathOpenSection(sec.id);
     box.append(k, nm, sub, go);
-    const or = document.createElement("div"); or.className = "lact-or";
-    or.textContent = "or just drill";
-    box.append(or);
   }
   const quick = document.createElement("div"); quick.className = "lact-quick";
+  quick.append(document.createTextNode(sec ? "or drill" : "Drill"));
   /* Conversation is here because the shape chips are no longer on screen. It stays a
      choice until the campaign owns it properly — a node's closing conversation is
      what it becomes, and until that exists, removing it would just delete a feature. */
-  [["quick", "5"], ["balanced", "15"], ["conversation", "Talk"]].forEach(([shape, label]) => {
+  [["quick", "5 cards"], ["balanced", "15 cards"], ["conversation", "talk"]].forEach(([shape, label], i) => {
+    if (i) quick.append(document.createTextNode("·"));
     const b = document.createElement("button");
-    b.className = "btn secondary"; b.textContent = label;
+    b.type = "button"; b.textContent = label;
     b.onclick = () => { lsSet(SHAPE_KEY, shape); learnRenderShapes();
                         document.getElementById("lStartBtn").click(); };
     quick.append(b);
@@ -14277,8 +14335,9 @@ function learnRenderAct() {
 function learnStatsOpen(on) {
   const pane = document.getElementById("lStatsPane");
   if (!pane) return;
+  pane.classList.toggle("open", !!on);
   pane.style.display = on ? "" : "none";
-  if (on) { learnRenderStats(); pane.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  if (on) { learnRenderStats(); pane.scrollTop = 0; }
 }
 
 function learnRenderStart() {
@@ -14308,6 +14367,7 @@ function learnRenderStart() {
     return;
   }
   document.getElementById("lMap").style.display = "";
+  syncNavOffset();
   /* The action card says everything the hero said, on top of the map. Kept in the
      DOM rather than deleted — its Start button is what the card's own buttons press. */
   document.getElementById("lHero").style.display = "none";
@@ -14375,14 +14435,16 @@ function learnRenderStart() {
      anywhere". Two renderings of one fact is just noise. */
   learnRenderShapes();
 
-  /* Naming keyboard shortcuts on a phone is worse than saying nothing: it advertises
-     controls the device cannot offer. The no-voice warning is a real fact about the
-     session rather than a shortcut, so it survives on both. */
-  hint.textContent = isTouchPrimary()
-    ? (hasHeVoice() ? "" : "No Hebrew voice yet, so you'll read the pronunciation")
-    : hasHeVoice()
-      ? "Space reveals · 1 / 2 / 3 grades · R replays the audio"
-      : "Space reveals · 1 / 2 / 3 grades · no Hebrew voice yet, so you'll read the pronunciation";
+  /* Cleared, not filled. This used to carry the keyboard shortcuts and the no-voice
+     warning as STANDING text, which was fine under a Start button and is wrong inside
+     the action card: shortcuts belong on the card you can press them on (lRunHint
+     already says them there), and the voice warning is the banner on the board now.
+     Measured, the two of them were 34px of a 192px card — a fifth of it spent saying
+     something twice.
+
+     What is left is transient only: "Wrote 6 new practice items", "Daily AI limit
+     reached". The card hides the line entirely while it is empty. */
+  hint.textContent = "";
 }
 
 function learnRenderShapes() {
@@ -14465,10 +14527,7 @@ document.getElementById("lMapFit").onclick = () => {
   pathApplyZoom(fit);
   if (!fit) pathFocusCurrent();
 };
-document.getElementById("lStatsClose").onclick = () => {
-  learnStatsOpen(false);
-  document.getElementById("lMap").scrollIntoView({ behavior: "smooth", block: "start" });
-};
+document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
 
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they

@@ -12701,6 +12701,316 @@ const PATH_SECTIONS = [
     situation: "saying something longer in one go, with a reason and an aside",
     words: ["למרות", "כדי", "לכן", "חוץ", "בנוסף"], chunks: [] }
 ];
+
+/* =====================  THE CAMPAIGN  =====================
+   Replaces the 32 hand-authored PATH_SECTIONS. Those were a proof of concept and
+   George called them exactly that — "it walked so the campaign can run" — but the
+   reasons they had to go are worth keeping written down, because several of them are
+   easy to rebuild by accident:
+
+     - the content was frozen at NEAR-BEGINNER, so it got EASIER relative to him
+       the further down he went;
+     - grammar was a property of a section's y-coordinate rather than of the learner,
+       so past tense arrived at row 8 whether he was ready at row 4 or drowning at 12;
+     - all 32 ran the same seven lessons, and lesson 5 already reached into
+       learnTargets, so the campaign was half a Learn session pretending otherwise;
+     - it ignored the voice notes entirely — the one input nothing else can supply;
+     - `requires` was a hard wall, so one section that could not generate stranded
+       every section behind it;
+     - and it could only ever grow by hand, which is not a path, it is a list.
+
+   What replaces it is a store of CHAPTERS, each a band of 4-6 nodes, generated from
+   evidence and laid out procedurally. Everything in this section works with no
+   network at all; the pipeline that writes new chapters sits on top of it. */
+const CAMP_KEY = "hvr_campaign";
+const CAMP_MIN_NODES = 4, CAMP_MAX_NODES = 6;
+
+function campBlank() { return { v: 1, chapters: [], log: [] }; }
+function campAll() {
+  try {
+    const o = JSON.parse(lsGet(CAMP_KEY));
+    if (!o || !Array.isArray(o.chapters)) return campBlank();
+    return { v: o.v || 1, chapters: o.chapters, log: Array.isArray(o.log) ? o.log : [] };
+  } catch (e) { return campBlank(); }
+}
+function campSave(v) { lsSet(CAMP_KEY, JSON.stringify(v)); }
+function campNodes(c) {
+  const out = [];
+  (c || campAll()).chapters.forEach(ch => (ch.nodes || []).forEach(n => out.push(n)));
+  return out;
+}
+function campNode(id, c) { return campNodes(c).filter(n => n.id === id)[0] || null; }
+function campChapterOf(id, c) {
+  const cc = c || campAll();
+  return cc.chapters.filter(ch => (ch.nodes || []).some(n => n.id === id))[0] || null;
+}
+
+/* ---- when a node is finished ------------------------------------------------
+   Outcome, not attendance. The old rule was "seven lessons at 60% each", a parallel
+   scoring system sitting next to an SRS that already knows perfectly well whether he
+   can say a word. This asks that instead: are the words his, and has he used them in
+   the closing conversation.
+
+   `carry` words are deliberately NOT required — they came from earlier nodes and are
+   here to make the node's sentences possible, not to be re-earned. */
+function campNodeWordsReady(node, srs) {
+  const words = (node && node.words) || [];
+  if (!words.length) return false;
+  const s = srs || srsAll();
+  return words.every(k => STOPLIST.has(k) || wordReady(k, s));
+}
+/* The graduation. George: "the conversation being a kind of 'graduation' from that
+   node, then the node turns gold." */
+const CAMP_CONVO_LESSON = 99;
+function campConvoPassed(id) {
+  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
+  return !!(r && r.pct >= PATH_PASS_PCT);
+}
+function campNodeDone(id, c, srs) {
+  const n = campNode(id, c);
+  return !!n && campNodeWordsReady(n, srs) && campConvoPassed(id);
+}
+/* Gold is not permanent. A node whose words have since decayed reopens with a marker
+   — the SRS made visible. The map only REPORTS this; repair happens in ordinary quick
+   sessions, because decayed words are overdue and learnTargets already leads with
+   overdue. That is the division of labour: the campaign teaches, quick sessions
+   maintain, and the map is what tells you maintenance is due. */
+function campNodeStale(id, c, srs) {
+  const n = campNode(id, c);
+  return !!n && campConvoPassed(id) && !campNodeWordsReady(n, srs);
+}
+function campNodeState(id, c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const ch = campChapterOf(id, cc);
+  if (!ch) return "locked";
+  if (ch.state === "fog") return "fog";
+  if (ch.state === "next") return "next";
+  if (campNodeDone(id, cc, ss)) return "done";
+  if (campNodeStale(id, cc, ss)) return "stale";
+  const rec = pathScoresAll()[id];
+  return (rec && Object.keys(rec).length) ? "current" : "open";
+}
+
+/* ---- when the next chapter opens -------------------------------------------
+   George: "once 60-75% (depending on isze of group) are gold the next session should
+   trigger". With chapters held to 4-6 nodes this lands exactly in that band —
+   3 of 4 (75%), 3 of 5 (60%), 4 of 6 (67%).
+
+   Nodes left behind are NOT retired: they stay on the map and stay startable. Gaps in
+   the trail are his to fill or ignore, and retiring them would make the rule quietly
+   punitive rather than generous. */
+function campThreshold(nodeCount) { return Math.max(3, Math.floor(nodeCount * 0.7)); }
+function campChapterGold(ch, c, srs) {
+  return (ch.nodes || []).filter(n => campNodeDone(n.id, c, srs)).length;
+}
+function campChapterComplete(ch, c, srs) {
+  return campChapterGold(ch, c, srs) >= campThreshold((ch.nodes || []).length);
+}
+/* The chapter he is working in: the first that is not yet complete. */
+function campLiveChapter(c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const live = cc.chapters.filter(ch => ch.state !== "fog" && ch.state !== "next");
+  for (let i = 0; i < live.length; i++) {
+    if (!campChapterComplete(live[i], cc, ss)) return live[i];
+  }
+  return live[live.length - 1] || null;
+}
+/* Recomputed rather than stored, so a chapter can never be left marked "next" after
+   the one before it was finished. Stored state is only ever a cache of this. */
+function campRestate(c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const live = campLiveChapter(cc, ss);
+  let seenLive = false;
+  cc.chapters.forEach(ch => {
+    if (ch === live) { ch.state = "live"; seenLive = true; return; }
+    if (!seenLive) { ch.state = "done"; return; }
+    ch.state = ch.sketch && ch.sketch.length && !(ch.nodes || []).length ? "fog" : "next";
+  });
+  return cc;
+}
+
+/* ---- the node he should be offered ------------------------------------------ */
+function campCurrentNode(c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const ch = campLiveChapter(cc, ss);
+  if (!ch) return null;
+  const nodes = ch.nodes || [];
+  const started = nodes.filter(n => campNodeState(n.id, cc, ss) === "current");
+  if (started.length) return started[0];
+  const open = nodes.filter(n => campNodeState(n.id, cc, ss) === "open");
+  if (open.length) return open[0];
+  const stale = nodes.filter(n => campNodeState(n.id, cc, ss) === "stale");
+  return stale[0] || null;
+}
+
+/* ---- day one, and the days generation cannot happen --------------------------
+   CAMP_SEED is the cold start. On the first run there is no evidence to plan from —
+   no level, no archive, no log — so planning would be inventing, and inventing on day
+   one is how a learner gets a chapter about the airport before they can say hello.
+   The generator is earned.
+
+   CAMP_FALLBACK is the airbag: chapters used only when a planned chapter cannot be
+   produced (quota gone, network down, three malformed replies). NOT a spine. A
+   campaign that can show an empty map is worse than one that occasionally shows a
+   generic chapter. */
+function campSeedChapter() {
+  return {
+    n: 1, theme: "Getting by", state: "live",
+    nodes: [
+      { id: "c1-hello", name: "How you are", icon: "שלום", lvl: 1,
+        situation: "greeting someone and saying how you are, and asking them back",
+        why: "where everything starts",
+        words: ["שלום", "בסדר", "טוב", "עייף", "תודה", "סליחה"], carry: [], needs: [] },
+      { id: "c1-people", name: "Who people are", icon: "משפחה", lvl: 1,
+        situation: "saying who people are and how your family are",
+        why: "grandad talks about family more than anything else",
+        words: ["משפחה", "אמא", "אבא", "סבא", "סבתא", "חבר"], carry: [], needs: [] },
+      { id: "c1-day", name: "Your day", icon: "עובד", lvl: 2,
+        situation: "saying what you are doing today — working, studying, going somewhere",
+        why: "the first thing anyone asks",
+        words: ["עובד", "לומד", "הולך", "עבודה", "בית", "היום"], carry: [], needs: [] },
+      { id: "c1-asking", name: "Asking for things", icon: "רוצה", lvl: 2,
+        situation: "asking for something, saying what you want or need, asking how much",
+        why: "the shortest route to being understood",
+        words: ["רוצה", "צריך", "יש", "אין", "כמה", "בבקשה"], carry: [], needs: [] }
+    ],
+    sketch: []
+  };
+}
+const CAMP_FALLBACK = [
+  { theme: "More of your life",
+    nodes: [
+      { name: "Family & home", icon: "בית", lvl: 2,
+        situation: "your home, the rooms in it, who lives there",
+        words: ["חדר", "דלת", "שולחן", "מיטה", "דירה"] },
+      { name: "Going places", icon: "נוסע", lvl: 2,
+        situation: "getting somewhere — the bus, the street, the town",
+        words: ["נוסע", "בא", "עיר", "רחוב", "אוטובוס", "פה"] },
+      { name: "Liking & wanting", icon: "אוהב", lvl: 2,
+        situation: "saying what you like, a lot or a little",
+        words: ["אוהב", "מאוד", "קצת", "יפה", "נחמד"] },
+      { name: "How you feel", icon: "מרגיש", lvl: 3,
+        situation: "saying how you feel, well or unwell, and where it hurts",
+        words: ["מרגיש", "כואב", "ראש", "בטן", "חולה", "בריא"] }
+    ] },
+  { theme: "What already happened",
+    nodes: [
+      { name: "Your day — past", icon: "אתמול", lvl: 3,
+        situation: "saying what you did earlier today or yesterday",
+        words: ["עבדתי", "הלכתי", "הייתי", "אמרתי", "ראיתי"] },
+      { name: "What you bought", icon: "קניתי", lvl: 3,
+        situation: "what you bought, what it cost, what you paid",
+        words: ["קניתי", "שילמתי", "לקחתי", "נתתי"] },
+      { name: "Where you went", icon: "נסעתי", lvl: 3,
+        situation: "where you went and when you got back",
+        words: ["נסעתי", "הגעתי", "חזרתי", "טסתי"] },
+      { name: "How it was", icon: "כיף", lvl: 4,
+        situation: "reacting to news — how good, how awful, what a shame",
+        words: ["כיף", "מדהים", "נהדר", "חבל", "מטורף"] }
+    ] }
+];
+
+/* Ensures there is always something to draw. Idempotent and safe to call on every
+   render — a campaign that has already been seeded is left exactly alone. */
+function campEnsure() {
+  const c = campAll();
+  if (!c.chapters.length) {
+    c.chapters.push(campSeedChapter());
+    campRestate(c);
+    campSave(c);
+  }
+  return c;
+}
+
+/* ---- laying it out ----------------------------------------------------------
+   The old map was beautiful because a human placed all 32 nodes by hand, and the
+   contract governing it was a set of instructions TO that human. Those rules were the
+   good part, so they survive as computation rather than as prose: fixed column
+   positions, one horizontal band per chapter, edges only between adjacent bands, at
+   most one merge. Tight enough to compute, loose enough not to look like a graph dump.
+
+   Pure: takes the store and returns geometry, touching no DOM and no storage, so the
+   layout can be unit-tested on its own. */
+const CAMP_COLS = [170, 390, 610, 830, 1050];
+const CAMP_BAND = 300, CAMP_TOP = 130, CAMP_W = 1220;
+/* A chapter of n nodes takes the MIDDLE n columns, so a four-node chapter is centred
+   rather than hugging the left edge. */
+function campColumns(n) {
+  const k = Math.max(1, Math.min(CAMP_COLS.length, n));
+  const start = Math.floor((CAMP_COLS.length - k) / 2);
+  return CAMP_COLS.slice(start, start + k);
+}
+/* A perfectly straight row of circles reads as a table. Nudging alternate nodes down
+   by a fixed amount costs nothing and is the difference between a map and a grid —
+   the old hand-placed board never had four nodes on exactly one line either. */
+const CAMP_STAGGER = 34;
+function campLayout(c) {
+  const cc = c || campAll();
+  const nodes = [], edges = [], bands = [];
+  const pos = {};
+  cc.chapters.forEach((ch, ci) => {
+    const bandY = CAMP_TOP + ci * CAMP_BAND;
+    const y = bandY;
+    bands.push({ y: bandY - 78, label: ch.theme || "", n: ch.n, state: ch.state });
+    /* A fogged chapter has a sketch and no nodes yet; it still occupies a band, and
+       its silhouettes are placed the same way real nodes are. */
+    const list = (ch.nodes || []).length ? ch.nodes
+      : (ch.sketch || []).map((sk, i) => ({ id: "fog-" + ch.n + "-" + i,
+                                            name: sk && sk.name || "", fog: true,
+                                            words: [], carry: [], needs: [] }));
+    const cols = campColumns(list.length);
+    list.forEach((node, i) => {
+      const x = cols[i % cols.length];
+      const ny = y + (i % 2 ? CAMP_STAGGER : 0);
+      pos[node.id] = { x: x, y: ny };
+      nodes.push(Object.assign({}, node, { x: x, y: ny, chapter: ch.n, chState: ch.state }));
+    });
+  });
+  nodes.forEach(n => {
+    (n.needs || []).forEach(r => {
+      if (pos[r]) edges.push({ a: pos[r], b: { x: n.x, y: n.y }, from: r, to: n.id });
+    });
+  });
+  return { w: CAMP_W, h: CAMP_TOP + Math.max(1, cc.chapters.length) * CAMP_BAND - 40,
+           nodes: nodes, edges: edges, bands: bands };
+}
+
+/* Which earlier node introduced each carried word — the edge, derived rather than
+   authored. The old contract said every edge means "you need those words for this",
+   but a human had to notice that and draw it; here it falls out of the data. */
+function campComputeNeeds(c) {
+  const cc = c || campAll();
+  /* Which node introduced each word, and which chapter that node sits in — the
+     chapter index is what lets an edge be rejected for not crossing a band. */
+  const owner = {}, ownerCh = {};
+  cc.chapters.forEach((ch, ci) => (ch.nodes || []).forEach(n => {
+    (n.words || []).forEach(w => { if (!owner[w]) { owner[w] = n.id; ownerCh[n.id] = ci; } });
+    if (ownerCh[n.id] === undefined) ownerCh[n.id] = ci;
+  }));
+  cc.chapters.forEach((ch, ci) => (ch.nodes || []).forEach(n => {
+    const seen = {};
+    (n.carry || []).forEach(w => {
+      const from = owner[w];
+      /* WITHIN a chapter the nodes are peers, not a sequence — an edge between two of
+         them draws a horizontal arrow across a single band, which is the readability
+         rule the old contract stated as "edges join ADJACENT rows". Same-band and
+         forward references are dropped rather than drawn. */
+      if (from && from !== n.id && ownerCh[from] < ci) seen[from] = true;
+    });
+    let needs = Object.keys(seen);
+    /* A node carrying nothing still has to hang off something, or its chapter floats
+       free of the road. Fall back to a node of the previous chapter. */
+    if (!needs.length && ci > 0) {
+      const prev = cc.chapters[ci - 1].nodes || [];
+      if (prev.length) needs = [prev[Math.min(ci, prev.length - 1)].id];
+    }
+    /* At most two incoming edges, from the old readability contract: more than that
+       is what turned the first version of the map into a tangle. */
+    n.needs = needs.filter(Boolean).slice(0, 2);
+  }));
+  return cc;
+}
+
 const PATH_BY_ID = {}; PATH_SECTIONS.forEach(s => { PATH_BY_ID[s.id] = s; });
 
 const PATH_LESSON_DEFS = [

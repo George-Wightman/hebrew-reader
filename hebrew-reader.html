@@ -2476,7 +2476,12 @@ function mergeById(a, b, cap) {
     if (!it || !it.id) return;
     const mine = byId[it.id];
     if (!mine) { byId[it.id] = it; return; }
+    /* Mine wins on every field, as it always has — except that a MISSING `lvl` is
+       filled from theirs. Difficulty grades are backfilled by pressing a button on
+       one device, and without this the other device's ungraded copies would win the
+       merge and quietly undo the whole backfill. */
     byId[it.id] = Object.assign({}, mine, { seen: maxNum(mine.seen, it.seen) });
+    if (!byId[it.id].lvl && it.lvl) byId[it.id].lvl = it.lvl;
   });
   const out = Object.keys(byId).sort().map(k => byId[k]);
   return cap ? out.slice(-cap) : out;
@@ -11789,13 +11794,36 @@ function struggleRecord(str, pending, token, weight) {
    One call buys ~12 items; the second time George drills these words the page
    costs nothing at all. */
 const BANK_KEY = "hvr_bank";
-const BANK_MIN_UNSEEN = 6;
+/* Was 6 — roughly one session's worth, which meant the generator sat satisfied
+   almost every time it was asked and the bank went stale. George: "we could use
+   more of the 500 ... to generate new sentences every learning that I do ... this
+   keeps it fresh and keeps pushing me." At 18 the top-up fires most sessions, and
+   with retirement now clearing spent items the pile doesn't just grow. The budget
+   is not the constraint: one draft plus one review per session against 20 Flash and
+   500 Flash-Lite a day, doubled if a second key is set. */
+const BANK_MIN_UNSEEN = 18;
 const BANK_MAX = 400;
 function bankAll() {
   try { const a = JSON.parse(lsGet(BANK_KEY)); return Array.isArray(a) ? a : []; }
   catch (e) { return []; }
 }
-function bankSave(v) { lsSet(BANK_KEY, JSON.stringify(v.slice(-BANK_MAX))); }
+/* Overflow used to drop the OLDEST items — `slice(-BANK_MAX)` — which is the worst
+   possible rule once the bank is being topped up every session. Age says nothing
+   about worth; a level-1 sentence he has already done four times is what should go,
+   and under the old rule it was precisely what survived, because it was written
+   early. Evicts by lowest level first, then by most-seen within a level. Survivors
+   keep their original order (nothing depends on it, but a stable store is easier to
+   reason about when reading an export by hand). */
+function bankValue(it) { return bankLevel(it) * 100 - Math.min(99, (it.seen || 0)); }
+function bankSave(v) {
+  let a = Array.isArray(v) ? v.slice() : [];
+  if (a.length > BANK_MAX) {
+    const order = a.map((it, i) => i).sort((x, y) => bankValue(a[x]) - bankValue(a[y]));
+    const doomed = new Set(order.slice(0, a.length - BANK_MAX));
+    a = a.filter((it, i) => !doomed.has(i));
+  }
+  lsSet(BANK_KEY, JSON.stringify(a));
+}
 
 /* Derived here rather than taken from the model's own answer. The app knows exactly
    which words are in the library; a hallucinated "uses" list would corrupt the
@@ -11827,6 +11855,46 @@ function bankPrune(bank, lib) {
   return bank.filter(it => it && it.he && (it.uses || []).some(u => lib[u]));
 }
 
+/* ---- refusing the same sentence wearing a different hat ----------------------
+   George: "its looking quite basic sentences a lot 'this is a big house' 'this is
+   a new house' which are fine but once Ive dont it once or twice, that should be
+   enough to call it done."
+
+   `learnIngest` only ever compared exact `he` strings, so those two are different
+   items and both live in the bank forever. The cure is a check on SHAPE, and the
+   narrowest one that catches the family he actually named: same token count,
+   differing in at most one position. Deliberately not a general similarity score —
+   Hamming-1 rejects the swapped adjective and nothing he would want to keep. */
+function heTokens(he) { return String(he || "").trim().split(/\s+/).filter(Boolean); }
+function bankNearDuplicate(he, type, bank) {
+  const a = heTokens(he);
+  if (a.length < 2) return false;              // too short for a shape to mean anything
+  return bank.some(it => {
+    if (!it || it.type !== type) return false;
+    const b = heTokens(it.he);
+    if (b.length !== a.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i] && ++diff > 1) return false;
+    }
+    return true;                                // identical, or one token apart
+  });
+}
+/* The second half of the same problem: a template family where the varying word
+   ISN'T in a fixed position ("זה בית גדול" / "זה בית מאוד גדול"). Three items
+   sharing an opening pair is a frame establishing itself; refuse the fourth. */
+const BANK_FRAME_MAX = 3;
+function bankFrameFull(he, bank) {
+  const a = heTokens(he);
+  if (a.length < 2) return false;
+  let n = 0;
+  for (let i = 0; i < bank.length; i++) {
+    const b = heTokens(bank[i] && bank[i].he);
+    if (b.length >= 2 && b[0] === a[0] && b[1] === a[1] && ++n >= BANK_FRAME_MAX) return true;
+  }
+  return false;
+}
+
 /* ---- is this sentence within reach yet? -------------------------------------
    The gate George asked for: a sentence he can't possibly say is worse than no
    sentence at all. Every CONTENT word must already be trained; grammar and filler
@@ -11852,6 +11920,144 @@ function bankDifficulty(it, lib, srs) {
   content.forEach(u => { worst = Math.max(worst, rank[srsStrengthOf(srs, u, "prod")] || 0); });
   const words = String(it.he || "").trim().split(/\s+/).filter(Boolean).length;
   return worst * 10 + words;
+}
+
+/* ---- how hard a sentence actually is ----------------------------------------
+   `bankDifficulty` above is word-band plus length, and for a long time it was the
+   app's ENTIRE notion of difficulty. It knows nothing about tense, clause
+   structure or register, which is why the level could never move: George, after
+   weeks of use, "I feel the level is stuck at basic, which is fine I am, but it
+   should be trying ot push me."
+
+   A level is a judgement about grammar, and the only thing in this app capable of
+   making it is the reviewer that already reads every generated item as a native
+   speaker. So the rubric lives here, gets pasted into both the drafting and the
+   review prompt, and comes back as one integer per item. It costs no extra
+   REQUEST — the review call was already being made.
+
+   Five bands, not ten: the reviewer has to apply this consistently across
+   separate calls months apart, and a finer scale would be false precision. */
+const LEVEL_MIN = 1, LEVEL_MAX = 5;
+const LEVEL_RUBRIC =
+  "LEVEL 1 — identification or a bare adjective, no verb at all, 2-4 words. " +
+  "\"this is a big house\", \"I am tired\".\n" +
+  "LEVEL 2 — one simple present-tense verb, 3-5 words. \"I am going home\".\n" +
+  "LEVEL 3 — a verb with an object or a preposition, or a question word, 5-7 " +
+  "words. Simple past or future is allowed here.\n" +
+  "LEVEL 4 — two clauses joined by ש/כי/אבל, or an infinitive chained to a verb, " +
+  "or an inflected preposition (אותך, אליו).\n" +
+  "LEVEL 5 — idiomatic, register-marked, or the natural spoken shortcut a native " +
+  "would really use rather than the textbook phrasing.";
+/* Items banked before levels existed have no `lvl`. Treating them as unknown and
+   refusing to serve them would throw away his whole existing bank, so they are
+   read as 2 — the modal band — until `reviewExistingBank` backfills them. */
+const LEVEL_DEFAULT = 2;
+function bankLevel(it) {
+  const n = Math.round(Number(it && it.lvl));
+  if (!isFinite(n) || !n) return LEVEL_DEFAULT;
+  return Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, n));
+}
+
+/* ---- what level HE is ------------------------------------------------------
+   A measurement, deliberately not a setting. The old prompt hard-coded "HIS
+   LEVEL: NEAR-BEGINNER" and nothing in the app could ever contradict it.
+
+   Counters decay rather than accumulate, for the same reason `miss` in srsApply
+   had to stop being a lifetime total: a level he outgrew in July should not be
+   holding down the number in September. 0.9 a session means roughly the last ten
+   sessions dominate. */
+const LEVEL_KEY = "hvr_level";
+const LEVEL_DECAY = 0.9, LEVEL_MIN_ATTEMPTS = 5, LEVEL_PASS_RATE = 0.7;
+function levelBlank() { return { at: LEVEL_MIN, lv: {} }; }
+function levelAll() {
+  try {
+    const o = JSON.parse(lsGet(LEVEL_KEY));
+    if (!o || typeof o !== "object") return levelBlank();
+    return { at: Number(o.at) || LEVEL_MIN, lv: (o.lv && typeof o.lv === "object") ? o.lv : {} };
+  } catch (e) { return levelBlank(); }
+}
+function levelSave(v) { lsSet(LEVEL_KEY, JSON.stringify(v)); }
+function levelDecay(st) {
+  Object.keys(st.lv).forEach(k => {
+    const r = st.lv[k];
+    r.n = (r.n || 0) * LEVEL_DECAY;
+    r.c = (r.c || 0) * LEVEL_DECAY;
+    /* Below a fifth of one answer it is noise carrying a key around. */
+    if (r.n < 0.2) delete st.lv[k];
+  });
+  return st;
+}
+function levelRecord(st, lvl, clean) {
+  const k = String(Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(lvl) || LEVEL_DEFAULT)));
+  const r = st.lv[k] || (st.lv[k] = { n: 0, c: 0 });
+  r.n = (r.n || 0) + 1;
+  if (clean) r.c = (r.c || 0) + 1;
+  return st;
+}
+/* The highest band he is genuinely holding down, from the evidence alone. */
+function levelMeasure(st) {
+  let out = LEVEL_MIN;
+  for (let L = LEVEL_MIN; L <= LEVEL_MAX; L++) {
+    const r = st.lv[String(L)];
+    if (r && r.n >= LEVEL_MIN_ATTEMPTS && (r.c || 0) / r.n >= LEVEL_PASS_RATE) out = L;
+  }
+  return out;
+}
+/* Moves `at` at most ONE band per session, in either direction. A lucky run at 4
+   should not vault him past 3, and one bad morning should not demote him two
+   bands and empty the session of everything he was working on. */
+function levelSettle(st) {
+  const want = levelMeasure(st);
+  const at = Number(st.at) || LEVEL_MIN;
+  st.at = want > at ? at + 1 : want < at ? at - 1 : at;
+  st.at = Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, st.at));
+  return st.at;
+}
+function learnerLevel() { return Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Number(levelAll().at) || LEVEL_MIN)); }
+
+/* Which levels the bank slice should be made of: mostly his own, with a
+   deliberate reach above it. This is the whole answer to "it should be trying to
+   push me" — the old code sorted the bank EASIEST FIRST, a ratchet that could
+   only ever point down.
+
+   Returned as a list of wanted levels rather than a set of counts so the filler
+   below can walk it in order and the reach cards are spread through the session
+   rather than clumped at the end. */
+const LEVEL_MIX = [0.6, 0.3, 0.1];
+function levelQuota(n, L) {
+  if (n <= 0) return [];
+  const want = [];
+  const at = Math.round(n * LEVEL_MIX[0]), up = Math.round(n * LEVEL_MIX[1]);
+  for (let i = 0; i < at; i++) want.push(L);
+  for (let i = 0; i < up && want.length < n; i++) want.push(L + 1);
+  while (want.length < n) want.push(L + 2);
+  return want.slice(0, n).map(x => Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, x)));
+}
+/* Fills the quota from a PRE-SORTED pool, preserving that pool's order inside each
+   level. Every consumer's careful ranking (cooldown, then target-word coverage,
+   then least-seen) therefore still decides WHICH item at a level is served; the
+   quota only decides how many of each.
+
+   A level with nothing in it borrows DOWNWARD first, then upward: if he has no
+   level-4 material, another level-3 is a better session than a level-5 wall. A
+   thin bank must still fill a session, never shorten one. */
+function pickByLevel(pool, quota) {
+  const used = new Set(), out = [];
+  const takeAt = (L) => {
+    for (let i = 0; i < pool.length; i++) {
+      if (used.has(i)) continue;
+      if (bankLevel(pool[i].it || pool[i]) === L) { used.add(i); return pool[i]; }
+    }
+    return null;
+  };
+  quota.forEach(L => {
+    let got = takeAt(L);
+    for (let d = 1; !got && d <= LEVEL_MAX; d++) {
+      got = takeAt(L - d) || takeAt(L + d);
+    }
+    if (got) out.push(got);
+  });
+  return out;
 }
 
 /* ---- per-word glosses on a bank item --------------------------------------- */
@@ -11886,6 +12092,13 @@ function glossMap(item) {
 /* ---- picking what to drill ------------------------------------------------- */
 const SESSION_CARDS = 15;
 const SESSION_BANK_MAX = 7;
+/* Never-drilled words get their own reserved slots at the front of the session —
+   see the soft launch in learnBuild. Three, and the bank gives up the room: a
+   session that meets four new words and practises none of them in context is the
+   flashcard app this one exists not to be. SESSION_BANK_MIN is the floor that
+   guarantees that context survives. */
+const NEW_WORD_CARDS = 3;
+const SESSION_BANK_MIN = 4;
 /* The most of a session that review material may occupy. The rest is always kept
    for words he hasn't drilled yet, so no amount of accumulated failure can stop
    new words appearing. */
@@ -12946,6 +13159,14 @@ function learnBuild() {
   const lib = libAll();
   const shape = learnShape();
 
+  /* Once per session, before anything is chosen: age the evidence, then let the
+     measured level move at most one band. Deliberately above the conversation
+     branch so a run of conversation sessions still decays the counters — otherwise
+     a fortnight of them would leave a stale level waiting when he came back. */
+  const lvlStore = levelDecay(levelAll());
+  const level = levelSettle(lvlStore);
+  levelSave(lvlStore);
+
   /* Conversation is a whole different shape of session: one scripted exchange rather
      than a mix of drills, so it returns early with one card per turn. Cards-per-turn
      (rather than one card for the lot) is what lets the progress bar, the grading and
@@ -12998,10 +13219,18 @@ function learnBuild() {
     .filter(it => bankServable(it, lib, srsNow))
     .map(it => ({ it: it, hits: (it.uses || []).filter(u => isTarget[u]).length,
                   diff: bankDifficulty(it, lib, srsNow) }))
-    /* THEN THE GRADE: easiest first among what's left, and only then by how well it
-       matches today's target words. Reach beats relevance — a perfectly targeted
-       sentence he can't say is worth nothing. */
-    .sort((a, b) => (a.diff - b.diff) || (b.hits - a.hits) || ((a.it.seen || 0) - (b.it.seen || 0)));
+    /* THEN THE GRADE. This used to be `diff` ascending — EASIEST FIRST — and that
+       one clause is most of why George could write "its looking quite basic
+       sentences a lot" and "I feel the level is stuck at basic". Easiest-first is a
+       ratchet that can only point downwards: the shortest sentence made of the
+       strongest words wins every session, forever, and nothing about answering it
+       correctly changes that.
+
+       Level now decides the MIX (see the quota below) and this sort decides only
+       which item wins WITHIN a level: the one covering most of today's target
+       words, then the one he has seen least, with `diff` surviving as a sensible
+       last tie-break. */
+    .sort((a, b) => (b.hits - a.hits) || ((a.it.seen || 0) - (b.it.seen || 0)) || (a.diff - b.diff));
 
   /* Rotation, applied AFTER the sort and without disturbing it: anything served in
      the last few sessions moves to the back of the queue, keeping its relative order.
@@ -13013,7 +13242,13 @@ function learnBuild() {
                                       BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
   const ranked = bankSplit.fresh.concat(bankSplit.recent);
 
-  const replyPick = (shape === "weak") ? null : (ranked.filter(x => x.it.type === "reply")[0] || null);
+  /* Levelled like everything else — the session closes on the real moment, and that
+     moment should be at his level rather than whichever reply happens to be easiest.
+     A quota of one, so pickByLevel returns at most one item and falls back through
+     the neighbouring levels if he has no reply at his own. */
+  const replyPick = (shape === "weak")
+    ? null
+    : (pickByLevel(ranked.filter(x => x.it.type === "reply"), [level])[0] || null);
 
   /* Shadowing runs on material he has ALREADY seen — repeating something he
      doesn't understand yet is a listening test with extra steps. Needs a voice
@@ -13028,9 +13263,39 @@ function learnBuild() {
     : [];
   const cards = shadowPicks.map(x => ({ kind: "shadow", item: x.it, words: x.it.uses || [] }));
 
-  const bankRoom = shape === "weak" ? 0 : shape === "quick" ? 2 : SESSION_BANK_MAX;
-  ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1)
-    .slice(0, bankRoom)
+  /* ---- the soft launch -----------------------------------------------------
+     George: "use the word cards to introduce new words, for instance those in the
+     library that are 'never seen' ... Once I know a word even weakly it makes more
+     sense to me to practice it in a sentence/ context than in isolation."
+
+     Word cards used to be the LAST slice, filling whatever room was left over — and
+     on a healthy bank the arithmetic left none at all: 2 shadow + 7 bank + 3 chunk +
+     2 note = 14, plus the reply is the whole session. So the only door new
+     vocabulary had was shut precisely when the app was working well, which is the
+     entire reason "it isnt introducing new words often enough".
+
+     Reserved FIRST now, and restricted to genuinely never-drilled words. That single
+     card is all a word needs: srsApply's first-meeting branch leaves `diff` at its
+     blank 5 and sets stab to 1 or 2, which srsStrength reads as `progressing`, which
+     is exactly what wordReady accepts. A word soft-launched here is eligible to
+     appear inside a sentence from the very next session, with no change to the
+     servable gate at all. */
+  const newWords = targets.filter(k => srsStrengthOf(srsNow, k, "prod") === "new");
+  const newRoom = shape === "weak" ? 0 : shape === "quick" ? 1 : NEW_WORD_CARDS;
+  const launching = newWords.slice(0, newRoom);
+  launching.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
+
+  /* Paid for out of the bank's allocation rather than out of chunks or notes, and
+     floored so a session heavy with new words still practises them in context. */
+  const bankRoom = shape === "weak" ? 0
+                 : shape === "quick" ? Math.max(1, 2 - launching.length)
+                 : Math.max(SESSION_BANK_MIN, SESSION_BANK_MAX - launching.length);
+  const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1);
+  /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
+     list. Mostly his own level, with a deliberate reach above it — "it should be
+     trying ot push me". pickByLevel preserves bankPool's ordering inside each level,
+     so every ranking decision above still stands. */
+  pickByLevel(bankPool, levelQuota(bankRoom, level))
     .forEach(x => cards.push({ kind: x.it.type, item: x.it, words: x.it.uses || [] }));
 
   /* Chunks are their own retrieval, not a variant of the word cards, so they get
@@ -13111,15 +13376,87 @@ function learnBuild() {
    still impossible. */
 const READY_MIN_FOR_SENTENCES = 8;
 
-async function learnTopUp() {
+/* ---- what this batch is ABOUT ----------------------------------------------
+   The conversation generator has had scenes since the day it was written, and the
+   comment above CORE_SCENES says why: a setting "is a vocabulary selector before
+   it's a story — which is most of the cure for the 'a big wind' problem, where
+   every word was individually valid and the sentence meant nothing." Sentence
+   generation never got the equivalent. It received a word list and a page of
+   prohibitions, and produced exactly what that asks for: the safest possible
+   pairing of a noun with an adjective, over and over.
+
+   These are communicative FUNCTIONS rather than settings, deliberately. A setting
+   varies the nouns; a function varies the grammar, because "ask someone to do
+   something later" cannot be written in the present tense in one clause. That is
+   what makes this pull the level up rather than just repaint it. */
+const FN_KEY = "hvr_fnrot";
+const LEARN_FUNCTIONS = [
+  "asking someone to do something, or for something you need",
+  "saying what you did earlier today or yesterday",
+  "making a plan — when, where, who with",
+  "reacting to news someone just told you",
+  "politely disagreeing, or saying you'd rather not",
+  "explaining why you can't do something",
+  "asking how someone is and following it up with a real second question",
+  "saying what you want or are going to do later"
+];
+/* Least-used first, same rule as convoNextScene, so the rotation is even rather
+   than random — nothing ever becomes automatic if nothing ever repeats. */
+function learnNextFunction() {
+  let done = {};
+  try { const o = JSON.parse(lsGet(FN_KEY)); if (o && typeof o === "object") done = o; } catch (e) {}
+  const pick = LEARN_FUNCTIONS.slice().sort((a, b) => (done[a] || 0) - (done[b] || 0))[0];
+  done[pick] = (done[pick] || 0) + 1;
+  lsSet(FN_KEY, JSON.stringify(done));
+  return pick;
+}
+
+/* ---- throwing away what's finished with -------------------------------------
+   Topping up every session without ever retiring anything just grows a bigger pile
+   of the same thing. George: "once Ive dont it once or twice, that should be enough
+   to call it done."
+
+   Three goes and below his current level is the test. Both halves matter: seen
+   without level would bin a hard sentence he's still working on, and level without
+   seen would bin material he has never actually been served. */
+const BANK_SPENT_SEEN = 3;
+function bankRetire(bank, level) {
+  return bank.filter(it => !((it.seen || 0) >= BANK_SPENT_SEEN && bankLevel(it) <= level - 1));
+}
+
+/* Is there anything at all the session builder could serve right now? The Start
+   button uses this to decide whether generating has to be waited for. Cheap enough
+   to run on every press, and it asks the question the way learnBuild will: after
+   the gate, not before it. */
+function learnHasServable() {
+  const lib = libAll(), srs = srsAll();
+  return bankPrune(bankAll(), lib).some(it => bankServable(it, lib, srs));
+}
+
+/* `quiet` is for the background call fired during a running session: same work,
+   no spinner. A ring appearing over a card he is mid-answer on reads as the app
+   doing something to HIM, which it isn't. */
+async function learnTopUp(quiet) {
   const lib = libAll();
   const srs = srsAll();
   const targets = learnTargets(SESSION_CARDS);
   if (!targets.length) return 0;
   const ready = readyWords(lib, srs);
   if (ready.length < READY_MIN_FOR_SENTENCES) return 0;
-  const isTarget = {}; targets.forEach(k => { isTarget[k] = true; });
-  const bank = bankPrune(bankAll(), lib);
+  const level = learnerLevel();
+
+  /* Retirement runs whether or not anything is generated below, and before the
+     stock count, so a bank that looks full of servable material but is actually
+     full of spent material still triggers a top-up.
+
+     Applied to the FULL bank and saved; the prune is then layered on top in memory
+     only, exactly as before. Pruning is about words that have been deleted from the
+     library and could come back — it has never been a reason to destroy a sentence,
+     and this must not quietly make it one. */
+  const full = bankAll();
+  const retired = bankRetire(full, level);
+  if (retired.length !== full.length) bankSave(retired);
+  const bank = bankPrune(retired, lib);
   /* Counts only material he could actually be SERVED. Counting gated sentences
      here would let a bank full of unreachable ones convince the app it had plenty. */
   const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
@@ -13130,29 +13467,64 @@ async function learnTopUp() {
      old prompt sent the target list as "words he is working on", which by then meant
      the newest arrivals from grandad — so every sentence was made of his least
      familiar vocabulary. New words reach sentences by being drilled into readiness
-     first, which is the whole progression. */
-  const readyRanked = ready.slice().sort((a, b) =>
-    wordFamiliarity(b, lib, srs, archiveAll()) - wordFamiliarity(a, lib, srs, archiveAll()));
+     first, which is the whole progression.
+
+     Ranked by DEMONSTRATED SRS strength rather than by wordFamiliarity. Familiarity
+     carries FAM_SEED_BONUS of 1000 against a realistic ceiling of ~220 from exposure
+     and age, so the top-25 "words he can already say" list was permanently the same
+     twenty-five words from the original xlsx seed, no matter what he learned
+     afterwards. That is the wrong measure for a section of the prompt whose entire
+     claim is "he has been drilled on these and got them right" — stability is
+     exactly that claim, measured. */
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  const readyRanked = ready.slice().sort((a, b) => stabOf(b) - stabOf(a));
   const working = readyRanked.slice(0, 25)
     .map(k => k + " (" + (lib[k].tr || "") + ") = " + (lib[k].en || "")).join("\n");
   const vocab = readyRanked.map(k => k + " (" + (lib[k].tr || "") + ")").join(", ");
+  /* The other end of the same list: words that only just became eligible, which
+     without this are technically in `vocab` and never chosen, because the model
+     reaches for the words it has the most context for. These are precisely the ones
+     soft-launched by a word card last session, so naming them is what closes the
+     loop between "meet a word" and "use it in a sentence". */
+  const fresh = readyRanked.slice(-12).reverse()
+    .map(k => k + " (" + (lib[k].tr || "") + ") = " + (lib[k].en || "")).join("\n");
+  const fn = learnNextFunction();
   const prompt =
     "You are writing speaking practice for an English speaker learning conversational Hebrew. " +
     "He replies to WhatsApp voice notes from his partner's grandad, so keep everything warm, " +
     "everyday and spoken — not textbook.\n\n" +
-    /* Added after the first real session produced אשמח לשמוע אותך — future tense,
-       an infinitive and an inflected preposition — for a near-beginner. The old
-       prompt asked for "short everyday sentences" and said nothing at all about
-       grammatical level, so it wrote for a competent adult speaker. */
-    "HIS LEVEL: NEAR-BEGINNER. This matters more than anything else below. He has " +
-    "very little Hebrew and is easily overwhelmed. Every sentence must be one he could " +
-    "plausibly say out loud after a few weeks of practice.\n" +
-    "- Present tense only. No future, no past, no subjunctive, no conditional.\n" +
-    "- 3 to 6 words. One clause. No subordinate clauses, no \"that\"/\"because\" joins.\n" +
-    "- No inflected prepositions (אותך, אליו, בשבילה). Use the plain form.\n" +
-    "- No infinitives chained to another verb (\"I'd be happy to hear\") — too hard.\n" +
-    "- Simple statements and simple questions. If in doubt, make it shorter.\n\n" +
+    /* This block used to read "HIS LEVEL: NEAR-BEGINNER ... Present tense only. No
+       future, no past ... 3 to 6 words. One clause." It was written in August after
+       one session produced אשמח לשמוע אותך for someone three weeks in, and it did
+       its job — but it was a CONSTANT, so the ceiling it set could never rise.
+       George, weeks later: "I feel the level is stuck at basic, which is fine I am,
+       but it should be trying ot push me."
+
+       So the level is now measured (see levelSettle) and the rubric is shared with
+       the reviewer that grades what comes back, which is what stops the two drifting
+       apart. The spread is the important part: material AT his level is practice,
+       material one and two above it is the thing that moves him. */
+    "THE DIFFICULTY SCALE — this is the same scale his answers are graded on, so " +
+    "apply it exactly:\n" + LEVEL_RUBRIC + "\n\n" +
+    "HE IS AT LEVEL " + level + ". Write a SPREAD, not a uniform batch:\n" +
+    "- about half at level " + level + " — this is the level he can already work at\n" +
+    "- about a third at level " + Math.min(LEVEL_MAX, level + 1) + " — a real stretch, but reachable\n" +
+    "- one or two at level " + Math.min(LEVEL_MAX, level + 2) + " — genuinely hard, to pull him forward\n" +
+    "Do NOT write everything at the easiest level. A batch of level-1 sentences is a " +
+    "failed batch however natural each one is: he has done those and is bored of them.\n\n" +
+    /* The variety lever. Without it the model reaches for the safest possible
+       construction every time, which is a noun with an adjective stapled to it —
+       and then the whole bank is "this is a big house" wearing different nouns. */
+    "WHAT THIS BATCH IS ABOUT: " + fn + ". Every item should belong to that, so the " +
+    "batch hangs together instead of being a list of unrelated facts. This is also " +
+    "how you reach the higher levels — that situation naturally needs tenses and " +
+    "joins that a bare description never does.\n\n" +
     "WORDS HE CAN ALREADY SAY (he has been drilled on these and got them right):\n" + working + "\n\n" +
+    /* The other half of the soft launch. A word gets one isolated card, becomes
+       eligible for sentences the next session, and would then sit unused forever
+       because the model has more to work with elsewhere — unless it is told. */
+    "JUST LEARNED — he met these very recently and needs them in context. Use them " +
+    "wherever it is natural to; that is the whole point of this batch:\n" + fresh + "\n\n" +
     "EVERY WORD HE IS READY FOR — use ONLY these, plus basic grammar words " +
     "(אני, אתה, זה, של, את, לא, כן, יש):\n" + vocab + "\n\n" +
     "Return JSON only, no markdown:\n" +
@@ -13180,13 +13552,23 @@ async function learnTopUp() {
     /* Was a hard quota of 6/4/2 = twelve items. If the vocabulary only supported four
        natural sentences it still had to invent twelve, so everything past the fourth
        was padding BY CONSTRUCTION. Quality is now allowed to cap quantity. */
-    "- Up to 6 of type \"sentence\": short everyday sentences HE might say. en = the English he'll be shown and must produce from.\n" +
-    "- Up to 4 of type \"listen\": short things grandad might say to him. en = what it means.\n" +
+    /* "short" used to be in both of these lines and had to come out: the level
+       spread above deliberately asks for items at 3-5, and every one of those is
+       longer than the three words "short" was quietly enforcing. */
+    "- Up to 6 of type \"sentence\": everyday sentences HE might say, spread across the levels above. en = the English he'll be shown and must produce from.\n" +
+    "- Up to 4 of type \"listen\": things grandad might say to him. en = what it means.\n" +
     "- Up to 2 of type \"reply\": qhe/qtr/qen is a question grandad asks; he/tr/en is a natural short answer.\n" +
     "- RETURN FEWER IF THAT IS ALL YOU CAN DO WELL. Four sentences a person would " +
     "really say beat twelve that are merely grammatical. Never pad to reach a count. " +
     "Returning 3 good items is a success; returning 12 with 6 awkward ones is a failure.\n" +
     "- Every item must use at least one WORD HE CAN ALREADY SAY.\n" +
+    /* Belt and braces with bankNearDuplicate. The ingest guard silently drops the
+       second of a pair, which costs an item off an already-short batch; asking the
+       model not to write it in the first place is free and keeps the count up. */
+    "- NO TWO ITEMS MAY BE THE SAME SENTENCE WITH ONE WORD SWAPPED. \"this is a big " +
+    "house\" and \"this is a new house\" count as ONE idea, not two, and the second " +
+    "will be thrown away. Every item must differ from the others in what it DOES, " +
+    "not just in which noun or adjective it happens to contain.\n" +
     "- Stay strictly inside the list above. Introducing a word he isn't ready for makes the " +
     "whole item unusable — it is better to write something very simple than something he can't " +
     "attempt. Only add to newWords if a sentence is genuinely impossible without it.\n" +
@@ -13210,13 +13592,17 @@ async function learnTopUp() {
     "native Hebrew speaker hearing it out loud. Delete any that are grammatical but " +
     "odd, any that pair an adjective with a noun that doesn't naturally take it, and " +
     "any you wouldn't say yourself. Return ONLY the survivors. A short list of real " +
-    "sentences is exactly what is wanted.";
+    "sentences is exactly what is wanted.\n" +
+    "Then check the survivors as a SET, which is a different question: are they " +
+    "genuinely different from each other, and do they still span the levels asked " +
+    "for? If deleting the odd ones has left you with nothing but the easiest level, " +
+    "write the harder ones again properly rather than shipping a flat batch.";
 
-  busy(true);
+  if (!quiet) busy(true);
   try {
     const drafted = extractJSON(await geminiRequest([{ text: prompt }]));
     return learnIngest(await learnReviewItems(drafted));
-  } finally { busy(false); }
+  } finally { if (!quiet) busy(false); }
 }
 
 /* ---- an independent second opinion -----------------------------------------
@@ -13238,21 +13624,31 @@ async function learnReviewItems(data) {
     i + ". [" + (it.type || "sentence") + "] " + (it.he || "") +
     "  |  " + (it.tr || "") + "  |  " + (it.en || "")).join("\n");
   const prompt =
-    "You are a native Hebrew speaker checking practice sentences written for a " +
-    "near-beginner. Your only job is to throw out the ones that are wrong or that " +
-    "no real person would say. Be strict — bad practice material teaches confident " +
-    "nonsense, and there is no cost to returning fewer.\n\n" +
-    "Reject an item if ANY of these are true:\n" +
+    "You are a native Hebrew speaker checking spoken-Hebrew practice sentences " +
+    "written for a learner. You have two jobs: throw out the ones that are wrong or " +
+    "that no real person would say, and grade the survivors for difficulty.\n\n" +
+    "JOB ONE — reject an item if ANY of these are true:\n" +
     "- No Israeli would actually say it (\"there is a big wind\", \"this is a medium end\")\n" +
     "- The adjective doesn't naturally go with that noun\n" +
     "- The Hebrew is ungrammatical, or the gender/number don't agree\n" +
     "- The English translation doesn't match the Hebrew\n" +
-    "- It's past or future tense, or longer than about 6 words\n\n" +
+    /* The old rule here was "reject it if it's past or future tense, or longer than
+       about six words". That was right when every item was supposed to be a
+       three-word present-tense sentence, and it is now exactly backwards: it would
+       throw away every level 3-5 item the drafting call was deliberately asked for.
+       Length and tense are what the LEVEL records; they are no longer grounds for
+       rejection. Only truth and naturalness are. */
+    "Do NOT reject an item for being long, or for being past or future tense. Those " +
+    "are graded below, not faults. Be strict about naturalness — bad practice " +
+    "material teaches confident nonsense, and there is no cost to returning fewer.\n\n" +
+    "JOB TWO — give every surviving item a level 1-5 by this rubric:\n" + LEVEL_RUBRIC + "\n" +
+    "Grade what the sentence IS, not what it was meant to be. Apply the rubric the " +
+    "same way every time — these grades are compared across different batches.\n\n" +
     "ITEMS:\n" + listing + "\n\n" +
-    "Return JSON only, no markdown: {\"keep\":[0,2,5]}\n" +
-    "keep = the indexes of items that pass. Include an index ONLY if you are happy " +
-    "to defend it as natural Hebrew. If most fail, keep few — that is the correct " +
-    "outcome, not a problem.";
+    "Return JSON only, no markdown: {\"keep\":[{\"i\":0,\"lvl\":2},{\"i\":2,\"lvl\":4}]}\n" +
+    "i = the item's index above. lvl = its level. Include an item ONLY if you are " +
+    "happy to defend it as natural Hebrew. If most fail, keep few — that is the " +
+    "correct outcome, not a problem.";
   try {
     const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
     const keep = (out && Array.isArray(out.keep)) ? out.keep : null;
@@ -13260,7 +13656,21 @@ async function learnReviewItems(data) {
        than twelve genuinely broken items — fall back rather than silently starve
        the bank on one bad response. */
     if (!keep || !keep.length) return data;
-    const kept = keep.map(i => items[i]).filter(Boolean);
+    /* Accepts BOTH shapes: the {i, lvl} objects asked for above, and the bare
+       integers the old prompt asked for. A model that ignores half the instruction
+       and returns [0,2,5] must still get its items kept — losing a whole batch over
+       a formatting slip is a far worse outcome than an unlevelled item, which
+       LEVEL_DEFAULT already handles. */
+    const kept = [];
+    keep.forEach(k => {
+      const obj = k && typeof k === "object";
+      const it = items[Number(obj ? k.i : k)];
+      if (!it) return;
+      const lvl = obj ? Math.round(Number(k.lvl)) : NaN;
+      kept.push(isFinite(lvl) && lvl
+        ? Object.assign({}, it, { lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, lvl)) })
+        : it);
+    });
     if (!kept.length) return data;
     return Object.assign({}, data, { items: kept });
   } catch (e) {
@@ -13276,20 +13686,26 @@ async function learnReviewItems(data) {
    SAME reviewer that now gates new material at what's already there.
 
    Batched at 12 so one bad response can only cost one batch, not the whole bank.
-   `_bankId` rides through `learnReviewItems` untouched — that function only ever
-   filters and returns the SAME object references it was given, keyed by the
-   REVIEWER'S index into that array, so tagging each draft object with the real
-   bank id and reading it back afterwards is exact regardless of what order the
-   model returns "keep" in. Chunks are never included: they're fixed phrases from
-   PHRASES, not AI output, so there is nothing here for a reviewer to judge. */
+   `_bankId` rides through `learnReviewItems` on each item, keyed by the REVIEWER'S
+   index into the array it was given, so tagging each draft object with the real bank
+   id and reading it back afterwards is exact regardless of what order the model
+   returns "keep" in. Chunks are never included: they're fixed phrases from PHRASES,
+   not AI output, so there is nothing here for a reviewer to judge.
+
+   Since the reviewer started grading difficulty this is also the BACKFILL: every
+   item banked before levels existed gets one here, which is why the button is worth
+   pressing once even on a bank that has already been cleaned. Without it the whole
+   existing bank sits at LEVEL_DEFAULT forever and the level mix has nothing to
+   choose between. */
 async function reviewExistingBank(onProgress) {
   if (!geminiKeys().length) throw new Error("no key configured");
   const bank = bankAll();
   const reviewable = bank.filter(it => it.type === "sentence" || it.type === "listen" || it.type === "reply");
-  if (!reviewable.length) return { checked: 0, removed: 0 };
+  if (!reviewable.length) return { checked: 0, removed: 0, levelled: 0 };
 
   const REVIEW_BATCH = 12;
   const removedIds = new Set();
+  const levels = {};
   for (let i = 0; i < reviewable.length; i += REVIEW_BATCH) {
     const batch = reviewable.slice(i, i + REVIEW_BATCH);
     const draft = { items: batch.map(it => ({
@@ -13298,15 +13714,18 @@ async function reviewExistingBank(onProgress) {
     })) };
     const reviewed = await learnReviewItems(draft);
     const keptIds = new Set(reviewed.items.map(it => it._bankId));
+    reviewed.items.forEach(it => { if (it._bankId && it.lvl) levels[it._bankId] = it.lvl; });
     batch.forEach(it => { if (!keptIds.has(it.id)) removedIds.add(it.id); });
     if (onProgress) onProgress(Math.min(i + REVIEW_BATCH, reviewable.length), reviewable.length);
   }
 
-  if (removedIds.size) {
+  let levelled = 0;
+  bank.forEach(it => { if (levels[it.id]) { it.lvl = levels[it.id]; levelled++; } });
+  if (removedIds.size || levelled) {
     bankSave(bank.filter(it => !removedIds.has(it.id)));
     rebuildTrIndex();
   }
-  return { checked: reviewable.length, removed: removedIds.size };
+  return { checked: reviewable.length, removed: removedIds.size, levelled: levelled };
 }
 
 function learnIngest(data) {
@@ -13328,12 +13747,21 @@ function learnIngest(data) {
        production practice. Drop it rather than pad the session with it. */
     if (!uses.length) return;
     if (bank.some(b => b.he === it.he && b.type === type)) return;
+    /* Checked against `bank` as it grows, so the guards apply WITHIN a batch too —
+       a single generation call that returns "a big house" and "a new house" only
+       banks the first of them. */
+    if (bankNearDuplicate(it.he, type, bank)) return;
+    if (bankFrameFull(it.he, bank)) return;
     bank.push({
       id: "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       type: type, he: String(it.he), tr: String(it.tr), en: String(it.en || ""),
       qhe: it.qhe ? String(it.qhe) : "", qtr: it.qtr ? String(it.qtr) : "",
       qen: it.qen ? String(it.qen) : "",
       gloss: cleanGloss(it.gloss),
+      /* Set by the reviewer. An item that arrived without one (old prompt shape,
+         malformed reply, review skipped for lack of a key) is left unset rather
+         than guessed at, and bankLevel reads it as LEVEL_DEFAULT. */
+      lvl: bankLevel(it),
       uses: uses, seen: 0, added: todayISO()
     });
     n++;
@@ -13832,8 +14260,16 @@ document.getElementById("lStartBtn").onclick = async () => {
       hint.textContent = "Writing you a conversation…";
       await learnMakeConversation();
     }
-    const added = await learnTopUp();
-    if (added) hint.textContent = "Wrote " + added + " new practice items.";
+    /* Only when there is genuinely nothing servable to run on. Topping up used to be
+       awaited here EVERY time, which is why Start could sit on "Getting ready…" for
+       several seconds; now the ordinary case starts instantly and the writing happens
+       in the background below, for next time. George: "not on click but preload say
+       while I do one lesson its loading in hte next one". */
+    if (!learnHasServable()) {
+      hint.textContent = "Writing you some practice…";
+      const added = await learnTopUp();
+      if (added) hint.textContent = "Wrote " + added + " new practice items.";
+    }
   } catch (e) {
     /* Quota, network, bad JSON — none of it should stop a session. The library
        alone is always enough for "Say the word". */
@@ -13860,6 +14296,12 @@ document.getElementById("lStartBtn").onclick = async () => {
   /* Write the NEXT one while he's busy with this one, so the wait happens where he
      isn't looking. Deliberately not awaited. */
   setTimeout(() => { convoTopUp(); }, 1500);
+  /* Same trick, now for sentences too — the material for the NEXT session is written
+     during this one. Staggered behind the conversation top-up so two requests don't
+     leave at once on a phone that has just started playing audio, and swallowed
+     whole: a background spend he did not ask for has no business surfacing an error
+     over the card he is looking at. */
+  setTimeout(() => { try { Promise.resolve(learnTopUp(true)).catch(() => {}); } catch (e) {} }, 4000);
 };
 
 function learnSpeakPrompt(slow) {
@@ -14987,6 +15429,16 @@ function learnAdvance(clean) {
     const b = bank.filter(x => x.id === c.item.id)[0];
     if (b) { b.seen = (b.seen || 0) + 1; bankSave(bank); }
   }
+  /* The evidence the measured level is built from. Only the three kinds that
+     actually test the sentence: `shadow` is repeat-after-me, so getting one right
+     says nothing about whether he could have produced it, and counting it would
+     inflate the level on mimicry alone. `note` is real speech with no level, and
+     `word`/`chunk` aren't sentences. */
+  if (c.item && (c.kind === "sentence" || c.kind === "listen" || c.kind === "reply")) {
+    const lvlStore = levelAll();
+    levelRecord(lvlStore, bankLevel(c.item), clean);
+    levelSave(lvlStore);
+  }
   /* One write per card rather than per session: a session abandoned two-thirds
      through still counts the two-thirds he actually did. */
   statsBump({ sec: statsCardEnd(), cards: 1, clean: clean ? 1 : 0,
@@ -15134,9 +15586,10 @@ document.getElementById("reviewBankBtn").onclick = async () => {
     const r = await reviewExistingBank((done, total) => {
       status.textContent = "Checking " + done + " of " + total + "…";
     });
-    status.textContent = r.removed
+    status.textContent = (r.removed
       ? "Removed " + r.removed + " of " + r.checked + " — the rest were kept."
-      : "Checked " + r.checked + " — all of them held up.";
+      : "Checked " + r.checked + " — all of them held up.")
+      + (r.levelled ? " Graded " + r.levelled + " for difficulty." : "");
   } catch (e) {
     status.textContent = "Couldn't finish — " + e.message;
   } finally {
@@ -17330,6 +17783,142 @@ T("pathWarmTarget: nothing to warm returns null, not a section", () => {
 T("pathWarmTarget: an empty items array counts as unwarmed", () => {
   const t = pathWarmTarget([PWSEC("a")], { a: { items: [] } }, () => "open");
   assertEq(t.what, "content");
+});
+
+/* ====================  SENTENCE LEVELS  ====================
+   The complaint these exist for: "its looking quite basic sentences a lot 'this is
+   a big house' 'this is a new house' ... I feel the level is stuck at basic, which
+   is fine I am, but it should be trying ot push me." */
+
+const LV = (lvl, extra) => Object.assign({ id: "i" + lvl + Math.random(), type: "sentence",
+                                           he: "x", lvl: lvl, seen: 0 }, extra || {});
+
+T("bankLevel: an item banked before levels existed reads as the default, not zero", () => {
+  assertEq(bankLevel({ he: "x" }), LEVEL_DEFAULT,
+           "the whole existing bank must stay servable");
+  assertEq(bankLevel({ he: "x", lvl: 0 }), LEVEL_DEFAULT);
+  assertEq(bankLevel({ he: "x", lvl: "3" }), 3, "a string from JSON is still a level");
+});
+T("bankLevel: clamps a model that invents a level 9", () => {
+  assertEq(bankLevel({ lvl: 9 }), LEVEL_MAX);
+  assertEq(bankLevel({ lvl: -2 }), LEVEL_MIN);
+});
+
+T("levelQuota: mostly his level, with a real reach above it", () => {
+  assertEq(levelQuota(7, 2), [2, 2, 2, 2, 3, 3, 4]);
+  assertEq(levelQuota(4, 1), [1, 1, 2, 3]);
+  assertEq(levelQuota(0, 2), []);
+});
+/* Without the clamp a learner at 5 would be asked for level 7 material, and
+   pickByLevel would spend its whole fallback search finding nothing. */
+T("levelQuota: never asks for a level above the scale", () => {
+  assertEq(levelQuota(7, 5), [5, 5, 5, 5, 5, 5, 5]);
+});
+
+T("pickByLevel: fills the quota from the right levels", () => {
+  const pool = [LV(1), LV(2), LV(2), LV(3), LV(4)];
+  const got = pickByLevel(pool, [2, 3, 4]).map(bankLevel);
+  assertEq(got, [2, 3, 4]);
+});
+/* A thin bank must still fill a session. Borrowing DOWN first is deliberate: with
+   no level-4 material another 3 is a better card than a 5 he cannot attempt. */
+T("pickByLevel: an empty level borrows downward before upward", () => {
+  const pool = [LV(3), LV(5)];
+  assertEq(pickByLevel(pool, [4]).map(bankLevel), [3]);
+});
+T("pickByLevel: never serves the same item twice in one session", () => {
+  const pool = [LV(2)];
+  assertEq(pickByLevel(pool, [2, 2, 2]).length, 1);
+});
+T("pickByLevel: keeps the pool's own ranking inside a level", () => {
+  const first = LV(2, { id: "first" }), second = LV(2, { id: "second" });
+  assertEq(pickByLevel([first, second], [2])[0].id, "first",
+           "the caller already sorted by coverage then least-seen — that must survive");
+});
+
+T("levelMeasure: needs real evidence, not one lucky answer", () => {
+  assertEq(levelMeasure({ at: 1, lv: { "3": { n: 2, c: 2 } } }), LEVEL_MIN,
+           "two answers is not a level");
+  assertEq(levelMeasure({ at: 1, lv: { "3": { n: 10, c: 9 } } }), 3);
+  assertEq(levelMeasure({ at: 1, lv: { "3": { n: 10, c: 4 } } }), LEVEL_MIN,
+           "40% is not holding a level down");
+});
+T("levelSettle: moves one band at a time, in both directions", () => {
+  const up = { at: 1, lv: { "4": { n: 10, c: 10 } } };
+  assertEq(levelSettle(up), 2, "a lucky run at 4 must not vault him past 3");
+  assertEq(levelSettle(up), 3, "but it keeps climbing on the next session");
+  const down = { at: 4, lv: {} };
+  assertEq(levelSettle(down), 3, "one bad morning demotes by one, not to the floor");
+});
+T("levelDecay: forgets a level he has moved on from", () => {
+  const st = { at: 2, lv: { "1": { n: 0.21, c: 0.21 }, "2": { n: 10, c: 8 } } };
+  levelDecay(st);
+  assertTrue(!st.lv["1"], "below a fifth of an answer is noise carrying a key around");
+  assertTrue(st.lv["2"].n < 10 && st.lv["2"].n > 8, "the live one is aged, not dropped");
+});
+T("levelRecord: a miss counts as evidence too", () => {
+  const st = levelBlank();
+  levelRecord(st, 3, true); levelRecord(st, 3, false);
+  assertEq(st.lv["3"], { n: 2, c: 1 });
+});
+
+/* ====================  NOT THE SAME SENTENCE AGAIN  ==================== */
+T("bankNearDuplicate: 'a big house' and 'a new house' are one idea, not two", () => {
+  const bank = [{ type: "sentence", he: "זה בית גדול" }];
+  assertTrue(bankNearDuplicate("זה בית חדש", "sentence", bank),
+             "one token apart at the same length is the family George named");
+  assertTrue(bankNearDuplicate("זה בית גדול", "sentence", bank), "and so is an exact repeat");
+});
+T("bankNearDuplicate: two genuinely different sentences both survive", () => {
+  const bank = [{ type: "sentence", he: "זה בית גדול" }];
+  assertTrue(!bankNearDuplicate("אני הולך הביתה", "sentence", bank));
+  assertTrue(!bankNearDuplicate("זה בית מאוד גדול", "sentence", bank),
+             "a different length is a different shape");
+  assertTrue(!bankNearDuplicate("זה בית חדש", "listen", bank),
+             "the same words as a listening line is a different exercise");
+});
+T("bankFrameFull: a template family is stopped at three", () => {
+  const bank = [{ he: "זה בית גדול" }, { he: "זה בית חדש" }];
+  assertTrue(!bankFrameFull("זה בית קטן", bank), "three is allowed");
+  bank.push({ he: "זה בית קטן" });
+  assertTrue(bankFrameFull("זה בית יפה", bank), "the fourth is refused");
+});
+
+/* ====================  RETIRING WHAT'S FINISHED WITH  ==================== */
+T("bankRetire: drops what he's done three times and outgrown", () => {
+  const bank = [LV(1, { id: "spent", seen: 3 }), LV(1, { id: "unseen", seen: 0 }),
+                LV(3, { id: "hard", seen: 5 })];
+  const kept = bankRetire(bank, 2).map(it => it.id);
+  assertEq(kept, ["unseen", "hard"],
+           "seen without level would bin a hard one he's still working on; " +
+           "level without seen would bin one he has never been served");
+});
+T("bankRetire: a learner still at level 1 retires nothing", () => {
+  const bank = [LV(1, { seen: 9 })];
+  assertEq(bankRetire(bank, 1).length, 1, "there is no level below his own to be under");
+});
+
+/* Age said nothing about worth. Under the old slice(-BANK_MAX) the item that
+   survived a full bank was whichever was written most recently. */
+T("bankValue: eviction sheds the lowest level, then the most-seen within it", () => {
+  const items = [LV(1, { seen: 0 }), LV(1, { seen: 4 }), LV(3, { seen: 9 })];
+  const order = items.slice().sort((a, b) => bankValue(a) - bankValue(b));
+  assertEq(order.map(x => [bankLevel(x), x.seen]), [[1, 4], [1, 0], [3, 9]],
+           "a level-3 he has done nine times outranks a level-1 he has never seen");
+});
+
+/* The backfill is run on one device. Without this the other device's ungraded
+   copies win the merge and the whole grading pass is silently undone. */
+T("mergeById: a missing level is filled from the other device", () => {
+  const mine = [{ id: "a", he: "x", seen: 2 }];
+  const theirs = [{ id: "a", he: "x", seen: 1, lvl: 4 }];
+  assertEq(mergeById(mine, theirs)[0].lvl, 4);
+  assertEq(mergeById(mine, theirs)[0].seen, 2, "higher seen still wins");
+});
+T("mergeById: a level already set is not overwritten", () => {
+  const mine = [{ id: "a", he: "x", lvl: 2 }];
+  const theirs = [{ id: "a", he: "x", lvl: 5 }];
+  assertEq(mergeById(mine, theirs)[0].lvl, 2, "mine wins on every field it has");
 });
 
 if (location.search.indexOf("selftest") !== -1) {

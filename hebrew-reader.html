@@ -13153,8 +13153,9 @@ function bankCooldownSplit(items, rec, seq, cooldown, idOf) {
    Every word below is already in DICT, so lessons 1-2 of any section run with no
    network at all — which matters far more here than in a normal session, because a
    dead node on a path blocks everything behind it. */
-const PATH_KEY = "hvr_path", PATH_CONTENT_KEY = "hvr_pathcontent";
-const PATH_LESSONS = 7;
+/* The campaign's cached content — a node's graduation conversation — still lives
+   here. PATH_KEY and PATH_LESSONS went with the sections they counted. */
+const PATH_CONTENT_KEY = "hvr_pathcontent";
 
 /* THE CONTRACT FOR HOW THIS MAP GROWS — read before adding to it.
 
@@ -13173,157 +13174,6 @@ const PATH_LESSONS = 7;
       change, so growing the map can never invalidate progress already made.
 
    Columns A=170 B=390 C=610 D=830 E=1050, merge nodes on the midpoints. */
-const PATH_PHASES = [
-  { y: 42,   label: "PRESENT · getting by" },
-  { y: 762,  label: "PRESENT · more of your life" },
-  { y: 1062, label: "PAST · what already happened" },
-  { y: 1512, label: "FUTURE · what hasn't happened yet" },
-  { y: 1812, label: "JOINING · saying more in one breath" }
-];
-
-const PATH_SECTIONS = [
-  /* ================= PHASE 1 · PRESENT, getting by ================= */
-  { id: "hello", x: 610, y: 80, icon: "שלום", name: "How you are", requires: [],
-    situation: "greeting someone and saying how you are, and asking them back",
-    words: ["שלום", "בסדר", "טוב", "עייף", "תודה", "סליחה"],
-    chunks: ["מה נשמע", "בוקר טוב"] },
-
-  /* ---- row 1 · the three strands open ---- */
-  { id: "people", x: 390, y: 230, icon: "משפחה", name: "Who people are", requires: ["hello"],
-    situation: "saying who people are and how your family are",
-    words: ["משפחה", "אמא", "אבא", "סבא", "סבתא", "חבר", "ילד"], chunks: [] },
-  { id: "day", x: 610, y: 230, icon: "עובד", name: "Your day", requires: ["hello"],
-    situation: "saying what you are doing today - working, studying, going somewhere",
-    words: ["עובד", "לומד", "הולך", "עבודה", "בית", "היום"], chunks: [] },
-  { id: "asking", x: 830, y: 230, icon: "רוצה", name: "Asking for things", requires: ["hello"],
-    situation: "asking for something, saying what you want or need, asking how much",
-    words: ["רוצה", "צריך", "יש", "אין", "כמה", "בבקשה"], chunks: [] },
-
-  { id: "home", x: 390, y: 380, icon: "בית", name: "Family & home", requires: ["people"],
-    situation: "talking about your home and who is there",
-    words: ["חדר", "דלת", "שולחן", "מיטה", "דירה"], chunks: [] },
-  { id: "going", x: 610, y: 380, icon: "הולך", name: "Going places", requires: ["day"],
-    situation: "saying where you are going and how you get there",
-    words: ["נוסע", "בא", "עיר", "רחוב", "אוטובוס", "פה"], chunks: [] },
-  { id: "liking", x: 830, y: 380, icon: "אוהב", name: "Liking & wanting", requires: ["asking"],
-    situation: "saying what you like and do not like",
-    words: ["אוהב", "מאוד", "קצת", "יפה", "נחמד"], chunks: [] },
-
-  /* ---- row 3 · liking forks into two things you can like ---- */
-  { id: "feelings", x: 390, y: 530, icon: "מרגיש", name: "How you feel", requires: ["home"],
-    situation: "saying how you feel and what hurts",
-    words: ["מרגיש", "כואב", "ראש", "בטן", "חולה", "בריא"], chunks: [] },
-  { id: "time", x: 610, y: 530, icon: "מחר", name: "Time & when", requires: ["going"],
-    situation: "saying when something is happening - today, tomorrow, this evening",
-    words: ["מחר", "אתמול", "עכשיו", "מתי", "שעה", "ערב"], chunks: [] },
-  { id: "food", x: 830, y: 530, icon: "אוכל", name: "Food & eating", requires: ["liking"],
-    situation: "eating and drinking, saying whether something is good",
-    words: ["אוכל", "שותה", "מים", "קפה", "לחם", "טעים"], chunks: ["ארוחת ערב"] },
-
-  /* Tier 2 replays a situation he can already handle, one grammar step up. The words
-     are the past forms of verbs he met in the parent section, so it reads as the same
-     ground rather than as starting again. */
-  { id: "hobbies", x: 1050, y: 530, icon: "משחק", name: "Free time", requires: ["liking"],
-    situation: "what you do in your free time - watching, playing, listening, reading",
-    words: ["משחק", "סרט", "מוזיקה", "ספר", "כדורגל", "שיר"], chunks: [] },
-
-  /* ---- row 4 · the first two merges ---- */
-  { id: "weather", x: 390, y: 680, icon: "חם", name: "Weather & small talk",
-    requires: ["feelings", "time"],
-    situation: "small talk about the weather and how it is today",
-    words: ["חם", "קר", "גשם", "שמש", "נעים", "רוח"], chunks: [] },
-  { id: "week", x: 610, y: 680, icon: "שבוע", name: "Your week", requires: ["time"],
-    situation: "talking about your week and which day something happens",
-    words: ["שבוע", "ראשון", "שני", "שלישי", "חודש"], chunks: ["סוף שבוע"] },
-  { id: "plans", x: 940, y: 680, icon: "אפשר", name: "Making plans",
-    requires: ["food", "hobbies"],
-    situation: "suggesting doing something together and asking if it is possible",
-    words: ["אפשר", "ביחד", "מסעדה", "פגישה"], chunks: ["בית קפה"] },
-
-  /* ================= PHASE 2 · PRESENT, wider ================= */
-  { id: "doctor", x: 170, y: 830, icon: "רופא", name: "At the doctor", requires: ["weather"],
-    situation: "saying you are unwell and what hurts",
-    words: ["רופא", "תור", "שפעת", "גרון", "חזק", "חלש"], chunks: [] },
-  { id: "work", x: 610, y: 830, icon: "לימודים", name: "Work & study", requires: ["week"],
-    situation: "talking about your work or studies and how they are going",
-    words: ["לימודים", "מבחן", "שיעור", "משרד", "מנהל", "סטודנט"], chunks: [] },
-  { id: "money", x: 830, y: 830, icon: "כסף", name: "Shopping & money", requires: ["plans"],
-    situation: "buying something, asking the price, saying it is expensive",
-    words: ["כסף", "חנות", "קניון", "שוק", "סופר", "כרטיס"], chunks: [] },
-
-  { id: "describing", x: 390, y: 980, icon: "גדול", name: "Describing things",
-    requires: ["doctor", "work"],
-    situation: "describing what something or someone is like",
-    words: ["גדול", "קטן", "חדש", "ישן", "ארוך", "קצר"], chunks: [] },
-  { id: "eatingout", x: 830, y: 980, icon: "מסעדה", name: "Eating out", requires: ["money"],
-    situation: "ordering food and drink and saying what you would like",
-    words: ["סלט", "בשר", "עוף", "דג", "יין", "מיץ"], chunks: [] },
-
-  /* ================= PHASE 3 · PAST TENSE =================
-     Past enters here because the strands above have enough present-tense depth for
-     the same verbs to come back in a new form rather than as new vocabulary. */
-  { id: "daypast", x: 390, y: 1130, icon: "עבדתי", name: "Your day — past",
-    requires: ["describing"], star: true, grammar: "past",
-    situation: "saying what you did today",
-    words: ["עבדתי", "הלכתי", "הייתי", "אמרתי", "ראיתי"], chunks: [] },
-  { id: "bought", x: 830, y: 1130, icon: "קניתי", name: "What you bought",
-    requires: ["eatingout"], grammar: "past",
-    situation: "saying what you bought and what you paid",
-    words: ["קניתי", "שילמתי", "לקחתי", "נתתי"], chunks: [] },
-
-  { id: "went", x: 170, y: 1280, icon: "נסעתי", name: "Where I went",
-    requires: ["daypast"], grammar: "past",
-    situation: "saying where you went and how you got there",
-    words: ["נסעתי", "הגעתי", "חזרתי", "טסתי"], chunks: [] },
-  { id: "happened", x: 610, y: 1280, icon: "קרה", name: "What happened",
-    requires: ["daypast"], grammar: "past",
-    situation: "saying what happened and who said what",
-    words: ["קרה", "אמר", "סיפר", "שמעתי"], chunks: [] },
-  { id: "familynews", x: 830, y: 1280, icon: "סיפר", name: "Family news",
-    requires: ["bought"], star: true, grammar: "past",
-    situation: "passing on news about the family - what they did and how they were",
-    words: ["הייתה", "היו", "באו", "אמרו", "עשו"], chunks: [] },
-
-  { id: "story", x: 390, y: 1430, icon: "היה", name: "Telling a story",
-    requires: ["went", "happened"], grammar: "past",
-    situation: "telling a short story about something that happened to you",
-    words: ["התחיל", "פגשתי", "מצאתי", "חזרנו", "נפגשנו"], chunks: [] },
-  { id: "howitwas", x: 830, y: 1430, icon: "כיף", name: "How it was",
-    requires: ["familynews"], grammar: "past",
-    situation: "saying how something was - fun, amazing, a shame",
-    words: ["כיף", "מדהים", "נהדר", "חבל", "מטורף"], chunks: [] },
-
-  /* ================= PHASE 4 · FUTURE ================= */
-  { id: "willdo", x: 390, y: 1580, icon: "אעשה", name: "What I'll do",
-    requires: ["story"], grammar: "future",
-    situation: "saying what you are going to do",
-    words: ["אעשה", "אלך", "אבוא", "אשלח", "אגיד"], chunks: [] },
-  { id: "meeting", x: 830, y: 1580, icon: "ניפגש", name: "Arranging to meet",
-    requires: ["howitwas"], star: true, grammar: "future",
-    situation: "arranging to meet someone - when, where, and agreeing it",
-    words: ["ניפגש", "נתראה", "נלך", "נדבר", "תבוא"], chunks: [] },
-
-  { id: "maybe", x: 610, y: 1730, icon: "אולי", name: "Promises & maybe",
-    requires: ["willdo", "meeting"], grammar: "future",
-    situation: "saying something will probably happen, or that you hope so",
-    words: ["אולי", "בטח", "כנראה", "מקווה"], chunks: ["בעזרת השם"] },
-
-  /* ================= PHASE 5 · JOINING ================= */
-  { id: "because", x: 390, y: 1880, icon: "כי", name: "Because & that",
-    requires: ["maybe"], grammar: "joining",
-    situation: "joining two thoughts together with because, if and but",
-    words: ["כי", "אם", "אז", "אבל", "בגלל"], chunks: [] },
-  { id: "opinions", x: 830, y: 1880, icon: "חושב", name: "Opinions",
-    requires: ["maybe"], grammar: "joining",
-    situation: "saying what you think and how something seems to you",
-    words: ["חושב", "נראה", "באמת", "בעצם", "בטוח"], chunks: ["נראה לי"] },
-
-  { id: "properly", x: 610, y: 2030, icon: "בגלל", name: "Telling it properly",
-    requires: ["because", "opinions"], grammar: "joining",
-    situation: "saying something longer in one go, with a reason and an aside",
-    words: ["למרות", "כדי", "לכן", "חוץ", "בנוסף"], chunks: [] }
-];
-
 /* =====================  THE CAMPAIGN  =====================
    Replaces the 32 hand-authored PATH_SECTIONS. Those were a proof of concept and
    George called them exactly that — "it walked so the campaign can run" — but the
@@ -13648,17 +13498,6 @@ function campComputeNeeds(c) {
   return cc;
 }
 
-const PATH_BY_ID = {}; PATH_SECTIONS.forEach(s => { PATH_BY_ID[s.id] = s; });
-
-const PATH_LESSON_DEFS = [
-  { name: "Meet the words",   kind: "words",        note: "word cards",         offline: true },
-  { name: "Meet the rest",    kind: "words2",       note: "word · phrase",      offline: true },
-  { name: "Say it",           kind: "sentence",     note: "sentences" },
-  { name: "Hear it",          kind: "listen",       note: "listen · say it back" },
-  { name: "Weave",            kind: "weave",        note: "with words you have" },
-  { name: "Answer back",      kind: "reply",        note: "reply" },
-  { name: "The conversation", kind: "conversation", note: "conversation" }
-];
 
 /* Per-lesson scores, not just a highest-reached number — a section's 7 lessons can be
    attempted in any order and retried, so "how far did he get" isn't a single integer
@@ -13671,75 +13510,16 @@ const PATH_PASS_PCT = 60;
    attempting one is passing it. From lesson 3 on, a genuine score is required. */
 function pathLessonPassed(n, pct) { return n <= 2 ? true : pct >= PATH_PASS_PCT; }
 function pathLessonRec(secId, n) { return (pathScoresAll()[secId] || {})[n]; }
-/* Lessons 1-6 can be done in any order and retried freely — only the closing
-   conversation (7) is a real gate, and it needs every one of them passed first. */
-function pathSection36Passed(secId) {
-  for (let n = 1; n <= 6; n++) {
-    const r = pathLessonRec(secId, n);
-    if (!r || !pathLessonPassed(n, r.pct)) return false;
-  }
-  return true;
-}
-function pathLesson7Unlocked(secId) { return pathSection36Passed(secId); }
-/* "How far along is this section" is now a derived count of passed lessons, not a
-   stored pointer — order-independent, and pathDone still falls out of it for free:
-   lesson 7 can only be passed once 1-6 already are, so progress===7 implies all of
-   them are, with nothing extra to check. */
-function pathProgress(id) {
-  const rec = pathScoresAll()[id] || {};
-  let n = 0;
-  for (let i = 1; i <= PATH_LESSONS; i++) {
-    const r = rec[i];
-    if (r && pathLessonPassed(i, r.pct)) n++;
-  }
-  return n;
-}
-function pathDone(id) { return pathProgress(id) >= PATH_LESSONS; }
-function pathDoneCount() { return PATH_SECTIONS.filter(s => pathDone(s.id)).length; }
-/* The ONLY gate is the branch itself. There is no tier wall and no counter — you
-   reach a section by finishing the ones it genuinely builds on, and nothing else. */
-function pathUnlocked(s) {
-  return (s.requires || []).every(r => pathDone(r));
-}
-function pathStateOf(s) {
-  if (pathDone(s.id)) return "done";
-  if (!pathUnlocked(s)) return "locked";
-  return pathProgress(s.id) > 0 ? "current" : "open";
-}
 function pathContentAll() {
   try { return JSON.parse(lsGet(PATH_CONTENT_KEY)) || {}; } catch (e) { return {}; }
 }
 function pathContentSave(v) { lsSet(PATH_CONTENT_KEY, JSON.stringify(v)); }
-
-/* Path words join the library so the scheduler can see them at all. src:"path" keeps
-   them distinguishable from batch imports and from words that arrived in a real
-   message, without claiming the familiarity of either. */
-function pathEnsureWords(sec) {
-  const lib = libAll();
-  let added = 0;
-  (sec.words || []).forEach(k => {
-    /* A feminine form (e.g. הייתה) redirects to its masculine key, same as every
-       other library-write path (cardEntry/libUpsert) — otherwise it files a
-       permanent feminine-keyed row that the merge feature was built to prevent. */
-    const genderBase = genderBaseOf(k);
-    const key = (genderBase && genderBase !== k) ? genderBase : k;
-    if (lib[key]) return;
-    const d = DICT[key];
-    if (!d) return;
-    lib[key] = { tr: String(d[0]).split("/")[0].trim(), en: d[1], cat: CAT[key] || "Uncategorised",
-               opp: "", seen: 0, added: todayISO(), src: "path", genderPair: genderPairFor(key) };
-    added++;
-  });
-  if (added) { libSave(lib); rebuildTrIndex(); }
-  return added;
-}
 
 function pathEdgePath(a, b) {
   const dy = (b.y - a.y) * 0.45;
   return "M" + a.x + " " + a.y + " C" + a.x + " " + (a.y + dy) +
          ", " + b.x + " " + (b.y - dy) + ", " + b.x + " " + b.y;
 }
-const PATH_W = 1220, PATH_H = 2130;
 /* ---- drawing the campaign ---------------------------------------------------
    Replaces the render that walked PATH_SECTIONS. Four zones, each with its own rule:
 
@@ -14056,20 +13836,6 @@ function campSay(msg) {
 
 
 
-/* ---- where you are on the map ----------------------------------------------
-   One section, the one the action card offers and the one the view opens onto:
-   whatever is already part-done, else the first thing open, else nothing (the map
-   is finished, or the library is too thin to have unlocked anything). */
-function pathCurrentSection() { return campCurrentNode(); }
-/* The next lesson within a section: the lowest number not yet passed. */
-function pathNextLesson(id) {
-  for (let n = 1; n <= PATH_LESSONS; n++) {
-    const r = pathLessonRec(id, n);
-    if (!r || !pathLessonPassed(n, r.pct)) return n;
-  }
-  return PATH_LESSONS;
-}
-
 /* The board is laid out at a FIXED pixel width and scrolled, rather than scaled to
    fit. Fitting 1220x2130 into a phone makes every node an unreadable dot — which is
    most of why the map was somewhere you visited rather than somewhere you were. */
@@ -14225,320 +13991,9 @@ function pathCloseSheet() {
   const sheet = document.getElementById("pathSheet");
   if (sheet) sheet.classList.remove("open");
 }
-function pathOpenSection(id) {
-  const sec = PATH_BY_ID[id];
-  const sheet = document.getElementById("pathSheet");
-  const panel = document.getElementById("pathSheetInner");
-  if (!sec || !panel || !sheet) return;
-  const lib = libAll();
-  sheet.classList.add("open");
-  panel.innerHTML = "";
-
-  const grip = document.createElement("div"); grip.className = "pathsheet-grip";
-  panel.append(grip);
-
-  const head = document.createElement("div"); head.className = "pp-head";
-  const h = document.createElement("h3"); h.textContent = sec.name;
-  head.append(h);
-  const tier = document.createElement("span"); tier.className = "pp-tier";
-  tier.textContent = (sec.star ? "★ again · " : "") +
-                     (PATH_GRAMMAR_LABEL[sec.grammar] || "present tense");
-  head.append(tier);
-  const close = document.createElement("button");
-  close.className = "linkbtn pp-close"; close.textContent = "✕ Close";
-  close.onclick = pathCloseSheet;
-  head.append(close);
-  panel.append(head);
-
-  /* States what this actually builds on, since the edge that says so may be off
-     screen on a map this tall. */
-  if ((sec.requires || []).length) {
-    const req = document.createElement("p"); req.className = "pp-req";
-    req.textContent = "Builds on " +
-      sec.requires.map(r => (PATH_BY_ID[r] || {}).name || r).join(" and ");
-    panel.append(req);
-  }
-
-  const sit = document.createElement("p"); sit.className = "pp-sit";
-  sit.textContent = sec.situation;
-  panel.append(sit);
-
-  const words = document.createElement("div"); words.className = "pp-words";
-  (sec.words || []).forEach(k => {
-    const d = DICT[k] || [];
-    const w = document.createElement("span"); w.className = "pp-w";
-    const b = document.createElement("b"); b.textContent = (lib[k] && lib[k].tr) || String(d[0] || "").split("/")[0];
-    const i = document.createElement("i"); i.textContent = k;
-    w.append(b, i); words.append(w);
-  });
-  panel.append(words);
-
-  /* Lessons 1-6 are independent and retryable in any order — each gets its own
-     Start/Retry button. 7 (the conversation) is the section's real test: locked
-     until every one of 1-6 has actually passed, per-lesson colour is that lesson's
-     own indicator (no separate "try again" messaging needed). */
-  PATH_LESSON_DEFS.forEach((L, idx) => {
-    const n = idx + 1;
-    const rec = pathLessonRec(id, n);
-    const locked = n === PATH_LESSONS && !pathLesson7Unlocked(id);
-    let state;
-    if (locked) state = "locked";
-    else if (!rec) state = "todo";
-    else if (n <= 2 || rec.pct >= 100) state = "done";
-    else if (rec.pct >= 80) state = "st-green";
-    else if (rec.pct >= 60) state = "st-orange";
-    else state = "st-red";
-
-    const row = document.createElement("div");
-    row.className = "plrow " + state;
-    const num = document.createElement("span"); num.className = "plnum";
-    num.textContent = locked ? "🔒" : !rec ? n : state === "st-red" ? "✕" : "✓";
-    const nm = document.createElement("span"); nm.className = "plname"; nm.textContent = L.name;
-    row.append(num, nm);
-    if (rec && n >= 3) {
-      const pctEl = document.createElement("span"); pctEl.className = "plpct " + state;
-      pctEl.textContent = rec.pct + "%";
-      row.append(pctEl);
-    }
-    if (L.offline) {
-      const o = document.createElement("span"); o.className = "ploff"; o.textContent = "works offline";
-      row.append(o);
-    }
-    const kind = document.createElement("span"); kind.className = "plkind"; kind.textContent = L.note;
-    row.append(kind);
-    if (locked) {
-      const lock = document.createElement("span"); lock.className = "pllock";
-      lock.textContent = "pass 1–6 first";
-      row.append(lock);
-    } else {
-      const go = document.createElement("button");
-      go.className = "btn plgo"; go.textContent = rec ? "Retry" : "Start";
-      go.onclick = () => pathStartLesson(id, n, go);
-      row.append(go);
-    }
-    panel.append(row);
-  });
-
-  const status = document.createElement("p"); status.className = "pathstatus"; status.id = "pathStatus";
-  panel.append(status);
-  if (pathDone(id)) {
-    status.textContent = "Section complete.";
-  }
-}
-
-/* One call per section, covering every lesson that needs written material. Cached
-   permanently: a path whose content is rewritten between visits stops being a path. */
-async function pathGenerateContent(sec) {
-  const store = pathContentAll();
-  if (store[sec.id] && (store[sec.id].items || []).length) return store[sec.id];
-  if (!geminiKeys().length) throw new Error("no key configured");
-  const lib = libAll(), srs = srsAll();
-  const secWords = (sec.words || []).filter(k => DICT[k]);
-  const known = readyWords(lib, srs).filter(k => secWords.indexOf(k) === -1).slice(0, 30);
-  const listOf = arr => arr.map(k => k + " (" + ((lib[k] && lib[k].tr) ||
-      String((DICT[k] || [])[0] || "").split("/")[0]) + ") = " +
-      ((lib[k] && lib[k].en) || (DICT[k] || [])[1] || "")).join("\n");
-  /* The tier's grammar, supplied by the section rather than hard-coded. This is the
-     mechanism that lifts the permanent present-tense cap the normal generator has. */
-  const grammar =
-    sec.grammar === "past" ? "PAST TENSE is the point of this section — use it throughout. " +
-        "Still short: 3 to 6 words, one clause."
-  : sec.grammar === "future" ? "FUTURE TENSE is the point of this section — use it throughout. " +
-        "Still short: 3 to 6 words, one clause."
-  : sec.grammar === "joining" ? "JOINING TWO CLAUSES is the point of this section — use " +
-        "כי / ש / אם / אבל to link two short thoughts. Two clauses maximum, and keep each half simple. " +
-        "Any tense is allowed here."
-  : "Present tense only. No past, no future, no subordinate clauses.";
-  const prompt =
-    "Write speaking practice for an English speaker learning conversational Hebrew, " +
-    "for one section of a structured course.\n\n" +
-    "SECTION: " + sec.name + " — " + sec.situation + "\n\n" +
-    "HIS LEVEL: NEAR-BEGINNER. " + grammar + " 3 to 6 words per sentence, one clause.\n\n" +
-    "THE WORDS THIS SECTION TEACHES — every item must use at least one:\n" + listOf(secWords) + "\n\n" +
-    "WORDS HE ALREADY KNOWS — you may also use these freely:\n" + listOf(known) + "\n\n" +
-    "Use no other vocabulary beyond basic grammar words (אני, אתה, זה, של, את, לא, כן, יש).\n\n" +
-    "THE MOST IMPORTANT RULE — every line must be something a real person would " +
-    "actually say. A grammatical sentence nobody would utter teaches confident nonsense. " +
-    "BAD: \"there is a big wind\". GOOD: \"it is cold today\", \"do you want coffee?\"\n\n" +
-    "Return JSON only:\n" +
-    '{"items":[' +
-    '{"type":"sentence","he":"","tr":"","en":"","gloss":[{"he":"","tr":"","en":"","why":""}]},' +
-    '{"type":"listen","he":"","tr":"","en":"","gloss":[]},' +
-    '{"type":"reply","qhe":"","qtr":"","qen":"","he":"","tr":"","en":"","gloss":[]}]}\n\n' +
-    "- 6 of type \"sentence\": things HE would say in this situation.\n" +
-    "- 4 of type \"listen\": short things said TO him in this situation.\n" +
-    "- 3 of type \"reply\": a question he'd be asked, and a natural short answer.\n" +
-    "- Return fewer if that is all you can do well. Never pad.\n" +
-    "- gloss: one entry per word of the \"he\" line, same words in the same order.\n" +
-    "- tr in plain English letters. Hebrew without nikud.\n\n" +
-    "BEFORE YOU ANSWER: re-read each item as a native speaker and delete any you " +
-    "would not say yourself.";
-  const drafted = extractJSON(await geminiRequest([{ text: prompt }]));
-  const reviewed = await learnReviewItems(drafted);
-  const items = (reviewed && Array.isArray(reviewed.items)) ? reviewed.items : [];
-  if (!items.length) throw new Error("nothing usable came back");
-  const clean = items.filter(it => it && it.he && it.tr).map((it, i) => ({
-    id: sec.id + "-" + i + "-" + Date.now(),
-    type: ["sentence", "listen", "reply"].indexOf(it.type) !== -1 ? it.type : "sentence",
-    he: it.he, tr: it.tr, en: it.en || "",
-    qhe: it.qhe || "", qtr: it.qtr || "", qen: it.qen || "",
-    gloss: Array.isArray(it.gloss) ? it.gloss : [],
-    uses: bankUses(it.he, lib), seen: 0, sec: sec.id
-  }));
-  const rec = { items: clean, ts: Date.now() };
-  store[sec.id] = rec; pathContentSave(store);
-  /* Also drop them into the normal bank so ordinary sessions can serve them later —
-     material earned on the path shouldn't be trapped there. */
-  try {
-    const bank = bankAll();
-    clean.forEach(it => bank.push(Object.assign({}, it)));
-    bankSave(bank);
-  } catch (e) {}
-  return rec;
-}
-
-/* Builds the cards for one lesson. Lessons 1-2 are pure library work and never touch
-   the network; 3-7 draw on the cached section content. */
-function pathLessonCards(sec, n, content) {
-  const lib = libAll();
-  const words = (sec.words || []).filter(k => lib[k]);
-  const half = Math.ceil(words.length / 2);
-  const items = (content && content.items) || [];
-  const pick = t => items.filter(it => it.type === t);
-  if (n === 1) return words.slice(0, half).map(k => ({ kind: "word", key: k, words: [k] }));
-  if (n === 2) {
-    const cards = words.slice(half).map(k => ({ kind: "word", key: k, words: [k] }));
-    (sec.chunks || []).filter(p => PHRASES[p]).forEach(p =>
-      cards.push({ kind: "chunk", key: p, words: [p] }));
-    return cards;
-  }
-  if (n === 3) return pick("sentence").slice(0, 4).map(it => ({ kind: "sentence", item: it, words: it.uses || [] }));
-  if (n === 4) {
-    const c = pick("listen").slice(0, 3).map(it => ({ kind: "listen", item: it, words: it.uses || [] }));
-    pick("sentence").slice(0, 2).forEach(it => c.push({ kind: "shadow", item: it, words: it.uses || [] }));
-    return c;
-  }
-  if (n === 5) {
-    /* The lesson that stops sections being islands: this section's sentences plus
-       whatever the ordinary scheduler thinks is due, mixed together. */
-    const c = pick("sentence").slice(4).map(it => ({ kind: "sentence", item: it, words: it.uses || [] }));
-    learnTargets(4).forEach(k => { if (lib[k]) c.push({ kind: "word", key: k, words: [k] }); });
-    return c;
-  }
-  if (n === 6) return pick("reply").map(it => ({ kind: "reply", item: it, words: it.uses || [] }));
-  return [];   // lesson 7 is the conversation, handled separately
-}
-
-async function pathStartLesson(id, n, btn) {
-  const sec = PATH_BY_ID[id];
-  if (!sec) return;
-  const status = document.getElementById("pathStatus");
-  const say = m => { if (status) status.textContent = m; };
-  const origLabel = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "Getting ready…"; }
-  pathEnsureWords(sec);
-  try {
-    let cards = [];
-    if (n === 7) {
-      say("Writing the conversation…");
-      const c = await pathConversation(sec);
-      cards = c.turns.map((t, i) => ({ kind: "conversation", convo: c, ti: i, item: t, words: t.uses || [] }));
-    } else if (n <= 2) {
-      cards = pathLessonCards(sec, n, null);      // no network needed
-    } else {
-      say("Getting this section's material…");
-      const content = await pathGenerateContent(sec);
-      cards = pathLessonCards(sec, n, content);
-    }
-    if (!cards.length) throw new Error("that lesson came out empty");
-    learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {},
-                     path: { id: id, lesson: n } };
-    statsBump({ sessions: 1 });
-    setView("learn");
-    learnShow("lRun");
-    learnRenderCard();
-  } catch (e) {
-    say(/limit/.test(e.message)
-      ? "Daily AI limit reached — lessons 1 and 2 still work without it."
-      : "Couldn't get this lesson ready: " + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
-  }
-}
-
-/* ---- pre-warming, so Start lesson doesn't make you wait ----------------------
-   George: "when I unlock a level it should generate the content, not wait untill I
-   click start lesson." Content was only ever generated by pathStartLesson, so every
-   first visit to a section paid the full latency at the moment he had already
-   committed to practising.
-
-   PURE, and it answers one question only: which section is next in line. It reads no
-   storage and knows nothing about quota — the guards that decide whether to spend a
-   request live in the caller, so this stays testable without a network. "Next" means
-   first in blueprint order among unlocked, unfinished sections, which is the order
-   the map already draws, so the warmed section is the one visibly next rather than
-   an arbitrary pick.
-
-   An EMPTY items array counts as unwarmed on purpose: that is a generation that
-   produced nothing, and retrying it is correct. */
-function pathWarmTarget(sections, content, stateOf) {
-  const store = content || {};
-  const list = sections || [];
-  for (let i = 0; i < list.length; i++) {
-    const s = list[i];
-    if (!s) continue;
-    const st = stateOf ? stateOf(s) : "open";
-    if (st === "done" || st === "locked") continue;
-    const rec = store[s.id];
-    if (!rec || !(rec.items || []).length) return { sec: s, what: "content" };
-    if (!rec.convo) return { sec: s, what: "convo" };
-  }
-  return null;
-}
-
 /* Session-scoped, deliberately not persisted: a new tab should try again, but a dead
    quota must not mean one wasted attempt on every single path open for the rest of
    the day. */
-let pathWarmInFlight = false, pathWarmGaveUp = false;
-/* Fire-and-forget. Never touches pathStatus, never surfaces an error, never throws
-   into the view — a background spend the user did not ask for has no business
-   reporting anything. Success is invisible except that Start lesson stops saying
-   "Getting ready…". */
-function pathWarmNext() {
-  if (pathWarmInFlight || pathWarmGaveUp) return;
-  if (!geminiKeys().length) return;
-  /* The ledger already knows the strong pool is gone. An attempt that can only 429
-     spends a request to learn something we were told this morning. */
-  try {
-    const q = aiQRoll(aiQAll(), todayISO());
-    if (q.spent.strong) return;
-  } catch (e) { /* a ledger that cannot be read is not a reason to skip the warm */ }
-  let target = null;
-  try { target = pathWarmTarget(PATH_SECTIONS, pathContentAll(), pathStateOf); }
-  catch (e) { return; }
-  if (!target) return;
-  pathWarmInFlight = true;
-  const done = () => { pathWarmInFlight = false; };
-  const fail = () => { pathWarmInFlight = false; pathWarmGaveUp = true; };
-  try {
-    const job = target.what === "convo"
-      ? pathConversation(target.sec)
-      : pathGenerateContent(target.sec);
-    Promise.resolve(job).then(done, fail);
-  } catch (e) { fail(); }
-}
-
-/* The closing conversation, scoped to the section's own situation and words. */
-async function pathConversation(sec) {
-  const store = pathContentAll();
-  if (store[sec.id] && store[sec.id].convo) return store[sec.id].convo;
-  const c = await learnMakeConversation({ id: sec.id, en: sec.name, hint: sec.situation });
-  if (!c) throw new Error("no conversation could be written yet");
-  store[sec.id] = store[sec.id] || { items: [] };
-  store[sec.id].convo = c;
-  pathContentSave(store);
-  return c;
-}
-
 /* `only` narrows the pool to one campaign node's vocabulary and changes NOTHING
    else: the same four buckets, the same ordering, the same overdue cap. That is what
    makes "a campaign lesson is a Learn session" true rather than aspirational — there
@@ -17181,9 +16636,6 @@ function learnFinish() {
         : lesson === CAMP_CONVO_LESSON
           ? " · " + node.name + (passed ? " — conversation passed" : " — worth another go")
           : " · " + node.name + " — " + p.have + " of " + p.need + " words yours";
-    } else {
-      const sec = PATH_BY_ID[s.path.id];
-      if (sec) sub += " · " + sec.name + " — lesson " + lesson;
     }
   }
   document.getElementById("lEndSub").textContent = sub;
@@ -19411,47 +18863,6 @@ T("bankCooldownSplit: junk inputs are empty pools, not a crash", () => {
   assertEq(bankCooldownSplit(null, null, 0, 3), { fresh: [], recent: [] });
 });
 
-/* ---- Morning-use fixes: which path section to warm ---- */
-const PWSEC = (id, req) => ({ id: id, name: id, requires: req || [] });
-T("pathWarmTarget: warms the first unlocked section with no content", () => {
-  const secs = [PWSEC("a"), PWSEC("b")];
-  const t = pathWarmTarget(secs, {}, () => "open");
-  assertEq(t.sec.id, "a");
-  assertEq(t.what, "content");
-});
-T("pathWarmTarget: skips locked and finished sections", () => {
-  const secs = [PWSEC("done"), PWSEC("locked"), PWSEC("next")];
-  const stateOf = s => s.id === "done" ? "done" : s.id === "locked" ? "locked" : "open";
-  assertEq(pathWarmTarget(secs, {}, stateOf).sec.id, "next");
-});
-T("pathWarmTarget: once content is cached it warms that section's conversation", () => {
-  const secs = [PWSEC("a")];
-  const content = { a: { items: [{ he: "x" }] } };
-  const t = pathWarmTarget(secs, content, () => "open");
-  assertEq(t.sec.id, "a");
-  assertEq(t.what, "convo");
-});
-T("pathWarmTarget: a fully warm section is skipped for the next one", () => {
-  const secs = [PWSEC("a"), PWSEC("b")];
-  const content = { a: { items: [{ he: "x" }], convo: { turns: [] } } };
-  const t = pathWarmTarget(secs, content, () => "open");
-  assertEq(t.sec.id, "b");
-  assertEq(t.what, "content");
-});
-T("pathWarmTarget: nothing to warm returns null, not a section", () => {
-  const secs = [PWSEC("a")];
-  const content = { a: { items: [{ he: "x" }], convo: { turns: [] } } };
-  assertNull(pathWarmTarget(secs, content, () => "open"));
-  assertNull(pathWarmTarget(secs, {}, () => "locked"), "everything locked warms nothing");
-  assertNull(pathWarmTarget([], {}, () => "open"), "no sections at all");
-});
-/* An empty items array is not cached content — it is a generation that produced
-   nothing, and re-warming it is the correct behaviour. */
-T("pathWarmTarget: an empty items array counts as unwarmed", () => {
-  const t = pathWarmTarget([PWSEC("a")], { a: { items: [] } }, () => "open");
-  assertEq(t.what, "content");
-});
-
 /* ====================  THE MAP IS THE FRONT DOOR  ====================
    The Learn screen opens onto the campaign, scrolled to where you are, so these two
    decide what you actually see when the app opens. */
@@ -19795,16 +19206,6 @@ T("campEnsure: seeds exactly once and never disturbs an existing campaign", () =
   } finally {
     if (before === null) localStorage.removeItem(CAMP_KEY); else lsSet(CAMP_KEY, before);
   }
-});
-
-T("pathNextLesson: the lowest lesson not yet passed", () => {
-  withPathScores({ hello: { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 50 } } }, () => {
-    assertEq(pathNextLesson("hello"), 3, "50% is under PATH_PASS_PCT, so 3 is still owed");
-  });
-  withPathScores({ hello: { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 90 } } }, () => {
-    assertEq(pathNextLesson("hello"), 4);
-  });
-  withPathScores({}, () => { assertEq(pathNextLesson("hello"), 1); });
 });
 
 /* The map stopped being a page. Anyone whose last view was saved as "path" — which

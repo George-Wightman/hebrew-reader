@@ -101,7 +101,7 @@ is enormous headroom.
 | 1 | Survey | Lite | State the evidence: what is strong, what has decayed, what grandad has said lately that George does not know, what earlier chapters covered, the measured level and its direction |
 | 2 | Plan | Flash | Turn the brief into 4–6 nodes: theme, target level, candidate words, and one line of *why* |
 | 3 | Critique | Lite | Read the plan cold — repetition against earlier chapters, difficulty, whether the words exist, whether it progresses. Returns edits |
-| 4–N | Build | Lite | One call per node: sentences, listen lines, replies, glosses, and the graduation conversation, at that node's level |
+| 4–N | ~~Build~~ | — | **Not built, and deliberately.** The per-node build calls turned out to be unnecessary: `learnNextFunction` hands the live node's *situation* to the ordinary sentence generator, so the shared bank fills with material about the chapter he is actually in, using machinery that already existed. That is also the join between the two halves — the drilling he does between lessons rehearses the campaign, with no new UI. Four requests a chapter saved by not spending merely because the budget is there. The graduation conversation is generated on demand from the node, and cached. |
 
 Survey is separate from Plan on purpose. Handing a model raw storage dumps and
 asking for a curriculum in one shot produces a curriculum that ignores half the

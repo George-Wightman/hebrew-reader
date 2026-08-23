@@ -4,7 +4,11 @@
        launcher asks for, and stays a few hundred bytes. The glyph sits inside the
        central 80% so it survives a maskable crop on Android. -->
   <rect width="512" height="512" fill="#f5f0e7"/>
-  <line x1="112" y1="410" x2="400" y2="410" stroke="#0d6e6e" stroke-opacity=".18" stroke-width="6" stroke-linecap="round"/>
+  <!-- The shin-dot: real Hebrew orthography marks ש as "shin" (vs שׂ "sin") with a dot
+       on this exact stroke. Reusing it here means the mark reads as authentic rather
+       than decorative, and in --gold it borrows the one color this app reserves for
+       achievement, rather than echoing the nav's teal active-tab underline. -->
+  <circle cx="313" cy="138" r="19" fill="#b3803a"/>
   <text x="256" y="256" fill="#0d6e6e"
         font-family="David, 'Times New Roman', serif" font-size="236" font-weight="700"
         text-anchor="middle" dominant-baseline="central">&#1513;</text>

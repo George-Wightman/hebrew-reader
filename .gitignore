@@ -7,3 +7,6 @@ desktop.ini
 # OS
 Thumbs.db
 .DS_Store
+
+# Brainstorming visual-companion scratch state
+.superpowers/

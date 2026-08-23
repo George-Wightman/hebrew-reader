@@ -1391,6 +1391,31 @@
   .pnode.locked .pnmbox { fill: #f2ebdd; stroke: #e3d9c0; }
   .pnode.done .pring { fill: var(--gold); stroke: #8a6520; }
   .pnode.done .pring2 { stroke: #d8bb84; }
+  /* ---- the chapter you have not reached yet ----
+     Real names, real positions, plainly not startable. Seeing what is coming is most
+     of what makes a path feel like a path; being able to jump to it is not. */
+  .pnode.next { cursor: default; opacity: .5; }
+  .pnode.next .pring { fill: var(--panel); stroke: #cfc3a6; stroke-dasharray: 5 5; }
+  .pnode.next .pnmbox { fill: var(--panel); stroke: #e3d9c0; }
+  /* ---- and the one beyond that ----
+     A silhouette under a soft radial fade. Placeholders, not decided content: the
+     chapter is re-planned against fresh evidence when he reaches it, so what is under
+     the fog genuinely changes with what he has been doing. */
+  .pnode.fognode { cursor: default; }
+  .pnode.fognode .pring { fill: #ded7c6; stroke: none; opacity: .55; }
+  .pnode.fognode .pnm { fill: #a49b88; font-weight: 400; font-style: italic; }
+  .pnode.fognode .pnmbox { fill: none; stroke: none; }
+  .pband.fogband { fill: #a49b88; font-weight: 400; letter-spacing: .06em; }
+  /* ---- gold that has slipped ----
+     Teal again, with a marker. The map reports decay; quick sessions repair it. */
+  .pnode.stale .pring { fill: var(--panel); stroke: var(--warn); stroke-width: 3; }
+  .pnode.stale .phe { fill: var(--warn); }
+  .pnode.stale .pnmbox { fill: var(--gold-soft); stroke: #e0c48c; }
+  .pstale { fill: var(--warn); font-weight: 700; }
+  /* The planner's one-line reason for a node, under its name in the live chapter
+     only. On a generated path this is what makes it read as authored. */
+  .pwhy { fill: #8b8271; font-style: italic; }
+
   /* A place on the map rather than a panel that greets you — so it reads as a node,
      but plainly not as a section: no second ring, muted, and off the routes. */
   .pnode.statsnode .pring { fill: var(--panel); stroke: #c4bba6; stroke-dasharray: 4 4; }
@@ -1428,6 +1453,24 @@
                     margin: 0 auto 12px; }
   .pp-req { font-size: .76rem; color: var(--faint); margin: 2px 0 8px; }
   @media (prefers-reduced-motion: reduce) { .pathsheet { transition: none; } }
+  .pp-x { margin-left: auto; }
+  .pp-why { margin: 6px 0 0; font-size: .86rem; color: var(--ink); font-style: italic; }
+  .pp-sit { margin: 4px 0 0; font-size: .8rem; color: var(--muted); }
+  .pp-stale { margin: 8px 0 0; font-size: .8rem; color: var(--warn); }
+  /* The words themselves, each with the strength dot the rest of the app already
+     uses — this panel is the one place the node's whole vocabulary is visible, and a
+     bare list without the dots would say nothing about what is left to do. */
+  .pp-words { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  .cw { display: inline-flex; align-items: center; gap: 6px; background: var(--panel);
+        border: 1px solid var(--border); border-radius: 99px; padding: 4px 11px; font-size: .8rem; }
+  .cw b { font-family: "David", "Times New Roman", serif; font-size: .95rem; font-weight: 400; }
+  .cw u { text-decoration: none; color: var(--muted); font-size: .74rem; }
+  .pp-carry { margin: 8px 0 0; font-size: .76rem; color: var(--muted); }
+  .pp-carry b { font-family: "David", "Times New Roman", serif; font-weight: 400; }
+  .pp-prog { margin: 10px 0 0; font-size: .8rem; color: var(--accent); }
+  .pp-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .pp-acts .btn { flex: 1 1 130px; }
+  .pp-gate { margin: 8px 0 0; font-size: .76rem; color: var(--muted); }
   .pp-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .pp-head h3 { margin: 0; font-size: 1.05rem; }
   .pp-tier { font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
@@ -13103,63 +13146,111 @@ function pathEdgePath(a, b) {
          ", " + b.x + " " + (b.y - dy) + ", " + b.x + " " + b.y;
 }
 const PATH_W = 1220, PATH_H = 2130;
-function pathRender() {
+/* ---- drawing the campaign ---------------------------------------------------
+   Replaces the render that walked PATH_SECTIONS. Four zones, each with its own rule:
+
+     done     a chapter behind you. Drawn in full rather than collapsed to a ribbon —
+              George asked to see "progress in that visual path moving through space",
+              and the road itself IS that. Scroll up to walk back down it.
+     live     the chapter you are in. The only one whose nodes carry their `why`.
+     next     real names, dimmed, not startable. Seeing what is coming is most of
+              what makes a path feel like a path.
+     fog      silhouettes under a soft mask with a theme hint. Placeholders, not
+              decided content — re-planned against fresh evidence when you reach them,
+              so the shape ahead genuinely shifts with what you have been doing.  */
+function campEscape(t) {
+  return String(t == null ? "" : t)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+/* How much of a node he actually owns — drives the ring on the live node, and it is
+   the honest number to show: not lessons attended, words held. */
+function campNodeProgress(node, srs) {
+  const words = (node.words || []).filter(k => !STOPLIST.has(k));
+  if (!words.length) return { have: 0, need: 0 };
+  const s = srs || srsAll();
+  return { have: words.filter(k => wordReady(k, s)).length, need: words.length };
+}
+
+function campRender() {
   const tree = document.getElementById("pathTree");
   if (!tree) return;
-  /* The old page header's counter is gone with the page; the action card's kicker
-     carries "N of 32" now, where it is next to the thing it counts. */
-  const st = {}; PATH_SECTIONS.forEach(s => { st[s.id] = pathStateOf(s); });
-  let svg = '<svg viewBox="0 0 ' + PATH_W + ' ' + PATH_H + '" role="img" aria-label="The path">';
-  /* Phase bands are labels, not gates — they say what changes about the language
-     down here, and nothing about them stops you. */
-  PATH_PHASES.forEach(p => {
-    svg += '<line class="pbandline" x1="60" y1="' + p.y + '" x2="' + (PATH_W - 60) + '" y2="' + p.y + '"/>';
-    svg += '<text class="pband" x="60" y="' + (p.y - 9) + '" font-size="14">' + p.label + '</text>';
+  const c = campRestate(campEnsure());
+  const srs = srsAll();
+  const L = campLayout(c);
+
+  let svg = '<svg viewBox="0 0 ' + L.w + ' ' + L.h + '" role="img" aria-label="Your campaign">';
+  /* One mask, reused by every fogged node. A radial fade rather than a flat overlay:
+     a hard-edged blur reads as a loading state, a soft one reads as distance. */
+  svg += '<defs><radialGradient id="campfog" cx="50%" cy="50%">' +
+         '<stop offset="45%" stop-color="#e8e1d1" stop-opacity="1"/>' +
+         '<stop offset="100%" stop-color="#e8e1d1" stop-opacity="0"/></radialGradient></defs>';
+
+  L.bands.forEach(b => {
+    svg += '<line class="pbandline" x1="60" y1="' + b.y + '" x2="' + (L.w - 60) + '" y2="' + b.y + '"/>';
+    svg += '<text class="pband' + (b.state === "fog" ? " fogband" : "") + '" x="60" y="' +
+           (b.y - 9) + '" font-size="14">' + campEscape(b.label) + '</text>';
   });
-  PATH_SECTIONS.forEach(s => {
-    (s.requires || []).forEach(r => {
-      const a = PATH_BY_ID[r];
-      if (!a) return;
-      svg += '<path class="pedge' + (st[r] === "done" ? " live" : "") +
-             '" d="' + pathEdgePath(a, s) + '"/>';
-    });
+
+  L.edges.forEach(e => {
+    const done = campNodeDone(e.from, c, srs);
+    svg += '<path class="pedge' + (done ? " live" : "") + '" d="' + pathEdgePath(e.a, e.b) + '"/>';
   });
-  PATH_SECTIONS.forEach(s => {
-    const state = st[s.id];
-    svg += '<g class="pnode ' + state + '" data-sec="' + s.id + '">';
-    svg += '<circle class="pring" cx="' + s.x + '" cy="' + s.y + '" r="44"/>';
-    svg += '<circle class="pring2" cx="' + s.x + '" cy="' + s.y + '" r="37"/>';
-    svg += '<text class="phe" x="' + s.x + '" y="' + (s.y + 9) + '" text-anchor="middle" font-size="24">' +
-           s.icon + '</text>';
-    if (state === "current") {
-      svg += '<circle class="pring" cx="' + (s.x + 34) + '" cy="' + (s.y - 32) + '" r="15"/>';
-      svg += '<text class="pprog" x="' + (s.x + 34) + '" y="' + (s.y - 27) +
-             '" text-anchor="middle" font-size="11">' + pathProgress(s.id) + '/' + PATH_LESSONS + '</text>';
+
+  L.nodes.forEach(n => {
+    if (n.fog) {
+      svg += '<g class="pnode fognode">';
+      svg += '<ellipse cx="' + n.x + '" cy="' + n.y + '" rx="118" ry="70" fill="url(#campfog)"/>';
+      svg += '<circle class="pring" cx="' + n.x + '" cy="' + n.y + '" r="37"/>';
+      if (n.name) svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) +
+                         '" text-anchor="middle" font-size="13">' + campEscape(n.name) + '</text>';
+      svg += '</g>';
+      return;
     }
-    /* A revisit, not a new situation: same ground, harder grammar. */
-    if (s.star) svg += '<text class="pstar" x="' + (s.x - 33) + '" y="' + (s.y - 26) +
-                       '" text-anchor="middle" font-size="21">★</text>';
-    svg += '<text class="pnm" x="' + s.x + '" y="' + (s.y + 66) + '" text-anchor="middle" font-size="14">' +
-           s.name + '</text>';
+    const state = campNodeState(n.id, c, srs);
+    svg += '<g class="pnode ' + state + '" data-node="' + campEscape(n.id) + '">';
+    svg += '<circle class="pring" cx="' + n.x + '" cy="' + n.y + '" r="44"/>';
+    svg += '<circle class="pring2" cx="' + n.x + '" cy="' + n.y + '" r="37"/>';
+    svg += '<text class="phe" x="' + n.x + '" y="' + (n.y + 9) + '" text-anchor="middle" font-size="24">' +
+           campEscape(n.icon || "") + '</text>';
+    /* Words held, not lessons done — see campNodeProgress. Only on the node he is
+       actually working, because on every node at once it is wallpaper. */
+    if (state === "current") {
+      const p = campNodeProgress(n, srs);
+      svg += '<circle class="pring" cx="' + (n.x + 34) + '" cy="' + (n.y - 32) + '" r="16"/>';
+      svg += '<text class="pprog" x="' + (n.x + 34) + '" y="' + (n.y - 27) +
+             '" text-anchor="middle" font-size="11">' + p.have + '/' + p.need + '</text>';
+    }
+    /* Gold that has slipped. The marker is the whole point: the map reports decay, the
+       quick sessions repair it. */
+    if (state === "stale") svg += '<text class="pstale" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
+                                  '" text-anchor="middle" font-size="21">↻</text>';
+    svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) + '" text-anchor="middle" font-size="14">' +
+           campEscape(n.name) + '</text>';
+    /* The reason the planner gave for this node, shown only in the chapter you are in.
+       On a generated path this is what makes it read as authored rather than sampled —
+       you can see WHY it is asking. */
+    if (n.chState === "live" && n.why)
+      svg += '<text class="pwhy" x="' + n.x + '" y="' + (n.y + 88) +
+             '" text-anchor="middle" font-size="11">' + campEscape(n.why) + '</text>';
     svg += '</g>';
   });
+
   /* Progress lives ON the map as somewhere you go, not as a dashboard that greets
-     you. George: "the only stat that I care about is the streak and the tracker of
-     how many minutes I have spent in the past week ... the others I dont look at to
-     be honest and could be hidden behind a like 'stats' node". Those two are on the
-     bar; everything else is behind this. */
+     you. Parked above the first band, off the road. */
   svg += '<g class="pnode statsnode" data-stats="1">';
-  svg += '<circle class="pring" cx="170" cy="80" r="34"/>';
-  svg += '<text class="phe" x="170" y="90" text-anchor="middle" font-size="24">◷</text>';
-  svg += '<text class="pnm" x="170" y="146" text-anchor="middle" font-size="14">Your practice</text>';
+  svg += '<circle class="pring" cx="170" cy="52" r="30"/>';
+  svg += '<text class="phe" x="170" y="61" text-anchor="middle" font-size="21">◷</text>';
+  svg += '<text class="pnm" x="170" y="106" text-anchor="middle" font-size="13">Your practice</text>';
   svg += '</g>';
+
   tree.innerHTML = svg + '</svg>';
-  /* A label floating on bare paper had nothing to anchor it — measured after insertion
-     (rather than guessed from character count) so the box fits every name exactly,
-     "How you are" and "Describing things" alike, at any zoom. */
+
+  /* A label floating on bare paper has nothing to anchor it. Measured after insertion
+     rather than guessed from character count, so the box fits every name exactly at
+     any zoom. */
   tree.querySelectorAll(".pnm").forEach(t => {
-    const b = t.getBBox();
-    const pad = 7;
+    const b = t.getBBox(), pad = 7;
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     rect.setAttribute("class", "pnmbox");
     rect.setAttribute("x", b.x - pad);
@@ -13169,25 +13260,209 @@ function pathRender() {
     rect.setAttribute("rx", 6);
     t.parentNode.insertBefore(rect, t);
   });
+
   tree.querySelectorAll(".pnode").forEach(g => {
     g.addEventListener("click", () => {
       if (g.dataset.stats) { learnStatsOpen(true); return; }
-      const s = PATH_BY_ID[g.dataset.sec];
-      if (s && pathStateOf(s) !== "locked") pathOpenSection(s.id);
+      const id = g.dataset.node;
+      if (!id) return;
+      const st = campNodeState(id, c, srs);
+      /* Fogged and next-chapter nodes are visible on purpose and startable on
+         purpose-not: looking ahead is the point, jumping ahead is not. */
+      if (st === "next" || st === "fog") { campPeek(id); return; }
+      campOpenNode(id);
     });
   });
 }
+/* Kept as the name every caller already uses. */
+function pathRender() { campRender(); }
+
+/* A node you cannot start yet still owes you an explanation for being on the map. */
+function campPeek(id) {
+  const n = campNode(id);
+  const hint = document.getElementById("lStartHint");
+  if (!hint) return;
+  hint.textContent = n && n.name
+    ? n.name + " — not yet. Finish this chapter first."
+    : "Still ahead of you.";
+  setTimeout(() => { if (hint.textContent.indexOf("not yet") !== -1 ||
+                        hint.textContent.indexOf("ahead of you") !== -1) hint.textContent = ""; }, 4000);
+}
+
+/* ---- one node, and the three things you can do with it ----------------------
+   The old sections ran seven fixed lessons each: 32 x 7 = 224 lessons of identical
+   shape, and lesson 5 already reached into learnTargets, so the campaign was half a
+   Learn session pretending to be something else.
+
+   A node has three, and only the first and last are its own:
+
+     Meet the words   word cards for whatever it introduces. Offline, always
+                      available, and all a word needs — srsApply's first-meeting
+                      branch leaves it at `progressing`, which is exactly what
+                      wordReady accepts, so one pass makes it usable in sentences.
+     Practise         an ordinary Learn session with its targets narrowed to this
+                      node. Repeatable. Same builder, same level mix, same soft
+                      launch, same bank: THE clause that stops the two halves of
+                      this app drifting apart.
+     The conversation The graduation. George: "the conversation being a kind of
+                      'graduation' from that node, then the node turns gold."  */
+const CAMP_MEET_LESSON = 1, CAMP_PRACTISE_LESSON = 2;
+
+function campWordRow(k, lib, srs) {
+  const band = srsStrengthOf(srs, k, "prod");
+  const e = lib[k] || {};
+  return '<span class="cw"><i class="sdot s-' + band + '"></i>' +
+         '<b dir="rtl">' + campEscape(k) + '</b>' +
+         '<u>' + campEscape(e.en || (DICT[k] ? DICT[k][1] : "")) + '</u></span>';
+}
+
+function campOpenNode(id) {
+  const c = campAll(), srs = srsAll(), lib = libAll();
+  const n = campNode(id, c);
+  const sheet = document.getElementById("pathSheet");
+  const panel = document.getElementById("pathSheetInner");
+  if (!n || !sheet || !panel) return;
+  campEnsureWords(n);
+  const state = campNodeState(id, c, srs);
+  const p = campNodeProgress(n, srs);
+  const ready = campNodeWordsReady(n, srs);
+  const graduated = campConvoPassed(id);
+
+  let h = '<div class="pp-head"><h3>' + campEscape(n.name) + '</h3>' +
+          '<span class="pp-tier">level ' + (n.lvl || 1) + '</span>' +
+          '<button class="linkbtn pp-x" id="campSheetX">✕ Close</button></div>';
+  if (n.why) h += '<p class="pp-why">' + campEscape(n.why) + '</p>';
+  if (n.situation) h += '<p class="pp-sit">' + campEscape(n.situation) + '</p>';
+  if (state === "stale") h += '<p class="pp-stale">You had this. Some of it has slipped — ' +
+    'it will come back on its own in your next few quick sessions.</p>';
+
+  h += '<div class="pp-words">' +
+       (n.words || []).map(k => campWordRow(k, lib, srs)).join("") + '</div>';
+  if ((n.carry || []).length)
+    h += '<p class="pp-carry">Also uses ' +
+         (n.carry || []).map(k => '<b dir="rtl">' + campEscape(k) + '</b>').join(", ") +
+         ' from earlier.</p>';
+
+  h += '<p class="pp-prog">' + p.have + ' of ' + p.need + ' words yours' +
+       (graduated ? ' · conversation passed' : '') + '</p>';
+
+  h += '<div class="pp-acts">';
+  h += '<button class="btn secondary" id="campMeet">Meet the words</button>';
+  h += '<button class="btn" id="campPractise">Practise</button>';
+  h += '<button class="btn' + (ready ? '' : ' secondary') + '" id="campConvo"' +
+       (ready ? '' : ' disabled') + '>' +
+       (graduated ? 'Conversation again' : 'The conversation') + '</button>';
+  h += '</div>';
+  if (!ready) h += '<p class="pp-gate">The conversation opens once all ' + p.need +
+                   ' words are yours — that is what it is for.</p>';
+
+  panel.innerHTML = h;
+  sheet.classList.add("open");
+  document.getElementById("campSheetX").onclick = pathCloseSheet;
+  document.getElementById("campMeet").onclick = () => campStartMeet(id);
+  document.getElementById("campPractise").onclick = () => campStartPractise(id);
+  const cv = document.getElementById("campConvo");
+  if (ready) cv.onclick = () => campStartConvo(id);
+}
+
+/* Path words join the library so the scheduler can see them at all. src:"path" keeps
+   them distinguishable from a batch import and from a word that arrived in a real
+   message, without claiming the familiarity of either. */
+function campEnsureWords(node) {
+  const lib = libAll();
+  let added = 0;
+  (node.words || []).concat(node.carry || []).forEach(k => {
+    const base = genderBaseOf(k);
+    const key = (base && base !== k) ? base : k;
+    if (lib[key]) return;
+    const d = DICT[key];
+    if (!d) return;
+    lib[key] = { tr: String(d[0]).split("/")[0].trim(), en: d[1], cat: CAT[key] || "Uncategorised",
+                 opp: "", seen: 0, added: todayISO(), src: "path", genderPair: genderPairFor(key) };
+    added++;
+  });
+  if (added) { libSave(lib); rebuildTrIndex(); }
+  return added;
+}
+
+function campBegin(cards, id, lesson) {
+  if (!cards || !cards.length) return false;
+  pathCloseSheet();
+  sessionClear();
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {},
+                   path: { id: id, lesson: lesson, camp: true } };
+  statsBump({ sessions: 1 });
+  learnShow("lRun");
+  learnRenderCard();
+  return true;
+}
+
+function campStartMeet(id) {
+  const n = campNode(id), lib = libAll();
+  if (!n) return;
+  const words = (n.words || []).filter(k => lib[k] && srsGradable(k, lib));
+  if (!campBegin(words.map(k => ({ kind: "word", key: k, words: [k] })), id, CAMP_MEET_LESSON))
+    campSay("Nothing to meet here — these words are already in your library.");
+}
+
+function campStartPractise(id) {
+  const n = campNode(id);
+  if (!n) return;
+  /* The whole point: an ordinary session, narrowed. Carry words are included so the
+     bank has something servable to build sentences from — a node made only of words
+     he has never drilled cannot produce a single sentence, because bankServable
+     requires every content word to be ready already. */
+  const only = (n.words || []).concat(n.carry || []);
+  const cards = learnBuild({ only: only, size: 10 });
+  if (!campBegin(cards, id, CAMP_PRACTISE_LESSON))
+    campSay("Meet the words first — there is nothing to practise with yet.");
+}
+
+async function campStartConvo(id) {
+  const n = campNode(id);
+  if (!n) return;
+  campSay("Getting the conversation ready…");
+  try {
+    const c = await campNodeConversation(n);
+    if (!c) { campSay("Couldn't write the conversation — try again in a moment."); return; }
+    campBegin(c.turns.map((t, i) => ({ kind: "conversation", convo: c, ti: i, item: t,
+                                       words: t.uses || [] })), id, CAMP_CONVO_LESSON);
+  } catch (e) {
+    campSay(/limit/.test(e.message || "") ? "Daily AI limit reached — try tomorrow."
+                                          : "Couldn't reach the AI just now.");
+  }
+}
+
+/* Cached per node, so a graduation retried tomorrow is the same exchange rather than
+   a fresh spend. */
+function campNodeConversation(node) {
+  const store = pathContentAll();
+  const rec = store[node.id];
+  if (rec && rec.convo) return Promise.resolve(rec.convo);
+  return Promise.resolve(learnMakeConversation({ id: node.id, en: node.name,
+                                                 hint: node.situation || node.name }))
+    .then(c => {
+      if (!c) return null;
+      const st = pathContentAll();
+      st[node.id] = st[node.id] || {};
+      st[node.id].convo = c;
+      pathContentSave(st);
+      return c;
+    });
+}
+
+function campSay(msg) {
+  const hint = document.getElementById("lStartHint");
+  if (hint) hint.textContent = msg;
+}
+
+
 
 /* ---- where you are on the map ----------------------------------------------
    One section, the one the action card offers and the one the view opens onto:
    whatever is already part-done, else the first thing open, else nothing (the map
    is finished, or the library is too thin to have unlocked anything). */
-function pathCurrentSection() {
-  const started = PATH_SECTIONS.filter(s => pathStateOf(s) === "current");
-  if (started.length) return started[0];
-  const open = PATH_SECTIONS.filter(s => pathStateOf(s) === "open");
-  return open.length ? open[0] : null;
-}
+function pathCurrentSection() { return campCurrentNode(); }
 /* The next lesson within a section: the lowest number not yet passed. */
 function pathNextLesson(id) {
   for (let n = 1; n <= PATH_LESSONS; n++) {
@@ -13337,11 +13612,13 @@ function pathApplyZoom(fit) {
 function pathFocusCurrent() {
   const view = document.getElementById("lMapView");
   if (!view || view.classList.contains("fit")) return;
-  const sec = pathCurrentSection() || PATH_SECTIONS[0];
+  const L = campLayout();
+  const sec = campCurrentNode() || L.nodes[0];
   if (!sec) return;
-  const w = pathBoardWidth(false), h = w * (PATH_H / PATH_W);
-  view.scrollLeft = Math.max(0, (sec.x / PATH_W) * w - view.clientWidth / 2);
-  view.scrollTop = Math.max(0, (sec.y / PATH_H) * h - view.clientHeight / 2);
+  const at = L.nodes.filter(n => n.id === sec.id)[0] || L.nodes[0];
+  const w = pathBoardWidth(false), h = w * (L.h / L.w);
+  view.scrollLeft = Math.max(0, (at.x / L.w) * w - view.clientWidth / 2);
+  view.scrollTop = Math.max(0, (at.y / L.h) * h - view.clientHeight / 2);
 }
 
 const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",
@@ -13664,13 +13941,19 @@ async function pathConversation(sec) {
   return c;
 }
 
-function learnTargets(limit) {
+/* `only` narrows the pool to one campaign node's vocabulary and changes NOTHING
+   else: the same four buckets, the same ordering, the same overdue cap. That is what
+   makes "a campaign lesson is a Learn session" true rather than aspirational — there
+   is no second scheduler to drift out of step with this one. */
+function learnTargets(limit, only) {
   const lib = libAll(), srs = srsAll(), focus = focusAll(), today = todayISO();
   const arch = archiveAll();
+  const allow = only && only.length ? new Set(only) : null;
   const overdue = [], fresh = [], starred = [], rest = [];
   Object.keys(lib).forEach(k => {
     /* Anything the grader will not record must not be asked — see srsGradable. */
     if (!srsGradable(k, lib)) return;
+    if (allow && !allow.has(k)) return;
     const r = srs[k] && srs[k].prod;
     if (!r || !r.n) fresh.push(k);
     else if (r.due && r.due <= today) overdue.push(k);
@@ -13792,9 +14075,12 @@ function learnChunkTargets(limit) {
   return scored.slice(0, limit).map(x => x.p);
 }
 
-function learnBuild() {
+function learnBuild(opts) {
   const lib = libAll();
-  const shape = learnShape();
+  const only = (opts && opts.only) || null;
+  /* A node lesson is always the ordinary mixed shape, whatever chip is selected —
+     "Conversation" is a graduation you reach from the node, not a way to practise it. */
+  const shape = only ? "balanced" : learnShape();
 
   /* Once per session, before anything is chosen: age the evidence, then let the
      measured level move at most one band. Deliberately above the conversation
@@ -13821,7 +14107,7 @@ function learnBuild() {
     }));
   }
 
-  const targets = learnTargets(SESSION_CARDS);
+  const targets = learnTargets(SESSION_CARDS, only);
   if (!targets.length) return null;
 
   const voice = hasHeVoice();
@@ -13832,7 +14118,7 @@ function learnBuild() {
      shape that used to suppress it was removing comprehension practice, not adding
      speaking practice. */
   const wantListen = voice;
-  const size = SHAPES[shape].cards;
+  const size = (opts && opts.size) || SHAPES[shape].cards;
 
   const srsNow = srsAll();
   const rankedAll = bank
@@ -14724,22 +15010,25 @@ function learnRenderAct() {
   const box = document.getElementById("lActBody");
   if (!box) return;
   box.innerHTML = "";
-  const sec = pathCurrentSection();
+  const camp = campRestate(campEnsure());
+  const sec = campCurrentNode(camp);
   if (sec) {
+    const ch = campChapterOf(sec.id, camp) || {};
+    const p = campNodeProgress(sec);
     const k = document.createElement("div"); k.className = "lact-kicker";
-    k.textContent = "Campaign · " + (pathDoneCount() + 1) + " of " + PATH_SECTIONS.length;
+    k.textContent = "Chapter " + (ch.n || 1) + " · " + (ch.theme || "Campaign");
     const nm = document.createElement("div"); nm.className = "lact-name";
     nm.textContent = sec.name;
-    const n = pathNextLesson(sec.id);
     const sub = document.createElement("p"); sub.className = "lact-sub";
-    sub.textContent = "Lesson " + n + " of " + PATH_LESSONS + " · " +
-                      (PATH_LESSON_DEFS[n - 1] || {}).name;
+    /* The node's own reason, when the planner gave one — it is the thing that makes a
+       generated path read as authored. Falls back to the count when it did not. */
+    sub.textContent = sec.why || (p.have + " of " + p.need + " words yours");
     const go = document.createElement("button"); go.className = "btn";
-    go.textContent = pathProgress(sec.id) ? "Continue" : "Start this";
-    /* Opens the section sheet rather than launching the lesson outright: the sheet is
-       where the words and the seven lessons are, and jumping straight into a card he
-       did not choose is the same mistake the resume offer already refuses to make. */
-    go.onclick = () => pathOpenSection(sec.id);
+    go.textContent = p.have ? "Continue" : "Start this";
+    /* Opens the node sheet rather than launching a lesson outright: the sheet is where
+       the words and the three things you can do live, and dropping him into a card he
+       did not choose is the mistake the resume offer already refuses to make. */
+    go.onclick = () => campOpenNode(sec.id);
     box.append(k, nm, sub, go);
   }
   const lab = document.createElement("div"); lab.className = "lact-label";
@@ -14805,7 +15094,9 @@ function learnRenderStart() {
   pathWirePinch();
   pathFocusCurrent();
   learnRenderAct();
-  pathWarmNext();
+  /* pathWarmNext is NOT called any more: it warmed PATH_SECTIONS, and nothing can
+     reach those sections now, so every request it made bought content for a page that
+     no longer exists. The campaign's own warm arrives with the planner in step 7. */
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -16230,14 +16521,19 @@ function learnFinish() {
     store[s.path.id][lesson] = { pct: pct, ts: Date.now() };
     pathScoresSave(store);
     const passed = pathLessonPassed(lesson, pct);
-    const sec = PATH_BY_ID[s.path.id];
-    if (sec) {
-      sub += pathDone(sec.id)
-        ? " · " + sec.name + " complete!"
-        : " · " + sec.name + " — lesson " + lesson +
-          (lesson <= 2 ? " done"
-           : passed ? " passed (" + pct + "%)"
-           : " needs another go (" + pct + "%)");
+    const node = campNode(s.path.id);
+    if (node) {
+      /* Completion is the WORDS plus the conversation, so the end screen says which
+         half is outstanding rather than quoting a percentage that decides nothing. */
+      const p = campNodeProgress(node);
+      sub += campNodeDone(node.id)
+        ? " · " + node.name + " complete"
+        : lesson === CAMP_CONVO_LESSON
+          ? " · " + node.name + (passed ? " — conversation passed" : " — worth another go")
+          : " · " + node.name + " — " + p.have + " of " + p.need + " words yours";
+    } else {
+      const sec = PATH_BY_ID[s.path.id];
+      if (sec) sub += " · " + sec.name + " — lesson " + lesson;
     }
   }
   document.getElementById("lEndSub").textContent = sub;
@@ -16257,7 +16553,7 @@ function learnEndButtons() {
   if (lastFinishedPath) {
     const id = lastFinishedPath.id;
     again.textContent = "Continue on the Path";
-    again.onclick = () => { setView("learn"); learnRenderStart(); pathOpenSection(id); };
+    again.onclick = () => { setView("learn"); learnRenderStart(); campOpenNode(id); };
     done.textContent = "Done for now";
     done.onclick = () => { setView("learn"); learnRenderStart(); };
   } else {
@@ -18517,27 +18813,137 @@ function withPathScores(scores, fn) {
 const PASS7 = { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 90 }, 4: { pct: 90 },
                 5: { pct: 90 }, 6: { pct: 90 }, 7: { pct: 90 } };
 
-T("pathCurrentSection: with nothing done it is the one section that needs nothing", () => {
-  withPathScores({}, () => {
-    assertEq(pathCurrentSection().id, "hello");
+/* ====================  THE CAMPAIGN  ====================
+   These replace four tests written against PATH_SECTIONS, which no longer decides
+   anything. Each runs against a scratch campaign and a scratch SRS, restored after. */
+function withCamp(campaign, srs, scores, fn) {
+  const keys = [CAMP_KEY, SRS_KEY, PATH_SCORES_KEY];
+  const before = keys.map(k => lsGet(k));
+  try {
+    lsSet(CAMP_KEY, JSON.stringify(campaign));
+    lsSet(SRS_KEY, JSON.stringify(srs || {}));
+    lsSet(PATH_SCORES_KEY, JSON.stringify(scores || {}));
+    fn();
+  } finally {
+    keys.forEach((k, i) => {
+      if (before[i] === null) localStorage.removeItem(k); else lsSet(k, before[i]);
+    });
+  }
+}
+/* Every word of a node at `progressing` — the band one word card produces. */
+function campReadySrs(node) {
+  const srs = {};
+  (node.words || []).forEach(k => { srs[k] = { prod: srsBandRecord("progressing"), recv: srsBlank() }; });
+  return srs;
+}
+function campOneChapter() { return { v: 1, chapters: [campSeedChapter()], log: [] }; }
+const CAMP_PASS = { 99: { pct: 90 } };
+
+T("campCurrentNode: with nothing done it is the first node of the first chapter", () => {
+  withCamp(campOneChapter(), {}, {}, () => {
+    assertEq(campCurrentNode().id, "c1-hello");
   });
 });
-T("pathCurrentSection: something part-done outranks something merely open", () => {
-  withPathScores({ hello: PASS7, day: { 1: { pct: 100 } } }, () => {
-    assertEq(pathCurrentSection().id, "day",
-             "a section already started is where he left off — offer that, not a fresh one");
+T("campCurrentNode: a node already started outranks one merely open", () => {
+  withCamp(campOneChapter(), {}, { "c1-day": { 1: { pct: 100 } } }, () => {
+    assertEq(campCurrentNode().id, "c1-day",
+             "where he left off, not a fresh one");
   });
 });
-T("pathCurrentSection: a finished section hands on to what it unlocked", () => {
-  withPathScores({ hello: PASS7 }, () => {
-    assertTrue(pathDone("hello"), "precondition");
-    assertTrue(["people", "day", "asking"].indexOf(pathCurrentSection().id) !== -1);
+T("campNodeDone: needs the words AND the graduation, not either alone", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  withCamp(camp, campReadySrs(node), {}, () => {
+    assertTrue(!campNodeDone("c1-hello"), "words alone are not a graduation");
+  });
+  withCamp(camp, {}, { "c1-hello": CAMP_PASS }, () => {
+    assertTrue(!campNodeDone("c1-hello"), "a conversation passed without the words is not it either");
+  });
+  withCamp(camp, campReadySrs(node), { "c1-hello": CAMP_PASS }, () => {
+    assertTrue(campNodeDone("c1-hello"), "both, and it is gold");
   });
 });
-T("pathCurrentSection: nothing open at all returns null rather than throwing", () => {
-  const all = {};
-  PATH_SECTIONS.forEach(s => { all[s.id] = PASS7; });
-  withPathScores(all, () => { assertNull(pathCurrentSection()); });
+/* Gold is not permanent — this is the SRS made visible on the map. */
+T("campNodeStale: a graduated node whose words have slipped reopens", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  const weak = campReadySrs(node);
+  weak[node.words[0]] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+  withCamp(camp, weak, { "c1-hello": CAMP_PASS }, () => {
+    assertTrue(campNodeStale("c1-hello"));
+    assertTrue(!campNodeDone("c1-hello"), "stale is not done");
+    assertEq(campNodeState("c1-hello"), "stale");
+  });
+});
+T("campCurrentNode: a chapter with nothing left to do offers nothing", () => {
+  const camp = campOneChapter();
+  let srs = {}, scores = {};
+  camp.chapters[0].nodes.forEach(n => {
+    Object.assign(srs, campReadySrs(n));
+    scores[n.id] = CAMP_PASS;
+  });
+  withCamp(camp, srs, scores, () => { assertNull(campCurrentNode()); });
+});
+
+/* George: "once 60-75% (depending on isze of group) are gold the next session should
+   trigger". Held to 4-6 nodes, this rule lands exactly inside that band. */
+T("campThreshold: 60-75% across every chapter size", () => {
+  assertEq([4, 5, 6].map(campThreshold), [3, 3, 4]);
+  assertEq([4, 5, 6].map(n => Math.round(campThreshold(n) / n * 100)), [75, 60, 67]);
+});
+T("campChapterComplete: opens on the threshold, not on every node", () => {
+  const camp = campOneChapter();
+  const nodes = camp.chapters[0].nodes;
+  let srs = {}, scores = {};
+  nodes.slice(0, 3).forEach(n => { Object.assign(srs, campReadySrs(n)); scores[n.id] = CAMP_PASS; });
+  withCamp(camp, srs, scores, () => {
+    assertEq(campChapterGold(camp.chapters[0]), 3);
+    assertTrue(campChapterComplete(camp.chapters[0]), "3 of 4 is the threshold");
+  });
+});
+
+/* Within a chapter the nodes are peers. A same-band edge draws a horizontal arrow
+   across one row, which is the readability rule the old contract stated as "edges
+   join ADJACENT rows and neighbouring columns only". */
+T("campComputeNeeds: edges are derived from carried words, and must cross a band", () => {
+  const camp = { v: 1, log: [], chapters: [
+    { n: 1, theme: "one", state: "live", nodes: [
+      { id: "a", name: "A", words: ["שלום"], carry: [], needs: [] },
+      { id: "b", name: "B", words: ["טוב"], carry: ["שלום"], needs: [] }] },
+    { n: 2, theme: "two", state: "next", nodes: [
+      { id: "c", name: "C", words: ["בית"], carry: ["טוב"], needs: [] }] }
+  ] };
+  campComputeNeeds(camp);
+  assertEq(camp.chapters[0].nodes[1].needs, [],
+           "b carries a word from a, but they share a band");
+  assertEq(camp.chapters[1].nodes[0].needs, ["b"], "c carries b's word from the band above");
+});
+T("campLayout: one band per chapter, middle columns, alternate nodes staggered", () => {
+  const camp = campOneChapter();
+  const L = campLayout(camp);
+  assertEq(L.nodes.map(n => n.x), [170, 390, 610, 830], "four nodes take the middle four columns");
+  assertEq(L.nodes.map(n => n.y - L.nodes[0].y), [0, CAMP_STAGGER, 0, CAMP_STAGGER]);
+  assertEq(L.bands.length, 1);
+});
+T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () => {
+  const camp = campOneChapter();
+  camp.chapters.push({ n: 2, theme: "ahead", state: "fog", nodes: [],
+                       sketch: [{ name: "one" }, { name: "two" }] });
+  const L = campLayout(camp);
+  assertEq(L.nodes.filter(n => n.fog).length, 2);
+  assertEq(L.bands.length, 2);
+  assertTrue(L.h > CAMP_BAND, "the board grows a band");
+});
+T("campEnsure: seeds exactly once and never disturbs an existing campaign", () => {
+  const before = lsGet(CAMP_KEY);
+  try {
+    localStorage.removeItem(CAMP_KEY);
+    assertEq(campEnsure().chapters.length, 1);
+    const c = campAll();
+    c.chapters[0].theme = "touched";
+    campSave(c);
+    assertEq(campEnsure().chapters[0].theme, "touched", "a seeded campaign is left alone");
+  } finally {
+    if (before === null) localStorage.removeItem(CAMP_KEY); else lsSet(CAMP_KEY, before);
+  }
 });
 
 T("pathNextLesson: the lowest lesson not yet passed", () => {

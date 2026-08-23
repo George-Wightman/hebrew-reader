@@ -13102,10 +13102,26 @@ function learnTargets(limit) {
    Four presets rather than a settings panel, on purpose: the failure mode of a
    configurable drill app is spending the practice window configuring it. */
 const SHAPE_KEY = "hvr_shape";
+/* Was five. Two of them were not modes at all:
+
+   "Weak first" was fifteen solo word cards — no bank, no chunks, no notes, no reply,
+   no shadowing, and after the level work, no soft launch and no level mix either. It
+   opted out of every improvement this page has. Its premise is already covered by the
+   scheduler: a missed word is due, and learnTargets leads with overdue. Worse, sorting
+   weak-first is a bug this app has already fixed once — see the comment in
+   learnTargets recording "Its just looping those old words now, the hard ones. there
+   arent any new ones coming up." A button that recreates a known bug is not a choice.
+
+   "Speaking" differed from Balanced by dropping `listen` cards and voice notes, and
+   nothing else. It did not add speaking — word, sentence, chunk, reply and shadow
+   cards are all already answered out loud in Hebrew. It removed COMPREHENSION, which
+   is half of what the app is for. George: "really theyre all speaking right".
+
+   What is left is the two questions actually being asked: how long have I got, and
+   drill or conversation. `balanced` keeps its key because learnShape() falls back to
+   it, which is also what quietly migrates anyone stored on a deleted shape. */
 const SHAPES = {
-  balanced: { label: "Balanced",   cards: SESSION_CARDS, note: "A bit of everything" },
-  weak:     { label: "Weak first", cards: SESSION_CARDS, note: "Only what you keep missing" },
-  speaking: { label: "Speaking",   cards: SESSION_CARDS, note: "Everything answered out loud, in Hebrew" },
+  balanced: { label: "Full",       cards: SESSION_CARDS, note: "Fifteen cards — the whole mix" },
   quick:    { label: "Quick",      cards: 5,             note: "Five cards" },
   /* Not a mix like the others — one scripted exchange, start to finish. `cards` is a
      ceiling; the real length is however many turns the conversation has. */
@@ -13184,27 +13200,17 @@ function learnBuild() {
     }));
   }
 
-  let targets = learnTargets(SESSION_CARDS);
-  if (shape === "weak") {
-    /* Only words with actual evidence of struggle, plus ones never drilled at all.
-       Falls back to the full list rather than refusing to start — a session with
-       nothing weak in it is a good problem, not an error. */
-    const srs = srsAll();
-    const hard = targets.filter(k => {
-      const st = srsStrengthOf(srs, k, "prod");
-      return st === "weak" || st === "new";
-    });
-    if (hard.length) targets = hard;
-  }
+  const targets = learnTargets(SESSION_CARDS);
   if (!targets.length) return null;
 
   const voice = hasHeVoice();
   const bank = bankPrune(bankAll(), lib);
   const isTarget = {}; targets.forEach(k => { isTarget[k] = true; });
 
-  /* "Speaking" drops the one drill answered in English. "Weak first" keeps the
-     bank out of it entirely — its whole job is hammering the words themselves. */
-  const wantListen = voice && shape !== "speaking";
+  /* Hear-and-answer needs a voice to hear. Nothing else gates it any more — the
+     shape that used to suppress it was removing comprehension practice, not adding
+     speaking practice. */
+  const wantListen = voice;
   const size = SHAPES[shape].cards;
 
   const srsNow = srsAll();
@@ -13246,9 +13252,7 @@ function learnBuild() {
      moment should be at his level rather than whichever reply happens to be easiest.
      A quota of one, so pickByLevel returns at most one item and falls back through
      the neighbouring levels if he has no reply at his own. */
-  const replyPick = (shape === "weak")
-    ? null
-    : (pickByLevel(ranked.filter(x => x.it.type === "reply"), [level])[0] || null);
+  const replyPick = pickByLevel(ranked.filter(x => x.it.type === "reply"), [level])[0] || null;
 
   /* Shadowing runs on material he has ALREADY seen — repeating something he
      doesn't understand yet is a listening test with extra steps. Needs a voice
@@ -13256,8 +13260,13 @@ function learnBuild() {
 
      Reserved BEFORE the bank slice, not after. Picked afterwards it competes for
      the same items and always loses, because the seen items it wants are exactly
-     the ones ranking highest — which silently produced zero shadow cards. */
-  const shadowPicks = (voice && (shape === "balanced" || shape === "speaking"))
+     the ones ranking highest — which silently produced zero shadow cards.
+
+     Withheld from a Quick session on purpose rather than by the accident it used to
+     be (the old gate named two of the four shapes by hand, and so excluded Quick
+     without ever saying so). Five cards is too tight to spend one on mimicry when
+     the same card could be a word he has never met. */
+  const shadowPicks = (voice && shape !== "quick")
     ? ranked.filter(x => (x.it.seen || 0) > 0 && x.it.type !== "reply" &&
                          (!replyPick || x.it !== replyPick.it)).slice(0, 2)
     : [];
@@ -13281,14 +13290,14 @@ function learnBuild() {
      appear inside a sentence from the very next session, with no change to the
      servable gate at all. */
   const newWords = targets.filter(k => srsStrengthOf(srsNow, k, "prod") === "new");
-  const newRoom = shape === "weak" ? 0 : shape === "quick" ? 1 : NEW_WORD_CARDS;
+  const newRoom = shape === "quick" ? 1 : NEW_WORD_CARDS;
   const launching = newWords.slice(0, newRoom);
   launching.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
 
   /* Paid for out of the bank's allocation rather than out of chunks or notes, and
      floored so a session heavy with new words still practises them in context. */
-  const bankRoom = shape === "weak" ? 0
-                 : shape === "quick" ? Math.max(1, 2 - launching.length)
+  const bankRoom = shape === "quick"
+                 ? Math.max(1, 2 - launching.length)
                  : Math.max(SESSION_BANK_MIN, SESSION_BANK_MAX - launching.length);
   const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1);
   /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
@@ -13300,10 +13309,8 @@ function learnBuild() {
 
   /* Chunks are their own retrieval, not a variant of the word cards, so they get
      their own slice rather than competing for the word budget. */
-  if (shape !== "weak") {
-    learnChunkTargets(shape === "quick" ? 1 : 3)
-      .forEach(p => cards.push({ kind: "chunk", key: p, words: [p] }));
-  }
+  learnChunkTargets(shape === "quick" ? 1 : 3)
+    .forEach(p => cards.push({ kind: "chunk", key: p, words: [p] }));
 
   /* Real voice notes. Their own slice for the same reason chunks get one: this is a
      different exercise, not a variant of the generated listening drill, and it must
@@ -13311,16 +13318,14 @@ function learnBuild() {
 
      Crucially NOT gated on hasHeVoice() — the recording already exists, so this is
      the one listening drill that works on a stock Windows machine with nothing
-     installed. "Speaking" shape skips it because it asks for English back. */
-  if (shape !== "weak" && shape !== "speaking") {
-    noteTargets(shape === "quick" ? 1 : NOTES_PER_SESSION)
-      .forEach(n => cards.push({
-        kind: "note",
-        item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
-                uses: n.uses || [] },
-        words: n.uses || []
-      }));
-  }
+     installed. */
+  noteTargets(shape === "quick" ? 1 : NOTES_PER_SESSION)
+    .forEach(n => cards.push({
+      kind: "note",
+      item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
+              uses: n.uses || [] },
+      words: n.uses || []
+    }));
 
   const covered = {};
   cards.forEach(c => (c.words || []).forEach(w => { covered[w] = true; }));
@@ -14176,8 +14181,7 @@ function learnRenderShapes() {
     b.onclick = () => { lsSet(SHAPE_KEY, k); learnRenderShapes(); };
     box.append(b);
   });
-  note.textContent = SHAPES[current].note +
-    (current === "speaking" && !speechSupported() ? " — no microphone here, so still graded by hand" : "");
+  note.textContent = SHAPES[current].note;
   box.append(note);
 
   /* Which drills are actually going to run, and which aren't.
@@ -14200,7 +14204,7 @@ function learnRenderShapes() {
       " a Hebrew voice this computer doesn't have.";
     box.append(warn);
   }
-  if (notesN && current !== "weak" && current !== "speaking") {
+  if (notesN && current !== "conversation") {
     const good = document.createElement("div");
     good.className = "lshapenote lshapeon";
     good.textContent = notesN === 1
@@ -14208,8 +14212,9 @@ function learnRenderShapes() {
       : notesN + " real voice notes in the mix — listening practice in the actual voice.";
     box.append(good);
   }
-  document.getElementById("lStartSub").textContent =
-    SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
+  document.getElementById("lStartSub").textContent = current === "conversation"
+    ? SHAPES[current].cards + " turns. Say every answer out loud before you reveal it."
+    : SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
 }
 
 document.getElementById("migrateImport").onclick = () => {
@@ -17783,6 +17788,27 @@ T("pathWarmTarget: nothing to warm returns null, not a section", () => {
 T("pathWarmTarget: an empty items array counts as unwarmed", () => {
   const t = pathWarmTarget([PWSEC("a")], { a: { items: [] } }, () => "open");
   assertEq(t.what, "content");
+});
+
+/* ====================  THREE SHAPES, NOT FIVE  ====================
+   "Weak first" and "Speaking" are gone. Nobody has to be migrated off them because
+   learnShape() has always fallen back to `balanced` for a key it doesn't recognise —
+   but that only holds while `balanced` remains a real key, so this pins it. */
+T("SHAPES: only the two real questions are asked", () => {
+  assertEq(Object.keys(SHAPES), ["balanced", "quick", "conversation"]);
+  assertTrue(!SHAPES.weak, "a mode that opted out of every improvement is not a choice");
+  assertTrue(!SHAPES.speaking, "it removed comprehension rather than adding speaking");
+});
+T("learnShape: a device still stored on a deleted shape falls back, not breaks", () => {
+  const before = lsGet(SHAPE_KEY);
+  try {
+    lsSet(SHAPE_KEY, "speaking");
+    assertEq(learnShape(), "balanced");
+    lsSet(SHAPE_KEY, "quick");
+    assertEq(learnShape(), "quick", "a live shape is still honoured");
+  } finally {
+    if (before === null) localStorage.removeItem(SHAPE_KEY); else lsSet(SHAPE_KEY, before);
+  }
 });
 
 /* ====================  SENTENCE LEVELS  ====================

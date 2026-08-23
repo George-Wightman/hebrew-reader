@@ -236,9 +236,36 @@ computed edges, 70/30 word carry, outcome-based completion, the 70% chapter
 threshold, cold start and airbag.
 
 **Phase 3 — the living map.** Decay reopening and its marker; nodes spawned by a
-real voice note arriving with unknown words; a weekly review call that digests the
-week's sessions into a teacher's observation ("you are consistently missing
-feminine plural agreement") and can spawn a node to target it.
+real voice note arriving with unknown words; and the review, below.
+
+### The review is a rolling log, not a weekly guess
+
+The first sketch of this was one weekly call over raw data. George:
+
+> "Im not sure how accurate this could be without data, so perhaps after every
+> block of practice ... there is a api call to light to sumarise/ evaluate teh
+> sessions performance. That way come hte end of hte week there is some sort of
+> log to work with, where we can use a higher level model to look over those and
+> hte data from the app to create that tailored strengthening lesson."
+
+He is right, and for a reason worth stating: by the end of a week the evidence is
+gone. `hvr_srs` records that a word was missed, not HOW it was missed — the
+transcript of what he actually said, the wrong gender, the dropped preposition,
+all of it is discarded the moment the card advances. A weekly call would be
+guessing from tallies.
+
+So: two tiers.
+
+- **After each block of practice** (a session, or several in a day — debounced,
+  not per session, since some days have three and some none), one Lite call reads
+  what actually happened while it is still in memory and writes a few lines to a
+  rolling log. Cheap, frequent, and it captures the thing that is otherwise lost.
+- **Weekly**, a Flash call reads the accumulated log alongside the app's own
+  numbers and produces the observation and the targeted strengthening work.
+
+This is the same shape as the campaign log for chapters, one level down, and for
+the same reason: summarise while the evidence exists, reason over the summaries
+later.
 
 Phase 3's voice-note spawning is the thing no other app can do, and it is the
 reason the campaign is worth generating rather than authoring at all.

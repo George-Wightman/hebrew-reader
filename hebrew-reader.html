@@ -1145,6 +1145,56 @@
      either time invested or words moved, nothing invented to look impressive.
      Sits under the Start button on the same screen: the practice you've done is
      context for the session you're about to start, not a separate report. */
+  /* ---- the map as the front door ----
+     A VIEWPORT with the board scrolling inside it, rather than the board scaled to
+     fit the page. Fitting the whole 1220x2130 map to a phone's width makes every
+     node an unreadable dot, which is why the map was a place you visited rather
+     than a place you were. A window onto it, opened at your own node, is legible at
+     any screen size — and "Whole map" is one tap away when you want the road. */
+  .lmap { position: relative; max-width: 980px; margin: 8px auto 0; }
+  .lmapview { position: relative; height: 62vh; min-height: 320px; max-height: 620px;
+              overflow: auto; background: #f2ebdd; border: 1px solid var(--border);
+              border-radius: 14px; -webkit-overflow-scrolling: touch; }
+  .lmapview .pathtree { max-width: none; margin: 0; }
+  .lmapview.fit { overflow: hidden; }
+  .lmapbar { position: absolute; left: 12px; top: 12px; display: flex; align-items: center;
+             gap: 14px; background: var(--panel); border: 1px solid var(--border);
+             border-radius: 99px; padding: 5px 14px; box-shadow: var(--shadow);
+             font-size: .76rem; color: var(--muted); pointer-events: none; }
+  .lmapbar b { font-size: .95rem; color: var(--ink); font-family: var(--display); }
+  .lmapbar .gold b { color: var(--gold); }
+  /* Seven bars, one per day. Deliberately tiny — it answers "have I been showing
+     up", which is a shape, not a number. */
+  .lmapweek { display: flex; align-items: flex-end; gap: 3px; height: 18px; }
+  .lmapweek i { display: block; width: 5px; background: var(--accent); border-radius: 1px;
+                min-height: 2px; opacity: .85; }
+  .lmapweek i.zero { background: var(--border); }
+  .lmapzoom { position: absolute; right: 12px; top: 12px; background: var(--panel);
+              border: 1px solid var(--border); border-radius: 99px; padding: 3px 12px;
+              box-shadow: var(--shadow); font-size: .76rem; }
+  /* The action sits ON the map, bottom-right, so the thing you came to do is never
+     more than one tap away however far you have scrolled. */
+  .lact { position: absolute; right: 12px; bottom: 12px; width: 262px; max-width: calc(100% - 24px);
+          background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+          padding: 12px 14px; box-shadow: 0 2px 10px rgba(34,48,60,.12); }
+  .lact-kicker { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase;
+                 color: var(--muted); }
+  .lact-name { font-family: var(--display); font-size: 1.08rem; margin: 2px 0 4px; }
+  .lact-sub { font-size: .74rem; color: var(--muted); margin: 0 0 10px; }
+  .lact .btn { width: 100%; }
+  .lact-or { text-align: center; font-size: .72rem; color: var(--faint); margin: 9px 0 7px; }
+  .lact-quick { display: flex; gap: 6px; }
+  .lact-quick button { flex: 1; }
+  @media (max-width: 620px) {
+    .lmapview { height: 54vh; }
+    .lact { left: 12px; right: 12px; width: auto; }
+    .lmapbar { font-size: .72rem; gap: 10px; padding: 4px 11px; }
+    /* The bar and the zoom control are both pinned to the top and collide on a phone.
+       The week total is the part to drop: the seven bars beside it already say
+       whether the week happened, which is the question this is answering. */
+    .lmapbar .lmaptot { display: none; }
+  }
+  .lstatshead { display: flex; align-items: baseline; justify-content: space-between; }
   .lstats { max-width: 760px; margin: 0 auto; padding: 8px 16px 40px; }
   .lstats::before { content: ""; display: block; height: 1px; background: var(--border);
                     margin: 30px auto 4px; max-width: 200px; }
@@ -1281,6 +1331,11 @@
   .pnode.locked .pnmbox { fill: #f2ebdd; stroke: #e3d9c0; }
   .pnode.done .pring { fill: var(--gold); stroke: #8a6520; }
   .pnode.done .pring2 { stroke: #d8bb84; }
+  /* A place on the map rather than a panel that greets you — so it reads as a node,
+     but plainly not as a section: no second ring, muted, and off the routes. */
+  .pnode.statsnode .pring { fill: var(--panel); stroke: #c4bba6; stroke-dasharray: 4 4; }
+  .pnode.statsnode .phe { fill: var(--muted); }
+  .pnode.statsnode .pnmbox { fill: var(--panel); stroke: #ded5c0; }
   .pnode.done .phe { fill: var(--panel); }
   .pnode.done .pnm { fill: var(--ink); }
   .pnode.current .pring { fill: var(--accent); stroke: #0a5551; }
@@ -1515,7 +1570,6 @@
 <nav class="topnav">
   <span class="navbrand">שלום</span>
   <button class="navbtn" id="navLearn">Learn<span id="learnBadge" class="navbadge" style="display:none"></span></button>
-  <button class="navbtn" id="navPath">Path</button>
   <button class="navbtn" id="navWords">Words<span id="navBadge" class="navbadge" style="display:none"></span></button>
   <span class="navsp"></span>
   <!-- Honest placeholder. Devices don't share anything yet, so it says so rather than
@@ -1690,34 +1744,61 @@
        One screen rather than two — the progress isn't a report you go and look up,
        it's the room you're standing in when you decide to practise. -->
   <div id="lStart">
-    <div class="lhero">
+    <!-- The old front door. It is the WHOLE screen when there aren't enough words for
+         a campaign yet, and hidden once the map takes over — but its controls stay in
+         the DOM, because the action card's buttons drive them and every message the
+         session flow writes still lands in #lStartHint below the map. -->
+    <div class="lhero" id="lHero">
       <div class="lhero-main">
         <h2 id="lStartTitle">Ready to speak</h2>
         <p class="lsub" id="lStartSub"></p>
         <div class="lchips" id="lStartChips"></div>
         <p class="lgate" id="lGate" style="display:none"></p>
-        <!-- Above Start, because if you were mid-session that's what you came back
-             for. Offered, never automatic: dropping someone straight into a card they
-             don't remember choosing is worse than asking. -->
-        <div class="lresume" id="lResume" style="display:none">
-          <div class="lresume-text">
-            <b>Pick up where you left off?</b>
-            <p id="lResumeText"></p>
-          </div>
-          <div class="lresume-btns">
-            <button class="btn" id="lResumeBtn">Resume</button>
-            <button class="btn secondary" id="lResumeDrop">Start fresh</button>
-          </div>
-        </div>
         <button class="btn big" id="lStartBtn">Start session</button>
         <div class="lshapes" id="lShapes"></div>
-        <p class="lhint" id="lStartHint"></p>
       </div>
-      <!-- The streak is the one number that rewards coming back rather than measuring
-           how you did, so it gets its own card and the only gold on the page. -->
-      <aside class="lhero-side" id="lStreak"></aside>
     </div>
-    <div class="lstats" id="lStatsPane">
+
+    <!-- Above the map, because if you were mid-session that's what you came back for.
+         Offered, never automatic: dropping someone straight into a card they don't
+         remember choosing is worse than asking. -->
+    <div class="lresume" id="lResume" style="display:none">
+      <div class="lresume-text">
+        <b>Pick up where you left off?</b>
+        <p id="lResumeText"></p>
+      </div>
+      <div class="lresume-btns">
+        <button class="btn" id="lResumeBtn">Resume</button>
+        <button class="btn secondary" id="lResumeDrop">Start fresh</button>
+      </div>
+    </div>
+
+    <!-- THE MAP IS THE FRONT DOOR. It used to be a separate tab, which made the
+         campaign feel like a side quest and left this screen a dashboard. Opened
+         pre-scrolled to where you are, with the action already on screen: nobody
+         should have to navigate a map to start practising. Pinching out to see the
+         whole road is a reward, not a prerequisite. -->
+    <div class="lmap" id="lMap">
+      <div class="lmapview" id="lMapView">
+        <div class="pathtree" id="pathTree"></div>
+      </div>
+      <!-- The only two numbers on the front door. Everything else lives behind the
+           stats node on the map, because a scoreboard is not a greeting. -->
+      <div class="lmapbar" id="lMapBar"></div>
+      <div class="lmapzoom"><button class="linkbtn" id="lMapFit">Whole map</button></div>
+      <div class="lact" id="lAct"></div>
+    </div>
+    <!-- Outside .lmap on purpose: learnRenderAct rebuilds the card's innerHTML, and
+         everything the session flow says ("Daily AI limit reached", "Wrote 6 new
+         practice items") is written here by id. -->
+    <p class="lhint" id="lStartHint"></p>
+
+    <!-- Opened from the stats node, not shown on arrival. -->
+    <div class="lstats" id="lStatsPane" style="display:none">
+      <div class="lstatshead">
+        <h3 class="lstats-sub">Your practice</h3>
+        <button class="linkbtn" id="lStatsClose">Close</button>
+      </div>
       <div class="lstatrow" id="lStatTiles"></div>
       <h3 class="lstats-sub">Minutes a day</h3>
       <div id="lStatMinutes"></div>
@@ -1727,6 +1808,8 @@
       <div id="lStatSpoken"></div>
     </div>
   </div>
+
+  <span id="lStreak" style="display:none"></span>
 
   <!-- Card -->
   <div id="lRun" style="display:none">
@@ -1752,17 +1835,7 @@
 <!-- The Path: a branching quest map. Its own view rather than a session shape, because
      a tree wants the full width and its own ground — wedged into the Learn start screen
      it reads as a list, which is exactly what it isn't. -->
-<div class="pathboard" id="viewPath" style="display:none">
-  <div class="pathhead">
-    <h2>The Path</h2>
-    <span class="pathstats" id="pathStats"></span>
-  </div>
-  <div class="pathtree" id="pathTree"></div>
-  <p class="pathnote">Three routes run from the start and you take whichever suits you. There are
-    no gates — a section opens when you've finished the ones it actually builds on. The language
-    gets harder as you go down rather than behind a wall, and a ★ marks a situation you've already
-    met coming back in a new tense.</p>
-</div>
+<span id="pathStats" style="display:none"></span>
 
 <!-- Raised from the bottom like the sentence pad, and for the same reason: the map
      stays visible behind it, so you keep your place instead of being moved elsewhere. -->
@@ -8189,15 +8262,15 @@ const VIEWS = {
   learn:      { view: "viewLearn",      nav: "navLearn", hidePad: true, enter: () => learnEnter() },
   /* The pad exists to compose a reply to a real message, so it belongs with Words
      and stands down on Learn, where the screen needs to be large and quiet. */
-  words:      { view: "viewWords",      nav: "navWords" },
-  /* The pad is for replying to a real message; the map is neither reading nor
-     writing one, so it stands down here as it does on Learn. */
-  path:       { view: "viewPath",       nav: "navPath", hidePad: true,
-                enter: () => { pathRender(); pathWarmNext(); } }
+  words:      { view: "viewWords",      nav: "navWords" }
 };
 /* Anyone opening this after the redesign has "translator" or "library" saved as their
-   last view. Both are now one page, so both land on Words. */
-const VIEW_ALIAS = { translator: "words", library: "words" };
+   last view. Both are now one page, so both land on Words.
+
+   "path" joins them: the map is not a page any more, it IS the Learn screen. A tab
+   of its own is what made the campaign read as a side quest — you had to decide to
+   go and look at it, and the practice screen it was competing with was a dashboard. */
+const VIEW_ALIAS = { translator: "words", library: "words", path: "learn" };
 function setView(name) {
   if (VIEW_ALIAS[name]) name = VIEW_ALIAS[name];
   if (!VIEWS[name]) name = "learn";
@@ -8208,7 +8281,10 @@ function setView(name) {
   lsSet(VIEW_KEY, name);
   /* The sheet is fixed to the window, so it would otherwise hang over whatever page
      you moved to. */
-  if (name !== "path") pathCloseSheet();
+  /* The section sheet belongs to the map, and the map is now the Learn screen —
+     so it closes when you leave LEARN, not when you leave the page it used to have
+     of its own. Left as `!== "path"` this shut the sheet on the way in. */
+  if (name !== "learn") pathCloseSheet();
   /* Leaving Learn stops the listening, even mid-card. The mic is only ever held for
      an active practice session, and navigating away ends that. */
   if (name !== "learn") { micStop(); micRelease(); }
@@ -12699,6 +12775,16 @@ function pathRender() {
            s.name + '</text>';
     svg += '</g>';
   });
+  /* Progress lives ON the map as somewhere you go, not as a dashboard that greets
+     you. George: "the only stat that I care about is the streak and the tracker of
+     how many minutes I have spent in the past week ... the others I dont look at to
+     be honest and could be hidden behind a like 'stats' node". Those two are on the
+     bar; everything else is behind this. */
+  svg += '<g class="pnode statsnode" data-stats="1">';
+  svg += '<circle class="pring" cx="170" cy="80" r="34"/>';
+  svg += '<text class="phe" x="170" y="90" text-anchor="middle" font-size="24">◷</text>';
+  svg += '<text class="pnm" x="170" y="146" text-anchor="middle" font-size="14">Your practice</text>';
+  svg += '</g>';
   tree.innerHTML = svg + '</svg>';
   /* A label floating on bare paper had nothing to anchor it — measured after insertion
      (rather than guessed from character count) so the box fits every name exactly,
@@ -12717,10 +12803,60 @@ function pathRender() {
   });
   tree.querySelectorAll(".pnode").forEach(g => {
     g.addEventListener("click", () => {
+      if (g.dataset.stats) { learnStatsOpen(true); return; }
       const s = PATH_BY_ID[g.dataset.sec];
       if (s && pathStateOf(s) !== "locked") pathOpenSection(s.id);
     });
   });
+}
+
+/* ---- where you are on the map ----------------------------------------------
+   One section, the one the action card offers and the one the view opens onto:
+   whatever is already part-done, else the first thing open, else nothing (the map
+   is finished, or the library is too thin to have unlocked anything). */
+function pathCurrentSection() {
+  const started = PATH_SECTIONS.filter(s => pathStateOf(s) === "current");
+  if (started.length) return started[0];
+  const open = PATH_SECTIONS.filter(s => pathStateOf(s) === "open");
+  return open.length ? open[0] : null;
+}
+/* The next lesson within a section: the lowest number not yet passed. */
+function pathNextLesson(id) {
+  for (let n = 1; n <= PATH_LESSONS; n++) {
+    const r = pathLessonRec(id, n);
+    if (!r || !pathLessonPassed(n, r.pct)) return n;
+  }
+  return PATH_LESSONS;
+}
+
+/* The board is laid out at a FIXED pixel width and scrolled, rather than scaled to
+   fit. Fitting 1220x2130 into a phone makes every node an unreadable dot — which is
+   most of why the map was somewhere you visited rather than somewhere you were. */
+const MAP_BOARD_W = 900;
+function pathBoardWidth(fit) {
+  const view = document.getElementById("lMapView");
+  if (!view) return MAP_BOARD_W;
+  return fit ? Math.max(240, view.clientWidth) : Math.max(MAP_BOARD_W, view.clientWidth);
+}
+function pathApplyZoom(fit) {
+  const view = document.getElementById("lMapView");
+  const tree = document.getElementById("pathTree");
+  if (!view || !tree) return;
+  view.classList.toggle("fit", !!fit);
+  tree.style.width = pathBoardWidth(fit) + "px";
+  const btn = document.getElementById("lMapFit");
+  if (btn) btn.textContent = fit ? "Back to me" : "Whole map";
+}
+/* Centres the view on where you are. Called on every entry, so the map always opens
+   showing the thing the action card is offering. */
+function pathFocusCurrent() {
+  const view = document.getElementById("lMapView");
+  if (!view || view.classList.contains("fit")) return;
+  const sec = pathCurrentSection() || PATH_SECTIONS[0];
+  if (!sec) return;
+  const w = pathBoardWidth(false), h = w * (PATH_H / PATH_W);
+  view.scrollLeft = Math.max(0, (sec.x / PATH_W) * w - view.clientWidth / 2);
+  view.scrollTop = Math.max(0, (sec.y / PATH_H) * h - view.clientHeight / 2);
 }
 
 const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",
@@ -14060,6 +14196,91 @@ function learnBadge() {
   el.style.display = n ? "inline-block" : "none";
 }
 
+/* ---- the two numbers that live on the front door ----------------------------
+   Streak, and a bar per day for the last week. Everything else is behind the stats
+   node. Silent on day one rather than announcing "0 days" — a streak counter whose
+   first act is to tell you you have nothing is working against the only thing it is
+   for. */
+function learnRenderMapBar() {
+  const bar = document.getElementById("lMapBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const streak = statsStreak();
+  if (streak > 0) {
+    const w = document.createElement("span"); w.className = "gold";
+    const b = document.createElement("b"); b.textContent = streak;
+    w.append(b, document.createTextNode(streak === 1 ? " day" : " days in a row"));
+    bar.append(w);
+  }
+  const days = statsRange(7);
+  const week = days.reduce((n, d) => n + (d.sec || 0), 0);
+  /* Scaled against a 20-minute day rather than against his own best, so a quiet week
+     actually LOOKS quiet. Self-scaling bars always look full, which is the one thing
+     a habit tracker must never do. */
+  const peak = Math.max(1200, ...days.map(d => d.sec));
+  const row = document.createElement("span"); row.className = "lmapweek";
+  days.forEach(d => {
+    const i = document.createElement("i");
+    i.style.height = Math.max(2, Math.round((d.sec / peak) * 18)) + "px";
+    if (!d.sec) i.className = "zero";
+    i.title = d.iso + " — " + fmtMins(d.sec);
+    row.append(i);
+  });
+  bar.append(row);
+  const tot = document.createElement("span"); tot.className = "lmaptot";
+  tot.append(document.createTextNode(fmtMins(week) + " this week"));
+  bar.append(tot);
+}
+
+/* The action card: what the campaign is offering, and a quick session if you would
+   rather just drill. Sits on the map so it is reachable however far you have
+   scrolled. */
+function learnRenderAct() {
+  const box = document.getElementById("lAct");
+  if (!box) return;
+  box.innerHTML = "";
+  const sec = pathCurrentSection();
+  if (sec) {
+    const k = document.createElement("div"); k.className = "lact-kicker";
+    k.textContent = "Campaign · " + (pathDoneCount() + 1) + " of " + PATH_SECTIONS.length;
+    const nm = document.createElement("div"); nm.className = "lact-name";
+    nm.textContent = sec.name;
+    const n = pathNextLesson(sec.id);
+    const sub = document.createElement("p"); sub.className = "lact-sub";
+    sub.textContent = "Lesson " + n + " of " + PATH_LESSONS + " · " +
+                      (PATH_LESSON_DEFS[n - 1] || {}).name;
+    const go = document.createElement("button"); go.className = "btn";
+    go.textContent = pathProgress(sec.id) ? "Continue" : "Start this";
+    /* Opens the section sheet rather than launching the lesson outright: the sheet is
+       where the words and the seven lessons are, and jumping straight into a card he
+       did not choose is the same mistake the resume offer already refuses to make. */
+    go.onclick = () => pathOpenSection(sec.id);
+    box.append(k, nm, sub, go);
+    const or = document.createElement("div"); or.className = "lact-or";
+    or.textContent = "or just drill";
+    box.append(or);
+  }
+  const quick = document.createElement("div"); quick.className = "lact-quick";
+  /* Conversation is here because the shape chips are no longer on screen. It stays a
+     choice until the campaign owns it properly — a node's closing conversation is
+     what it becomes, and until that exists, removing it would just delete a feature. */
+  [["quick", "5"], ["balanced", "15"], ["conversation", "Talk"]].forEach(([shape, label]) => {
+    const b = document.createElement("button");
+    b.className = "btn secondary"; b.textContent = label;
+    b.onclick = () => { lsSet(SHAPE_KEY, shape); learnRenderShapes();
+                        document.getElementById("lStartBtn").click(); };
+    quick.append(b);
+  });
+  box.append(quick);
+}
+
+function learnStatsOpen(on) {
+  const pane = document.getElementById("lStatsPane");
+  if (!pane) return;
+  pane.style.display = on ? "" : "none";
+  if (on) { learnRenderStats(); pane.scrollIntoView({ behavior: "smooth", block: "start" }); }
+}
+
 function learnRenderStart() {
   learnShow("lStart");
   const lib = libAll();
@@ -14069,24 +14290,7 @@ function learnRenderStart() {
   const hint = document.getElementById("lStartHint");
   chips.innerHTML = "";
 
-  /* Above the title, so it's the first thing read. Silent on day one rather than
-     announcing "0 days" — a streak counter that starts by telling you you have
-     nothing is working against the only thing it's for. */
-  const streak = statsStreak();
-  const streakEl = document.getElementById("lStreak");
-  streakEl.innerHTML = "";
-  if (streak > 0) {
-    const num = document.createElement("b");
-    num.textContent = streak;
-    const lab = document.createElement("span");
-    lab.textContent = streak === 1 ? "day so far" : "days in a row";
-    streakEl.append(num, lab);
-    streakEl.style.display = "";
-  } else {
-    /* No card at all rather than a card reading zero — a streak counter whose first
-       act is to tell you you have nothing is working against the only thing it's for. */
-    streakEl.style.display = "none";
-  }
+  learnRenderMapBar();
 
   if (n < 10) {
     document.getElementById("lStartTitle").textContent = "Not enough words yet";
@@ -14095,12 +14299,25 @@ function learnRenderStart() {
     btn.style.display = "none";
     document.getElementById("lShapes").innerHTML = "";
     hint.textContent = n + " word" + (n === 1 ? "" : "s") + " so far, 10 needed";
-    /* Progress pane stays hidden until there's a library to have progress in —
-       an empty chart is a worse first impression than no chart. */
-    document.getElementById("lStatsPane").style.display = "none";
+    /* Hide the map too: an empty campaign is a worse first impression than no
+       campaign, and none of it is reachable on a library this thin anyway. The hero
+       is the whole screen in this state, which is exactly what it was built for. */
+    document.getElementById("lMap").style.display = "none";
+    document.getElementById("lHero").style.display = "";
+    learnStatsOpen(false);
     return;
   }
-  document.getElementById("lStatsPane").style.display = "";
+  document.getElementById("lMap").style.display = "";
+  /* The action card says everything the hero said, on top of the map. Kept in the
+     DOM rather than deleted — its Start button is what the card's own buttons press. */
+  document.getElementById("lHero").style.display = "none";
+  /* The board is drawn, sized and scrolled to the current node before anything else
+     paints, so the map never appears at the top-left and then jump. */
+  pathRender();
+  pathApplyZoom(false);
+  pathFocusCurrent();
+  learnRenderAct();
+  pathWarmNext();
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -14157,7 +14374,6 @@ function learnRenderStart() {
      fortnight ago, which is the version that actually answers "am I getting
      anywhere". Two renderings of one fact is just noise. */
   learnRenderShapes();
-  learnRenderStats();
 
   /* Naming keyboard shortcuts on a phone is worse than saying nothing: it advertises
      controls the device cannot offer. The no-voice warning is a real fact about the
@@ -14243,6 +14459,17 @@ document.getElementById("lResumeBtn").onclick = () => {
   learnShow("lRun");
   learnRenderCard();
 };
+document.getElementById("lMapFit").onclick = () => {
+  const view = document.getElementById("lMapView");
+  const fit = !view.classList.contains("fit");
+  pathApplyZoom(fit);
+  if (!fit) pathFocusCurrent();
+};
+document.getElementById("lStatsClose").onclick = () => {
+  learnStatsOpen(false);
+  document.getElementById("lMap").scrollIntoView({ behavior: "smooth", block: "start" });
+};
+
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they
      were answered — this only discards the ones still ahead. */
@@ -15541,9 +15768,9 @@ function learnEndButtons() {
   if (lastFinishedPath) {
     const id = lastFinishedPath.id;
     again.textContent = "Continue on the Path";
-    again.onclick = () => { setView("path"); pathOpenSection(id); };
+    again.onclick = () => { setView("learn"); learnRenderStart(); pathOpenSection(id); };
     done.textContent = "Done for now";
-    done.onclick = () => setView("path");
+    done.onclick = () => { setView("learn"); learnRenderStart(); };
   } else {
     again.textContent = "Another session";
     again.onclick = () => learnRenderStart();
@@ -17788,6 +18015,58 @@ T("pathWarmTarget: nothing to warm returns null, not a section", () => {
 T("pathWarmTarget: an empty items array counts as unwarmed", () => {
   const t = pathWarmTarget([PWSEC("a")], { a: { items: [] } }, () => "open");
   assertEq(t.what, "content");
+});
+
+/* ====================  THE MAP IS THE FRONT DOOR  ====================
+   The Learn screen opens onto the campaign, scrolled to where you are, so these two
+   decide what you actually see when the app opens. */
+function withPathScores(scores, fn) {
+  const before = lsGet(PATH_SCORES_KEY);
+  try { lsSet(PATH_SCORES_KEY, JSON.stringify(scores)); fn(); }
+  finally { if (before === null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, before); }
+}
+const PASS7 = { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 90 }, 4: { pct: 90 },
+                5: { pct: 90 }, 6: { pct: 90 }, 7: { pct: 90 } };
+
+T("pathCurrentSection: with nothing done it is the one section that needs nothing", () => {
+  withPathScores({}, () => {
+    assertEq(pathCurrentSection().id, "hello");
+  });
+});
+T("pathCurrentSection: something part-done outranks something merely open", () => {
+  withPathScores({ hello: PASS7, day: { 1: { pct: 100 } } }, () => {
+    assertEq(pathCurrentSection().id, "day",
+             "a section already started is where he left off — offer that, not a fresh one");
+  });
+});
+T("pathCurrentSection: a finished section hands on to what it unlocked", () => {
+  withPathScores({ hello: PASS7 }, () => {
+    assertTrue(pathDone("hello"), "precondition");
+    assertTrue(["people", "day", "asking"].indexOf(pathCurrentSection().id) !== -1);
+  });
+});
+T("pathCurrentSection: nothing open at all returns null rather than throwing", () => {
+  const all = {};
+  PATH_SECTIONS.forEach(s => { all[s.id] = PASS7; });
+  withPathScores(all, () => { assertNull(pathCurrentSection()); });
+});
+
+T("pathNextLesson: the lowest lesson not yet passed", () => {
+  withPathScores({ hello: { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 50 } } }, () => {
+    assertEq(pathNextLesson("hello"), 3, "50% is under PATH_PASS_PCT, so 3 is still owed");
+  });
+  withPathScores({ hello: { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 90 } } }, () => {
+    assertEq(pathNextLesson("hello"), 4);
+  });
+  withPathScores({}, () => { assertEq(pathNextLesson("hello"), 1); });
+});
+
+/* The map stopped being a page. Anyone whose last view was saved as "path" — which
+   is everyone who was looking at it when this shipped — must land on Learn rather
+   than on the fallback. */
+T("VIEW_ALIAS: a saved 'path' view lands on Learn, where the map now lives", () => {
+  assertEq(VIEW_ALIAS.path, "learn");
+  assertTrue(!VIEWS.path, "the map is not a view of its own any more");
 });
 
 /* ====================  THREE SHAPES, NOT FIVE  ====================

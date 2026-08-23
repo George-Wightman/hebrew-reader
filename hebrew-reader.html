@@ -1189,9 +1189,16 @@
   .lmaptop .lbanner { margin: 0; max-width: 340px; font-size: .76rem; padding: 8px 12px;
                       box-shadow: var(--shadow); }
 
-  .lmapzoom { position: absolute; right: 12px; top: 12px; background: var(--panel);
-              border: 1px solid var(--border); border-radius: 99px; padding: 4px 13px;
-              box-shadow: var(--shadow); font-size: .76rem; }
+  .lmapzoomwrap { position: absolute; right: 12px; top: 12px; display: flex;
+                  flex-direction: column; align-items: flex-end; gap: 7px; }
+  .lmapzoom { background: var(--panel); border: 1px solid var(--border);
+              border-radius: 99px; padding: 4px 13px; box-shadow: var(--shadow);
+              font-size: .76rem; }
+  .lmapsteps { display: flex; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
+  .lmapsteps button { background: none; border: 0; cursor: pointer; color: var(--accent);
+                      font-size: 1.05rem; line-height: 1; padding: 5px 15px; font-family: inherit; }
+  .lmapsteps button:active { background: var(--accent-soft); }
+  .lmapzoomsep { width: 1px; background: var(--border); }
 
   /* The action floats bottom-right so the thing you came to do is always reachable,
      however far you have scrolled the board — and deliberately SMALL. The first
@@ -1204,13 +1211,19 @@
   .lact-name { font-family: var(--display); font-size: 1.12rem; line-height: 1.2; margin: 1px 0 2px; }
   .lact-sub { font-size: .72rem; color: var(--muted); margin: 0 0 9px; }
   .lact .btn { width: 100%; padding: 9px 14px; font-size: .92rem; }
-  /* Text links, not a second row of buttons. Drilling is the secondary act here and
-     it should not compete with the campaign for weight. */
-  .lact-quick { display: flex; align-items: baseline; gap: 6px; margin-top: 8px;
-                font-size: .74rem; color: var(--muted); }
-  .lact-quick button { background: none; border: 0; padding: 0; font: inherit;
-                       color: var(--accent); cursor: pointer; }
-  .lact-quick button:hover { text-decoration: underline; }
+  /* Real buttons, not text links. Tried as links first and George circled all three
+     on a screenshot: next to a filled primary they read as decoration rather than as
+     the other three things you could do. Outlined rather than filled keeps the
+     campaign the loudest thing on the card without demoting these to prose. */
+  .lact-label { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase;
+                color: var(--faint); margin: 9px 0 5px; }
+  .lact-quick { display: flex; gap: 6px; }
+  .lact-quick button { flex: 1; background: var(--panel); border: 1px solid var(--border);
+                       border-radius: 9px; padding: 7px 4px; font-family: inherit;
+                       font-size: .78rem; color: var(--accent); cursor: pointer;
+                       white-space: nowrap; }
+  .lact-quick button:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .lact-quick button:active { background: var(--accent-soft); }
   .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
   .lact .lhint:empty { display: none; }
 
@@ -1235,7 +1248,9 @@
        anyway and a hugged edge reads as a mistake. Still short: the map must remain
        the thing you are looking at. */
     .lact { left: 10px; right: 10px; bottom: 10px; width: auto; padding: 11px 13px 9px; }
-    .lmaptop { right: 108px; gap: 6px; }
+    /* Clears the zoom cluster in the opposite corner — "Whole map" is ~101px wide
+       plus its 12px inset, so anything under ~120 puts the streak pill underneath it. */
+    .lmaptop { right: 124px; gap: 6px; }
     .lmapbar { font-size: .72rem; gap: 10px; padding: 4px 11px; }
     /* The bar and the zoom control are both pinned to the top and collide on a phone.
        The week total is the part to drop: the seven bars beside it already say
@@ -1809,7 +1824,14 @@
         </div>
       </div>
 
-      <div class="lmapzoom"><button class="linkbtn" id="lMapFit">Whole map</button></div>
+      <div class="lmapzoomwrap">
+        <div class="lmapzoom"><button class="linkbtn" id="lMapFit">Whole map</button></div>
+        <div class="lmapzoom lmapsteps">
+          <button type="button" id="lMapOut" aria-label="Zoom out">−</button>
+          <span class="lmapzoomsep"></span>
+          <button type="button" id="lMapIn" aria-label="Zoom in">+</button>
+        </div>
+      </div>
 
       <!-- Over the board, because if you were mid-session that's what you came back
            for. Offered, never automatic: dropping someone straight into a card they
@@ -12874,12 +12896,106 @@ function pathNextLesson(id) {
    a board it must scroll forever, and a desktop doesn't get one so wide the nodes
    swim. */
 const MAP_BOARD_MIN = 620, MAP_BOARD_MAX = 1000;
+/* Zoom multiplies the natural width above. Kept as a MULTIPLIER rather than as an
+   absolute pixel width so it survives a rotation or a move between phone and laptop
+   meaning the same thing on both — "a bit closer than default" rather than "980px",
+   which would be a different amount of map on every screen. */
+const MAP_ZOOM_KEY = "hvr_mapzoom", MAP_ZOOM_MIN = 0.55, MAP_ZOOM_MAX = 2.6;
+function mapZoom() {
+  const z = parseFloat(lsGet(MAP_ZOOM_KEY));
+  return isFinite(z) ? Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z)) : 1;
+}
+function mapZoomSave(z) {
+  lsSet(MAP_ZOOM_KEY, String(Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z))));
+}
 function pathBoardWidth(fit) {
   const view = document.getElementById("lMapView");
   if (!view) return MAP_BOARD_MIN;
   const w = view.clientWidth || MAP_BOARD_MIN;
   if (fit) return Math.max(240, w);
-  return Math.round(Math.max(MAP_BOARD_MIN, Math.min(MAP_BOARD_MAX, w * 1.7)));
+  const base = Math.max(MAP_BOARD_MIN, Math.min(MAP_BOARD_MAX, w * 1.7));
+  return Math.round(base * mapZoom());
+}
+
+/* Re-widths the board while holding one point on the map still under the finger (or
+   under the middle of the screen, for the buttons). Without the anchor, zooming
+   always creeps towards the top-left corner and you lose the thing you were looking
+   at, which is the whole reason to zoom. */
+function pathZoomTo(z, anchorX, anchorY) {
+  const view = document.getElementById("lMapView");
+  const tree = document.getElementById("pathTree");
+  if (!view || !tree || view.classList.contains("fit")) return;
+  const before = tree.getBoundingClientRect().width || 1;
+  mapZoomSave(z);
+  const after = pathBoardWidth(false);
+  tree.style.width = after + "px";
+  const k = after / before;
+  const r = view.getBoundingClientRect();
+  const ax = (anchorX === undefined ? r.width / 2 : anchorX - r.left);
+  const ay = (anchorY === undefined ? r.height / 2 : anchorY - r.top);
+  view.scrollLeft = (view.scrollLeft + ax) * k - ax;
+  view.scrollTop = (view.scrollTop + ay) * k - ay;
+}
+/* Pressing + or − while the whole map is showing means "stop showing me the whole
+   map"; without this the press is silently swallowed, because pathZoomTo refuses to
+   fight the fit width. */
+function pathZoomStep(mult) {
+  const view = document.getElementById("lMapView");
+  if (view && view.classList.contains("fit")) { pathApplyZoom(false); pathFocusCurrent(); }
+  pathZoomTo(mapZoom() * mult);
+}
+
+/* Two-finger pinch on the board. Pointer events rather than touch events so it works
+   the same for a trackpad-driven pen or a touchscreen laptop, and so the pointer ids
+   can be tracked individually — a pinch is two pointers, and treating the second one
+   as a new drag is what makes a map fly off when you try to zoom it. */
+function pathWirePinch() {
+  const view = document.getElementById("lMapView");
+  if (!view || view.dataset.pinch) return;
+  view.dataset.pinch = "1";
+  const live = new Map();
+  let startGap = 0, startZoom = 1;
+  const gap = () => {
+    const p = [...live.values()];
+    return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+  };
+  const mid = () => {
+    const p = [...live.values()];
+    return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+  };
+  view.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse") return;
+    live.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (live.size === 2) { startGap = gap(); startZoom = mapZoom(); }
+  });
+  view.addEventListener("pointermove", (e) => {
+    if (!live.has(e.pointerId)) return;
+    live.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (live.size !== 2 || !startGap) return;
+    /* Only once the fingers have actually moved apart or together — a two-finger
+       SCROLL would otherwise be read as a zoom of 1.001 on every frame and fight the
+       pan the browser is doing for free. */
+    const ratio = gap() / startGap;
+    if (Math.abs(ratio - 1) < 0.04) return;
+    e.preventDefault();
+    const m = mid();
+    pathZoomTo(startZoom * ratio, m.x, m.y);
+  });
+  const drop = (e) => {
+    live.delete(e.pointerId);
+    if (live.size < 2) startGap = 0;
+  };
+  view.addEventListener("pointerup", drop);
+  view.addEventListener("pointercancel", drop);
+  view.addEventListener("pointerleave", drop);
+  /* Ctrl-wheel is the desktop pinch — trackpads send it, and so does a mouse wheel
+     with ctrl held. Left alone the browser zooms the whole page instead, which on a
+     fixed full-bleed layout looks broken. */
+  view.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    pathZoomTo(mapZoom() * (e.deltaY < 0 ? 1.12 : 0.89), e.clientX, e.clientY);
+  }, { passive: false });
 }
 
 /* The nav wraps to two rows on a narrow phone, so its height is measured rather than
@@ -14316,13 +14432,14 @@ function learnRenderAct() {
     go.onclick = () => pathOpenSection(sec.id);
     box.append(k, nm, sub, go);
   }
+  const lab = document.createElement("div"); lab.className = "lact-label";
+  lab.textContent = sec ? "or just drill" : "Practise";
+  box.append(lab);
   const quick = document.createElement("div"); quick.className = "lact-quick";
-  quick.append(document.createTextNode(sec ? "or drill" : "Drill"));
   /* Conversation is here because the shape chips are no longer on screen. It stays a
      choice until the campaign owns it properly — a node's closing conversation is
      what it becomes, and until that exists, removing it would just delete a feature. */
-  [["quick", "5 cards"], ["balanced", "15 cards"], ["conversation", "talk"]].forEach(([shape, label], i) => {
-    if (i) quick.append(document.createTextNode("·"));
+  [["quick", "5 cards"], ["balanced", "15 cards"], ["conversation", "Talk"]].forEach(([shape, label]) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = label;
     b.onclick = () => { lsSet(SHAPE_KEY, shape); learnRenderShapes();
@@ -14375,6 +14492,7 @@ function learnRenderStart() {
      paints, so the map never appears at the top-left and then jump. */
   pathRender();
   pathApplyZoom(false);
+  pathWirePinch();
   pathFocusCurrent();
   learnRenderAct();
   pathWarmNext();
@@ -14527,6 +14645,8 @@ document.getElementById("lMapFit").onclick = () => {
   pathApplyZoom(fit);
   if (!fit) pathFocusCurrent();
 };
+document.getElementById("lMapIn").onclick = () => pathZoomStep(1.25);
+document.getElementById("lMapOut").onclick = () => pathZoomStep(0.8);
 document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
 
 document.getElementById("lResumeDrop").onclick = () => {

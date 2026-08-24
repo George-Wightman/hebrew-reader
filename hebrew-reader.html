@@ -16352,8 +16352,8 @@ function learnReveal() {
     card.append(trEl);
   }
   /* For word and sentence cards the English WAS the prompt — repeating it back is
-     noise. For listen and reply it's the answer, so it's the point. */
-  if ((isHearKind(c.kind) || c.kind === "reply" || c.kind === "conversation") && en) {
+     noise. For listen, reply and shadow it's the answer, so it's the point. */
+  if ((isHearKind(c.kind) || c.kind === "reply" || c.kind === "shadow" || c.kind === "conversation") && en) {
     const enEl = document.createElement("div"); enEl.className = "len"; enEl.textContent = en;
     card.append(enEl);
   }

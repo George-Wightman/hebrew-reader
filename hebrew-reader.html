@@ -1529,6 +1529,14 @@
   /* The sheet. */
   .ppaper { fill: url(#camppaper); }
   .pfleck circle { fill: #9c8b6a; opacity: .13; }
+  /* The country. Faint enough to be ground the map is drawn ON, never a thing competing
+     with the towns or the road for a look. */
+  .pterrain { pointer-events: none; }
+  .pter path { fill: #ab9e80; stroke: none; opacity: .44; }
+  .pter .pterln { fill: none; stroke: #ab9e80; stroke-width: 1.6; opacity: .5;
+                  stroke-linecap: round; }
+  .pter.water .pterln { stroke: #93a7a3; opacity: .52; }
+  .pter.crag path { fill: #a29476; opacity: .4; }
   .pvig { fill: url(#campvig); pointer-events: none; }
 
   /* Section detail, raised from the bottom exactly like the sentence pad. */
@@ -14367,6 +14375,88 @@ function campVignette(L) {
          '<rect class="pvig" x="' + x0 + '" y="' + y0 + '" width="' + w + '" height="' + h + '"/>';
 }
 
+/* ---- the country between the towns --------------------------------------------
+   The last of it. Everything so far has been the road and the places on it; this is the
+   land they sit in, and without it the map is markers on blank paper however good the
+   paper looks.
+
+   Drawn the way an old map draws country: not a picture of a hill, a SIGN for one, a
+   few strokes repeated. Each chapter gets a dominant kind and a second one from its own
+   seed, so one region is downland and the next is forest — which is the other half of
+   making chapters feel like different places, the first half being that they are laid
+   out differently.
+
+   Placement is a jittered grid with everything already on the map subtracted from it:
+   the towns, their names, the region's name, the road, and the drifting words. Terrain
+   that lands on a label is worse than no terrain at all, so when in doubt it is
+   dropped — there is always more empty paper than there are things to draw on it. */
+const CAMP_TERRAIN = ["hill", "wood", "water", "crag"];
+function campTerrainGlyph(kind, x, y, k, seed) {
+  const at = ' transform="translate(' + campR(x) + ' ' + campR(y) + ') scale(' + campR(k) + ')"';
+  if (kind === "wood") {
+    /* A canopy and a trunk. Two of them, the second smaller and behind, because one
+       tree is a tree and two is woodland. */
+    return '<g class="pter wood"' + at + '>' +
+           '<path d="M-4.5 0 Q-6 -7.5 0 -8 Q6 -7.5 4.5 0 Z"/><path class="pterln" d="M0 0 L0 -4"/>' +
+           '<path d="M4 1 Q3 -4.5 7 -5 Q11 -4.5 10 1 Z"/><path class="pterln" d="M7 1 L7 -2"/></g>';
+  }
+  if (kind === "water") {
+    return '<g class="pter water"' + at + '>' +
+           '<path class="pterln" d="M-11 0 q5.5 -3 11 0 q5.5 3 11 0"/>' +
+           '<path class="pterln" d="M-8 5 q5.5 -3 11 0 q5.5 3 11 0"/></g>';
+  }
+  if (kind === "crag") {
+    return '<g class="pter crag"' + at + '>' +
+           '<path d="M-9 0 L-3.5 -9 L0.5 -3.5 L5 -11 L10 0 Z"/></g>';
+  }
+  /* Downland: two humps, the far one smaller, which is the oldest hill sign there is. */
+  const lean = campJitter(seed, 91) > 0.5 ? 1 : -1;
+  return '<g class="pter hill"' + at + ' data-lean="' + lean + '">' +
+         '<path class="pterln" d="M-11 0 Q-3 -9.5 5 0"/>' +
+         '<path class="pterln" d="M1 0 Q7.5 -6.5 13 0"/></g>';
+}
+/* Everything a piece of terrain must keep off. */
+function campTerrainClear(x, y, k, nodes, boxes, samples) {
+  const reach = 16 * k + 10;
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (Math.abs(n.x - x) < CAMP_RING_R + reach + 26 &&
+        Math.abs(n.y - y) < CAMP_RING_R + reach + 20) return false;
+    const lb = campLabelBox(n);
+    if (x > lb.x0 - reach && x < lb.x1 + reach && y > lb.y0 - reach && y < lb.y1 + reach) return false;
+  }
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (x > b.x0 - reach && x < b.x1 + reach && y > b.y0 - reach && y < b.y1 + reach) return false;
+  }
+  const near = campTrailNearest(samples, x, y);
+  return !near || near.dist > reach + 22;
+}
+function campTerrain(band, bi, nodes, boxes, samples) {
+  const seed = campSeedOf("land" + bi + ":" + (band.label || ""));
+  const main = CAMP_TERRAIN[Math.floor(campJitter(seed, 92) * CAMP_TERRAIN.length) % CAMP_TERRAIN.length];
+  const other = CAMP_TERRAIN[Math.floor(campJitter(seed, 93) * CAMP_TERRAIN.length) % CAMP_TERRAIN.length];
+  const out = [];
+  /* Wider than the country, so the land does not stop where the towns do. */
+  const x0 = -340, x1 = CAMP_W + 340, cell = 94;
+  let i = 0;
+  for (let gx = x0; gx < x1; gx += cell) {
+    for (let gy = band.top + 26; gy < band.bottom - 20; gy += cell) {
+      i++;
+      const j1 = campJitter(seed + i * 7, 94), j2 = campJitter(seed + i * 7, 95);
+      const j3 = campJitter(seed + i * 7, 96), j4 = campJitter(seed + i * 7, 97);
+      /* Not every cell. A full grid of hills reads as wallpaper, and the gaps are what
+         make the ones that are there look placed. */
+      if (j4 > 0.78) continue;
+      const x = gx + j1 * cell, y = gy + j2 * cell;
+      const k = 0.72 + j3 * 0.7;
+      if (!campTerrainClear(x, y, k, nodes, boxes, samples)) continue;
+      out.push({ kind: j3 > 0.74 ? other : main, x: x, y: y, k: k, seed: seed + i });
+    }
+  }
+  return out;
+}
+
 /* ---- a node is a walled town -------------------------------------------------
    The ring was a circle, which is a diagram. Crenellating it makes the same circle a
    curtain wall seen from above, and costs nothing else: the Hebrew still sits in the
@@ -14476,6 +14566,38 @@ function campRender() {
      spaced, and dropped below the line into the open paper at the left of its own
      band, it becomes the name of somewhere you are in. Nothing is ever laid out left
      of x=130, so it cannot collide with a node. */
+  /* Everything is worked out before anything is written. The trail's geometry, where
+     each node's words land, and the terrain all depend on one another — terrain must
+     keep off the words and the road, and it has to be painted UNDER both — so the
+     planning and the drawing are separated rather than interleaved. */
+  const trail = campTrail(c);
+  const wearY = campWearFront(L, c, srs);
+  const doneNow = {}, hasWords = {};
+  const regionBoxes = L.bands.map(campRegionBox);
+  const wordPlan = [];
+  L.nodes.forEach(n => {
+    if (n.fog) return;
+    const st = campNodeState(n.id, c, srs);
+    if (st === "done") doneNow[n.id] = true;
+    const mode = st === "done" ? "halo" : st === "stale" ? "loose"
+               : (n.chState === "live" ? "drift" : null);
+    if (!mode) return;
+    const set = campWordSet(n, L.nodes, regionBoxes);
+    if (!set.words.length) return;
+    hasWords[n.id] = true;
+    wordPlan.push({ node: n, mode: mode, set: set });
+  });
+  const keepOff = regionBoxes.concat(
+    wordPlan.reduce((acc, w) => acc.concat(w.set[w.mode].map(campWordBox)), []));
+
+  /* The land, first of all and under everything: the country the towns stand in. */
+  L.bands.forEach((b, bi) => {
+    let land = "";
+    campTerrain(b, bi, L.nodes.filter(n => n.band === bi), keepOff, trail.samples)
+      .forEach(t => { land += campTerrainGlyph(t.kind, t.x, t.y, t.k, t.seed); });
+    if (land) svg += '<g class="pterrain" data-band="' + bi + '">' + land + '</g>';
+  });
+
   L.bands.forEach((b, bi) => {
     svg += '<line class="pbandline" data-band="' + bi + '" x1="60" y1="' + b.y +
            '" x2="' + (L.w - 60) + '" y2="' + b.y + '"/>';
@@ -14495,8 +14617,6 @@ function campRender() {
   /* The trail, over the band lines and under everything else. Bed first — a single
      pale stroke the marks sit on, so the line still reads as continuous at the zoom
      where the individual marks stop being separable. */
-  const trail = campTrail(c);
-  const wearY = campWearFront(L, c, srs);
   svg += '<path class="ptrailbed" d="' + trail.d + '"/>';
   campTrailMarks(trail).forEach(m => {
     const worn = Math.max(0, Math.min(1, (wearY + CAMP_WEAR_FADE - m.y) / CAMP_WEAR_FADE));
@@ -14521,18 +14641,8 @@ function campRender() {
   /* The words, under the nodes so a node always sits ON its own vocabulary rather than
      among it. Each halo word also carries where it would have drifted, which is what
      the settle animates FROM — see the end of this function. */
-  const doneNow = {}, hasWords = {};
-  const regionBoxes = L.bands.map(campRegionBox);
-  L.nodes.forEach(n => {
-    if (n.fog) return;
-    const st = campNodeState(n.id, c, srs);
-    if (st === "done") doneNow[n.id] = true;
-    const mode = st === "done" ? "halo" : st === "stale" ? "loose"
-               : (n.chState === "live" ? "drift" : null);
-    if (!mode) return;
-    const set = campWordSet(n, L.nodes, regionBoxes);
-    if (!set.words.length) return;
-    hasWords[n.id] = true;
+  wordPlan.forEach(w => {
+    const n = w.node, set = w.set, mode = w.mode;
     set[mode].forEach((p, i) => {
       const from = set.drift[i];
       svg += '<g class="pword ' + mode + '" data-w="' + campEscape(n.id) +
@@ -20307,6 +20417,45 @@ T("campFogEdge: an irregular top, and no gap at either end", () => {
   assertTrue(d.indexOf("M" + (-CAMP_PAD_X) + " ") === 0 &&
              d.indexOf("L" + (CAMP_W + CAMP_PAD_X) + " 1000") !== -1 && /Z$/.test(d),
              "it starts past the left edge of the SHEET, reaches past the right, and closes");
+});
+
+/* ---- the country between the towns ----
+   Terrain that lands on a label is worse than no terrain at all, and it is drawn under
+   everything, so nothing on top of it will hide the mistake. */
+T("campTerrain: nothing is drawn on a town, its name, or the road", () => {
+  for (let n = 3; n <= 6; n++) {
+    const camp = campOneChapter();
+    const nodes = [];
+    for (let i = 0; i < n; i++)
+      nodes.push({ id: "n" + i, name: "A longer node name", icon: "בית",
+                   words: ["עובד", "בוקר", "לומד"], carry: [] });
+    camp.chapters[0].nodes = nodes;
+    const L = campLayout(camp), trail = campTrail(camp);
+    const boxes = L.bands.map(campRegionBox);
+    campTerrain(L.bands[0], 0, L.nodes, boxes, trail.samples).forEach(t => {
+      L.nodes.forEach(node => {
+        assertTrue(Math.hypot(t.x - node.x, t.y - node.y) > CAMP_RING_R,
+                   n + " nodes: " + t.kind + " is drawn inside " + node.id);
+        const lb = campLabelBox(node);
+        assertTrue(!(t.x > lb.x0 && t.x < lb.x1 && t.y > lb.y0 && t.y < lb.y1),
+                   n + " nodes: " + t.kind + " is drawn on " + node.id + "'s name");
+      });
+      assertTrue(campTrailNearest(trail.samples, t.x, t.y).dist > 20,
+                 n + " nodes: " + t.kind + " is drawn on the road");
+    });
+  }
+});
+T("campTerrain: each region is its own kind of country", () => {
+  const kinds = [];
+  for (let bi = 0; bi < 8; bi++) {
+    const band = { top: CAMP_TOP - 40, bottom: CAMP_TOP + 430, y: CAMP_TOP - 40,
+                   label: "region " + bi };
+    const got = campTerrain(band, bi, [], [], campTrailSamples(
+      [{ x: -9999, y: -9999 }, { x: -9998, y: -9998 }], 4));
+    assertTrue(got.length > 12, "region " + bi + " came back nearly empty");
+    kinds.push(got[0].kind);
+  }
+  assertTrue(new Set(kinds).size > 1, "every region drew the same terrain");
 });
 
 /* ---- the words around a node ---- */

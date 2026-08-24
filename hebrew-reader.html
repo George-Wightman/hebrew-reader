@@ -1431,9 +1431,8 @@
   /* The trail. Colour and width come from the render, per mark — see campTrailMarks. */
   .ptrailbed { fill: none; stroke: #e9e1cf; stroke-width: 10.5; stroke-linecap: round; }
   .ptrailmark { stroke-linecap: round; }
-  .pspur { fill: none; stroke: #d9cfba; stroke-width: 2.4; stroke-dasharray: 7 8;
-           stroke-linecap: round; }
-  .pspur.worn { stroke: #c2a271; stroke-width: 2.9; }
+  .pspur { stroke: #cfc4ab; stroke-linecap: round; }
+  .pspur.worn { stroke: #bd9c6a; }
   .pway circle { fill: var(--bg); stroke: #c8b48c; stroke-width: 2; }
   .pway .pwaydot { fill: #b3803a; stroke: none; }
   /* A node's own words in the paper around it. Faint enough to be texture, and never
@@ -13968,10 +13967,10 @@ function campRouteOk(pts, spots, bandY) {
 /* No node may be further than this from the road. Beyond it the spur stops reading as
    a side track up to somewhere and starts reading as a line drawn between two things,
    which is exactly what the trail replaced. */
-const CAMP_REACH_MAX = 300;
+const CAMP_REACH_MAX = 300, CAMP_REACH_GOOD = 205;
 function campRouteFor(spots, seed, entryX, bandY) {
   let best = null, bestScore = Infinity;
-  for (let t = 0; t < 28; t++) {
+  for (let t = 0; t < 44; t++) {
     const pts = campRouteBand(spots, seed + t * 5077, entryX);
     /* Clearance is absolute — a candidate that clips a node is not considered at all. */
     if (!campRouteOk(pts, spots, bandY)) continue;
@@ -13983,7 +13982,9 @@ function campRouteFor(spots, seed, entryX, bandY) {
        rather than assumed from the waypoint. */
     const score = (r.closest < CAMP_SPUR_MIN ? 0 : 900) + r.worst;
     if (score < bestScore) { bestScore = score; best = pts; }
-    if (score <= CAMP_REACH_MAX) break;
+    /* Only a genuinely good road ends the search. Stopping at merely acceptable left
+       the far side of a chapter reaching much further than it had to. */
+    if (score <= CAMP_REACH_GOOD) break;
   }
   return best || campTrailShape(spots.length).map(p => [p[0], p[1]]);
 }
@@ -14104,32 +14105,43 @@ function campJitter(i, salt) {
    just slightly paler than the one before. They overlap by a hair and cap round, so
    what you see is one line that swells and thins, with no joins in it. */
 const CAMP_MARK_LEN = 15, CAMP_MARK_OVERLAP = 1.6, CAMP_MARK_W = 4.4;
-function campTrailMarks(trail) {
+/* One pen for every line on the map. The road was drawn like this from the start and
+   the side tracks were a plain dashed stroke, which made them look like a different
+   drawing laid over the same paper. George: "I also think we could improve the paths
+   that connect to the nodes along to way, bring htem into the style of hte current
+   path." Same wavering, same swelling and thinning, just finer. */
+function campInkMarks(samples, total, opt) {
   const marks = [];
-  if (trail.total < CAMP_MARK_LEN) return marks;
+  const unit = opt.len, salt = opt.salt || 0, sway = opt.wobble === undefined ? 3.4 : opt.wobble;
+  if (!samples.length || total < unit) return marks;
   let at = 0, n = 0;
-  while (at < trail.total - 1) {
-    const len = CAMP_MARK_LEN * (0.72 + campJitter(n, 1) * 0.56);
-    const a = campTrailAt(trail.samples, at);
-    const b = campTrailAt(trail.samples, Math.min(trail.total, at + len + CAMP_MARK_OVERLAP));
-    /* Thins out over the last stretch, so the trail tapers into unexplored ground
-       rather than stopping dead at the bottom of the map. */
-    const taper = Math.min(1, (trail.total - at) / 220);
+  while (at < total - 1) {
+    const len = unit * (0.72 + campJitter(n + salt, 1) * 0.56);
+    const a = campTrailAt(samples, at);
+    const b = campTrailAt(samples, Math.min(total, at + len + CAMP_MARK_OVERLAP));
+    /* Thins out over the last stretch, so the road tapers into unexplored ground rather
+       than stopping dead at the bottom of the map. A side track has no such ending and
+       passes no fade at all. */
+    const taper = opt.fade ? Math.min(1, (total - at) / opt.fade) : 1;
     /* A hand does not draw a bezier. Each end is nudged sideways off the true curve,
        and the nudge changes only every few segments — jittering every one would read as
        noise rather than as a wavering line, and the whole trick is that it should look
        drawn, not dithered. */
-    const wob = i => (campJitter(Math.floor((n + i) / 3), 4) - 0.5) * 3.4;
+    const wob = i => (campJitter(Math.floor((n + salt + i) / 3), 4) - 0.5) * sway;
     const dx = b.x - a.x, dy = b.y - a.y, dl = Math.sqrt(dx * dx + dy * dy) || 1;
     const nx = -dy / dl, ny = dx / dl;
     const w0 = wob(0), w1 = wob(1);
     marks.push({ a: { x: a.x + nx * w0, y: a.y + ny * w0 },
                  b: { x: b.x + nx * w1, y: b.y + ny * w1 }, y: (a.y + b.y) / 2,
-                 w: CAMP_MARK_W * (0.82 + campJitter(n, 2) * 0.4) * (0.3 + taper * 0.7) });
+                 w: opt.w * (0.82 + campJitter(n + salt, 2) * 0.4) * (0.3 + taper * 0.7) });
     at += len;
     n++;
   }
   return marks;
+}
+function campTrailMarks(trail) {
+  return campInkMarks(trail.samples, trail.total,
+                      { len: CAMP_MARK_LEN, w: CAMP_MARK_W, fade: 220 });
 }
 
 /* A node further from the trail than this gets a spur. On mostly-empty paper a node
@@ -14137,7 +14149,7 @@ function campTrailMarks(trail) {
    unfinished layout; the spur is what makes the distance intentional — there is a way
    up to it, it is just off the main road. Nearer nodes get nothing, because a track
    joining two things already touching is noise. */
-const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92, CAMP_SPUR_MAX = 240;
+const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92, CAMP_SPUR_MAX = 230;
 /* Half the width a node's label occupies below it — the name box, and under that the
    `why` line, which is the wider of the two and does not shrink with a short name. The
    trail router and the clearance check must agree on this figure or the router will
@@ -14162,8 +14174,9 @@ function campSpur(node, samples) {
   const nx = -(by - ay), ny = bx - ax, nl = Math.sqrt(nx * nx + ny * ny) || 1;
   const bow = Math.min(24, near.dist * 0.15) * (node.x < ax ? 1 : -1);
   return { dist: near.dist, at: near.at,
-           d: "M" + campR(ax) + " " + campR(ay) + " Q" + campR(mx + nx / nl * bow) + " " +
-              campR(my + ny / nl * bow) + ", " + campR(bx) + " " + campR(by) };
+           points: [{ x: ax, y: ay },
+                    { x: mx + nx / nl * bow, y: my + ny / nl * bow },
+                    { x: bx, y: by }] };
 }
 
 /* How far down he has actually been, which is all the wear means. Deliberately not a
@@ -14390,7 +14403,8 @@ function campVignette(L) {
    the towns, their names, the region's name, the road, and the drifting words. Terrain
    that lands on a label is worse than no terrain at all, so when in doubt it is
    dropped — there is always more empty paper than there are things to draw on it. */
-const CAMP_TERRAIN = ["hill", "wood", "water", "crag"];
+/* No water. George: "I also dont like hte water icon, the others are nice." */
+const CAMP_TERRAIN = ["hill", "wood", "crag"];
 function campTerrainGlyph(kind, x, y, k, seed) {
   const at = ' transform="translate(' + campR(x) + ' ' + campR(y) + ') scale(' + campR(k) + ')"';
   if (kind === "wood") {
@@ -14399,11 +14413,6 @@ function campTerrainGlyph(kind, x, y, k, seed) {
     return '<g class="pter wood"' + at + '>' +
            '<path d="M-4.5 0 Q-6 -7.5 0 -8 Q6 -7.5 4.5 0 Z"/><path class="pterln" d="M0 0 L0 -4"/>' +
            '<path d="M4 1 Q3 -4.5 7 -5 Q11 -4.5 10 1 Z"/><path class="pterln" d="M7 1 L7 -2"/></g>';
-  }
-  if (kind === "water") {
-    return '<g class="pter water"' + at + '>' +
-           '<path class="pterln" d="M-11 0 q5.5 -3 11 0 q5.5 3 11 0"/>' +
-           '<path class="pterln" d="M-8 5 q5.5 -3 11 0 q5.5 3 11 0"/></g>';
   }
   if (kind === "crag") {
     return '<g class="pter crag"' + at + '>' +
@@ -14628,8 +14637,15 @@ function campRender() {
   L.nodes.forEach(n => {
     const sp = campSpur(n, trail.samples);
     if (!sp) return;
-    svg += '<path class="pspur' + (!n.fog && campNodeDone(n.id, c, srs) ? " worn" : "") +
-           '" d="' + sp.d + '"/>';
+    const cls = "pspur" + (!n.fog && campNodeDone(n.id, c, srs) ? " worn" : "");
+    const ss = campTrailSamples(sp.points, 14);
+    const tot = ss.length ? ss[ss.length - 1].len : 0;
+    campInkMarks(ss, tot, { len: 10, w: 2.8, salt: campSeedOf(n.id) % 9000, wobble: 2 })
+      .forEach(m => {
+        svg += '<line class="' + cls + '" x1="' + campR(m.a.x) + '" y1="' + campR(m.a.y) +
+               '" x2="' + campR(m.b.x) + '" y2="' + campR(m.b.y) +
+               '" stroke-width="' + campR(m.w) + '"/>';
+      });
   });
   /* Crossing into new country should be an event. Until now the trail passed through
      the band line as though nothing had happened. */
@@ -20352,7 +20368,7 @@ T("campSpur: only the middle distance gets a track", () => {
   assertNull(campSpur({ x: 140, y: 200 }, samples), "40 away is touching the trail");
   const near = campSpur({ x: 280, y: 200 }, samples);
   assertTrue(!!near, "180 away is somewhere off the road");
-  assertTrue(near.d.indexOf("M100") === 0, "and the track leaves FROM the trail");
+  assertEq(Math.round(near.points[0].x), 100, "and the track leaves FROM the trail");
   assertNull(campSpur({ x: 500, y: 200 }, samples),
              "400 away is not off the road, it is somewhere else — and a track that " +
              "long is a dependency edge wearing a different hat");
@@ -20360,9 +20376,9 @@ T("campSpur: only the middle distance gets a track", () => {
 T("campSpur: the track stops at the ring, not at the node's centre", () => {
   const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
   const sp = campSpur({ x: 220, y: 200 }, samples);
-  const end = sp.d.split(",").pop().trim().split(/\s+/).map(Number);
-  assertEq(Math.round(end[0]), 220 - CAMP_RING_R, "it lands on the ring's edge");
-  assertEq(Math.round(end[1]), 200);
+  const end = sp.points[sp.points.length - 1];
+  assertEq(Math.round(end.x), 220 - CAMP_RING_R, "it lands on the ring's edge");
+  assertEq(Math.round(end.y), 200);
 });
 /* The texture must be a property of the trail, not of the moment it was drawn. */
 T("campTrailMarks: the same trail draws the same marks every time", () => {

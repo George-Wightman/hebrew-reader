@@ -1425,8 +1425,14 @@
 
   .pnode { cursor: pointer; }
   .pnode.locked { cursor: default; }
-  .pedge { stroke: #cfc3a6; stroke-width: 3; fill: none; }
-  .pedge.live { stroke: var(--gold); stroke-width: 4; }
+  /* The trail. Colour and width come from the render, per mark — see campTrailMarks. */
+  .ptrailbed { fill: none; stroke: #e9e1cf; stroke-width: 10.5; stroke-linecap: round; }
+  .ptrailmark { stroke-linecap: round; }
+  .pspur { fill: none; stroke: #d9cfba; stroke-width: 2.4; stroke-dasharray: 7 8;
+           stroke-linecap: round; }
+  .pspur.worn { stroke: #c2a271; stroke-width: 2.9; }
+  .pway circle { fill: var(--bg); stroke: #c8b48c; stroke-width: 2; }
+  .pway .pwaydot { fill: #b3803a; stroke: none; }
   .pring { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2.5; }
   .pring2 { fill: none; stroke: #e3d9c0; stroke-width: 1.5; }
   .phe { font-family: "David", "Times New Roman", serif; fill: #8b8271; }
@@ -12632,8 +12638,10 @@ function campPickWords(proposed, taken) {
    means all four "need" the same one or two predecessors — which is exactly the
    picture George drew: several lines bursting from one node rather than a route.
    `avoid` is the carry every sibling already built THIS chapter has claimed, so each
-   node reaches for different vocabulary and — because campComputeNeeds derives edges
-   from carry — hangs off a different point on the road behind it.
+   node reaches for different vocabulary rather than four nodes drilling the same three
+   words between them. (This used to matter twice over: carry also derived the map's
+   dependency edges, and identical carry drew every line to one hub. The edges are gone
+   — the trail replaced them — but the vocabulary reason was always the better one.)
    Falls back to ignoring `avoid` only when the ready pool is too thin to honour it
    (an early or small library), so a chapter can still be built rather than come back
    short a node over a preference. */
@@ -12690,7 +12698,7 @@ function campApplyPlan(plan) {
     c.chapters.push({ n: n + 1, theme: String((sk && sk.theme) || "further on").slice(0, 40),
                       state: "fog", nodes: [], sketch: names.map(x => ({ name: String(x).slice(0, 30) })) });
   }
-  campComputeNeeds(c);
+
   campRestate(c);
   campSave(c);
   return c.chapters[n - 1];
@@ -12868,7 +12876,7 @@ async function campSpawnFromNote(note) {
       why: "he said this to you",
       words: words, carry: campPickCarry(words), needs: [], fromNote: note.id || true
     });
-    campComputeNeeds(c2);
+
     campRestate(c2);
     campSave(c2);
     lsSet(SPAWN_KEY, todayISO());
@@ -13634,8 +13642,7 @@ function campShape(n) {
 }
 function campLayout(c) {
   const cc = c || campAll();
-  const nodes = [], edges = [], bands = [];
-  const pos = {};
+  const nodes = [], bands = [];
   cc.chapters.forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const y = bandY;
@@ -13655,76 +13662,234 @@ function campLayout(c) {
          beyond the cap must still land somewhere sane rather than on top of itself. */
       const at = shape[i % shape.length];
       const wrap = Math.floor(i / shape.length) * 180;
-      pos[node.id] = { x: at[0], y: y + at[1] + wrap };
       nodes.push(Object.assign({}, node, { x: at[0], y: y + at[1] + wrap,
                                            chapter: ch.n, chState: standing }));
     });
   });
-  nodes.forEach(n => {
-    (n.needs || []).forEach(r => {
-      if (pos[r]) edges.push({ a: pos[r], b: { x: n.x, y: n.y }, from: r, to: n.id });
-    });
-  });
   return { w: CAMP_W, h: CAMP_TOP + Math.max(1, cc.chapters.length) * CAMP_BAND - 40,
-           nodes: nodes, edges: edges, bands: bands };
+           nodes: nodes, bands: bands };
 }
 
-/* Which earlier node introduced each carried word — the edge, derived rather than
-   authored. The old contract said every edge means "you need those words for this",
-   but a human had to notice that and draw it; here it falls out of the data. */
-function campComputeNeeds(c) {
+/* ---- the trail --------------------------------------------------------------
+   What replaced the dependency edges. Those were derived from which earlier node
+   introduced each carried word — honest, but a graph, and a graph on the page reads as
+   instructions. George: "I dont want it to be 'you have to follow this path' I want it
+   to be more like an adventure ... you find Whiterun naturally, you follow the path,
+   you can choose to see it and move on, or you go into the node ... the path shouldnt
+   be super improtant in terms of informing you what to do, more a syslistic note."
+
+   So the trail is terrain. It descends the whole map, running past each chapter's
+   constellation rather than visiting it, and the nodes are simply places it passes.
+   It says nothing about what to do next; the nodes already do that.
+
+   Hand-authored per node count, exactly like CAMP_SHAPES and for the same reason: a
+   computed route — nearest-neighbour, relaxation — is almost-right and occasionally
+   ugly in a way you cannot correct, whereas six small arrays can be made good and then
+   stay good. Offsets share the node offsets' origin (the band's y), so -40 is the band
+   line at the top of the band. Each shape STARTS on that line and ends short of the
+   next one; the run between a shape's last point and the following band's first is
+   what carries the trail across the boundary, and is deliberately long enough to swing
+   the x across without a horizontal jog at the line itself.
+
+   Every shape deliberately GRAZES one node — passing close enough that it needs no
+   spur — and leaves the rest out in the country. Routing purely through the widest
+   gaps was the first attempt and it was wrong: the constellations are spread across
+   1220 units, so the widest gap is enormous, every node came out 120-290 away, and
+   every single one grew a spur. Spurs off everything is just the dependency edges back
+   again with a trunk in the middle. One node the road runs past, several set back off
+   it, is the thing George described.
+
+   Two more traps these have to dodge, both found by the clearance test. A node is the
+   ring PLUS its name box PLUS the `why` line, so a gap that looks generous on the
+   coordinates can be none at all. And a Catmull-Rom curve bows between its waypoints,
+   so waypoints that each clear every node individually can still sag into one. */
+const CAMP_TRAIL_SHAPES = {
+  1: [[430, -40], [478, 55], [500, 128], [440, 240], [468, 330]],
+  2: [[615, -40], [540, 50], [486, 108], [575, 210], [605, 320]],
+  3: [[450, -40], [390, 30], [356, 84], [430, 160], [400, 290]],
+  4: [[420, -40], [350, 20], [326, 84], [420, 150], [772, 220], [758, 340]],
+  5: [[422, -40], [350, 15], [326, 74], [425, 150], [480, 212], [630, 285], [606, 380]],
+  6: [[400, -40], [330, 5], [306, 64], [400, 140], [430, 190], [770, 240], [780, 360]]
+};
+function campTrailShape(n) {
+  return CAMP_TRAIL_SHAPES[Math.max(1, Math.min(6, n))] || CAMP_TRAIL_SHAPES[6];
+}
+function campR(v) { return Math.round(v * 10) / 10; }
+
+/* The whole route, band after band, plus the points where it crosses a chapter
+   boundary — those are exactly the shapes' first waypoints, so the waymark never has
+   to be searched for. */
+function campTrailPoints(c) {
   const cc = c || campAll();
-  /* Which node introduced each word, and which chapter that node sits in — the
-     chapter index is what lets an edge be rejected for not crossing a band. */
-  const owner = {}, ownerCh = {};
-  cc.chapters.forEach((ch, ci) => (ch.nodes || []).forEach(n => {
-    (n.words || []).forEach(w => { if (!owner[w]) { owner[w] = n.id; ownerCh[n.id] = ci; } });
-    if (ownerCh[n.id] === undefined) ownerCh[n.id] = ci;
-  }));
-  /* How many nodes already hang off each predecessor, and a cap on it. Diversifying
-     carry (above) removes most of the reason several nodes would want the same
-     predecessor, but not all of it — an early or small library can still only offer
-     one or two real candidates. This is the second, structural line of defense:
-     whatever the carry says, no node picks a predecessor that already has two
-     dependents while a less-loaded real candidate exists. George: "two branches ...
-     coming off the central node might make more sense as a path through the nodes,
-     like the track Im walking along. instead of like a branch from one the the
-     other." — capped fan-out, spread across the chapter's real candidates, is what
-     turns a hub into a route: at most a fork, never a burst. */
-  const fanOut = {};
-  const FAN_CAP = 2;
-  cc.chapters.forEach((ch, ci) => (ch.nodes || []).forEach(n => {
-    const votes = {};
-    (n.carry || []).forEach(w => {
-      const from = owner[w];
-      /* WITHIN a chapter the nodes are peers, not a sequence — an edge between two of
-         them draws a horizontal arrow across a single band, which is the readability
-         rule the old contract stated as "edges join ADJACENT rows". Same-band and
-         forward references are dropped rather than drawn. */
-      if (from && from !== n.id && ownerCh[from] < ci) votes[from] = (votes[from] || 0) + 1;
+  const pts = [], crossings = [];
+  (cc.chapters.length ? cc.chapters : [{ nodes: [], sketch: [] }]).forEach((ch, ci) => {
+    const bandY = CAMP_TOP + ci * CAMP_BAND;
+    const count = (ch.nodes || []).length || (ch.sketch || []).length || 1;
+    campTrailShape(count).forEach((p, i) => {
+      const at = { x: p[0], y: bandY + p[1] };
+      if (i === 0 && ci > 0) crossings.push(at);
+      pts.push(at);
     });
-    /* Most-carried-from first, so the predecessor a node is genuinely most indebted to
-       still wins whenever it has room — the cap only overrides that when it has to. */
-    const candidates = Object.keys(votes).sort((a, b) => votes[b] - votes[a]);
-    let needs = candidates.filter(id => (fanOut[id] || 0) < FAN_CAP).slice(0, 2);
-    /* Nothing real to hang off — either the carry resolved to nothing, or every real
-       candidate is already carrying its two. Both cases land here, and both take the
-       SAME fallback: the least-loaded node of the previous chapter. Reconnecting to an
-       already-full candidate instead (what this used to do) made the cap a suggestion,
-       not a limit — the very thing that let a hub happen when a chapter's nodes had no
-       real alternative to redirect to. This is what makes it a genuine guarantee: no
-       node ever draws more than FAN_CAP lines, full stop. */
-    if (!needs.length && ci > 0) {
-      const prev = cc.chapters[ci - 1].nodes || [];
-      if (prev.length) {
-        const byLoad = prev.slice().sort((a, b) => (fanOut[a.id] || 0) - (fanOut[b.id] || 0));
-        needs = [byLoad[0].id];
-      }
+  });
+  return { pts: pts, crossings: crossings };
+}
+
+/* Catmull-Rom through the waypoints, written out as cubics. The curve passes THROUGH
+   each point rather than being pulled towards it, which is what lets the shapes above
+   be authored as "the trail goes here" instead of as control handles. */
+function campTrailPath(pts) {
+  if (pts.length < 2) return "";
+  let d = "M" + campR(pts[0].x) + " " + campR(pts[0].y);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i];
+    const p2 = pts[i + 1], p3 = pts[i + 2] || pts[i + 1];
+    d += " C" + campR(p1.x + (p2.x - p0.x) / 6) + " " + campR(p1.y + (p2.y - p0.y) / 6) +
+         ", " + campR(p2.x - (p3.x - p1.x) / 6) + " " + campR(p2.y - (p3.y - p1.y) / 6) +
+         ", " + campR(p2.x) + " " + campR(p2.y);
+  }
+  return d;
+}
+/* The same curve as points, with a running length. Everything else the trail needs —
+   where a mark goes, how close a node is, where a spur should leave — is a question
+   about position along the curve, and answering it here keeps all of it pure: no
+   getPointAtLength, no DOM, testable on its own like the rest of the layout. */
+function campTrailSamples(pts, per) {
+  const out = [];
+  if (pts.length < 2) return out;
+  out.push({ x: pts[0].x, y: pts[0].y, len: 0 });
+  let len = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i];
+    const p2 = pts[i + 1], p3 = pts[i + 2] || pts[i + 1];
+    const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+    for (let s = 1; s <= per; s++) {
+      const t = s / per, u = 1 - t;
+      const x = u * u * u * p1.x + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * p2.x;
+      const y = u * u * u * p1.y + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * p2.y;
+      const prev = out[out.length - 1];
+      len += Math.sqrt((x - prev.x) * (x - prev.x) + (y - prev.y) * (y - prev.y));
+      out.push({ x: x, y: y, len: len });
     }
-    needs.forEach(id => { fanOut[id] = (fanOut[id] || 0) + 1; });
-    n.needs = needs.filter(Boolean);
-  }));
-  return cc;
+  }
+  return out;
+}
+function campTrail(c) {
+  const p = campTrailPoints(c);
+  const samples = campTrailSamples(p.pts, 16);
+  return { d: campTrailPath(p.pts), points: p.pts, crossings: p.crossings,
+           samples: samples, total: samples.length ? samples[samples.length - 1].len : 0 };
+}
+function campTrailAt(samples, len) {
+  if (!samples.length) return null;
+  if (len <= 0) return samples[0];
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i].len >= len) {
+      const a = samples[i - 1], b = samples[i], span = (b.len - a.len) || 1;
+      const t = (len - a.len) / span;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, len: len };
+    }
+  }
+  return samples[samples.length - 1];
+}
+function campTrailNearest(samples, x, y) {
+  let best = null, bd = Infinity;
+  for (let i = 0; i < samples.length; i++) {
+    const dx = samples[i].x - x, dy = samples[i].y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = samples[i]; }
+  }
+  return best ? { at: best, dist: Math.sqrt(bd) } : null;
+}
+
+/* A fixed hash rather than Math.random. The trail must be identical on every render:
+   a line that reshuffled its own texture each time the map redrew would be worse than
+   a perfectly uniform one, because the eye would catch it moving. */
+function campJitter(i, salt) {
+  let h = (i * 374761393 + salt * 668265263) | 0;
+  h = ((h ^ (h >>> 13)) * 1274126177) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/* The trail is not a dashed stroke. A dash array puts the same width and the same
+   colour on every dash, and the whole point is that they differ — each mark takes its
+   own length and width from the seeded jitter, which is what gives the line the
+   loading and lightening of a pen rather than the evenness of a plot. Emitting them
+   individually is also what lets each one be coloured by how far along it sits, so the
+   worn part of the trail needs no gradient and has no boundary: every mark is just
+   slightly paler than the one before it. */
+const CAMP_MARK_LEN = 15, CAMP_MARK_GAP = 17, CAMP_MARK_W = 4.6;
+function campTrailMarks(trail) {
+  const marks = [];
+  if (trail.total < CAMP_MARK_LEN) return marks;
+  let at = 8, n = 0;
+  while (at < trail.total - 4) {
+    const len = CAMP_MARK_LEN * (0.62 + campJitter(n, 1) * 0.78);
+    const a = campTrailAt(trail.samples, at);
+    const b = campTrailAt(trail.samples, Math.min(trail.total, at + len));
+    /* Thins out over the last stretch, so the trail tapers into unexplored ground
+       rather than stopping dead at the bottom of the map. */
+    const taper = Math.min(1, (trail.total - at) / 200);
+    marks.push({ a: a, b: b, y: (a.y + b.y) / 2,
+                 w: CAMP_MARK_W * (0.68 + campJitter(n, 2) * 0.74) * (0.35 + taper * 0.65) });
+    at += len + CAMP_MARK_GAP * (0.7 + campJitter(n, 3) * 0.62);
+    n++;
+  }
+  return marks;
+}
+
+/* A node further from the trail than this gets a spur. On mostly-empty paper a node
+   sitting alone a long way off with nothing between it and the trail reads as
+   unfinished layout; the spur is what makes the distance intentional — there is a way
+   up to it, it is just off the main road. Nearer nodes get nothing, because a track
+   joining two things already touching is noise. */
+const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92;
+function campSpur(node, samples) {
+  const near = campTrailNearest(samples, node.x, node.y);
+  if (!near || near.dist < CAMP_SPUR_MIN) return null;
+  const ax = near.at.x, ay = near.at.y;
+  /* Stops at the ring's edge rather than its centre — a spur run to the middle pokes
+     out the far side of a node whose fill is not fully opaque. */
+  const k = CAMP_RING_R / near.dist;
+  const bx = node.x + (ax - node.x) * k, by = node.y + (ay - node.y) * k;
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const nx = -(by - ay), ny = bx - ax, nl = Math.sqrt(nx * nx + ny * ny) || 1;
+  const bow = Math.min(24, near.dist * 0.15) * (node.x < ax ? 1 : -1);
+  return { dist: near.dist, at: near.at,
+           d: "M" + campR(ax) + " " + campR(ay) + " Q" + campR(mx + nx / nl * bow) + " " +
+              campR(my + ny / nl * bow) + ", " + campR(bx) + " " + campR(by) };
+}
+
+/* How far down he has actually been, which is all the wear means. Deliberately not a
+   pointer: George ruled out a "you are here" marker, and a trodden track is a fact
+   about a road rather than an instruction.
+
+   TOUCHED, not merely available. `open` is the state of a node that is startable and
+   has never been started, and counting it wore the trail all the way to the bottom of
+   chapter one on a map nobody had opened yet — the whole first chapter reading as
+   already walked on day one. A fresh map should be pale the whole way down, because
+   nothing has been walked. */
+const CAMP_WEAR_FADE = 280;
+function campWearFront(L, c, srs) {
+  /* A whole fade ABOVE the map's first line, not merely on it: the wear runs from the
+     front upwards, so a front sitting on the top line would still leave the first
+     stretch of trail warm on a map nobody had touched. */
+  let y = CAMP_TOP - 40 - CAMP_WEAR_FADE;
+  L.nodes.forEach(n => {
+    if (n.fog) return;
+    const st = campNodeState(n.id, c, srs);
+    if (st !== "done" && st !== "stale" && st !== "current") return;
+    if (n.y > y) y = n.y;
+  });
+  return y;
+}
+const CAMP_TRAIL_WORN = "#ac8046", CAMP_TRAIL_PALE = "#ddd5c1";
+function campMix(a, b, t) {
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const p = parseInt(a.substr(1 + i * 2, 2), 16), q = parseInt(b.substr(1 + i * 2, 2), 16);
+    out.push(Math.round(p + (q - p) * t));
+  }
+  return "rgb(" + out.join(",") + ")";
 }
 
 
@@ -13744,11 +13909,6 @@ function pathContentAll() {
 }
 function pathContentSave(v) { lsSet(PATH_CONTENT_KEY, JSON.stringify(v)); }
 
-function pathEdgePath(a, b) {
-  const dy = (b.y - a.y) * 0.45;
-  return "M" + a.x + " " + a.y + " C" + a.x + " " + (a.y + dy) +
-         ", " + b.x + " " + (b.y - dy) + ", " + b.x + " " + b.y;
-}
 /* ---- drawing the campaign ---------------------------------------------------
    Replaces the render that walked PATH_SECTIONS. Four zones, each with its own rule:
 
@@ -13799,9 +13959,30 @@ function campRender() {
            (b.y - 9) + '" font-size="14">' + campEscape(b.label) + '</text>';
   });
 
-  L.edges.forEach(e => {
-    const done = campNodeDone(e.from, c, srs);
-    svg += '<path class="pedge' + (done ? " live" : "") + '" d="' + pathEdgePath(e.a, e.b) + '"/>';
+  /* The trail, over the band lines and under everything else. Bed first — a single
+     pale stroke the marks sit on, so the line still reads as continuous at the zoom
+     where the individual marks stop being separable. */
+  const trail = campTrail(c);
+  const wearY = campWearFront(L, c, srs);
+  svg += '<path class="ptrailbed" d="' + trail.d + '"/>';
+  campTrailMarks(trail).forEach(m => {
+    const worn = Math.max(0, Math.min(1, (wearY + CAMP_WEAR_FADE - m.y) / CAMP_WEAR_FADE));
+    svg += '<line class="ptrailmark" x1="' + campR(m.a.x) + '" y1="' + campR(m.a.y) +
+           '" x2="' + campR(m.b.x) + '" y2="' + campR(m.b.y) + '" stroke="' +
+           campMix(CAMP_TRAIL_PALE, CAMP_TRAIL_WORN, worn) +
+           '" stroke-width="' + campR(m.w) + '"/>';
+  });
+  L.nodes.forEach(n => {
+    const sp = campSpur(n, trail.samples);
+    if (!sp) return;
+    svg += '<path class="pspur' + (!n.fog && campNodeDone(n.id, c, srs) ? " worn" : "") +
+           '" d="' + sp.d + '"/>';
+  });
+  /* Crossing into new country should be an event. Until now the trail passed through
+     the band line as though nothing had happened. */
+  trail.crossings.forEach(p => {
+    svg += '<g class="pway"><circle cx="' + campR(p.x) + '" cy="' + campR(p.y) + '" r="9.5"/>' +
+           '<circle class="pwaydot" cx="' + campR(p.x) + '" cy="' + campR(p.y) + '" r="3.4"/></g>';
   });
 
   L.nodes.forEach(n => {
@@ -19259,23 +19440,6 @@ T("campChapterComplete: opens on the threshold, not on every node", () => {
     assertTrue(campChapterComplete(camp.chapters[0]), "3 of 4 is the threshold");
   });
 });
-
-/* Within a chapter the nodes are peers. A same-band edge draws a horizontal arrow
-   across one row, which is the readability rule the old contract stated as "edges
-   join ADJACENT rows and neighbouring columns only". */
-T("campComputeNeeds: edges are derived from carried words, and must cross a band", () => {
-  const camp = { v: 1, log: [], chapters: [
-    { n: 1, theme: "one", state: "live", nodes: [
-      { id: "a", name: "A", words: ["שלום"], carry: [], needs: [] },
-      { id: "b", name: "B", words: ["טוב"], carry: ["שלום"], needs: [] }] },
-    { n: 2, theme: "two", state: "next", nodes: [
-      { id: "c", name: "C", words: ["בית"], carry: ["טוב"], needs: [] }] }
-  ] };
-  campComputeNeeds(camp);
-  assertEq(camp.chapters[0].nodes[1].needs, [],
-           "b carries a word from a, but they share a band");
-  assertEq(camp.chapters[1].nodes[0].needs, ["b"], "c carries b's word from the band above");
-});
 /* A chapter is an AREA, not a row. These pin the property that matters — that no two
    nodes share a line and none of them collide — rather than the exact coordinates,
    which are a design choice and free to change. */
@@ -19322,6 +19486,124 @@ T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () =
   assertEq(L.bands.length, 2);
   assertTrue(L.h > CAMP_BAND, "the board grows a band");
 });
+
+/* ---- the trail ----
+   The trail passes NEAR the nodes, never under them. This is the one property the
+   hand-authored waypoints can silently break: a Catmull-Rom curve overshoots between
+   points, so waypoints that individually clear every ring can still bow into one.
+
+   A node is not just its ring — it is the ring plus the name box under it plus, in the
+   live chapter, the `why` line under that. A gap that looks generous on the
+   coordinates can be no gap at all once those are counted, which is exactly how the
+   five-node route was wrong the first time. */
+T("campTrail: the curve never runs under a node, at every chapter size", () => {
+  for (let n = 1; n <= 6; n++) {
+    const camp = campOneChapter();
+    const nodes = [];
+    for (let i = 0; i < n; i++)
+      nodes.push({ id: "n" + i, name: "N" + i, icon: "בית", words: ["בית"], carry: [] });
+    camp.chapters[0].nodes = nodes;
+    const L = campLayout(camp);
+    const trail = campTrail(camp);
+    L.nodes.forEach(node => {
+      const near = campTrailNearest(trail.samples, node.x, node.y);
+      assertTrue(near.dist > CAMP_RING_R + 12,
+                 n + " nodes: the trail bows into " + node.id +
+                 " (" + Math.round(near.dist) + " from its centre, ring is " + CAMP_RING_R + ")");
+      const hit = trail.samples.filter(s => Math.abs(s.x - node.x) < 95 &&
+                                            s.y > node.y + 48 && s.y < node.y + 100)[0];
+      assertTrue(!hit, n + " nodes: the trail runs through " + node.id + "'s name box" +
+                       (hit ? " at " + Math.round(hit.x) + "," + Math.round(hit.y) : ""));
+    });
+  }
+});
+/* The mix is the point. Route the trail through the widest gap in a constellation and
+   every node ends up 120-290 away, every node grows a spur, and what you have drawn is
+   the dependency graph again with a trunk down the middle. Every chapter size must
+   have at least one node the road runs past. */
+T("campTrail: every chapter has a node the road runs right past", () => {
+  for (let n = 1; n <= 6; n++) {
+    const camp = campOneChapter();
+    const nodes = [];
+    for (let i = 0; i < n; i++)
+      nodes.push({ id: "n" + i, name: "N" + i, icon: "בית", words: ["בית"], carry: [] });
+    camp.chapters[0].nodes = nodes;
+    const L = campLayout(camp);
+    const trail = campTrail(camp);
+    const spurred = L.nodes.filter(node => !!campSpur(node, trail.samples));
+    assertTrue(spurred.length < L.nodes.length,
+               n + " nodes: every one of them is off the road, so every one grew a spur");
+    if (n >= 3) assertTrue(spurred.length > 0,
+               n + " nodes: none of them is set back, so the map has no country in it");
+  }
+});
+T("campTrail: it descends the whole map and crosses at every chapter boundary", () => {
+  const camp = campOneChapter();
+  camp.chapters.push({ n: 2, theme: "ahead", state: "next", sketch: [], nodes: [
+    { id: "b1", name: "B1", words: ["בית"], carry: [] },
+    { id: "b2", name: "B2", words: ["טוב"], carry: [] }] });
+  const L = campLayout(camp);
+  const trail = campTrail(camp);
+  const ys = trail.samples.map(s => s.y);
+  assertTrue(Math.min.apply(null, ys) <= CAMP_TOP - 39, "it starts at the top band line");
+  assertTrue(Math.max.apply(null, ys) > CAMP_TOP + CAMP_BAND, "and runs into the second band");
+  assertEq(trail.crossings.length, 1, "one boundary between two chapters, one waymark");
+  assertEq(campR(trail.crossings[0].y), campR(CAMP_TOP + CAMP_BAND - 40),
+           "and it sits exactly on the band line");
+  assertTrue(trail.total > CAMP_BAND, "the running length is real");
+});
+/* A spur exists to make distance intentional. Drawing one to a node the road already
+   runs past is noise, and NOT drawing one to a node far out on bare paper makes the
+   layout look unfinished rather than remote. The threshold is therefore a real design
+   line, not a tolerance: it is what splits "the trail goes right by this" from "this is
+   somewhere off the road", and CAMP_TRAIL_SHAPES is authored against it. */
+T("campSpur: far nodes get a track, near ones get nothing", () => {
+  const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
+  assertNull(campSpur({ x: 140, y: 200 }, samples), "40 away is touching the trail");
+  const far = campSpur({ x: 400, y: 200 }, samples);
+  assertTrue(!!far, "300 away is somewhere off the road");
+  assertTrue(far.d.indexOf("M100") === 0, "and the track leaves FROM the trail");
+});
+T("campSpur: the track stops at the ring, not at the node's centre", () => {
+  const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
+  const sp = campSpur({ x: 400, y: 200 }, samples);
+  const end = sp.d.split(",").pop().trim().split(/\s+/).map(Number);
+  assertEq(Math.round(end[0]), 400 - CAMP_RING_R, "it lands on the ring's edge");
+  assertEq(Math.round(end[1]), 200);
+});
+/* The texture must be a property of the trail, not of the moment it was drawn. */
+T("campTrailMarks: the same trail draws the same marks every time", () => {
+  const camp = campOneChapter();
+  const a = campTrailMarks(campTrail(camp)), b = campTrailMarks(campTrail(camp));
+  assertTrue(a.length > 10, "a band's worth of trail is more than a few marks");
+  assertEq(JSON.stringify(a), JSON.stringify(b), "a trail that reshuffles itself is worse than a plain one");
+  assertTrue(a.some(m => campR(m.w) !== campR(a[0].w)), "and the marks are not all one width");
+});
+/* Wear is "how far down he has BEEN". A node that is merely startable is not a node he
+   has walked to, and counting it wore the whole first chapter in on day one. */
+T("campWearFront: a map nobody has opened is not worn at all", () => {
+  const camp = campOneChapter();
+  withCamp(camp, {}, {}, () => {
+    const L = campLayout(camp);
+    assertTrue(L.nodes.every(n => campNodeState(n.id, camp) === "open"),
+               "every node of a fresh seed is open, which is the case that used to break");
+    const front = campWearFront(L, camp);
+    const marks = campTrailMarks(campTrail(camp));
+    assertTrue(marks.every(m => (front + CAMP_WEAR_FADE - m.y) / CAMP_WEAR_FADE <= 0),
+               "nothing has been walked, so not one mark of the trail is trodden");
+  });
+});
+T("campWearFront: it follows him down as he actually works nodes", () => {
+  const camp = campOneChapter();
+  const deep = camp.chapters[0].nodes[3];
+  withCamp(camp, {}, { [deep.id]: { 1: { pct: 100 } } }, () => {
+    const L = campLayout(camp);
+    assertEq(campNodeState(deep.id, camp), "current");
+    const at = L.nodes.filter(n => n.id === deep.id)[0];
+    assertEq(campWearFront(L, camp), at.y, "the trail is worn as far as the node he is on");
+  });
+});
+
 /* ---- the planner's local half ----
    The three network calls cannot be tested here, but everything they hand back passes
    through these, and these are where a hallucinated answer would do real damage. */
@@ -19382,7 +19664,7 @@ T("campAutoPass: passes what he has outgrown, marks it granted, and opens the ch
   });
 });
 
-T("campApplyPlan: builds a chapter, assigns carry, and derives its edges", () => {
+T("campApplyPlan: builds a chapter and assigns carry", () => {
   withCamp(campOneChapter(), {}, {}, () => {
     const made = campApplyPlan({ theme: "Out and about", sketch: { theme: "later", names: ["a", "b"] },
       nodes: [
@@ -19445,8 +19727,8 @@ T("campApplyFallback: no key still produces a chapter rather than an empty map",
   withCamp(campOneChapter(), {}, {}, () => {
     const made = campApplyFallback();
     assertTrue(!!made && made.nodes.length >= CAMP_MIN_NODES);
-    assertTrue(made.nodes.every(n => n.needs.length >= 1),
-               "and it still hangs off the road rather than floating free");
+    assertTrue(made.nodes.every(n => n.words.length >= 3),
+               "and every node of it is thick enough to actually teach");
   });
 });
 
@@ -19603,38 +19885,6 @@ T("campPickCarry: falls back to reuse rather than come back short a word", () =>
     const avoid = { a: true, b: true };
     assertEq(campPickCarry([], avoid).length, 2, "reuses what exists rather than starving the node");
   });
-});
-
-T("campComputeNeeds: fan-out is capped even when every node votes for the same node", () => {
-  const camp = { v: 1, log: [], chapters: [
-    { n: 1, theme: "one", state: "live", nodes: [
-      { id: "hub", name: "Hub", words: ["א", "ב", "ג", "ד", "ה"], carry: [], needs: [] },
-      { id: "other", name: "Other", words: ["ו", "ז"], carry: [], needs: [] }] },
-    { n: 2, theme: "two", state: "next", nodes: [
-      { id: "p", name: "P", words: ["ח"], carry: ["א"], needs: [] },
-      { id: "q", name: "Q", words: ["ט"], carry: ["ב"], needs: [] },
-      { id: "r", name: "R", words: ["י"], carry: ["ג"], needs: [] },
-      { id: "s", name: "S", words: ["כ"], carry: ["ד"], needs: [] }] }
-  ] };
-  campComputeNeeds(camp);
-  const counts = {};
-  camp.chapters[1].nodes.forEach(n => n.needs.forEach(id => { counts[id] = (counts[id] || 0) + 1; }));
-  assertTrue((counts.hub || 0) <= 2, "no more than a fork off any one node, however the carry landed");
-  assertTrue((counts.other || 0) >= 1,
-             "the least-loaded real candidate takes the overflow rather than everything piling onto hub");
-});
-T("campComputeNeeds: a genuinely single candidate still connects, cap or not", () => {
-  const camp = { v: 1, log: [], chapters: [
-    { n: 1, theme: "one", state: "live", nodes: [
-      { id: "only", name: "Only", words: ["א"], carry: [], needs: [] }] },
-    { n: 2, theme: "two", state: "next", nodes: [
-      { id: "a", name: "A", words: ["ב"], carry: ["א"], needs: [] },
-      { id: "b", name: "B", words: ["ג"], carry: ["א"], needs: [] },
-      { id: "c", name: "C", words: ["ד"], carry: ["א"], needs: [] }] }
-  ] };
-  campComputeNeeds(camp);
-  assertTrue(camp.chapters[1].nodes.every(n => n.needs.length === 1 && n.needs[0] === "only"),
-             "with nothing else to hang off, the cap must not orphan a node from the road");
 });
 
 /* ====================  CLICK OUTSIDE TO CLOSE  ====================

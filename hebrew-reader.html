@@ -1489,6 +1489,15 @@
   .pbandline { stroke: #ddd0b0; stroke-width: 1.5; stroke-dasharray: 6 7; }
 
   /* Section detail, raised from the bottom exactly like the sentence pad. */
+  /* Faded rather than shown/hidden, so it can move in step with the sheet's own slide
+     instead of snapping. pointer-events follows the fade so it can never eat a tap
+     while it is invisible mid-transition. */
+  .sheetbackdrop {
+    position: fixed; inset: 0; z-index: 45; background: rgba(20,30,40,.32);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease-out;
+  }
+  .sheetbackdrop.open { opacity: 1; pointer-events: auto; }
+  @media (prefers-reduced-motion: reduce) { .sheetbackdrop { transition: none; } }
   .pathsheet {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 46;
     background: var(--panel); border-top: 1px solid #e0d7c2;
@@ -1997,7 +2006,10 @@
      it reads as a list, which is exactly what it isn't. -->
 
 <!-- Raised from the bottom like the sentence pad, and for the same reason: the map
-     stays visible behind it, so you keep your place instead of being moved elsewhere. -->
+     stays visible behind it, so you keep your place instead of being moved elsewhere.
+     Its own backdrop, faded in behind it — George: "if I oculd jsut press outside of
+     hte box to close it instead of having to click specifically on the close icon." -->
+<div class="sheetbackdrop" id="pathSheetBackdrop"></div>
 <div class="pathsheet" id="pathSheet">
   <div class="pathsheet-inner" id="pathSheetInner"></div>
 </div>
@@ -6682,17 +6694,27 @@ document.getElementById("clearLearnedBtn").onclick = settingsAction(() => {
    click with target === the backdrop, closing the modal mid-selection — exactly
    what happened trying to copy a long Gemini error message. Requiring the PRESS
    to have also started on the backdrop is what a genuine click-to-close needs
-   anyway, and it's what a drag-that-escapes never has. */
-function wireModalBackdropClose(modal) {
+   anyway, and it's what a drag-that-escapes never has.
+
+   `onClose` defaults to the plain hide every caller used to hard-code; the node
+   sheet passes its own (a class toggle, not a display swap), which is the only
+   reason this needed generalising rather than staying a one-liner. */
+function wireModalBackdropClose(modal, onClose) {
+  const close = onClose || (() => { modal.style.display = "none"; });
   let downOnBackdrop = false;
   modal.addEventListener("mousedown", (e) => { downOnBackdrop = (e.target === modal); });
   modal.addEventListener("click", (e) => {
-    if (downOnBackdrop && e.target === modal) modal.style.display = "none";
+    if (downOnBackdrop && e.target === modal) close();
     downOnBackdrop = false;
   });
 }
 wireModalBackdropClose(settingsModal);
 wireModalBackdropClose(pasteModal);
+/* Was missing despite being the same .modal-backdrop as the other two — its only
+   way to close has been the ✕ until now. */
+wireModalBackdropClose(document.getElementById("strengthModal"), () => {
+  document.getElementById("strengthClose").click();
+});
 
 /* =====================  LIBRARY  ===================== */
 const LIB_KEY = "hvr_library";
@@ -7993,9 +8015,7 @@ function closeWordPanel() {
 }
 
 document.getElementById("wpClose").onclick = closeWordPanel;
-document.getElementById("wordPanel").addEventListener("click", (ev) => {
-  if (ev.target.id === "wordPanel") closeWordPanel();
-});
+wireModalBackdropClose(document.getElementById("wordPanel"), closeWordPanel);
 document.addEventListener("keydown", (ev) => {
   const panel = document.getElementById("wordPanel");
   if (!panel || panel.style.display === "none") return;
@@ -12606,13 +12626,25 @@ function campPickWords(proposed, taken) {
 }
 /* Carried vocabulary: words he already owns, freshest first — the ones most worth
    holding on to, and the ones the map will draw an edge from. */
-function campPickCarry(exclude) {
+/* THE BUG BEHIND THE HUB. Every node in a chapter called this with only its own new
+   words excluded, so every one of them ranked the SAME global pool the SAME way and
+   came back with the SAME three carry words. Four nodes carrying identical vocabulary
+   means all four "need" the same one or two predecessors — which is exactly the
+   picture George drew: several lines bursting from one node rather than a route.
+   `avoid` is the carry every sibling already built THIS chapter has claimed, so each
+   node reaches for different vocabulary and — because campComputeNeeds derives edges
+   from carry — hangs off a different point on the road behind it.
+   Falls back to ignoring `avoid` only when the ready pool is too thin to honour it
+   (an early or small library), so a chapter can still be built rather than come back
+   short a node over a preference. */
+function campPickCarry(exclude, avoid) {
   const lib = libAll(), srs = srsAll();
-  return Object.keys(lib)
+  const ranked = Object.keys(lib)
     .filter(k => srsGradable(k, lib) && wordReady(k, srs) && exclude.indexOf(k) === -1)
     .sort((a, b) => ((srs[a] && srs[a].prod && srs[a].prod.stab) || 0) -
-                    ((srs[b] && srs[b].prod && srs[b].prod.stab) || 0))
-    .slice(0, CAMP_CARRY_PER_NODE);
+                    ((srs[b] && srs[b].prod && srs[b].prod.stab) || 0));
+  const fresh = avoid ? ranked.filter(k => !avoid[k]) : ranked;
+  return (fresh.length >= CAMP_CARRY_PER_NODE ? fresh : ranked).slice(0, CAMP_CARRY_PER_NODE);
 }
 
 /* ---- turning a plan into a chapter on the map ------------------------------ */
@@ -12627,6 +12659,11 @@ function campApplyPlan(plan) {
   const taken = {};
   campNodes(c).forEach(x => (x.words || []).forEach(w => { taken[w] = true; }));
   const built = [];
+  /* What this chapter's own nodes have already carried — see campPickCarry. Scoped to
+     the chapter being built, not the whole campaign: reusing an older chapter's carry
+     is exactly the reinforcement the 70/30 split exists for, only THIS round matters
+     for keeping siblings from converging on one predecessor. */
+  const carryUsed = {};
   nodes.forEach((raw, i) => {
     const words = campPickWords(raw.words, taken);
     if (words.length < 3) return;             // too thin to teach
@@ -12638,8 +12675,9 @@ function campApplyPlan(plan) {
       lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(raw.lvl)) || learnerLevel())),
       situation: String(raw.situation || raw.name || "").slice(0, 160),
       why: String(raw.why || "").slice(0, 90),
-      words: words, carry: campPickCarry(words), needs: []
+      words: words, carry: campPickCarry(words, carryUsed), needs: []
     });
+    built[built.length - 1].carry.forEach(w => { carryUsed[w] = true; });
   });
   if (built.length < CAMP_MIN_NODES) return null;
   c.chapters.push({ n: n, theme: String((plan && plan.theme) || "What comes next").slice(0, 40),
@@ -13643,26 +13681,48 @@ function campComputeNeeds(c) {
     (n.words || []).forEach(w => { if (!owner[w]) { owner[w] = n.id; ownerCh[n.id] = ci; } });
     if (ownerCh[n.id] === undefined) ownerCh[n.id] = ci;
   }));
+  /* How many nodes already hang off each predecessor, and a cap on it. Diversifying
+     carry (above) removes most of the reason several nodes would want the same
+     predecessor, but not all of it — an early or small library can still only offer
+     one or two real candidates. This is the second, structural line of defense:
+     whatever the carry says, no node picks a predecessor that already has two
+     dependents while a less-loaded real candidate exists. George: "two branches ...
+     coming off the central node might make more sense as a path through the nodes,
+     like the track Im walking along. instead of like a branch from one the the
+     other." — capped fan-out, spread across the chapter's real candidates, is what
+     turns a hub into a route: at most a fork, never a burst. */
+  const fanOut = {};
+  const FAN_CAP = 2;
   cc.chapters.forEach((ch, ci) => (ch.nodes || []).forEach(n => {
-    const seen = {};
+    const votes = {};
     (n.carry || []).forEach(w => {
       const from = owner[w];
       /* WITHIN a chapter the nodes are peers, not a sequence — an edge between two of
          them draws a horizontal arrow across a single band, which is the readability
          rule the old contract stated as "edges join ADJACENT rows". Same-band and
          forward references are dropped rather than drawn. */
-      if (from && from !== n.id && ownerCh[from] < ci) seen[from] = true;
+      if (from && from !== n.id && ownerCh[from] < ci) votes[from] = (votes[from] || 0) + 1;
     });
-    let needs = Object.keys(seen);
-    /* A node carrying nothing still has to hang off something, or its chapter floats
-       free of the road. Fall back to a node of the previous chapter. */
+    /* Most-carried-from first, so the predecessor a node is genuinely most indebted to
+       still wins whenever it has room — the cap only overrides that when it has to. */
+    const candidates = Object.keys(votes).sort((a, b) => votes[b] - votes[a]);
+    let needs = candidates.filter(id => (fanOut[id] || 0) < FAN_CAP).slice(0, 2);
+    /* Nothing real to hang off — either the carry resolved to nothing, or every real
+       candidate is already carrying its two. Both cases land here, and both take the
+       SAME fallback: the least-loaded node of the previous chapter. Reconnecting to an
+       already-full candidate instead (what this used to do) made the cap a suggestion,
+       not a limit — the very thing that let a hub happen when a chapter's nodes had no
+       real alternative to redirect to. This is what makes it a genuine guarantee: no
+       node ever draws more than FAN_CAP lines, full stop. */
     if (!needs.length && ci > 0) {
       const prev = cc.chapters[ci - 1].nodes || [];
-      if (prev.length) needs = [prev[Math.min(ci, prev.length - 1)].id];
+      if (prev.length) {
+        const byLoad = prev.slice().sort((a, b) => (fanOut[a.id] || 0) - (fanOut[b.id] || 0));
+        needs = [byLoad[0].id];
+      }
     }
-    /* At most two incoming edges, from the old readability contract: more than that
-       is what turned the first version of the map into a tangle. */
-    n.needs = needs.filter(Boolean).slice(0, 2);
+    needs.forEach(id => { fanOut[id] = (fanOut[id] || 0) + 1; });
+    n.needs = needs.filter(Boolean);
   }));
   return cc;
 }
@@ -13925,6 +13985,7 @@ function campOpenNode(id) {
 
   panel.innerHTML = h;
   sheet.classList.add("open");
+  document.getElementById("pathSheetBackdrop").classList.add("open");
   document.getElementById("campSheetX").onclick = pathCloseSheet;
   document.getElementById("campMeet").onclick = () => campStartMeet(id);
   document.getElementById("campPractise").onclick = () => campStartPractise(id);
@@ -14220,7 +14281,10 @@ const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",
 function pathCloseSheet() {
   const sheet = document.getElementById("pathSheet");
   if (sheet) sheet.classList.remove("open");
+  const backdrop = document.getElementById("pathSheetBackdrop");
+  if (backdrop) backdrop.classList.remove("open");
 }
+wireModalBackdropClose(document.getElementById("pathSheetBackdrop"), pathCloseSheet);
 /* Session-scoped, deliberately not persisted: a new tab should try again, but a dead
    quota must not mean one wasted attempt on every single path open for the rest of
    the day. */
@@ -19500,6 +19564,127 @@ T("reviewStartDrill: no targets is a no-op, not a broken session", () => {
     reviewSave({ blocks: [], obs: { ts: Date.now(), text: "x", targets: [] } });
     assertTrue(!reviewStartDrill());
   });
+});
+
+/* ====================  A ROUTE, NOT A HUB  ====================
+   George, seeing every next-chapter node converge on one node: "two branches ...
+   coming off the central node might make more sense as a path through the nodes,
+   like the track Im walking along. instead of like a branch from one the the other." */
+function withReadyWords(keys, fn) {
+  const before = [lsGet(SRS_KEY), lsGet(LIB_KEY)];
+  try {
+    const srs = {}, lib = {};
+    keys.forEach((k, i) => {
+      srs[k] = { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") };
+      srs[k].prod.stab = i;   // distinct, so the sort order is deterministic
+      lib[k] = { tr: k, en: k, cat: "Uncategorised", added: todayISO() };
+    });
+    lsSet(SRS_KEY, JSON.stringify(srs));
+    lsSet(LIB_KEY, JSON.stringify(lib));
+    fn();
+  } finally {
+    if (before[0] === null) localStorage.removeItem(SRS_KEY); else lsSet(SRS_KEY, before[0]);
+    if (before[1] === null) localStorage.removeItem(LIB_KEY); else lsSet(LIB_KEY, before[1]);
+  }
+}
+T("campPickCarry: avoid steers different nodes to different words", () => {
+  withReadyWords(["a", "b", "c", "d", "e", "f"], () => {
+    const first = campPickCarry([], {});
+    const avoid = {}; first.forEach(k => { avoid[k] = true; });
+    const second = campPickCarry([], avoid);
+    assertTrue(first.every(k => second.indexOf(k) === -1),
+               "the second node must not repeat what the first already carries");
+  });
+});
+T("campPickCarry: falls back to reuse rather than come back short a word", () => {
+  /* Only 2 ready words exist and CAMP_CARRY_PER_NODE wants 3 — avoiding both would
+     leave the node with nothing, which is worse than a repeat. */
+  withReadyWords(["a", "b"], () => {
+    const avoid = { a: true, b: true };
+    assertEq(campPickCarry([], avoid).length, 2, "reuses what exists rather than starving the node");
+  });
+});
+
+T("campComputeNeeds: fan-out is capped even when every node votes for the same node", () => {
+  const camp = { v: 1, log: [], chapters: [
+    { n: 1, theme: "one", state: "live", nodes: [
+      { id: "hub", name: "Hub", words: ["א", "ב", "ג", "ד", "ה"], carry: [], needs: [] },
+      { id: "other", name: "Other", words: ["ו", "ז"], carry: [], needs: [] }] },
+    { n: 2, theme: "two", state: "next", nodes: [
+      { id: "p", name: "P", words: ["ח"], carry: ["א"], needs: [] },
+      { id: "q", name: "Q", words: ["ט"], carry: ["ב"], needs: [] },
+      { id: "r", name: "R", words: ["י"], carry: ["ג"], needs: [] },
+      { id: "s", name: "S", words: ["כ"], carry: ["ד"], needs: [] }] }
+  ] };
+  campComputeNeeds(camp);
+  const counts = {};
+  camp.chapters[1].nodes.forEach(n => n.needs.forEach(id => { counts[id] = (counts[id] || 0) + 1; }));
+  assertTrue((counts.hub || 0) <= 2, "no more than a fork off any one node, however the carry landed");
+  assertTrue((counts.other || 0) >= 1,
+             "the least-loaded real candidate takes the overflow rather than everything piling onto hub");
+});
+T("campComputeNeeds: a genuinely single candidate still connects, cap or not", () => {
+  const camp = { v: 1, log: [], chapters: [
+    { n: 1, theme: "one", state: "live", nodes: [
+      { id: "only", name: "Only", words: ["א"], carry: [], needs: [] }] },
+    { n: 2, theme: "two", state: "next", nodes: [
+      { id: "a", name: "A", words: ["ב"], carry: ["א"], needs: [] },
+      { id: "b", name: "B", words: ["ג"], carry: ["א"], needs: [] },
+      { id: "c", name: "C", words: ["ד"], carry: ["א"], needs: [] }] }
+  ] };
+  campComputeNeeds(camp);
+  assertTrue(camp.chapters[1].nodes.every(n => n.needs.length === 1 && n.needs[0] === "only"),
+             "with nothing else to hang off, the cap must not orphan a node from the road");
+});
+
+/* ====================  CLICK OUTSIDE TO CLOSE  ====================
+   George: "if I oculd jsut press outside of hte box to close it instead of having to
+   click specifically on the close icon." */
+T("wireModalBackdropClose: a press-and-click on the backdrop itself closes", () => {
+  const el = document.createElement("div");
+  document.body.appendChild(el);
+  let closed = 0;
+  wireModalBackdropClose(el, () => { closed++; });
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  el.remove();
+  assertEq(closed, 1);
+});
+T("wireModalBackdropClose: a drag that STARTS inside must not close it", () => {
+  const el = document.createElement("div");
+  const child = document.createElement("span");
+  el.appendChild(child); document.body.appendChild(el);
+  let closed = 0;
+  wireModalBackdropClose(el, () => { closed++; });
+  /* Selecting text that starts inside the panel and releases past its edge fires a
+     click with target === backdrop — the exact case that broke copying a long error
+     message before this guard existed. */
+  child.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  el.remove();
+  assertEq(closed, 0, "the press has to have started on the backdrop too, not just the release");
+});
+T("wireModalBackdropClose: a click on a child never closes it", () => {
+  const el = document.createElement("div");
+  const child = document.createElement("span");
+  el.appendChild(child); document.body.appendChild(el);
+  let closed = 0;
+  wireModalBackdropClose(el, () => { closed++; });
+  child.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  child.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  el.remove();
+  assertEq(closed, 0);
+});
+T("wireModalBackdropClose: with no onClose it falls back to hiding the element", () => {
+  const el = document.createElement("div");
+  el.style.display = "flex";
+  document.body.appendChild(el);
+  wireModalBackdropClose(el);
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  const shown = el.style.display;
+  el.remove();
+  assertEq(shown, "none");
 });
 
 T("campEnsure: seeds exactly once and never disturbs an existing campaign", () => {

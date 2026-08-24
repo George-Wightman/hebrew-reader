@@ -1445,7 +1445,9 @@
   .pring { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2.5; }
   .pring2 { fill: none; stroke: #e3d9c0; stroke-width: 1.5; }
   .phe { font-family: "David", "Times New Roman", serif; fill: #8b8271; }
-  .pnm { fill: #6b6252; font-weight: 600; }
+  /* Place names on the map take the map's face too, not the interface's. */
+  .pnm { font-family: var(--map-display); fill: #5f5646; font-weight: 600;
+         letter-spacing: .015em; }
   .pnmbox { fill: var(--panel); stroke: #ddd0b0; stroke-width: 1; }
   .pnode.done .pnmbox { fill: #fbf3e2; stroke: #d8bb84; }
   .pnode.current .pnmbox { fill: var(--accent-soft); stroke: #7fc0bb; }
@@ -1479,7 +1481,7 @@
   .pfog { pointer-events: none; }
   /* The planner's one-line reason for a node, under its name in the live chapter
      only. On a generated path this is what makes it read as authored. */
-  .pwhy { fill: #8b8271; font-style: italic; }
+  .pwhy { font-family: var(--map-display); fill: #8b8271; font-style: italic; }
 
   /* A place on the map rather than a panel that greets you — so it reads as a node,
      but plainly not as a section: no second ring, muted, and off the routes. */
@@ -1500,12 +1502,26 @@
   .pstar { fill: var(--gold); }
   /* Phase bands label what changes about the language further down. They are captions,
      not gates — nothing about them stops you. */
-  /* The name of the country, not a section header. Serif, widely spaced, sitting in the
-     open paper inside its own band rather than pinned above the line that bounds it. */
-  .pband { font-family: var(--display); font-size: 25px; fill: #b3803a; opacity: .5;
+  /* An old-style face for anything the MAP says, as opposed to anything the app says.
+     No font file: Hoefler Text ships on iOS and Baskerville on both iOS and macOS, and
+     Palatino Linotype / Book Antiqua on Windows — all genuine old-style faces with real
+     stress and bracketed serifs, where Georgia is a screen face pretending. A woff2 in
+     assets/ would beat all of them, but it has to be a font we are licensed to ship,
+     and this gets most of the way with nothing to download and nothing to cache. */
+  :root { --map-display: "Hoefler Text", Baskerville, "Palatino Linotype", "Book Antiqua",
+                         Palatino, Georgia, serif; }
+  /* The name of the country, not a section header. Sitting in the open paper inside its
+     own band rather than pinned above the line that bounds it. */
+  .pband { font-family: var(--map-display); font-size: 25px; fill: #b3803a; opacity: .5;
            font-weight: 400; letter-spacing: .3em; }
   .pband.fogband { fill: #a49b88; opacity: .55; letter-spacing: .28em; font-style: italic; }
   .pbandline { stroke: #ddd0b0; stroke-width: 1.5; stroke-dasharray: 6 7; }
+  /* The sheet. */
+  .ppaper { fill: url(#camppaper); }
+  .pfleck circle { fill: #9c8b6a; opacity: .13; }
+  .pvig { fill: url(#campvig); pointer-events: none; }
+  .pdeckle { fill: none; stroke: #8a6f45; stroke-width: 2.4; opacity: .17;
+             stroke-linejoin: round; pointer-events: none; }
 
   /* Section detail, raised from the bottom exactly like the sentence pad. */
   /* Faded rather than shown/hidden, so it can move in step with the sheet's own slide
@@ -14002,7 +14018,16 @@ function campTrailMarks(trail) {
     /* Thins out over the last stretch, so the trail tapers into unexplored ground
        rather than stopping dead at the bottom of the map. */
     const taper = Math.min(1, (trail.total - at) / 220);
-    marks.push({ a: a, b: b, y: (a.y + b.y) / 2,
+    /* A hand does not draw a bezier. Each end is nudged sideways off the true curve,
+       and the nudge changes only every few segments — jittering every one would read as
+       noise rather than as a wavering line, and the whole trick is that it should look
+       drawn, not dithered. */
+    const wob = i => (campJitter(Math.floor((n + i) / 3), 4) - 0.5) * 3.4;
+    const dx = b.x - a.x, dy = b.y - a.y, dl = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = -dy / dl, ny = dx / dl;
+    const w0 = wob(0), w1 = wob(1);
+    marks.push({ a: { x: a.x + nx * w0, y: a.y + ny * w0 },
+                 b: { x: b.x + nx * w1, y: b.y + ny * w1 }, y: (a.y + b.y) / 2,
                  w: CAMP_MARK_W * (0.82 + campJitter(n, 2) * 0.4) * (0.3 + taper * 0.7) });
     at += len;
     n++;
@@ -14207,6 +14232,62 @@ function campDrawnCount() {
 }
 function campDrawnSave(n) { lsSet(MAP_DRAWN_KEY, String(n)); }
 
+/* ---- the paper itself ---------------------------------------------------------
+   Until now the board was a flat fill and the map was drawn on nothing. This is the
+   sheet: a warm gradient that is not the same colour in both corners, flecks in the
+   pulp, a vignette, and a torn edge where the sheet stops.
+
+   The flecks are static circles rather than an feTurbulence filter. A filter over a
+   1220-by-1050 board has to re-raster every time the map is pinched, on a phone, which
+   is the one thing this map must never do; and a hundred and fifty hand-placed specks
+   look more like paper than noise does anyway. */
+function campPaper(L) {
+  let s = '<defs><linearGradient id="camppaper" x1="0.1" y1="0" x2="0.9" y2="1">' +
+          '<stop offset="0%" stop-color="#f8f3e9"/><stop offset="48%" stop-color="#f2ece0"/>' +
+          '<stop offset="100%" stop-color="#eae1d0"/></linearGradient></defs>';
+  s += '<rect class="ppaper" x="0" y="0" width="' + L.w + '" height="' + L.h + '"/>';
+  let f = "";
+  const n = Math.min(420, Math.round(L.h * 0.22));
+  for (let i = 0; i < n; i++)
+    f += '<circle cx="' + campR(campJitter(i, 81) * L.w) + '" cy="' +
+         campR(campJitter(i, 82) * L.h) + '" r="' +
+         campR(0.5 + campJitter(i, 83) * 1.9) + '"/>';
+  return s + '<g class="pfleck">' + f + '</g>';
+}
+/* Where the sheet stops. A straight rectangle edge would say "this is a div"; a torn
+   one says the map is an object lying on the table, and it is the cheapest way to make
+   panning off the map feel like reaching the edge of something. */
+function campDeckle(L) {
+  const step = 74;
+  let d = "M0 0";
+  const edge = (from, to, along, fixed, horizontal, salt) => {
+    let out = "";
+    for (let t = from + step; t <= to; t += step) {
+      const at = Math.min(t, to);
+      const off = (campJitter(Math.round(at) + salt, 84) - 0.5) * 11;
+      out += horizontal ? " L" + campR(at) + " " + campR(fixed + off)
+                        : " L" + campR(fixed + off) + " " + campR(at);
+    }
+    return out;
+  };
+  d += edge(0, L.w, 0, 0, true, 11);
+  d += edge(0, L.h, 0, L.w, false, 23);
+  d += " L" + campR(L.w) + " " + campR(L.h);
+  for (let t = L.w - step; t >= 0; t -= step)
+    d += " L" + campR(Math.max(0, t)) + " " + campR(L.h + (campJitter(Math.round(t) + 37, 84) - 0.5) * 11);
+  for (let t = L.h - step; t >= 0; t -= step)
+    d += " L" + campR((campJitter(Math.round(t) + 51, 84) - 0.5) * 11) + " " + campR(Math.max(0, t));
+  return d + " Z";
+}
+function campVignette(L) {
+  return '<defs><radialGradient id="campvig" cx="0.5" cy="0.4" r="0.8">' +
+         '<stop offset="0%" stop-color="#7d5f32" stop-opacity="0"/>' +
+         '<stop offset="66%" stop-color="#7d5f32" stop-opacity="0.035"/>' +
+         '<stop offset="100%" stop-color="#6f5228" stop-opacity="0.15"/></radialGradient></defs>' +
+         '<rect class="pvig" x="0" y="0" width="' + L.w + '" height="' + L.h + '"/>' +
+         '<path class="pdeckle" d="' + campDeckle(L) + '"/>';
+}
+
 const CAMP_TRAIL_WORN = "#ac8046", CAMP_TRAIL_PALE = "#ddd5c1";
 function campMix(a, b, t) {
   const out = [];
@@ -14271,6 +14352,7 @@ function campRender() {
   const L = campLayout(c);
 
   let svg = '<svg viewBox="0 0 ' + L.w + ' ' + L.h + '" role="img" aria-label="Your campaign">';
+  svg += campPaper(L);
   /* Fog covers a REGION, not each node. It was a radial fade per silhouette, which
      read as four blurry circles — a rendering fault rather than unexplored ground.
      A single sheet across the whole band, thin at the top where it meets the chapter
@@ -14424,6 +14506,9 @@ function campRender() {
            campEscape(b.label) + '</text>';
   });
 
+  /* Last of all, over everything: the sheet is lit from the middle and torn at the
+     edges, and both of those are properties of the paper, not of the map on it. */
+  svg += campVignette(L);
   tree.innerHTML = svg + '</svg>';
 
   /* A label floating on bare paper has nothing to anchor it. Measured after insertion

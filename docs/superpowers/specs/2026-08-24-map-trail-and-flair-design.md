@@ -36,10 +36,23 @@ possible and have nothing to do with drawing.
 A new pure function derives the trail from the layout the same way `campLayout` derives
 everything else: no DOM, no storage, unit-testable on its own.
 
-The trail descends the full map height. Within each chapter band it is routed through
-the *gaps* in that chapter's constellation — it must not pass under a node ring, and it
-must not run parallel to the band line. Node positions are not touched; `CAMP_SHAPES`
-is unchanged. The map still reads as areas you explore, because it still is.
+The trail descends the full map height. Within each chapter band it runs past that
+chapter's constellation without passing under a node. Node positions are not touched;
+`CAMP_SHAPES` is unchanged. The map still reads as areas you explore, because it still
+is.
+
+**Routing through the widest gap is wrong, and building it proved it.** The
+constellations are spread across 1220 units, so the widest gap is enormous: every node
+came out 120–290 from the trail, every one cleared the spur threshold, and what was on
+screen was the dependency graph again with a trunk down the middle. Each shape must
+therefore deliberately **graze** one node — passing close enough that it needs no spur —
+and leave the rest set back. One node the road runs right past, several off in the
+country, is the thing being described.
+
+Two collision traps, both now pinned by tests. A node is its ring **plus** its name box
+**plus** the `why` line, so a gap that looks generous on the coordinates can be no gap
+at all. And a Catmull-Rom curve bows between its waypoints, so waypoints that each clear
+every node individually can still sag into one.
 
 Because a chapter's node count determines its constellation, and the constellations are
 hand-authored, the trail's route through each is hand-authored too — one waypoint set
@@ -49,11 +62,16 @@ corrected; six small arrays can simply be made good.
 
 ### Rendering
 
-The trail is **not** a dashed stroke. It is an invisible guide path inserted into the
-SVG, then walked with `getPointAtLength` to emit each dash as its own mark. This is the
-measure-after-insertion pattern `campRender` already uses for `.pnm` boxes.
+The trail is **not** a dashed stroke. The curve is sampled into points with a running
+length in pure JS, and each dash is emitted as its own mark along it.
 
-Walking the path rather than stroking it buys three things at once:
+Sampling rather than measuring the inserted path with `getPointAtLength` — which is what
+this design originally called for — keeps the whole trail pure: where a mark goes, how
+close a node is, where a spur leaves are all questions about position along the curve,
+and answering them without the DOM makes every one of them unit-testable, exactly like
+the rest of the layout.
+
+Walking the curve rather than stroking it buys three things at once:
 
 - **Nib pressure.** Each mark takes its width and length from a seeded jitter, so the
   line has the loading and lightening of a pen rather than the uniformity of a plot.
@@ -64,8 +82,14 @@ Walking the path rather than stroking it buys three things at once:
   There is no boundary, because there is no gradient stop — each mark is simply
   slightly paler than the one before. A worn track is a physical fact about a road, not
   a progress bar, which is what keeps it on the right side of "does not instruct".
-- **Fog.** Marks entering a fogged band thin and fade to nothing, so the trail runs out
-  rather than being covered up.
+- **Taper.** Marks thin over the last stretch, so the trail runs out into unexplored
+  ground rather than stopping dead at the bottom of the board. The fog sheet, which is
+  drawn over everything, takes care of the rest.
+
+Wear means **touched**, not available. Counting `open` nodes — startable, never started
+— wore the trail to the bottom of chapter one on a map nobody had opened, so the whole
+first chapter read as already walked on day one. Only `done`, `stale` and `current`
+move the wear front, and an untouched map is pale end to end.
 
 Cost is roughly 200 elements per render. `campRender` runs on state change, not on pan
 or zoom — zoom resizes the board and the SVG scales with its viewBox — so this is not

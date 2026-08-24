@@ -1192,9 +1192,16 @@
 
   .lmaptop { position: absolute; left: 12px; top: 12px; right: 128px; display: flex;
              flex-direction: column; align-items: flex-start; gap: 8px; }
+  /* A <button> now, not a <div> — the real element rather than a click handler bolted
+     onto a div, so it is focusable and reachable by keyboard for free. Reset the
+     button chrome back to what the pill already was; nothing here changes its look
+     except the cursor and the hover, which are the whole point of the change. */
   .lmapbar { display: flex; align-items: center; gap: 14px; background: var(--panel);
              border: 1px solid var(--border); border-radius: 99px; padding: 5px 14px;
-             box-shadow: var(--shadow); font-size: .76rem; color: var(--muted); }
+             box-shadow: var(--shadow); font-size: .76rem; color: var(--muted);
+             font-family: inherit; cursor: pointer; }
+  .lmapbar:hover { border-color: var(--accent); }
+  .lmapbar:active { background: var(--accent-soft); }
   .lmapbar b { font-size: .95rem; color: var(--ink); font-family: var(--display); }
   .lmapbar .gold b { color: var(--gold); }
   /* Seven bars, one per day. Deliberately tiny — it answers "have I been showing
@@ -1875,9 +1882,12 @@
            because the board IS the page — a windowed map with the controls stacked
            underneath it was the first attempt and it wasted most of a phone screen. -->
       <div class="lmaptop">
-        <!-- The only two numbers on the front door. Everything else lives behind the
-             stats node on the map, because a scoreboard is not a greeting. -->
-        <div class="lmapbar" id="lMapBar"></div>
+        <!-- The only two numbers on the front door, and now also the door itself: this
+             IS the button into the stats room. It replaced a dashed node parked above
+             the map — George: "not be an akward looking node floating htere" — and a
+             scoreboard makes more sense as the thing you press than as a landmark on
+             the road. -->
+        <button type="button" class="lmapbar" id="lMapBar" aria-label="Your practice — open full stats"></button>
         <div class="lbanner" id="lVoiceBanner" style="display:none">
           <div class="lbanner-head">
             <span><b>No Hebrew voice yet</b> — you'll read the pronunciation instead of hearing it.</span>
@@ -13722,14 +13732,12 @@ function campRender() {
     svg += '</g>';
   });
 
-  /* Progress lives ON the map as somewhere you go, not as a dashboard that greets
-     you. Parked above the first band, off the road. */
-  svg += '<g class="pnode statsnode" data-stats="1">';
-  svg += '<circle class="pring" cx="170" cy="52" r="30"/>';
-  svg += '<text class="phe" x="170" y="61" text-anchor="middle" font-size="21">◷</text>';
-  svg += '<text class="pnm" x="170" y="106" text-anchor="middle" font-size="13">Your practice</text>';
-  svg += '</g>';
-
+  /* Progress used to be a dashed node parked above the first chapter — plainly not a
+     real node, but still sat ON the road, still competing with it for a look. George:
+     "the stats 'node' should be behind the other stats, like I click on the streak and
+     tracker and it gives me an extended stats view. not be an akward looking node
+     floating htere." It is the streak/week pill itself now — see learnRenderMapBar —
+     so the map holds only the campaign. */
   tree.innerHTML = svg + '</svg>';
 
   /* A label floating on bare paper has nothing to anchor it. Measured after insertion
@@ -13749,7 +13757,6 @@ function campRender() {
 
   tree.querySelectorAll(".pnode").forEach(g => {
     g.addEventListener("click", () => {
-      if (g.dataset.stats) { learnStatsOpen(true); return; }
       const id = g.dataset.node;
       if (!id) return;
       const st = campNodeState(id, c, srs);
@@ -15198,6 +15205,7 @@ function learnRenderMapBar() {
   const bar = document.getElementById("lMapBar");
   if (!bar) return;
   bar.innerHTML = "";
+  bar.onclick = () => learnStatsOpen(true);
   const streak = statsStreak();
   if (streak > 0) {
     const w = document.createElement("span"); w.className = "gold";

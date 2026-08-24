@@ -1506,13 +1506,6 @@
            font-weight: 400; letter-spacing: .3em; }
   .pband.fogband { fill: #a49b88; opacity: .55; letter-spacing: .28em; font-style: italic; }
   .pbandline { stroke: #ddd0b0; stroke-width: 1.5; stroke-dasharray: 6 7; }
-  /* The rose. Faint enough that panning off the trail is what finds it. */
-  .prose { pointer-events: none; opacity: .3; }
-  .prose .proserim { fill: none; stroke: #b3803a; stroke-width: 1.1; }
-  .prose .prosepin { fill: #b3803a; stroke: none; }
-  .prose .prosepin.minor { fill: #cbab77; }
-  .prose .prosen { font-family: var(--display); font-size: 17px; fill: #b3803a;
-                   letter-spacing: .06em; }
 
   /* Section detail, raised from the bottom exactly like the sentence pad. */
   /* Faded rather than shown/hidden, so it can move in step with the sheet's own slide
@@ -13830,28 +13823,34 @@ function campJitter(i, salt) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-/* The trail is not a dashed stroke. A dash array puts the same width and the same
-   colour on every dash, and the whole point is that they differ — each mark takes its
-   own length and width from the seeded jitter, which is what gives the line the
-   loading and lightening of a pen rather than the evenness of a plot. Emitting them
-   individually is also what lets each one be coloured by how far along it sits, so the
-   worn part of the trail needs no gradient and has no boundary: every mark is just
-   slightly paler than the one before it. */
-const CAMP_MARK_LEN = 15, CAMP_MARK_GAP = 17, CAMP_MARK_W = 4.6;
+/* The trail is one continuous line, drawn as a run of overlapping segments rather than
+   a single stroke. George, on the first version, which left gaps between them: "the
+   path, the checker isnt a good choice it looks strange and messy lets try it with jsut
+   the stroke no dash." He was right — at map zoom the gaps read as a dotted UI rule,
+   not as ink.
+
+   Segments survive the gaps going away, and they are the reason this is not simply a
+   <path stroke>. A stroke has one width and one colour along its whole length; these
+   each take their own from a fixed seeded jitter, which is what gives the line the
+   loading and lightening of a pen. And each is coloured by how far along it sits, so
+   the worn stretch behind him needs no gradient and has no boundary — every segment is
+   just slightly paler than the one before. They overlap by a hair and cap round, so
+   what you see is one line that swells and thins, with no joins in it. */
+const CAMP_MARK_LEN = 15, CAMP_MARK_OVERLAP = 1.6, CAMP_MARK_W = 4.4;
 function campTrailMarks(trail) {
   const marks = [];
   if (trail.total < CAMP_MARK_LEN) return marks;
-  let at = 8, n = 0;
-  while (at < trail.total - 4) {
-    const len = CAMP_MARK_LEN * (0.62 + campJitter(n, 1) * 0.78);
+  let at = 0, n = 0;
+  while (at < trail.total - 1) {
+    const len = CAMP_MARK_LEN * (0.72 + campJitter(n, 1) * 0.56);
     const a = campTrailAt(trail.samples, at);
-    const b = campTrailAt(trail.samples, Math.min(trail.total, at + len));
+    const b = campTrailAt(trail.samples, Math.min(trail.total, at + len + CAMP_MARK_OVERLAP));
     /* Thins out over the last stretch, so the trail tapers into unexplored ground
        rather than stopping dead at the bottom of the map. */
-    const taper = Math.min(1, (trail.total - at) / 200);
+    const taper = Math.min(1, (trail.total - at) / 220);
     marks.push({ a: a, b: b, y: (a.y + b.y) / 2,
-                 w: CAMP_MARK_W * (0.68 + campJitter(n, 2) * 0.74) * (0.35 + taper * 0.65) });
-    at += len + CAMP_MARK_GAP * (0.7 + campJitter(n, 3) * 0.62);
+                 w: CAMP_MARK_W * (0.82 + campJitter(n, 2) * 0.4) * (0.3 + taper * 0.7) });
+    at += len;
     n++;
   }
   return marks;
@@ -13953,9 +13952,20 @@ function campWordBox(p) {
            y0: p.y - p.size * 0.82, y1: p.y + p.size * 0.3 };
 }
 function campBoxesHit(a, b) { return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0; }
-function campWordClashes(p, node, others) {
+/* Where a region's name sits, so the drift can be kept off it. George: "the 'headers'
+   for each chapter an coliding with the floating halo words." The name is set large and
+   widely spaced, so it is a much bigger obstacle than its character count suggests. */
+const CAMP_REGION_SIZE = 25, CAMP_REGION_TRACK = 0.3;
+function campRegionBox(band) {
+  const per = CAMP_REGION_SIZE * (0.54 + CAMP_REGION_TRACK);
+  return { x0: 46, x1: 60 + String(band.label || "").length * per + 10,
+           y0: band.y + 46 - CAMP_REGION_SIZE, y1: band.y + 46 + 12 };
+}
+function campWordClashes(p, node, others, avoid) {
   const box = campWordBox(p);
   if (campBoxesHit(box, campLabelBox(node))) return true;
+  for (let i = 0; i < (avoid || []).length; i++)
+    if (campBoxesHit(box, avoid[i])) return true;
   for (let i = 0; i < (others || []).length; i++) {
     const o = others[i];
     if (!o || o.id === node.id) continue;
@@ -13970,7 +13980,7 @@ function campWordClashes(p, node, others) {
    constellation at the moment it is meant to feel settled. */
 const CAMP_HALO_R = 79, CAMP_DRIFT_MIN = 64, CAMP_DRIFT_MAX = 114;
 const CAMP_HALO_ANGLES = { 1: [90], 2: [142, 38], 3: [154, 90, 26] };
-function campWordSet(node, others) {
+function campWordSet(node, others, avoid) {
   const words = campNodeWordsFor(node);
   const seed = campSeedOf(node.id);
   const angles = CAMP_HALO_ANGLES[words.length] || CAMP_HALO_ANGLES[3];
@@ -13989,7 +13999,7 @@ function campWordSet(node, others) {
       const p = { w: w, x: node.x + Math.cos(a) * r, y: node.y - Math.sin(a) * r,
                   size: 12.5 + j3 * 6.5, rot: -8 + j1 * 18 };
       if (!first) first = p;
-      if (!campWordClashes(p, node, others)) { placed = p; break; }
+      if (!campWordClashes(p, node, others, avoid)) { placed = p; break; }
     }
     drift.push(placed || first);
     const ha = (angles[i] || 90) * Math.PI / 180;
@@ -14022,12 +14032,6 @@ function campFogEdge(top, bottom, w, seed) {
   return d + " L" + campR(w) + " " + campR(bottom) + " L0 " + campR(bottom) + " Z";
 }
 
-/* A rose in the empty paper. George gave the map freedom to pan into empty space a few
-   commits ago and that space has been blank ever since; this is the reward for going
-   looking. Parked to the right of the widest node column, where nothing can ever be
-   laid out on top of it. */
-const CAMP_ROSE_X = 1132;
-function campRoseAt() { return { x: CAMP_ROSE_X, y: CAMP_TOP + 126 }; }
 /* Which band a y falls in. The trail's marks are generated by walking a curve, so they
    have no chapter of their own — this is how the reveal knows which of them belong to
    ground the map has never drawn before. */
@@ -14134,14 +14138,11 @@ function campRender() {
     svg += '<text class="pband" data-band="' + bi + '" x="60" y="' + (b.y + 46) + '">' +
            campEscape(b.label) + '</text>';
   });
-  const rose = campRoseAt();
-  svg += '<g class="prose" transform="translate(' + rose.x + ' ' + rose.y + ')">' +
-         '<circle class="proserim" r="41"/><circle class="proserim" r="31"/>' +
-         '<path class="prosepin" d="M0 -30 L5.5 -5.5 L30 0 L5.5 5.5 L0 30 ' +
-         'L-5.5 5.5 L-30 0 L-5.5 -5.5 Z"/>' +
-         '<path class="prosepin minor" d="M20 -20 L6 -6 L-20 20 L-6 6 Z"/>' +
-         '<path class="prosepin minor" d="M-20 -20 L-6 -6 L20 20 L6 6 Z"/>' +
-         '<text class="prosen" y="-47" text-anchor="middle">N</text></g>';
+  /* A compass rose lived here for exactly one commit. George: "i also think the compas
+     is a bit takky and I dont like it." A rose is map furniture that says "this is a
+     map" without the map having earned it, and a symmetrical vector star is the least
+     hand-drawn thing that could possibly sit on paper like this. The empty space it was
+     filling wants terrain, not an ornament. */
 
   /* The trail, over the band lines and under everything else. Bed first — a single
      pale stroke the marks sit on, so the line still reads as continuous at the zoom
@@ -14173,6 +14174,7 @@ function campRender() {
      among it. Each halo word also carries where it would have drifted, which is what
      the settle animates FROM — see the end of this function. */
   const doneNow = {}, hasWords = {};
+  const regionBoxes = L.bands.map(campRegionBox);
   L.nodes.forEach(n => {
     if (n.fog) return;
     const st = campNodeState(n.id, c, srs);
@@ -14180,7 +14182,7 @@ function campRender() {
     const mode = st === "done" ? "halo" : st === "stale" ? "loose"
                : (n.chState === "live" ? "drift" : null);
     if (!mode) return;
-    const set = campWordSet(n, L.nodes);
+    const set = campWordSet(n, L.nodes, regionBoxes);
     if (!set.words.length) return;
     hasWords[n.id] = true;
     set[mode].forEach((p, i) => {
@@ -19887,18 +19889,6 @@ T("campFogEdge: an irregular top, and no gap at either end", () => {
   assertTrue(/^M0 /.test(d) && d.indexOf("L1220 1000") !== -1 && /Z$/.test(d),
              "it starts at the left edge, reaches the right, and closes");
 });
-T("campRoseAt: the rose sits where nothing is ever laid out", () => {
-  const camp = campOneChapter();
-  camp.chapters.push({ n: 2, theme: "ahead", state: "fog", nodes: [],
-                       sketch: [{ name: "a" }, { name: "b" }, { name: "c" },
-                                { name: "d" }, { name: "e" }, { name: "f" }] });
-  const L = campLayout(camp), r = campRoseAt();
-  L.nodes.forEach(n => {
-    assertTrue(Math.hypot(n.x - r.x, n.y - r.y) > CAMP_RING_R + 50,
-               n.id + " is laid out on top of the compass rose");
-  });
-  assertTrue(r.x + 50 < CAMP_W, "and the rose stays on the board");
-});
 
 /* ---- the words around a node ---- */
 T("campNodeWordsFor: three words, stable, never a pronoun", () => {
@@ -19950,6 +19940,16 @@ T("campWordSet: a loosened halo is between the two, not back to scattered", () =
 });
 /* Words landing on a neighbour's label is the failure this placement exists to avoid,
    and the constellation is at its tightest with six nodes in a band. */
+T("campWordSet: drifted words keep off the region's name", () => {
+  const camp = campOneChapter();
+  camp.chapters[0].theme = "More of your life";
+  const L = campLayout(camp), boxes = L.bands.map(campRegionBox);
+  const near = L.nodes.slice().sort((a, b) => a.x - b.x)[0];
+  campWordSet(near, L.nodes, boxes).drift.forEach(p => {
+    assertTrue(!campBoxesHit(campWordBox(p), boxes[0]),
+               p.w + " lands on the region name — the collision George photographed");
+  });
+});
 T("campWordSet: drifted words keep off the labels, at every chapter size", () => {
   for (let n = 1; n <= 6; n++) {
     const camp = campOneChapter();

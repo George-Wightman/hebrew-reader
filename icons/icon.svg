@@ -10,8 +10,8 @@
        colour this app reserves for progress, and because a teal mark down here would
        read as another active-tab underline, which is what made the old line look
        like a glitch. -->
-  <circle cx="334" cy="293" r="19" fill="#b3803a"/>
-  <text x="234" y="256" fill="#0d6e6e"
+  <circle cx="356" cy="293" r="19" fill="#b3803a"/>
+  <text x="256" y="256" fill="#0d6e6e"
         font-family="David, 'Times New Roman', serif" font-size="236" font-weight="700"
         text-anchor="middle" dominant-baseline="central">&#1513;</text>
 </svg>

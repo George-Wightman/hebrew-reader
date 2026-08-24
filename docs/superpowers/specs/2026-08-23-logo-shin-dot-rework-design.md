@@ -24,9 +24,9 @@ Rationale:
 - Gold is already reserved exclusively for achievement/progress elsewhere in the app (see the `:root` comment in `hebrew-reader.html`: "gold reserved exclusively for achievement... keeping gold for one job is what stops the page turning into decoration"). Reusing it on the icon keeps that rule intact rather than introducing a new color for a new purpose.
 - It can't be confused with the nav's teal active-tab underline (`.navbtn.active { box-shadow: inset 0 -2px 0 var(--accent) }`), since it differs in color, shape, and location — that visual echo was part of why the old line read as unintentional.
 
-Geometry, measured against the rendered glyph (David bold at `font-size: 236` in the 512 viewBox). The glyph baseline is y≈309, and the dot is `r="19"` at `cy="293"` so its base rests exactly on that baseline, with a ~16-unit gap after the glyph's right edge.
+Geometry, measured against the rendered glyph (David bold at `font-size: 236` in the 512 viewBox). The glyph baseline is y≈309, and the dot is `r="19"` at `cy="293"` so its base rests exactly on that baseline, with a ~19-unit gap after the glyph's right edge.
 
-The pair is optically centred rather than the glyph alone: `<text>` sits at `x="234"` and the dot at `cx="334"`, shifting the whole group 22 units left of where a centred glyph would put it. That gives ink spanning x 163–349 — a group centre of exactly 256. Centring the ש alone would leave the pair leaning ~4% right, which is visible at home-screen size. Both extremes stay well inside the central 80% maskable safe zone (51–461).
+The ש stays centred on the canvas (`<text x="256">`, glyph ink centre ≈252) and the dot hangs off it at `cx="356"`, rather than the pair being centred as a unit. An earlier version shifted both left to balance the group visually, but that was reverted: the icon should read as *the letter*, with the full stop as something added after it — not as a two-element lockup that happens to include a letter. Both extremes (x 184 and x 371) stay well inside the central 80% maskable safe zone (51–461).
 
 ## Constraints learned during implementation
 

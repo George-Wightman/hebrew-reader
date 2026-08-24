@@ -13642,16 +13642,66 @@ function campEnsure() {
    Every pair is separated by at least ~340 horizontally OR ~200 vertically, which is
    what a node actually occupies once its name box and its `why` line are under it. */
 const CAMP_BAND = 470, CAMP_TOP = 150, CAMP_W = 1220;
-const CAMP_SHAPES = {
-  1: [[590, 130]],
-  2: [[400, 100], [820, 210]],
-  3: [[270, 80], [620, 230], [970, 70]],
-  4: [[240, 80], [600, 40], [940, 150], [430, 310]],
-  5: [[240, 70], [600, 40], [940, 110], [400, 300], [830, 320]],
-  6: [[220, 60], [580, 30], [930, 100], [240, 300], [600, 330], [940, 320]]
+
+/* ---- a different country every chapter ---------------------------------------
+   A chapter used to take one of six hand-authored arrangements, chosen by node count,
+   which meant every four-node chapter was laid out pixel-for-pixel like every other
+   four-node chapter. George, looking at it running: "if all the chapters are going ot
+   have the same layout this will get tedious right, just a large S shape repeated."
+   Exactly right, and no amount of ink or texture fixes it — chapter seven would be
+   chapter three again.
+
+   So the arrangement is generated from the chapter's own seed. Not freely, though: a
+   genuinely random scatter clusters and collides, and the separation rule (340 apart
+   horizontally or 200 vertically, or two nodes overlap on screen) is not a preference.
+   The generator therefore varies the things that cannot break it — which row split the
+   chapter uses, how far the whole row slides, and where each node sits inside its own
+   slot — and the columns stay 400 apart so the worst case after jitter is still 348.
+
+   The hand-authored routes in CAMP_TRAIL_SHAPES survive as the fallback for the trail
+   router below, which is allowed to give up. */
+const CAMP_COL0 = 200, CAMP_COL_GAP = 400;
+function campColX(c) { return CAMP_COL0 + c * CAMP_COL_GAP; }
+/* Row splits, and an alternative for the sizes that have a real second option. Each
+   number is a column index; fractions sit between columns, which is what stops a
+   two-row chapter reading as a grid. */
+const CAMP_ROWS = {
+  1: [[[1]], [[0.4]], [[1.6]]],
+  2: [[[0, 2]], [[0.2, 1.8]], [[0.5], [1.5]]],
+  3: [[[0, 1, 2]], [[0.2, 1.8], [1]], [[1], [0.2, 1.8]]],
+  4: [[[0, 1, 2], [0.9]], [[0.2, 1.8], [0.2, 1.8]], [[0.9], [0, 1, 2]]],
+  5: [[[0, 1, 2], [0.35, 1.65]], [[0.2, 1.8], [0, 1, 2]], [[0.35, 1.65], [0, 1, 2]]],
+  6: [[[0, 1, 2], [0, 1, 2]]]
 };
-function campShape(n) {
-  return CAMP_SHAPES[Math.max(1, Math.min(6, n))] || CAMP_SHAPES[6];
+function campChapterSeed(ch, ci) {
+  return campSeedOf("ch" + ((ch && ch.n) || (ci + 1)) + ":" + (ch && ch.theme || ""));
+}
+function campConstellation(n, seed) {
+  const size = Math.max(1, Math.min(6, n));
+  const variants = CAMP_ROWS[size] || CAMP_ROWS[6];
+  /* Which silhouette this chapter has. Two variants was not enough — chapters one and
+     two came out near-identical, which is the tedium this whole thing exists to avoid.
+     Three shapes, and one of them puts the short row on top instead of underneath, so
+     even the same shape reads as a different place. */
+  const rows = variants[Math.floor(campJitter(seed, 61) * variants.length) % variants.length];
+  const twoRow = rows.length > 1;
+  const out = [];
+  rows.forEach((row, ri) => {
+    /* The whole row slides together. That moves the country from chapter to chapter
+       without ever closing the gap between two nodes standing in it. */
+    const slide = (campJitter(seed + ri * 97, 62) - 0.5) * 110;
+    row.forEach((col, i) => {
+      const k = seed + ri * 97 + i * 13;
+      const x = campColX(col) + slide + (campJitter(k, 63) - 0.5) * 52;
+      /* One row: every node takes its own height, which is the stagger that stops a
+         short chapter reading as a line. Two rows: each keeps to its own half, because
+         the 200 of vertical clearance is all that separates them. */
+      const y = twoRow ? (ri === 0 ? 20 + campJitter(k, 64) * 60 : 285 + campJitter(k, 65) * 45)
+                       : 70 + campJitter(k, 64) * 170;
+      out.push([Math.round(x), Math.round(y)]);
+    });
+  });
+  return out.slice(0, size);
 }
 function campLayout(c) {
   const cc = c || campAll();
@@ -13667,7 +13717,7 @@ function campLayout(c) {
       : (ch.sketch || []).map((sk, i) => ({ id: "fog-" + ch.n + "-" + i,
                                             name: sk && sk.name || "", fog: true,
                                             words: [], carry: [], needs: [] }));
-    const shape = campShape(list.length);
+    const shape = campConstellation(list.length, campChapterSeed(ch, ci));
     const standing = campChapterStanding(ch, cc);
     list.forEach((node, i) => {
       /* Past the sixth node the constellation repeats one band lower — it cannot
@@ -13695,7 +13745,7 @@ function campLayout(c) {
    constellation rather than visiting it, and the nodes are simply places it passes.
    It says nothing about what to do next; the nodes already do that.
 
-   Hand-authored per node count, exactly like CAMP_SHAPES and for the same reason: a
+   Hand-authored per node count, on the same principle as the old constellations: a
    computed route — nearest-neighbour, relaxation — is almost-right and occasionally
    ugly in a way you cannot correct, whereas six small arrays can be made good and then
    stay good. Offsets share the node offsets' origin (the band's y), so -40 is the band
@@ -13727,6 +13777,103 @@ const CAMP_TRAIL_SHAPES = {
 function campTrailShape(n) {
   return CAMP_TRAIL_SHAPES[Math.max(1, Math.min(6, n))] || CAMP_TRAIL_SHAPES[6];
 }
+
+/* ---- routing the trail through a generated country ---------------------------
+   The waypoints above were authored against fixed constellations. Now the
+   constellation is different every chapter, so the route has to be found rather than
+   written: hand-authoring cannot keep up with a layout that is generated.
+
+   It is found by descending the band in levels. At each level the nodes block ranges
+   of x — the ring, and wider still where the name box and `why` line hang below it —
+   and the router picks a free x, preferring to carry on roughly where it was. One node
+   per chapter is chosen to be GRAZED: at its level the router is pushed right up
+   against it, close enough to need no spur, which is what keeps the road running past
+   somewhere instead of only between things.
+
+   Then the candidate is checked with the same geometry the tests use, and rejected if
+   the curve bows into anything. Ten tries, then it gives up and takes the hand-authored
+   shape for that node count, which is always valid. A map that occasionally repeats
+   itself is much better than one that occasionally draws a road through a town. */
+function campBlockAt(y, at) {
+  const dy = y - at.y;
+  if (Math.abs(dy) < CAMP_RING_R + 20) return CAMP_RING_R + 22;
+  /* Below the ring is the name box and, in the live chapter, the reason under it —
+     much wider than the node and the thing most easily forgotten. The floor is not the
+     ring's width but CAMP_LABEL_HALF, which is what the clearance check actually
+     demands: routing to a narrower figure passed the router's own verification and then
+     failed the test, because a short node name does not make a node's label narrow —
+     the `why` line under it is the wide part. */
+  if (dy >= CAMP_RING_R - 4 && dy <= 108)
+    return Math.max(CAMP_LABEL_HALF + 6, String(at.name || "").length * 3.8 + 62);
+  return 0;
+}
+function campFreeX(y, spots, want) {
+  const lo = 118, hi = CAMP_W - 118;
+  const blocks = [];
+  spots.forEach(s => {
+    const w = campBlockAt(y, s);
+    if (w > 0) blocks.push([s.x - w, s.x + w]);
+  });
+  blocks.sort((a, b) => a[0] - b[0]);
+  const free = [];
+  let at = lo;
+  blocks.forEach(b => {
+    if (b[0] > at) free.push([at, Math.min(b[0], hi)]);
+    at = Math.max(at, b[1]);
+  });
+  if (at < hi) free.push([at, hi]);
+  let best = null, bd = Infinity;
+  free.forEach(f => {
+    if (f[1] - f[0] < 26) return;
+    const x = Math.max(f[0] + 13, Math.min(f[1] - 13, want));
+    const d = Math.abs(x - want);
+    if (d < bd) { bd = d; best = x; }
+  });
+  return best === null ? Math.max(lo, Math.min(hi, want)) : best;
+}
+/* Levels down the band. The first sits exactly on the boundary line, because that is
+   where the waymark goes and where the previous band hands over. */
+const CAMP_ROUTE_LEVELS = [-40, 40, 120, 200, 280, 348];
+function campRouteBand(spots, seed, entryX) {
+  const graze = spots.length ? spots[Math.floor(campJitter(seed, 71) * spots.length) % spots.length]
+                             : null;
+  let want = entryX === undefined ? 300 + campJitter(seed, 72) * 620 : entryX;
+  const pts = [];
+  CAMP_ROUTE_LEVELS.forEach((y, li) => {
+    if (graze && li > 0 && Math.abs(y - graze.y) <= 44) {
+      /* Right up against it. Inside the spur threshold so no track is drawn, outside
+         the ring by enough that the clearance check still passes. */
+      const side = graze.x > CAMP_W / 2 ? -1 : 1;
+      want = graze.x + side * (CAMP_RING_R + 33);
+    } else {
+      want += (campJitter(seed + li * 31, 73) - 0.5) * 300;
+    }
+    pts.push([Math.round(campFreeX(y, spots, want)), y]);
+    want = pts[pts.length - 1][0];
+  });
+  return pts;
+}
+/* Does this route actually keep off everything? Same two rules the tests enforce: never
+   within the ring's reach, never through a name box. */
+function campRouteOk(pts, spots, bandY) {
+  const abs = pts.map(p => ({ x: p[0], y: bandY + p[1] }));
+  const s = campTrailSamples(abs, 14);
+  for (let i = 0; i < spots.length; i++) {
+    const at = { x: spots[i].x, y: bandY + spots[i].y };
+    const near = campTrailNearest(s, at.x, at.y);
+    if (!near || near.dist <= CAMP_RING_R + 12) return false;
+    for (let j = 0; j < s.length; j++)
+      if (Math.abs(s[j].x - at.x) < CAMP_LABEL_HALF && s[j].y > at.y + 48 && s[j].y < at.y + 100) return false;
+  }
+  return true;
+}
+function campRouteFor(spots, seed, entryX, bandY) {
+  for (let t = 0; t < 10; t++) {
+    const pts = campRouteBand(spots, seed + t * 5077, entryX);
+    if (campRouteOk(pts, spots, bandY)) return pts;
+  }
+  return campTrailShape(spots.length).map(p => [p[0], p[1]]);
+}
 function campR(v) { return Math.round(v * 10) / 10; }
 
 /* The whole route, band after band, plus the points where it crosses a chapter
@@ -13735,14 +13882,21 @@ function campR(v) { return Math.round(v * 10) / 10; }
 function campTrailPoints(c) {
   const cc = c || campAll();
   const pts = [], crossings = [];
+  let entry;
   (cc.chapters.length ? cc.chapters : [{ nodes: [], sketch: [] }]).forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const count = (ch.nodes || []).length || (ch.sketch || []).length || 1;
-    campTrailShape(count).forEach((p, i) => {
+    const seed = campChapterSeed(ch, ci);
+    const list = (ch.nodes || []).length ? ch.nodes : (ch.sketch || []);
+    const spots = campConstellation(count, seed).map((p, i) => ({
+      x: p[0], y: p[1], name: (list[i] && list[i].name) || ""
+    }));
+    campRouteFor(spots, seed, entry, bandY).forEach((p, i) => {
       const at = { x: p[0], y: bandY + p[1] };
       if (i === 0 && ci > 0) crossings.push(at);
       pts.push(at);
     });
+    entry = pts.length ? pts[pts.length - 1].x : entry;
   });
   return { pts: pts, crossings: crossings };
 }
@@ -13862,6 +14016,11 @@ function campTrailMarks(trail) {
    up to it, it is just off the main road. Nearer nodes get nothing, because a track
    joining two things already touching is noise. */
 const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92;
+/* Half the width a node's label occupies below it — the name box, and under that the
+   `why` line, which is the wider of the two and does not shrink with a short name. The
+   trail router and the clearance check must agree on this figure or the router will
+   certify routes the check then rejects. */
+const CAMP_LABEL_HALF = 95;
 function campSpur(node, samples) {
   const near = campTrailNearest(samples, node.x, node.y);
   if (!near || near.dist < CAMP_SPUR_MIN) return null;
@@ -19752,6 +19911,62 @@ T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () =
   assertTrue(L.h > CAMP_BAND, "the board grows a band");
 });
 
+/* ---- a different country every chapter ----
+   The failure this replaced: six fixed arrangements chosen by node count, so every
+   chapter of the same size was laid out identically. George: "if all the chapters are
+   going ot have the same layout this will get tedious right, just a large S shape
+   repeated." */
+T("campConstellation: two chapters of the same size are different countries", () => {
+  for (let n = 2; n <= 6; n++) {
+    const seen = [];
+    for (let ch = 1; ch <= 6; ch++) {
+      const s = JSON.stringify(campConstellation(n, campChapterSeed({ n: ch, theme: "t" + ch }, ch - 1)));
+      assertTrue(seen.indexOf(s) === -1, n + " nodes: chapter " + ch + " is a repeat of an earlier one");
+      seen.push(s);
+    }
+  }
+});
+T("campConstellation: the same chapter is the same country every time", () => {
+  const ch = { n: 3, theme: "Getting by" };
+  assertEq(JSON.stringify(campConstellation(5, campChapterSeed(ch, 2))),
+           JSON.stringify(campConstellation(5, campChapterSeed(ch, 2))),
+           "a map that rearranges itself between renders is not a place");
+});
+/* Variety is not allowed to cost separation. This is the same rule campLayout is held
+   to, applied to every chapter the generator can produce rather than to six. */
+T("campConstellation: nothing collides, at any size, in any chapter", () => {
+  for (let n = 1; n <= 6; n++) {
+    for (let ch = 1; ch <= 30; ch++) {
+      const pts = campConstellation(n, campChapterSeed({ n: ch, theme: "t" + ch }, ch - 1));
+      assertEq(pts.length, n);
+      pts.forEach(p => {
+        assertTrue(p[0] > 60 && p[0] < CAMP_W - 60, "chapter " + ch + ": x " + p[0] + " is off the board");
+        assertTrue(p[1] >= -40 && p[1] <= 340, "chapter " + ch + ": y " + p[1] + " is out of its band");
+      });
+      for (let i = 0; i < pts.length; i++)
+        for (let j = i + 1; j < pts.length; j++) {
+          const dx = Math.abs(pts[i][0] - pts[j][0]), dy = Math.abs(pts[i][1] - pts[j][1]);
+          assertTrue(dx >= 340 || dy >= 200,
+                     n + " nodes, chapter " + ch + ": " + i + " and " + j +
+                     " overlap (dx " + dx + ", dy " + dy + ")");
+        }
+    }
+  }
+});
+/* The router is allowed to give up, but never to produce a road through a town. */
+T("campRouteFor: a generated route clears every node, in every chapter", () => {
+  for (let n = 1; n <= 6; n++) {
+    for (let ch = 1; ch <= 20; ch++) {
+      const seed = campChapterSeed({ n: ch, theme: "t" + ch }, ch - 1);
+      const spots = campConstellation(n, seed).map(p => ({ x: p[0], y: p[1], name: "A node name" }));
+      const pts = campRouteFor(spots, seed, undefined, CAMP_TOP);
+      assertTrue(campRouteOk(pts, spots, CAMP_TOP) ||
+                 JSON.stringify(pts) === JSON.stringify(campTrailShape(n).map(q => [q[0], q[1]])),
+                 n + " nodes, chapter " + ch + ": the route clips a node and is not the fallback");
+    }
+  }
+});
+
 /* ---- the trail ----
    The trail passes NEAR the nodes, never under them. This is the one property the
    hand-authored waypoints can silently break: a Catmull-Rom curve overshoots between
@@ -19775,7 +19990,7 @@ T("campTrail: the curve never runs under a node, at every chapter size", () => {
       assertTrue(near.dist > CAMP_RING_R + 12,
                  n + " nodes: the trail bows into " + node.id +
                  " (" + Math.round(near.dist) + " from its centre, ring is " + CAMP_RING_R + ")");
-      const hit = trail.samples.filter(s => Math.abs(s.x - node.x) < 95 &&
+      const hit = trail.samples.filter(s => Math.abs(s.x - node.x) < CAMP_LABEL_HALF &&
                                             s.y > node.y + 48 && s.y < node.y + 100)[0];
       assertTrue(!hit, n + " nodes: the trail runs through " + node.id + "'s name box" +
                        (hit ? " at " + Math.round(hit.x) + "," + Math.round(hit.y) : ""));

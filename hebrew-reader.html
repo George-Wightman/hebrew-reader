@@ -1421,7 +1421,10 @@
      left is the board itself, which is now sized in pixels by pathApplyZoom and filled
      edge to edge by its svg. */
   .pathtree { margin: 0; }
-  .pathtree svg { width: 100%; height: auto; display: block; }
+  /* Visible overflow so the sheet — paper, flecks, fog, vignette — can paint out past
+     the country into the scroller's padding. Without it the map stops at a hard
+     rectangle you can pinch out and see all four corners of. */
+  .pathtree svg { width: 100%; height: auto; display: block; overflow: visible; }
 
   .pnode { cursor: pointer; }
   .pnode.locked { cursor: default; }
@@ -1443,6 +1446,13 @@
   .pword.halo text { fill: #96875e; opacity: .6; }
   .pword.loose text { fill: #b0894c; opacity: .46; }
   .pring { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2.5; }
+  /* The curtain wall. Matches whatever the ring under it is doing, per state below. */
+  .pmerlon { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2; stroke-linejoin: round; }
+  .pnode.done .pmerlon { fill: var(--gold); stroke: #8a6520; }
+  .pnode.current .pmerlon { fill: var(--accent); stroke: #0a5551; }
+  .pnode.open .pmerlon { fill: var(--panel); stroke: var(--accent); stroke-width: 2.4; }
+  .pnode.stale .pmerlon { fill: var(--panel); stroke: var(--warn); stroke-width: 2.4; }
+  .pnode.next .pmerlon { fill: var(--panel); stroke: #cfc3a6; }
   .pring2 { fill: none; stroke: #e3d9c0; stroke-width: 1.5; }
   .phe { font-family: "David", "Times New Roman", serif; fill: #8b8271; }
   /* Place names on the map take the map's face too, not the interface's. */
@@ -1520,8 +1530,6 @@
   .ppaper { fill: url(#camppaper); }
   .pfleck circle { fill: #9c8b6a; opacity: .13; }
   .pvig { fill: url(#campvig); pointer-events: none; }
-  .pdeckle { fill: none; stroke: #8a6f45; stroke-width: 2.4; opacity: .17;
-             stroke-linejoin: round; pointer-events: none; }
 
   /* Section detail, raised from the bottom exactly like the sentence pad. */
   /* Faded rather than shown/hidden, so it can move in step with the sheet's own slide
@@ -13658,6 +13666,20 @@ function campEnsure() {
    Every pair is separated by at least ~340 horizontally OR ~200 vertically, which is
    what a node actually occupies once its name box and its `why` line are under it. */
 const CAMP_BAND = 470, CAMP_TOP = 150, CAMP_W = 1220;
+/* The sheet is much bigger than the country drawn on it. George gave the map freedom to
+   pan and pinch out well past the content, and everything that dressed the board — the
+   paper, the fog, the vignette — stopped dead at the content's edge: "it stops at the
+   old border, but since I can zoom further out it jsut looks like a box at the bottom."
+   So the drawing surface runs far past the map on every side, and further still below,
+   where the fog has to keep going into ground nobody has reached.
+
+   It is done by letting the svg OVERFLOW its viewBox rather than by widening the
+   viewBox. Widening it was the first attempt and it was wrong twice over: it shrinks
+   the country by exactly the factor it adds, and "whole map" then dutifully fits the
+   blank margin instead of the map. Overflowing leaves every coordinate, the zoom maths
+   and the fitting untouched, and the surround simply paints out into the scroller's
+   own padding — which is precisely the space that was showing bare page before. */
+const CAMP_PAD_X = 1400, CAMP_PAD_TOP = 400, CAMP_PAD_BOTTOM = 1800;
 
 /* ---- a different country every chapter ---------------------------------------
    A chapter used to take one of six hand-authored arrangements, chosen by node count,
@@ -13848,29 +13870,81 @@ function campFreeX(y, spots, want) {
   return best === null ? Math.max(lo, Math.min(hi, want)) : best;
 }
 /* Levels down the band. The first sits exactly on the boundary line, because that is
-   where the waymark goes and where the previous band hands over. */
-const CAMP_ROUTE_LEVELS = [-40, 40, 120, 200, 280, 348];
+   where the waymark goes and where the previous band hands over. Eight of them rather
+   than six: the road has to bend several times inside one band to read as wandering. */
+const CAMP_ROUTE_LEVELS = (function () {
+  const out = [];
+  for (let y = -40; y < 348; y += 32) out.push(y);
+  out.push(348);
+  return out;
+})();
+/* Where the country is, at this height. Nodes near the level pull hard, nodes far up
+   or down the band barely at all. */
+function campAttractX(y, spots) {
+  if (!spots.length) return CAMP_W / 2;
+  let sw = 0, sx = 0;
+  spots.forEach(s => {
+    const w = 1 / (1 + Math.abs(y - s.y) / 110);
+    sw += w; sx += w * s.x;
+  });
+  return sx / sw;
+}
 function campRouteBand(spots, seed, entryX) {
   const graze = spots.length ? spots[Math.floor(campJitter(seed, 71) * spots.length) % spots.length]
                              : null;
-  let want = entryX === undefined ? 300 + campJitter(seed, 72) * 620 : entryX;
   const pts = [];
+  let prev = entryX === undefined ? campAttractX(-40, spots) : entryX;
+  let prevY = CAMP_ROUTE_LEVELS[0] - 60;
   CAMP_ROUTE_LEVELS.forEach((y, li) => {
-    if (graze && li > 0 && Math.abs(y - graze.y) <= 44) {
+    let want;
+    if (graze && li > 0 && Math.abs(y - graze.y) <= 40) {
       /* Right up against it. Inside the spur threshold so no track is drawn, outside
          the ring by enough that the clearance check still passes. */
       const side = graze.x > CAMP_W / 2 ? -1 : 1;
-      want = graze.x + side * (CAMP_RING_R + 33);
+      want = graze.x + side * (CAMP_RING_R + 24);
     } else {
-      want += (campJitter(seed + li * 31, 73) - 0.5) * 300;
+      /* Pulled towards whatever the country holds at this height, then swung off it.
+         The first router simply took a free x near wherever it already was, and George
+         caught what that does: "It shouldnt form a connection that long, it should
+         dynamicaly move throughout hte nodes, not stay on one side like this." A road
+         that drifts to one edge and stays there leaves every node reaching across the
+         whole board for it, and a spur that long is an edge again. */
+      const pull = campAttractX(y, spots);
+      const swing = (campJitter(seed + li * 31, 73) - 0.5) * 300;
+      want = pull * 0.62 + prev * 0.38 + swing;
     }
-    pts.push([Math.round(campFreeX(y, spots, want)), y]);
-    want = pts[pts.length - 1][0];
+    /* A road cannot turn faster than it travels. Without this the router would hand
+       back x jumping 160 units between levels 60 apart, and the curve drawn through
+       those points overshoots the corner and bulges straight over a node that every
+       level itself carefully avoided — which is how a first version of this managed to
+       fail its own clearance check on all 28 candidates and fall back every time.
+
+       2.2 rather than something gentler because a row of three nodes can be 840 apart,
+       and a road that cannot cover that much x inside one band can only ever serve one
+       end of it — which is the drifting-to-one-side problem in a different disguise. */
+    const room = Math.max(40, (y - prevY) * 2.2);
+    want = Math.max(prev - room, Math.min(prev + room, want));
+    const x = campFreeX(y, spots, want);
+    pts.push([Math.round(x), y]);
+    prev = x;
+    prevY = y;
   });
   return pts;
 }
-/* Does this route actually keep off everything? Same two rules the tests enforce: never
-   within the ring's reach, never through a name box. */
+/* How far the furthest node has to reach to touch this road. This is the number that
+   decides whether the map reads as a road through country or as a hub with wires. */
+function campRouteReach(pts, spots, bandY) {
+  const abs = pts.map(p => ({ x: p[0], y: bandY + p[1] }));
+  const s = campTrailSamples(abs, 14);
+  let worst = 0, closest = Infinity;
+  spots.forEach(sp => {
+    const near = campTrailNearest(s, sp.x, bandY + sp.y);
+    if (!near) return;
+    if (near.dist > worst) worst = near.dist;
+    if (near.dist < closest) closest = near.dist;
+  });
+  return { worst: worst, closest: closest };
+}
 function campRouteOk(pts, spots, bandY) {
   const abs = pts.map(p => ({ x: p[0], y: bandY + p[1] }));
   const s = campTrailSamples(abs, 14);
@@ -13883,12 +13957,27 @@ function campRouteOk(pts, spots, bandY) {
   }
   return true;
 }
+/* No node may be further than this from the road. Beyond it the spur stops reading as
+   a side track up to somewhere and starts reading as a line drawn between two things,
+   which is exactly what the trail replaced. */
+const CAMP_REACH_MAX = 300;
 function campRouteFor(spots, seed, entryX, bandY) {
-  for (let t = 0; t < 10; t++) {
+  let best = null, bestScore = Infinity;
+  for (let t = 0; t < 28; t++) {
     const pts = campRouteBand(spots, seed + t * 5077, entryX);
-    if (campRouteOk(pts, spots, bandY)) return pts;
+    /* Clearance is absolute — a candidate that clips a node is not considered at all. */
+    if (!campRouteOk(pts, spots, bandY)) continue;
+    const r = campRouteReach(pts, spots, bandY);
+    /* Two things make a good road, and they pull against each other: nothing may be far
+       from it, and SOMETHING must be right on it. Pushing a waypoint hard against the
+       grazed node is not enough on its own — the curve smooths between waypoints and
+       quietly gives the distance back — so the graze is scored on the smoothed line
+       rather than assumed from the waypoint. */
+    const score = (r.closest < CAMP_SPUR_MIN ? 0 : 900) + r.worst;
+    if (score < bestScore) { bestScore = score; best = pts; }
+    if (score <= CAMP_REACH_MAX) break;
   }
-  return campTrailShape(spots.length).map(p => [p[0], p[1]]);
+  return best || campTrailShape(spots.length).map(p => [p[0], p[1]]);
 }
 function campR(v) { return Math.round(v * 10) / 10; }
 
@@ -14040,7 +14129,7 @@ function campTrailMarks(trail) {
    unfinished layout; the spur is what makes the distance intentional — there is a way
    up to it, it is just off the main road. Nearer nodes get nothing, because a track
    joining two things already touching is noise. */
-const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92;
+const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92, CAMP_SPUR_MAX = 240;
 /* Half the width a node's label occupies below it — the name box, and under that the
    `why` line, which is the wider of the two and does not shrink with a short name. The
    trail router and the clearance check must agree on this figure or the router will
@@ -14049,6 +14138,13 @@ const CAMP_LABEL_HALF = 95;
 function campSpur(node, samples) {
   const near = campTrailNearest(samples, node.x, node.y);
   if (!near || near.dist < CAMP_SPUR_MIN) return null;
+  /* And nothing beyond CAMP_SPUR_MAX gets one either. A row of three nodes can be 840
+     units wide and a road cannot run past all of it, so something is always going to be
+     genuinely far away — and a track drawn all the way out to it stops reading as a
+     side road and starts reading as a line joining two things, which is the dependency
+     edge coming back. George, on seeing one: "It shouldnt form a connection that long."
+     Past this distance a node is not off the road, it is somewhere else. */
+  if (near.dist > CAMP_SPUR_MAX) return null;
   const ax = near.at.x, ay = near.at.y;
   /* Stops at the ring's edge rather than its centre — a spur run to the middle pokes
      out the far side of a node whose fill is not fully opaque. */
@@ -14204,16 +14300,21 @@ function campWordSet(node, others, avoid) {
    map. An irregular edge makes it the boundary of surveyed ground: past here nobody
    has been, which is what the fog is actually for. Seeded per band so it is stable
    between renders, for the same reason the trail's marks are. */
-function campFogEdge(top, bottom, w, seed) {
-  const step = 88;
-  let d = "M0 " + campR(top + (campJitter(seed, 41) - 0.5) * 22);
-  for (let x = step; x <= w + step; x += step) {
-    const at = Math.min(x, w);
-    const y = top + (campJitter(seed + x, 42) - 0.5) * 30;
-    const cy = top + (campJitter(seed + x, 43) - 0.5) * 40;
+function campFogEdge(top, bottom, seed) {
+  /* Left and right run out to the edge of the sheet, not the edge of the country, and
+     the last band's fog runs off the bottom of it. George: "The fog has to stay just
+     needs expanding far far out to the sides and bottom." Bounded to the content it was
+     a grey box you could pinch out and see all four corners of, which is the opposite
+     of unexplored. */
+  const lo = -CAMP_PAD_X, hi = CAMP_W + CAMP_PAD_X, step = 88;
+  let d = "M" + lo + " " + campR(top + (campJitter(seed, 41) - 0.5) * 22);
+  for (let x = lo + step; x <= hi + step; x += step) {
+    const at = Math.min(x, hi);
+    const y = top + (campJitter(seed + Math.round(at), 42) - 0.5) * 30;
+    const cy = top + (campJitter(seed + Math.round(at), 43) - 0.5) * 40;
     d += " Q" + campR(at - step / 2) + " " + campR(cy) + ", " + campR(at) + " " + campR(y);
   }
-  return d + " L" + campR(w) + " " + campR(bottom) + " L0 " + campR(bottom) + " Z";
+  return d + " L" + campR(hi) + " " + campR(bottom) + " L" + lo + " " + campR(bottom) + " Z";
 }
 
 /* Which band a y falls in. The trail's marks are generated by walking a curve, so they
@@ -14245,47 +14346,53 @@ function campPaper(L) {
   let s = '<defs><linearGradient id="camppaper" x1="0.1" y1="0" x2="0.9" y2="1">' +
           '<stop offset="0%" stop-color="#f8f3e9"/><stop offset="48%" stop-color="#f2ece0"/>' +
           '<stop offset="100%" stop-color="#eae1d0"/></linearGradient></defs>';
-  s += '<rect class="ppaper" x="0" y="0" width="' + L.w + '" height="' + L.h + '"/>';
+  const x0 = -CAMP_PAD_X, y0 = -CAMP_PAD_TOP;
+  const w = CAMP_W + CAMP_PAD_X * 2, h = L.h + CAMP_PAD_TOP + CAMP_PAD_BOTTOM;
+  s += '<rect class="ppaper" x="' + x0 + '" y="' + y0 + '" width="' + w + '" height="' + h + '"/>';
   let f = "";
-  const n = Math.min(420, Math.round(L.h * 0.22));
+  const n = Math.min(700, Math.round(h * 0.3));
   for (let i = 0; i < n; i++)
-    f += '<circle cx="' + campR(campJitter(i, 81) * L.w) + '" cy="' +
-         campR(campJitter(i, 82) * L.h) + '" r="' +
+    f += '<circle cx="' + campR(x0 + campJitter(i, 81) * w) + '" cy="' +
+         campR(y0 + campJitter(i, 82) * h) + '" r="' +
          campR(0.5 + campJitter(i, 83) * 1.9) + '"/>';
   return s + '<g class="pfleck">' + f + '</g>';
 }
-/* Where the sheet stops. A straight rectangle edge would say "this is a div"; a torn
-   one says the map is an object lying on the table, and it is the cheapest way to make
-   panning off the map feel like reaching the edge of something. */
-function campDeckle(L) {
-  const step = 74;
-  let d = "M0 0";
-  const edge = (from, to, along, fixed, horizontal, salt) => {
-    let out = "";
-    for (let t = from + step; t <= to; t += step) {
-      const at = Math.min(t, to);
-      const off = (campJitter(Math.round(at) + salt, 84) - 0.5) * 11;
-      out += horizontal ? " L" + campR(at) + " " + campR(fixed + off)
-                        : " L" + campR(fixed + off) + " " + campR(at);
-    }
-    return out;
-  };
-  d += edge(0, L.w, 0, 0, true, 11);
-  d += edge(0, L.h, 0, L.w, false, 23);
-  d += " L" + campR(L.w) + " " + campR(L.h);
-  for (let t = L.w - step; t >= 0; t -= step)
-    d += " L" + campR(Math.max(0, t)) + " " + campR(L.h + (campJitter(Math.round(t) + 37, 84) - 0.5) * 11);
-  for (let t = L.h - step; t >= 0; t -= step)
-    d += " L" + campR((campJitter(Math.round(t) + 51, 84) - 0.5) * 11) + " " + campR(Math.max(0, t));
-  return d + " Z";
-}
 function campVignette(L) {
-  return '<defs><radialGradient id="campvig" cx="0.5" cy="0.4" r="0.8">' +
+  const x0 = -CAMP_PAD_X, y0 = -CAMP_PAD_TOP;
+  const w = CAMP_W + CAMP_PAD_X * 2, h = L.h + CAMP_PAD_TOP + CAMP_PAD_BOTTOM;
+  return '<defs><radialGradient id="campvig" cx="0.5" cy="0.4" r="0.78">' +
          '<stop offset="0%" stop-color="#7d5f32" stop-opacity="0"/>' +
-         '<stop offset="66%" stop-color="#7d5f32" stop-opacity="0.035"/>' +
-         '<stop offset="100%" stop-color="#6f5228" stop-opacity="0.15"/></radialGradient></defs>' +
-         '<rect class="pvig" x="0" y="0" width="' + L.w + '" height="' + L.h + '"/>' +
-         '<path class="pdeckle" d="' + campDeckle(L) + '"/>';
+         '<stop offset="58%" stop-color="#7d5f32" stop-opacity="0.03"/>' +
+         '<stop offset="100%" stop-color="#6f5228" stop-opacity="0.13"/></radialGradient></defs>' +
+         '<rect class="pvig" x="' + x0 + '" y="' + y0 + '" width="' + w + '" height="' + h + '"/>';
+}
+
+/* ---- a node is a walled town -------------------------------------------------
+   The ring was a circle, which is a diagram. Crenellating it makes the same circle a
+   curtain wall seen from above, and costs nothing else: the Hebrew still sits in the
+   middle of it, the name box still hangs below, the progress count still rides the
+   shoulder, and the halo still orbits the same radius. George picked this over drawing
+   a town in elevation for exactly that reason — and "get rid of hte flag", so there is
+   no pennant. A pennant is heraldry; a wall is a place.
+
+   Merlons thin out with the state of the node. A finished town is walled the whole way
+   round; one you are working has gaps in its wall; one you have not reached has a few
+   stones on the near side and nothing else. */
+const CAMP_MERLON = { done: 14, stale: 14, current: 10, open: 10, next: 5, fog: 0 };
+function campWall(cx, cy, r, count, cls) {
+  if (!count) return "";
+  let out = "";
+  for (let i = 0; i < count; i++) {
+    /* Started from the top and walked round, so a wall with gaps in it always has its
+       stones in the same places on the same node rather than rotating between renders. */
+    const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    const deg = campR(a * 180 / Math.PI + 90);
+    out += '<rect class="' + cls + '" x="' + campR(x - 4.6) + '" y="' + campR(y - 7.4) +
+           '" width="9.2" height="8" rx="1.2" transform="rotate(' + deg + ' ' +
+           campR(x) + ' ' + campR(y) + ')"/>';
+  }
+  return out;
 }
 
 const CAMP_TRAIL_WORN = "#ac8046", CAMP_TRAIL_PALE = "#ddd5c1";
@@ -14450,6 +14557,8 @@ function campRender() {
     const state = campNodeState(n.id, c, srs);
     svg += '<g class="pnode ' + state + '" data-band="' + n.band +
            '" data-node="' + campEscape(n.id) + '">';
+    svg += campWall(n.x, n.y, 44, CAMP_MERLON[state] === undefined ? 10 : CAMP_MERLON[state],
+                    "pmerlon");
     svg += '<circle class="pring" cx="' + n.x + '" cy="' + n.y + '" r="44"/>';
     svg += '<circle class="pring2" cx="' + n.x + '" cy="' + n.y + '" r="37"/>';
     svg += '<text class="phe" x="' + n.x + '" y="' + (n.y + 9) + '" text-anchor="middle" font-size="24">' +
@@ -14500,8 +14609,12 @@ function campRender() {
      of is just a smudge. */
   L.bands.forEach((b, bi) => {
     if (b.state !== "fog") return;
+    /* The last fogged band does not end at its own boundary — it runs off the bottom of
+       the sheet, because what is past it is more of the same nothing. */
+    const last = bi === L.bands.length - 1;
     svg += '<path class="pfog" data-band="' + bi + '" d="' +
-           campFogEdge(b.top, b.bottom, L.w, bi * 977 + 13) + '" fill="url(#campfog)"/>';
+           campFogEdge(b.top, last ? L.h + CAMP_PAD_BOTTOM : b.bottom, bi * 977 + 13) +
+           '" fill="url(#campfog)"/>';
     svg += '<text class="pband fogband" data-band="' + bi + '" x="60" y="' + (b.top + 46) + '">' +
            campEscape(b.label) + '</text>';
   });
@@ -20095,11 +20208,13 @@ T("campTrail: every chapter has a node the road runs right past", () => {
     camp.chapters[0].nodes = nodes;
     const L = campLayout(camp);
     const trail = campTrail(camp);
-    const spurred = L.nodes.filter(node => !!campSpur(node, trail.samples));
-    assertTrue(spurred.length < L.nodes.length,
-               n + " nodes: every one of them is off the road, so every one grew a spur");
-    if (n >= 3) assertTrue(spurred.length > 0,
-               n + " nodes: none of them is set back, so the map has no country in it");
+    /* Measured in distance rather than in spurs drawn: past CAMP_SPUR_MAX a node is far
+       enough that it gets no track at all, and it is still very much set back. */
+    const dist = L.nodes.map(node => campTrailNearest(trail.samples, node.x, node.y).dist);
+    assertTrue(dist.some(d => d < CAMP_SPUR_MIN),
+               n + " nodes: the road runs past none of them, so every one is out in the country");
+    if (n >= 3) assertTrue(dist.some(d => d >= CAMP_SPUR_MIN),
+               n + " nodes: the road runs past all of them, so the map has no country in it");
   }
 });
 T("campTrail: it descends the whole map and crosses at every chapter boundary", () => {
@@ -20122,18 +20237,21 @@ T("campTrail: it descends the whole map and crosses at every chapter boundary", 
    layout look unfinished rather than remote. The threshold is therefore a real design
    line, not a tolerance: it is what splits "the trail goes right by this" from "this is
    somewhere off the road", and CAMP_TRAIL_SHAPES is authored against it. */
-T("campSpur: far nodes get a track, near ones get nothing", () => {
+T("campSpur: only the middle distance gets a track", () => {
   const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
   assertNull(campSpur({ x: 140, y: 200 }, samples), "40 away is touching the trail");
-  const far = campSpur({ x: 400, y: 200 }, samples);
-  assertTrue(!!far, "300 away is somewhere off the road");
-  assertTrue(far.d.indexOf("M100") === 0, "and the track leaves FROM the trail");
+  const near = campSpur({ x: 280, y: 200 }, samples);
+  assertTrue(!!near, "180 away is somewhere off the road");
+  assertTrue(near.d.indexOf("M100") === 0, "and the track leaves FROM the trail");
+  assertNull(campSpur({ x: 500, y: 200 }, samples),
+             "400 away is not off the road, it is somewhere else — and a track that " +
+             "long is a dependency edge wearing a different hat");
 });
 T("campSpur: the track stops at the ring, not at the node's centre", () => {
   const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
-  const sp = campSpur({ x: 400, y: 200 }, samples);
+  const sp = campSpur({ x: 220, y: 200 }, samples);
   const end = sp.d.split(",").pop().trim().split(/\s+/).map(Number);
-  assertEq(Math.round(end[0]), 400 - CAMP_RING_R, "it lands on the ring's edge");
+  assertEq(Math.round(end[0]), 220 - CAMP_RING_R, "it lands on the ring's edge");
   assertEq(Math.round(end[1]), 200);
 });
 /* The texture must be a property of the trail, not of the moment it was drawn. */
@@ -20180,14 +20298,15 @@ T("campBandOf: a y lands in the band that actually contains it", () => {
 /* The fog's edge is the boundary of surveyed ground, so it has to be irregular AND it
    has to cover the whole band — a sheet with a gap at one end is just a bug. */
 T("campFogEdge: an irregular top, and no gap at either end", () => {
-  const d = campFogEdge(600, 1000, 1220, 7);
+  const d = campFogEdge(600, 1000, 7);
   const ys = (d.match(/Q[-\d.]+ [-\d.]+, [-\d.]+ ([-\d.]+)/g) || [])
     .map(s => parseFloat(s.split(", ")[1].split(" ")[1]));
   assertTrue(ys.length > 8, "one wobble across 1220 units is not an edge");
   assertTrue(new Set(ys.map(Math.round)).size > 4, "and a repeating one is not irregular");
   assertTrue(ys.every(y => Math.abs(y - 600) < 40), "but it must stay near the line it replaces");
-  assertTrue(/^M0 /.test(d) && d.indexOf("L1220 1000") !== -1 && /Z$/.test(d),
-             "it starts at the left edge, reaches the right, and closes");
+  assertTrue(d.indexOf("M" + (-CAMP_PAD_X) + " ") === 0 &&
+             d.indexOf("L" + (CAMP_W + CAMP_PAD_X) + " 1000") !== -1 && /Z$/.test(d),
+             "it starts past the left edge of the SHEET, reaches past the right, and closes");
 });
 
 /* ---- the words around a node ---- */

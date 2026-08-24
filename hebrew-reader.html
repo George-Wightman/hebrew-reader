@@ -1168,9 +1168,26 @@
   .lmapview { position: absolute; inset: 0; overflow: auto; background: #f2ebdd;
               -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
               touch-action: pan-x pan-y;
-              scrollbar-width: none; -ms-overflow-style: none; }
+              scrollbar-width: none; -ms-overflow-style: none;
+              /* One chapter is 390 units tall against a 1220 board, so early on the map
+                 is a short strip in a tall window and everything under it was empty
+                 cream. `margin:auto` on a flex child is the one centring that survives
+                 overflow in both axes — the usual align-items:center clips the top of a
+                 board taller than the window and makes it unscrollable. */
+              display: flex; }
+  /* flex-shrink:0 is not optional here. A flex item shrinks to its container by
+     default, so the board's computed width silently collapsed from 638px to the 375px
+     of the window the moment .lmapview became a flex container — the map went back to
+     being squeezed to fit, which is the exact thing the fixed-pixel board exists to
+     avoid. */
+
   .lmapview::-webkit-scrollbar { width: 0; height: 0; }
-  .lmapview .pathtree { max-width: none; margin: 0; }
+  /* One rule, because there were two: an earlier `margin: 0` sat below the `margin:
+     auto` and won on source order at equal specificity, so the centring silently did
+     nothing. flex-shrink:0 is not optional either — a flex item shrinks to its
+     container by default, which collapsed the board from 638px back to the width of
+     the window, the exact squeeze the fixed-pixel board exists to avoid. */
+  .lmapview .pathtree { max-width: none; margin: auto; flex: 0 0 auto; }
   .lmapview.fit { overflow: hidden; }
 
   .lmaptop { position: absolute; left: 12px; top: 12px; right: 128px; display: flex;
@@ -14076,7 +14093,23 @@ function pathFocusCurrent() {
   if (!sec) return;
   const at = L.nodes.filter(n => n.id === sec.id)[0] || L.nodes[0];
   const w = pathBoardWidth(false), h = w * (L.h / L.w);
-  view.scrollLeft = Math.max(0, (at.x / L.w) * w - view.clientWidth / 2);
+  const px = x => (x / L.w) * w;
+
+  /* Centre on the CHAPTER when the chapter fits, and only fall back to centring on the
+     node when it does not. Centring on the node alone pushed the first of four
+     siblings off the left edge even though all four would have fitted on screen
+     together — which is the one view that actually tells you where you are. */
+  const band = L.nodes.filter(n => n.chapter === at.chapter);
+  const xs = band.map(n => px(n.x));
+  const lo = Math.min.apply(null, xs), hi = Math.max.apply(null, xs);
+  /* Not "does it fit" but "is it close" — a four-node chapter comes out a little wider
+     than a phone, and centring the CHAPTER then trims both edges evenly, which reads as
+     "there is more either side". Centring the NODE instead pushed the first sibling
+     entirely off screen while leaving empty board on the right, which reads as broken.
+     Past 1.5 screens the chapter is genuinely too wide to sit in and the node wins. */
+  view.scrollLeft = (hi - lo) <= view.clientWidth * 1.5
+    ? Math.max(0, (lo + hi) / 2 - view.clientWidth / 2)
+    : Math.max(0, px(at.x) - view.clientWidth / 2);
   view.scrollTop = Math.max(0, (at.y / L.h) * h - view.clientHeight / 2);
 }
 

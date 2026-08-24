@@ -1188,7 +1188,19 @@
      container by default, which collapsed the board from 638px back to the width of
      the window, the exact squeeze the fixed-pixel board exists to avoid. */
   .lmapview .pathtree { max-width: none; margin: auto; flex: 0 0 auto; }
-  .lmapview.fit { overflow: hidden; }
+  /* Blank margin the map's own beige shows through, scrollable on every side —
+     George: "I want the freedom to scroll around, even if thats into empty space,
+     currently the view field is limited to a very small box around the actual map
+     area, expand this a fair amount so I can 'explore'." Without it the scrollable
+     region was exactly the board's own bounding box, so a drag ran out of road the
+     instant it passed the last node — no matter how empty the app's sense of
+     exploration is meant to feel.
+     vw/vh rather than a flat pixel figure so the room scales with the actual screen:
+     roughly a screen and a half of blank space either side on a phone, more on a
+     desktop where there is more to give. Zeroed in fit mode, where the whole board
+     is already the point and there is nothing to pan into. */
+  .lmapview { padding: 45vh 40vw; }
+  .lmapview.fit { overflow: hidden; padding: 0; }
 
   .lmaptop { position: absolute; left: 12px; top: 12px; right: 128px; display: flex;
              flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -14059,8 +14071,15 @@ function pathZoomTo(z, anchorX, anchorY) {
   const r = view.getBoundingClientRect();
   const ax = (anchorX === undefined ? r.width / 2 : anchorX - r.left);
   const ay = (anchorY === undefined ? r.height / 2 : anchorY - r.top);
-  view.scrollLeft = (view.scrollLeft + ax) * k - ax;
-  view.scrollTop = (view.scrollTop + ay) * k - ay;
+  /* The plain "scale everything around the anchor by k" formula assumes the WHOLE
+     scrollable region grows by k, which was true when the board was the only thing in
+     it. The exploration padding is a fixed vw/vh figure that does not grow with the
+     board, so it needs its own term — pad*(1-k) — or every zoom step drifts the anchor
+     by however much the (unscaled) padding was wrongly scaled that time. */
+  const padX = parseFloat(getComputedStyle(view).paddingLeft) || 0;
+  const padY = parseFloat(getComputedStyle(view).paddingTop) || 0;
+  view.scrollLeft = padX * (1 - k) + (view.scrollLeft + ax) * k - ax;
+  view.scrollTop = padY * (1 - k) + (view.scrollTop + ay) * k - ay;
 }
 /* Pressing + or − while the whole map is showing means "stop showing me the whole
    map"; without this the press is silently swallowed, because pathZoomTo refuses to
@@ -14179,14 +14198,21 @@ function pathFocusCurrent() {
      is on screen with room around it. A constellation is wider than a phone by design
      — that is the panning that makes it a map — but the one node the action card is
      offering must never be the one that fell off the edge. */
-  const pad = 110;
-  left = Math.min(left, px(at.x) - pad);
-  left = Math.max(left, px(at.x) + pad - view.clientWidth);
-  view.scrollLeft = Math.max(0, Math.min(left, view.scrollWidth - view.clientWidth));
+  const nodePad = 110;
+  left = Math.min(left, px(at.x) - nodePad);
+  left = Math.max(left, px(at.x) + nodePad - view.clientWidth);
+  /* `left`/`top` above are pixel offsets from the BOARD'S own top-left corner. The
+     board no longer sits at scroll position (0,0) — the exploration padding pushes it
+     in by padLeft/padTop first — so that has to be added before it means anything as a
+     scrollLeft. Read from the live computed style rather than duplicated as a second
+     constant, so the CSS value stays the only place this number is written. */
+  const padX = parseFloat(getComputedStyle(view).paddingLeft) || 0;
+  const padY = parseFloat(getComputedStyle(view).paddingTop) || 0;
+  view.scrollLeft = Math.max(0, Math.min(padX + left, view.scrollWidth - view.clientWidth));
 
   let top = (at.y / L.h) * h - view.clientHeight / 2;
-  top = Math.min(top, (at.y / L.h) * h - pad);
-  view.scrollTop = Math.max(0, Math.min(top, view.scrollHeight - view.clientHeight));
+  top = Math.min(top, (at.y / L.h) * h - nodePad);
+  view.scrollTop = Math.max(0, Math.min(padY + top, view.scrollHeight - view.clientHeight));
 }
 
 const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",

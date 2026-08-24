@@ -1448,6 +1448,8 @@
   .pstale { fill: var(--warn); font-weight: 700; }
   .pfrom { fill: var(--accent); }
   .pauto { fill: var(--gold); }
+  /* The fog sheet must never eat a tap meant for the map underneath it. */
+  .pfog { pointer-events: none; }
   /* The planner's one-line reason for a node, under its name in the live chapter
      only. On a generated path this is what makes it read as authored. */
   .pwhy { fill: #8b8271; font-style: italic; }
@@ -12656,7 +12658,9 @@ function campApplyFallback() {
   for (let i = 0; i < CAMP_FALLBACK.length; i++) {
     const spec = CAMP_FALLBACK[(real.length - 1 + i) % CAMP_FALLBACK.length];
     if (!spec) continue;
-    const made = campApplyPlan({ theme: spec.theme, nodes: spec.nodes, sketch: null });
+    const made = campApplyPlan({ theme: spec.theme, nodes: spec.nodes,
+                                 sketch: { theme: "further on",
+                                           names: (spec.sketch || ["further on"]) } });
     if (made) return made;
   }
   return null;
@@ -12686,9 +12690,20 @@ async function campWarmNext() {
       const real = c.chapters.filter(ch => (ch.nodes || []).length);
       if (!real.length) return;
       const last = real[real.length - 1];
-      /* Write the next one as soon as the last REAL chapter is complete — the fogged
-         sketch beyond it is not a chapter, it is a promise of one. */
-      if (!campChapterComplete(last, c, srs)) return;
+      const live = campLiveChapter(c, srs);
+      /* THE BUG THIS REPLACES: the gate was `if (!campChapterComplete(last)) return`,
+         so nothing was ever planned until the chapter he was standing in was FINISHED.
+         On a fresh campaign that meant one chapter, no "next", no sketch, no fog — the
+         map said "here are four nodes and that is all there is", which is the opposite
+         of the direction and discovery it exists to give. George: "The current app also
+         completely ommitst the fog feature and the ability to see future chapters."
+
+         Plan when he is standing in the LAST chapter, so there is always one drawn
+         ahead of him and a fog beyond that. One node finished is the price of
+         admission — a campaign with no evidence at all behind it would be planned from
+         nothing, and the seed's own horizon covers that first sitting. */
+      if (live !== last) return;
+      if (campChapterGold(live, c, srs) < 1 && real.length === 1) return;
       if (!geminiKeys().length) {
         if (!campApplyFallback()) return;
         continue;
@@ -13472,11 +13487,17 @@ function campSeedChapter() {
         why: "the shortest route to being understood",
         words: ["רוצה", "צריך", "יש", "אין", "כמה", "בבקשה"], carry: [], needs: [] }
     ],
-    sketch: []
+    /* Day one ships with a horizon. Without this the seed is the only chapter in the
+       store, campLayout has one band to draw, and the map reads as "four nodes and
+       that is the app" — which is exactly what George saw. The names are replaced the
+       moment a real chapter is planned; until then they are the promise that the map
+       goes somewhere. */
+    sketch: [{ name: "your week" }, { name: "getting around" }, { name: "what happened" }]
   };
 }
 const CAMP_FALLBACK = [
   { theme: "More of your life",
+    sketch: ["what happened", "telling a story", "how it was"],
     nodes: [
       { name: "Family & home", icon: "בית", lvl: 2,
         situation: "your home, the rooms in it, who lives there",
@@ -13492,6 +13513,7 @@ const CAMP_FALLBACK = [
         words: ["מרגיש", "כואב", "ראש", "בטן", "חולה", "בריא"] }
     ] },
   { theme: "What already happened",
+    sketch: ["making plans", "what you will do", "if and when"],
     nodes: [
       { name: "Your day — past", icon: "אתמול", lvl: 3,
         situation: "saying what you did earlier today or yesterday",
@@ -13513,7 +13535,13 @@ const CAMP_FALLBACK = [
 function campEnsure() {
   const c = campAll();
   if (!c.chapters.length) {
-    c.chapters.push(campSeedChapter());
+    const seed = campSeedChapter();
+    /* The sketch is lifted off the seed into a fog chapter of its own, because that is
+       what campLayout draws: a chapter with a sketch and no nodes IS the fog. Leaving
+       it attached to the seed would have stored a horizon nothing ever rendered. */
+    c.chapters.push({ n: seed.n, theme: seed.theme, state: "live", nodes: seed.nodes, sketch: [] });
+    c.chapters.push({ n: seed.n + 1, theme: "further on", state: "fog",
+                      nodes: [], sketch: seed.sketch });
     campRestate(c);
     campSave(c);
   }
@@ -13529,19 +13557,31 @@ function campEnsure() {
 
    Pure: takes the store and returns geometry, touching no DOM and no storage, so the
    layout can be unit-tested on its own. */
-const CAMP_COLS = [170, 390, 610, 830, 1050];
-const CAMP_BAND = 300, CAMP_TOP = 130, CAMP_W = 1220;
-/* A chapter of n nodes takes the MIDDLE n columns, so a four-node chapter is centred
-   rather than hugging the left edge. */
-function campColumns(n) {
-  const k = Math.max(1, Math.min(CAMP_COLS.length, n));
-  const start = Math.floor((CAMP_COLS.length - k) / 2);
-  return CAMP_COLS.slice(start, start + k);
+/* CONSTELLATIONS, not columns. The first version put every node of a chapter on one
+   line at fixed x positions with a 34px alternating nudge, and George's read of it was
+   exact: "The current layout is trapped in a horizontal movement ... I want this to
+   feel more dynamic, not a straight path, but like an exploration of areas."
+
+   A row IS a straight path — the stagger was decoration on top of a queue. So a chapter
+   now occupies an AREA, and the positions inside it are hand-placed per node count
+   rather than computed from a column index. Hand-placed because a scatter that is
+   genuinely random looks like a bug, and one derived from an index looks like a table:
+   these are the small number of arrangements that read as somewhere you explore.
+
+   Every pair is separated by at least ~340 horizontally OR ~200 vertically, which is
+   what a node actually occupies once its name box and its `why` line are under it. */
+const CAMP_BAND = 470, CAMP_TOP = 150, CAMP_W = 1220;
+const CAMP_SHAPES = {
+  1: [[590, 130]],
+  2: [[400, 100], [820, 210]],
+  3: [[270, 80], [620, 230], [970, 70]],
+  4: [[240, 80], [600, 40], [940, 150], [430, 310]],
+  5: [[240, 70], [600, 40], [940, 110], [400, 300], [830, 320]],
+  6: [[220, 60], [580, 30], [930, 100], [240, 300], [600, 330], [940, 320]]
+};
+function campShape(n) {
+  return CAMP_SHAPES[Math.max(1, Math.min(6, n))] || CAMP_SHAPES[6];
 }
-/* A perfectly straight row of circles reads as a table. Nudging alternate nodes down
-   by a fixed amount costs nothing and is the difference between a map and a grid —
-   the old hand-placed board never had four nodes on exactly one line either. */
-const CAMP_STAGGER = 34;
 function campLayout(c) {
   const cc = c || campAll();
   const nodes = [], edges = [], bands = [];
@@ -13549,21 +13589,25 @@ function campLayout(c) {
   cc.chapters.forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const y = bandY;
-    bands.push({ y: bandY - 78, label: ch.theme || "", n: ch.n,
-                 state: campChapterStanding(ch, cc) });
+    bands.push({ y: bandY - 40, top: bandY - 40, bottom: bandY + CAMP_BAND - 40,
+                 label: ch.theme || "", n: ch.n, state: campChapterStanding(ch, cc) });
     /* A fogged chapter has a sketch and no nodes yet; it still occupies a band, and
        its silhouettes are placed the same way real nodes are. */
     const list = (ch.nodes || []).length ? ch.nodes
       : (ch.sketch || []).map((sk, i) => ({ id: "fog-" + ch.n + "-" + i,
                                             name: sk && sk.name || "", fog: true,
                                             words: [], carry: [], needs: [] }));
-    const cols = campColumns(list.length);
+    const shape = campShape(list.length);
+    const standing = campChapterStanding(ch, cc);
     list.forEach((node, i) => {
-      const x = cols[i % cols.length];
-      const ny = y + (i % 2 ? CAMP_STAGGER : 0);
-      pos[node.id] = { x: x, y: ny };
-      nodes.push(Object.assign({}, node, { x: x, y: ny, chapter: ch.n,
-                                          chState: campChapterStanding(ch, cc) }));
+      /* Past the sixth node the constellation repeats one band lower — it cannot
+         happen today (CAMP_MAX_NODES is 6) but a chapter that grew a spawned node
+         beyond the cap must still land somewhere sane rather than on top of itself. */
+      const at = shape[i % shape.length];
+      const wrap = Math.floor(i / shape.length) * 180;
+      pos[node.id] = { x: at[0], y: y + at[1] + wrap };
+      nodes.push(Object.assign({}, node, { x: at[0], y: y + at[1] + wrap,
+                                           chapter: ch.n, chState: standing }));
     });
   });
   nodes.forEach(n => {
@@ -13667,11 +13711,15 @@ function campRender() {
   const L = campLayout(c);
 
   let svg = '<svg viewBox="0 0 ' + L.w + ' ' + L.h + '" role="img" aria-label="Your campaign">';
-  /* One mask, reused by every fogged node. A radial fade rather than a flat overlay:
-     a hard-edged blur reads as a loading state, a soft one reads as distance. */
-  svg += '<defs><radialGradient id="campfog" cx="50%" cy="50%">' +
-         '<stop offset="45%" stop-color="#e8e1d1" stop-opacity="1"/>' +
-         '<stop offset="100%" stop-color="#e8e1d1" stop-opacity="0"/></radialGradient></defs>';
+  /* Fog covers a REGION, not each node. It was a radial fade per silhouette, which
+     read as four blurry circles — a rendering fault rather than unexplored ground.
+     A single sheet across the whole band, thin at the top where it meets the chapter
+     he can see and thickening as it goes down, is what says "the map continues and
+     you have not been there". */
+  svg += '<defs><linearGradient id="campfog" x1="0" y1="0" x2="0" y2="1">' +
+         '<stop offset="0%" stop-color="#e8e1d1" stop-opacity="0.42"/>' +
+         '<stop offset="45%" stop-color="#e8e1d1" stop-opacity="0.82"/>' +
+         '<stop offset="100%" stop-color="#e8e1d1" stop-opacity="0.97"/></linearGradient></defs>';
 
   L.bands.forEach(b => {
     svg += '<line class="pbandline" x1="60" y1="' + b.y + '" x2="' + (L.w - 60) + '" y2="' + b.y + '"/>';
@@ -13687,9 +13735,8 @@ function campRender() {
   L.nodes.forEach(n => {
     if (n.fog) {
       svg += '<g class="pnode fognode">';
-      svg += '<ellipse cx="' + n.x + '" cy="' + n.y + '" rx="118" ry="70" fill="url(#campfog)"/>';
-      svg += '<circle class="pring" cx="' + n.x + '" cy="' + n.y + '" r="37"/>';
-      if (n.name) svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) +
+      svg += '<circle class="pring" cx="' + n.x + '" cy="' + n.y + '" r="40"/>';
+      if (n.name) svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 64) +
                          '" text-anchor="middle" font-size="13">' + campEscape(n.name) + '</text>';
       svg += '</g>';
       return;
@@ -13738,6 +13785,17 @@ function campRender() {
      tracker and it gives me an extended stats view. not be an akward looking node
      floating htere." It is the streak/week pill itself now — see learnRenderMapBar —
      so the map holds only the campaign. */
+  /* After every node, so it lies OVER the silhouettes rather than under them. The
+     band's own label is redrawn on top afterwards — a horizon you cannot read the name
+     of is just a smudge. */
+  L.bands.forEach(b => {
+    if (b.state !== "fog") return;
+    svg += '<rect class="pfog" x="0" y="' + b.top + '" width="' + L.w +
+           '" height="' + (b.bottom - b.top) + '" fill="url(#campfog)"/>';
+    svg += '<text class="pband fogband" x="60" y="' + (b.top + 26) + '" font-size="14">' +
+           campEscape(b.label) + '</text>';
+  });
+
   tree.innerHTML = svg + '</svg>';
 
   /* A label floating on bare paper has nothing to anchor it. Measured after insertion
@@ -14114,10 +14172,21 @@ function pathFocusCurrent() {
      "there is more either side". Centring the NODE instead pushed the first sibling
      entirely off screen while leaving empty board on the right, which reads as broken.
      Past 1.5 screens the chapter is genuinely too wide to sit in and the node wins. */
-  view.scrollLeft = (hi - lo) <= view.clientWidth * 1.5
-    ? Math.max(0, (lo + hi) / 2 - view.clientWidth / 2)
-    : Math.max(0, px(at.x) - view.clientWidth / 2);
-  view.scrollTop = Math.max(0, (at.y / L.h) * h - view.clientHeight / 2);
+  let left = (hi - lo) <= view.clientWidth * 1.5
+    ? (lo + hi) / 2 - view.clientWidth / 2
+    : px(at.x) - view.clientWidth / 2;
+  /* Then CLAMPED, so whatever the chapter framing wants, the node he is about to tap
+     is on screen with room around it. A constellation is wider than a phone by design
+     — that is the panning that makes it a map — but the one node the action card is
+     offering must never be the one that fell off the edge. */
+  const pad = 110;
+  left = Math.min(left, px(at.x) - pad);
+  left = Math.max(left, px(at.x) + pad - view.clientWidth);
+  view.scrollLeft = Math.max(0, Math.min(left, view.scrollWidth - view.clientWidth));
+
+  let top = (at.y / L.h) * h - view.clientHeight / 2;
+  top = Math.min(top, (at.y / L.h) * h - pad);
+  view.scrollTop = Math.max(0, Math.min(top, view.scrollHeight - view.clientHeight));
 }
 
 const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",
@@ -19117,12 +19186,42 @@ T("campComputeNeeds: edges are derived from carried words, and must cross a band
            "b carries a word from a, but they share a band");
   assertEq(camp.chapters[1].nodes[0].needs, ["b"], "c carries b's word from the band above");
 });
-T("campLayout: one band per chapter, middle columns, alternate nodes staggered", () => {
+/* A chapter is an AREA, not a row. These pin the property that matters — that no two
+   nodes share a line and none of them collide — rather than the exact coordinates,
+   which are a design choice and free to change. */
+T("campLayout: a chapter occupies an area rather than a row", () => {
   const camp = campOneChapter();
   const L = campLayout(camp);
-  assertEq(L.nodes.map(n => n.x), [170, 390, 610, 830], "four nodes take the middle four columns");
-  assertEq(L.nodes.map(n => n.y - L.nodes[0].y), [0, CAMP_STAGGER, 0, CAMP_STAGGER]);
+  const ys = L.nodes.map(n => n.y);
+  assertTrue(new Set(ys).size > 1, "four nodes on one y is the straight path this replaced");
+  assertTrue(Math.max.apply(null, ys) - Math.min.apply(null, ys) > 150,
+             "and they spread down the band, not just nudge");
   assertEq(L.bands.length, 1);
+});
+/* A node is a circle plus a name box plus its `why` line — roughly 340 wide and 200
+   tall. Two nodes closer than that in BOTH axes overlap on screen. */
+T("campLayout: no two nodes in a chapter collide, at every size it can be", () => {
+  for (let n = 1; n <= 6; n++) {
+    const camp = campOneChapter();
+    const nodes = [];
+    for (let i = 0; i < n; i++)
+      nodes.push({ id: "n" + i, name: "N" + i, words: ["בית"], carry: [], needs: [] });
+    camp.chapters[0].nodes = nodes;
+    const L = campLayout(camp);
+    for (let i = 0; i < L.nodes.length; i++)
+      for (let j = i + 1; j < L.nodes.length; j++) {
+        const dx = Math.abs(L.nodes[i].x - L.nodes[j].x);
+        const dy = Math.abs(L.nodes[i].y - L.nodes[j].y);
+        assertTrue(dx >= 340 || dy >= 200,
+                   "chapter of " + n + ": nodes " + i + " and " + j + " overlap (dx " + dx + ", dy " + dy + ")");
+      }
+    /* And nothing may hang out of the band it belongs to, or it lands in the next
+       chapter's territory. */
+    L.nodes.forEach(nd => {
+      assertTrue(nd.x > 60 && nd.x < CAMP_W - 60, "inside the board");
+      assertTrue(nd.y >= L.bands[0].top && nd.y <= L.bands[0].bottom - 90, "inside its band");
+    });
+  }
 });
 T("campLayout: a fogged chapter still takes a band, drawn from its sketch", () => {
   const camp = campOneChapter();
@@ -19381,7 +19480,11 @@ T("campEnsure: seeds exactly once and never disturbs an existing campaign", () =
   const before = lsGet(CAMP_KEY);
   try {
     localStorage.removeItem(CAMP_KEY);
-    assertEq(campEnsure().chapters.length, 1);
+    /* Two: the seed, and the fog beyond it. Day one has to have a horizon or the map
+       reads as "four nodes and that is the app". */
+    assertEq(campEnsure().chapters.length, 2);
+    assertEq(campEnsure().chapters[1].nodes.length, 0, "the second is fog");
+    assertTrue(campEnsure().chapters[1].sketch.length >= 2, "with names under it");
     const c = campAll();
     c.chapters[0].theme = "touched";
     campSave(c);

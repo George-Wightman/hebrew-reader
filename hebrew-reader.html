@@ -1243,6 +1243,44 @@
   .lmaptop .lbanner { margin: 0; max-width: 340px; font-size: .76rem; padding: 8px 12px;
                       box-shadow: var(--shadow); }
 
+  /* ---- what the session moved ---- */
+  /* The end of the session is still the session, so it stays on the same paper rather
+     than dropping back onto the page underneath. */
+  #lEnd { background: linear-gradient(150deg, #f8f3e9, #f2ece0 48%, #eae1d0);
+          margin: -20px -18px -40px; padding: 26px 18px 48px; min-height: 70vh; }
+  #lEnd .lend { max-width: 620px; margin: 0 auto; }
+  .lwhead { font-size: .68rem; letter-spacing: .13em; text-transform: uppercase;
+            color: #a49b88; margin: 22px 0 8px; text-align: left; }
+  .lwrow { display: flex; align-items: center; gap: 12px; padding: 7px 0;
+           border-top: 1px solid var(--hair); text-align: left; }
+  .lwname { flex: 0 0 34%; min-width: 0; }
+  .lwname b { display: block; font-size: .92rem; color: var(--ink); font-weight: 600;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lwname span { display: block; font-size: .72rem; color: var(--muted);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lwbars { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .lwline { display: flex; align-items: center; gap: 8px; }
+  .lwline u { flex: 0 0 30px; font-size: .62rem; letter-spacing: .08em; text-transform: uppercase;
+              color: #a49b88; text-decoration: none; }
+  .lwtrack { position: relative; flex: 1 1 auto; height: 7px; border-radius: 4px;
+             background: #ece5d6; overflow: hidden; }
+  .lwtrack i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+  /* The four bands, in the colours the reading cards already use for them. */
+  .lwtrack i.tier-new { background: #dcd6ca; }
+  .lwtrack i.tier-weak { background: #d99b91; }
+  .lwtrack i.tier-progressing { background: #e2bb70; }
+  .lwtrack i.tier-strong { background: #6fae8b; }
+  /* Where the word stood when the session started. */
+  .lwfrom { position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px;
+            background: rgba(60,45,20,.42); z-index: 2; }
+  .lwline s { flex: 0 0 30px; text-align: right; text-decoration: none;
+              font-size: .7rem; font-weight: 700; }
+  .lwline s.up { color: var(--good); }
+  .lwline s.down { color: var(--bad); }
+  .lwheld { display: flex; flex-wrap: wrap; gap: 5px; }
+  .lwheld span { font-size: .74rem; color: var(--muted); background: #f2ece0;
+                 border-radius: 6px; padding: 2px 8px; }
+
   /* The action floats bottom-right so the thing you came to do is always reachable,
      however far you have scrolled the board — and deliberately SMALL. The first
      version was 205px tall and blotted out the map behind it. */
@@ -2053,6 +2091,9 @@
     <div class="lend">
       <div class="lbig" id="lEndScore"></div>
       <p class="lsub" id="lEndSub"></p>
+      <!-- What the session moved, word by word. The stats room next door already covers
+           minutes and cards; this is the half it cannot say. -->
+      <div id="lEndWords"></div>
       <div class="lactions">
         <button class="btn" id="lAgainBtn">Another session</button>
         <button class="btn secondary" id="lDoneBtn">Done for now</button>
@@ -12002,6 +12043,29 @@ function srsBands() {
   return out;
 }
 
+/* ---- how far a word has come -------------------------------------------------
+   What the end screen draws a bar from. Strong needs BOTH stab >= 21 and diff <= 5, so
+   a bar filled from stability alone would sit full while the label still read
+   "progressing" — a bar contradicting its own caption is worse than no bar. Taking
+   the worse of the two means a full bar always means strong, and the bar is limited by
+   whichever thing is actually holding the word back.
+
+   A side that has never been tested returns 0 rather than being scored as a failure:
+   most words are drilled on one side long before the other, and an untested side is not
+   a weak one. */
+function srsReach(rec) {
+  if (!rec || !rec.n) return 0;
+  const byStab = Math.max(0, Math.min(1, (rec.stab || 0) / 21));
+  /* Difficulty runs 1 (easy) to 10 (hard) and must reach 5 to allow strong. 1 is as
+     good as it gets, so the run from 10 down to 5 is the part that counts. */
+  const byDiff = Math.max(0, Math.min(1, (10 - (rec.diff || 5)) / 5));
+  return Math.min(byStab, byDiff);
+}
+function srsReachOf(srs, key, side) {
+  const r = (srs || {})[key];
+  return r ? srsReach(r[side || "prod"]) : 0;
+}
+
 /* ---- what he's actually done ------------------------------------------------
    George is committing to this properly and wanted to see it: time, streak, words,
    progress over weeks rather than a snapshot of today.
@@ -18049,6 +18113,16 @@ function learnCapGrade(grade, key) {
   return learnHints > 0 ? Math.min(grade, 1) : grade;
 }
 
+/* What a word looked like before this session touched it, remembered the first time it
+   is touched and never overwritten. The end screen needs a before and an after, and by
+   the time it runs the scheduler has long since moved on. */
+function learnMark(s, srs, key) {
+  if (!s || !key) return;
+  s.moved = s.moved || {};
+  if (s.moved[key]) return;
+  s.moved[key] = { prod: srsReachOf(srs, key, "prod"), recv: srsReachOf(srs, key, "recv") };
+}
+
 function learnGrade(grade) {
   const s = learnSession; if (!s || !learnRevealed) return;
   const c = s.cards[s.i];
@@ -18067,6 +18141,7 @@ function learnGrade(grade) {
   const freeKey = (c.kind === "chunk");
   (c.words || []).forEach(k => {
     if (!freeKey && !srsGradable(k, lib)) return;
+    learnMark(s, srs, k);
     /* Capped against THIS word, so a hint spent on one of them leaves the rest alone. */
     const g = learnCapGrade(grade, freeKey ? null : k);
     srsApply(srs, k, g, side);
@@ -18132,6 +18207,7 @@ function learnCommit() {
     if (grade !== 2) clean = false;
     if (t.key) {
       if (!srsGradable(t.key, lib)) return;
+      learnMark(s, srs, t.key);
       srsApply(srs, t.key, grade, side);
       if (grade === 2) s.strengthened[t.key] = true; else s.back[t.key] = true;
     } else if (grade !== 2) {
@@ -18195,6 +18271,107 @@ function statsSnapshotBands() {
   statsSave(st);
 }
 
+/* ---- what the session actually moved -----------------------------------------
+   The end screen used to be a score, one sentence and two buttons, while the stats room
+   next door already held minutes, cards, days and fourteen-day bars. So "richer" has to
+   mean something the stats room does not say: not how long you practised, but what
+   happened to the words.
+
+   George, having binned XP on the grounds that it "doesnt add anything new and jsut
+   diluets the pool": "each word has an XP bar (2 for hte comprehension and production I
+   suppose) and Theres like a green or red +/- depending on performance." Which is
+   better than XP precisely because it reports something true — the scheduler's own
+   movement, not a parallel currency invented to sit beside it.
+
+   Something moves almost every session: at baseline difficulty a clean answer runs the
+   interval 1, 2, 5, 12, 28 days. Band changes are rare by comparison, which is why the
+   bars are drawn from reach rather than from the band alone — a screen that showed
+   only rank changes would be blank most evenings, and wrongly so. */
+function learnReport(s, srs) {
+  const lib = libAll();
+  const rows = [];
+  Object.keys(s.moved || {}).forEach(k => {
+    if (!lib[k]) return;
+    const was = s.moved[k];
+    const now = { prod: srsReachOf(srs, k, "prod"), recv: srsReachOf(srs, k, "recv") };
+    const shift = (now.prod - was.prod) + (now.recv - was.recv);
+    rows.push({ key: k, tr: lib[k].tr || k, en: lib[k].en || "",
+                was: was, now: now, shift: shift,
+                band: { prod: srsStrengthOf(srs, k, "prod"), recv: srsStrengthOf(srs, k, "recv") } });
+  });
+  /* Biggest movement first, in either direction: a word that slipped is as much the
+     story of the session as one that climbed. */
+  rows.sort((a, b) => Math.abs(b.shift) - Math.abs(a.shift));
+  return { moved: rows.filter(r => Math.abs(r.shift) > 0.001),
+           held: rows.filter(r => Math.abs(r.shift) <= 0.001) };
+}
+
+/* Two bars a word: what you can SAY, and what you UNDERSTAND. Filled by srsReach, so a
+   full bar always means strong, and coloured by the band it is actually in — reusing
+   the tier colours the reading cards already use rather than inventing a second colour
+   language for the same four states. */
+function learnWordRow(r) {
+  const row = document.createElement("div"); row.className = "lwrow";
+  const name = document.createElement("div"); name.className = "lwname";
+  const tr = document.createElement("b"); tr.textContent = r.tr;
+  name.append(tr);
+  if (r.en) { const en = document.createElement("span"); en.textContent = r.en; name.append(en); }
+  row.append(name);
+
+  const bars = document.createElement("div"); bars.className = "lwbars";
+  [["say", "prod"], ["hear", "recv"]].forEach(([label, side]) => {
+    const line = document.createElement("div"); line.className = "lwline";
+    const lab = document.createElement("u"); lab.textContent = label; line.append(lab);
+    const track = document.createElement("div"); track.className = "lwtrack";
+    const fill = document.createElement("i");
+    fill.className = "tier-" + r.band[side];
+    fill.style.width = Math.round(r.now[side] * 100) + "%";
+    track.append(fill);
+    /* Where it stood before, marked on the bar it has since passed. Drawn as a line
+       rather than as a lighter overlay across the gained stretch: an overlay washes out
+       the band colour underneath, which is the one thing the bar is coloured to say. */
+    const delta = r.now[side] - r.was[side];
+    if (Math.abs(delta) > 0.001 && r.was[side] > 0.001) {
+      const from = document.createElement("u"); from.className = "lwfrom";
+      from.style.left = Math.round(r.was[side] * 100) + "%";
+      track.append(from);
+    }
+    line.append(track);
+    const d = document.createElement("s");
+    d.className = delta > 0.001 ? "up" : delta < -0.001 ? "down" : "flat";
+    d.textContent = Math.abs(delta) <= 0.001 ? "" :
+      (delta > 0 ? "+" : "\u2212") + Math.round(Math.abs(delta) * 100);
+    line.append(d);
+    bars.append(line);
+  });
+  row.append(bars);
+  return row;
+}
+function learnRenderReport(rep) {
+  const box = document.getElementById("lEndWords");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!rep.moved.length && !rep.held.length) return;
+  if (rep.moved.length) {
+    const h = document.createElement("div"); h.className = "lwhead";
+    h.textContent = "What moved";
+    box.append(h);
+    rep.moved.forEach(r => box.append(learnWordRow(r)));
+  }
+  /* Held steady is real information, not a gap in the report: it is what a working
+     schedule looks like on a word that was already where it should be. Collapsed to a
+     line of chips because thirty stacked bar-pairs is a wall. */
+  if (rep.held.length) {
+    const h = document.createElement("div"); h.className = "lwhead";
+    h.textContent = "Held steady";
+    const chips = document.createElement("div"); chips.className = "lwheld";
+    rep.held.forEach(r => {
+      const c = document.createElement("span"); c.textContent = r.tr; chips.append(c);
+    });
+    box.append(h, chips);
+  }
+}
+
 /* Read by the end-screen buttons after learnSession is nulled below, so a path
    lesson's completion can route back to the Path instead of the generic Learn
    home. Set unconditionally on every finish (to null for a non-path session),
@@ -18254,6 +18431,7 @@ function learnFinish() {
     }
   }
   document.getElementById("lEndSub").textContent = sub;
+  try { learnRenderReport(learnReport(s, srsAll())); } catch (e) {}
   lastFinishedPath = s.path || null;
   learnSession = null;
   learnShow("lEnd");
@@ -20819,6 +20997,72 @@ T("campWearFront: it follows him down as he actually works nodes", () => {
     const at = L.nodes.filter(n => n.id === deep.id)[0];
     assertEq(campWearFront(L, camp), at.y, "the trail is worn as far as the node he is on");
   });
+});
+
+/* ---- what the session moved ----
+   The end screen's bars. The trap they exist to avoid: strong needs BOTH stability and
+   difficulty, so a bar filled from stability alone sits full while the caption still
+   says "progressing". */
+T("srsReach: a full bar means strong, and nothing else does", () => {
+  assertEq(srsReach(null), 0, "an untested side is not a failed one");
+  assertEq(srsReach(srsBlank()), 0);
+  assertEq(srsReach(srsBandRecord("strong")), 1, "strong fills it");
+  assertTrue(srsReach(srsBandRecord("progressing")) < 1);
+  assertTrue(srsReach(srsBandRecord("weak")) < srsReach(srsBandRecord("progressing")));
+});
+T("srsReach: difficulty holds the bar back even when the interval is long", () => {
+  /* 40 days of stability is well past the 21 strong needs, but difficulty 8 is far
+     outside it — srsStrength calls this weak, and the bar must not disagree. */
+  const stubborn = { due: "2026-09-01", last: "2026-08-01", stab: 40, diff: 8, n: 6, miss: 3, lapses: 2 };
+  assertEq(srsStrength(stubborn), "weak", "the scheduler's own verdict");
+  assertTrue(srsReach(stubborn) < 0.5,
+             "a bar drawn from stability alone would have been full and called itself weak");
+});
+T("learnReport: splits what moved from what held, biggest movement first", () => {
+  const lib = {};
+  lib["בית"] = { tr: "bayit", en: "house" };
+  lib["ספר"] = { tr: "sefer", en: "book" };
+  const before = libAll();
+  try {
+    lsSet(LIB_KEY, JSON.stringify(lib));
+    const srs = {};
+    srs["בית"] = { prod: srsBandRecord("strong"), recv: srsBlank() };
+    srs["ספר"] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+    const sess = { moved: {
+      "בית": { prod: 0.2, recv: 0 },
+      "ספר": { prod: srsReachOf(srs, "ספר", "prod"), recv: 0 }
+    } };
+    const rep = learnReport(sess, srs);
+    assertEq(rep.moved.length, 1, "only the one whose reach actually changed");
+    assertEq(rep.moved[0].tr, "bayit");
+    assertEq(rep.held.length, 1, "and the other is not dropped, it held");
+    assertEq(rep.held[0].tr, "sefer");
+    assertTrue(rep.moved[0].shift > 0, "and it went up");
+  } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
+});
+T("learnReport: a word that slipped is reported as loudly as one that climbed", () => {
+  const lib = {}; lib["בית"] = { tr: "bayit", en: "house" };
+  const before = libAll();
+  try {
+    lsSet(LIB_KEY, JSON.stringify(lib));
+    const srs = {};
+    srs["בית"] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+    const rep = learnReport({ moved: { "בית": { prod: 1, recv: 0 } } }, srs);
+    assertEq(rep.moved.length, 1);
+    assertTrue(rep.moved[0].shift < 0, "it lost ground, and that is the story of the session");
+  } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
+});
+/* The snapshot has to be the state BEFORE the session touched the word, taken once. */
+T("learnMark: remembers where a word started and never overwrites it", () => {
+  const sess = {};
+  const srs = {};
+  srs["בית"] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+  learnMark(sess, srs, "בית");
+  const first = sess.moved["בית"].prod;
+  srs["בית"] = { prod: srsBandRecord("strong"), recv: srsBlank() };
+  learnMark(sess, srs, "בית");
+  assertEq(sess.moved["בית"].prod, first,
+           "a word met twice in one session must still report from where it began");
 });
 
 /* ---- the hint ladder ----

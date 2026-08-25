@@ -14144,39 +14144,84 @@ function campTrailMarks(trail) {
                       { len: CAMP_MARK_LEN, w: CAMP_MARK_W, fade: 220 });
 }
 
-/* A node further from the trail than this gets a spur. On mostly-empty paper a node
-   sitting alone a long way off with nothing between it and the trail reads as
-   unfinished layout; the spur is what makes the distance intentional — there is a way
-   up to it, it is just off the main road. Nearer nodes get nothing, because a track
-   joining two things already touching is noise. */
-const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92, CAMP_SPUR_MAX = 230;
+/* A track up to a town that stands off the road. It is what makes distance
+   intentional: a town alone on bare paper with nothing between it and the road reads as
+   unfinished layout, while one with a track reads as somewhere off the main way.
+
+   Distance is NOT the limit — standing in the way is. An earlier version capped the
+   length, and George's read of that was right: "all of htese nodes could have had paths
+   right. Aslong as hte path doesnt go through another node it can connect." So a track
+   is drawn however far it has to go, and refused only when the route would run over
+   another town or its name. The one thing still ruled out at the near end is a track
+   between two things already touching, which is noise.
+
+   And it is a track, not an arc: "not just an arch but like a straigh ish line that
+   connects to the path." Straight-ish, with a few small bends that change sign freely,
+   damped at both ends so it leaves the road and arrives at the gate pointing the right
+   way. A road bends because of the ground, not because someone swept a compass. */
+const CAMP_RING_R = 44, CAMP_SPUR_MIN = 92, CAMP_SPUR_MAX = 560;
 /* Half the width a node's label occupies below it — the name box, and under that the
    `why` line, which is the wider of the two and does not shrink with a short name. The
    trail router and the clearance check must agree on this figure or the router will
    certify routes the check then rejects. */
 const CAMP_LABEL_HALF = 95;
-function campSpur(node, samples) {
+function campSpurPath(a, b, seed) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const nx = -dy / dist, ny = dx / dist;
+  const steps = Math.max(2, Math.min(5, Math.round(dist / 95)));
+  const pts = [{ x: a.x, y: a.y }];
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    /* Damped by the sine at both ends, so the wander sits in the middle of the run
+       where ground would put it and the two ends stay pointing where they are going. */
+    const ease = Math.sin(t * Math.PI);
+    const off = (campJitter(seed + i * 37, 101) - 0.5) * Math.min(36, dist * 0.17) * ease;
+    const slip = (campJitter(seed + i * 37, 102) - 0.5) * 0.1;
+    const tt = Math.max(0.06, Math.min(0.94, t + slip));
+    pts.push({ x: a.x + dx * tt + nx * off, y: a.y + dy * tt + ny * off });
+  }
+  pts.push({ x: b.x, y: b.y });
+  return pts;
+}
+function campSpurClear(pts, node, others) {
+  const s = campTrailSamples(pts, 12);
+  const bar = (CAMP_RING_R + 18) * (CAMP_RING_R + 18);
+  for (let i = 0; i < s.length; i++) {
+    for (let j = 0; j < (others || []).length; j++) {
+      const o = others[j];
+      if (!o || o.id === node.id) continue;
+      const dx = s[i].x - o.x, dy = s[i].y - o.y;
+      if (dx * dx + dy * dy < bar) return false;
+      const lb = campLabelBox(o);
+      if (s[i].x > lb.x0 - 8 && s[i].x < lb.x1 + 8 &&
+          s[i].y > lb.y0 - 8 && s[i].y < lb.y1 + 8) return false;
+    }
+  }
+  return true;
+}
+function campSpur(node, samples, others) {
   const near = campTrailNearest(samples, node.x, node.y);
-  if (!near || near.dist < CAMP_SPUR_MIN) return null;
-  /* And nothing beyond CAMP_SPUR_MAX gets one either. A row of three nodes can be 840
-     units wide and a road cannot run past all of it, so something is always going to be
-     genuinely far away — and a track drawn all the way out to it stops reading as a
-     side road and starts reading as a line joining two things, which is the dependency
-     edge coming back. George, on seeing one: "It shouldnt form a connection that long."
-     Past this distance a node is not off the road, it is somewhere else. */
-  if (near.dist > CAMP_SPUR_MAX) return null;
-  const ax = near.at.x, ay = near.at.y;
-  /* Stops at the ring's edge rather than its centre — a spur run to the middle pokes
-     out the far side of a node whose fill is not fully opaque. */
-  const k = CAMP_RING_R / near.dist;
-  const bx = node.x + (ax - node.x) * k, by = node.y + (ay - node.y) * k;
-  const mx = (ax + bx) / 2, my = (ay + by) / 2;
-  const nx = -(by - ay), ny = bx - ax, nl = Math.sqrt(nx * nx + ny * ny) || 1;
-  const bow = Math.min(24, near.dist * 0.15) * (node.x < ax ? 1 : -1);
-  return { dist: near.dist, at: near.at,
-           points: [{ x: ax, y: ay },
-                    { x: mx + nx / nl * bow, y: my + ny / nl * bow },
-                    { x: bx, y: by }] };
+  if (!near || near.dist < CAMP_SPUR_MIN || near.dist > CAMP_SPUR_MAX) return null;
+  const seed0 = campSeedOf(node.id);
+  /* Leaving the road a little further along is often exactly what gets a track past
+     something standing in the way, so the junction is allowed to move before the route
+     is given up on. */
+  const along = [0, -36, 36, -78, 78, -130, 130];
+  for (let oi = 0; oi < along.length; oi++) {
+    const a = campTrailAt(samples, near.at.len + along[oi]);
+    if (!a) continue;
+    const dx = node.x - a.x, dy = node.y - a.y;
+    const dl = Math.sqrt(dx * dx + dy * dy) || 1;
+    if (dl > CAMP_SPUR_MAX) continue;
+    /* Stops at the gate rather than in the middle of the town. */
+    const b = { x: node.x - dx / dl * CAMP_RING_R, y: node.y - dy / dl * CAMP_RING_R };
+    for (let t = 0; t < 4; t++) {
+      const pts = campSpurPath(a, b, seed0 + t * 811 + oi * 97);
+      if (campSpurClear(pts, node, others)) return { dist: near.dist, at: a, points: pts };
+    }
+  }
+  return null;
 }
 
 /* How far down he has actually been, which is all the wear means. Deliberately not a
@@ -14635,7 +14680,7 @@ function campRender() {
            '" stroke-width="' + campR(m.w) + '"/>';
   });
   L.nodes.forEach(n => {
-    const sp = campSpur(n, trail.samples);
+    const sp = campSpur(n, trail.samples, L.nodes);
     if (!sp) return;
     const cls = "pspur" + (!n.fog && campNodeDone(n.id, c, srs) ? " worn" : "");
     const ss = campTrailSamples(sp.points, 14);
@@ -20358,24 +20403,45 @@ T("campTrail: it descends the whole map and crosses at every chapter boundary", 
            "and it sits exactly on the band line");
   assertTrue(trail.total > CAMP_BAND, "the running length is real");
 });
-/* A spur exists to make distance intentional. Drawing one to a node the road already
-   runs past is noise, and NOT drawing one to a node far out on bare paper makes the
-   layout look unfinished rather than remote. The threshold is therefore a real design
-   line, not a tolerance: it is what splits "the trail goes right by this" from "this is
-   somewhere off the road", and CAMP_TRAIL_SHAPES is authored against it. */
-T("campSpur: only the middle distance gets a track", () => {
+/* What may and may not have a track run to it. Being far away is fine; standing in the
+   way is not. */
+T("campSpur: near enough needs no track, and distance alone never refuses one", () => {
   const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
-  assertNull(campSpur({ x: 140, y: 200 }, samples), "40 away is touching the trail");
-  const near = campSpur({ x: 280, y: 200 }, samples);
-  assertTrue(!!near, "180 away is somewhere off the road");
-  assertEq(Math.round(near.points[0].x), 100, "and the track leaves FROM the trail");
-  assertNull(campSpur({ x: 500, y: 200 }, samples),
-             "400 away is not off the road, it is somewhere else — and a track that " +
-             "long is a dependency edge wearing a different hat");
+  assertNull(campSpur({ id: "a", x: 140, y: 200 }, samples, []),
+             "40 away is already touching the road");
+  const near = campSpur({ id: "b", x: 280, y: 200 }, samples, []);
+  assertTrue(!!near, "180 away gets one");
+  assertEq(Math.round(near.points[0].x), 100, "and the track leaves FROM the road");
+  assertTrue(!!campSpur({ id: "c", x: 520, y: 200 }, samples, []),
+             "420 away still gets one — distance is not what refuses a track");
 });
-T("campSpur: the track stops at the ring, not at the node's centre", () => {
+/* The one thing that does refuse it. */
+T("campSpurClear: a route that runs over another town is refused", () => {
+  const pts = [{ x: 100, y: 200 }, { x: 270, y: 200 }, { x: 436, y: 200 }];
+  assertTrue(campSpurClear(pts, { id: "a" }, []), "open country is fine");
+  assertTrue(!campSpurClear(pts, { id: "a" },
+             [{ id: "mid", x: 270, y: 200, name: "In the way" }]),
+             "straight through the middle of another town is not");
+  assertTrue(!campSpurClear(pts, { id: "a" },
+             [{ id: "lbl", x: 270, y: 130, name: "Its name is in the way" }]),
+             "and neither is straight through another town's name");
+});
+/* A track is a track, not a compass sweep: it must not be a single smooth bow, and its
+   ends must point at the two things it joins. */
+T("campSpurPath: straight-ish, with the wander in the middle", () => {
+  const a = { x: 100, y: 200 }, b = { x: 460, y: 200 };
+  const pts = campSpurPath(a, b, 4242);
+  assertTrue(pts.length >= 4, "a run this long bends more than once");
+  assertEq(pts[0].x, 100); assertEq(pts[pts.length - 1].x, 460);
+  const off = pts.slice(1, -1).map(p => p.y - 200);
+  assertTrue(off.some(o => Math.abs(o) > 3), "a perfectly straight line is not a track");
+  assertTrue(off.every(o => Math.abs(o) < 62), "and nor is a detour");
+  assertTrue(Math.abs(pts[1].y - 200) < Math.abs(off.sort((x, y) =>
+             Math.abs(y) - Math.abs(x))[0]) + 1, "the wander is damped at the ends");
+});
+T("campSpur: the track stops at the gate, not in the middle of the town", () => {
   const samples = campTrailSamples([{ x: 100, y: 0 }, { x: 100, y: 400 }], 16);
-  const sp = campSpur({ x: 220, y: 200 }, samples);
+  const sp = campSpur({ id: "z", x: 220, y: 200 }, samples, []);
   const end = sp.points[sp.points.length - 1];
   assertEq(Math.round(end.x), 220 - CAMP_RING_R, "it lands on the ring's edge");
   assertEq(Math.round(end.y), 200);

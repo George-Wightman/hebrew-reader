@@ -16184,7 +16184,9 @@ let learnSession = null;
 let learnRevealed = false;
 let learnCardTokens = null;   // per-word chips for the card on screen, or null
 let learnMarks = null;        // 0 = got it, 1 = missed, 2 = nearly
-let learnHints = 0;           // hints taken on the card on screen; caps its grade
+let learnHints = 0;           // rungs taken on the card on screen
+let learnHinted = {};         // ...and which word keys they exposed, which is what pays
+let learnHintAll = false;     // ...unless a rung handed over the whole target
 let learnNote = "";           // scratch note for the card on screen; never persisted
 /* The live word panel's repaint/close, so an async explain can rebuild the panel
    without severing its grade buttons from the chips they belong to. */
@@ -16887,7 +16889,8 @@ function learnRenderCard() {
   card.innerHTML = "";
   learnRevealed = false;
   learnCardTokens = null; learnMarks = null;   // stale marks must never carry over
-  learnHints = 0; learnNote = "";              // and neither must a previous card's help
+  learnHints = 0; learnHinted = {}; learnHintAll = false;
+  learnNote = "";                              // and neither must a previous card's help
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
   /* A listen must never span two cards. Stopping it is not enough on its own — the
      in-flight attempt also checks the card hasn't moved before it scores anything,
@@ -17316,35 +17319,93 @@ function learnScoreSpoken(c, text) {
    what the card is actually asking for — a first letter is a real hint when you're
    producing Hebrew and useless when you're being asked what a sentence meant.
    Steps that would render blank are dropped rather than shown empty. */
+/* Which words on this card he might actually be stuck on. NOT every word in the
+   sentence, which is what the ladder used to reach for: George, on being handed help he
+   did not need — "The current hints will give words that I am already dtong with (like
+   lo or ein) and not the word that I actualyl dont know."
+
+   Two filters, and both were missing. STOPLIST words are function words the scheduler
+   refuses to grade at all (see srsGradable), so they carry no strength record and are
+   not something he is ever stuck on — and "ein" and "lo", the two he named, are both on
+   it. And a word he is already strong at on the side this card tests is, by definition,
+   not the one holding him up. */
+function learnHardKeys(c, lib, srs, side) {
+  const raw = c.kind === "word" ? [c.key]
+            : c.kind === "chunk" ? String(c.key || "").split(/[^֐-׿]+/)
+            : String((c.item || {}).he || "").split(/[^֐-׿]+/);
+  const out = [];
+  raw.forEach(w => {
+    const k = libKeyFor(String(w || "").trim(), lib);
+    if (!k || out.indexOf(k) !== -1) return;
+    if (STOPLIST.has(k)) return;
+    if (srsStrengthOf(srs, k, side) === "strong") return;
+    out.push(k);
+  });
+  return out;
+}
+/* The sentence with the words he owns spelled out and the ones he does not reduced to
+   a first letter. George: "if hte sentence is 'I dont have a computer' What I might
+   struggle with is computer, and thats what I want in the hint."
+
+   Handing over the easy words is only acceptable because the cost of a hint is now paid
+   per word — showing him "ein" because he already owns it charges "ein" nothing. */
+function learnScaffold(he, lib, srs, side) {
+  let blanked = 0;
+  const out = String(he || "").trim().split(/\s+/).map(w => {
+    const bare = w.replace(/[^֐-׿]/g, "");
+    if (!bare) return w;
+    const k = libKeyFor(bare, lib);
+    if (k && (STOPLIST.has(k) || srsStrengthOf(srs, k, side) === "strong")) return w;
+    blanked++;
+    return bare[0] + "___";
+  }).join(" ");
+  /* Nothing blanked means nothing to help with, and a "hint" that restates the answer
+     in full would be the most expensive rung on the ladder pretending to be the
+     cheapest. */
+  return blanked ? out : "";
+}
+
 function learnHintSteps(c) {
   const lib = libAll();
+  const srs = srsAll();
+  const side = KIND_SIDE[c.kind] || "prod";
+  const hard = learnHardKeys(c, lib, srs, side);
   const firstLetters = he =>
     String(he || "").trim().split(/\s+/)
       .map(w => w.replace(/[^֐-׿]/g, "")[0] || "").filter(Boolean).join(" ");
   const steps = [];
-  const prime = hintPrimeStep(c, lib);
+  const prime = hintPrimeStep(c, lib, hard);
+  /* Every rung declares what it exposed, and only that is charged for. "all" is for the
+     rungs that genuinely hand over the target; a slow replay and a restatement of THEIR
+     question expose nothing about your answer and cost nothing. */
   if (c.kind === "word") {
     if (prime) steps.push(prime);
     const first = String(c.key || "").replace(/[^֐-׿]/g, "")[0];
-    if (first) steps.push({ label: "Starts with", text: first, rtl: true });
+    if (first) steps.push({ label: "Starts with", text: first, rtl: true, exposes: [c.key] });
   } else if (c.kind === "sentence") {
     if (prime) steps.push(prime);
-    const fl = firstLetters(c.item.he);
-    if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true });
-    if (c.item.tr) steps.push({ label: "How it sounds", text: c.item.tr, rtl: false });
+    const sc = learnScaffold(c.item.he, lib, srs, side);
+    if (sc) steps.push({ label: "Fill in the gap", text: sc, rtl: true, exposes: hard });
+    if (c.item.tr) steps.push({ label: "How it sounds", text: c.item.tr, rtl: false, exposes: "all" });
   } else if (c.kind === "chunk") {
-    if (prime) steps.push(prime);
+    /* A chunk is retrieved WHOLE — that is the entire claim being trained — so there is
+       no such thing as helping with part of one. Every rung here costs the whole card. */
+    if (prime) steps.push(Object.assign({}, prime, { exposes: "all" }));
     const fl = firstLetters(c.key);
-    if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true });
+    if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true, exposes: "all" });
     const p = PHRASES[c.key];
-    if (p && p[0]) steps.push({ label: "How it sounds", text: p[0], rtl: false });
+    if (p && p[0]) steps.push({ label: "How it sounds", text: p[0], rtl: false, exposes: "all" });
   } else if (isHearKind(c.kind) || c.kind === "shadow") {
-    steps.push({ label: "", text: "", slow: true });
-    if (c.item.tr) steps.push({ label: "What he said, in English letters", text: c.item.tr, rtl: false });
+    steps.push({ label: "", text: "", slow: true, exposes: [] });
+    if (c.item.tr) steps.push({ label: "What he said, in English letters", text: c.item.tr,
+                               rtl: false, exposes: "all" });
   } else if (c.kind === "reply") {
-    if (c.item.qtr) steps.push({ label: "His question, in English letters", text: c.item.qtr, rtl: false });
-    const fit = (c.item.uses || []).filter(u => lib[u]).map(u => lib[u].tr || u);
-    if (fit.length) steps.push({ label: "Words you have that fit", text: fit.slice(0, 6).join(" · "), rtl: false });
+    if (c.item.qtr) steps.push({ label: "His question, in English letters", text: c.item.qtr,
+                                 rtl: false, exposes: [] });
+    const fit = (c.item.uses || []).filter(u => lib[u]).slice(0, 6);
+    if (fit.length) steps.push({ label: "Words you have that fit",
+                                 text: fit.map(u => lib[u].tr || u).join(" · "),
+                                 rtl: false, exposes: fit });
   } else if (c.kind === "conversation") {
     /* The slow replay comes first because "I didn't catch what they said" is a
        different problem from "I can't produce a reply", and replaying costs
@@ -17352,12 +17413,12 @@ function learnHintSteps(c) {
        unasked: you're meant to understand their line and attempt your own reply
        first, the way an actual conversation works, with the answer only as a
        last resort exactly like every other production card. */
-    steps.push({ label: "", text: "", slow: true });
+    steps.push({ label: "", text: "", slow: true, exposes: [] });
     if (prime) steps.push(prime);
-    const fl = firstLetters(c.item.he);
-    if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true });
-    if (c.item.tr) steps.push({ label: "How to say it", text: c.item.tr, rtl: false });
-    if (c.item.askEn) steps.push({ label: "What to say", text: c.item.askEn, rtl: false });
+    const sc = learnScaffold(c.item.he, lib, srs, side);
+    if (sc) steps.push({ label: "Fill in the gap", text: sc, rtl: true, exposes: hard });
+    if (c.item.tr) steps.push({ label: "How to say it", text: c.item.tr, rtl: false, exposes: "all" });
+    if (c.item.askEn) steps.push({ label: "What to say", text: c.item.askEn, rtl: false, exposes: "all" });
   }
   return steps;
 }
@@ -17367,25 +17428,24 @@ function learnHintSteps(c) {
    enough to unstick you without handing over the answer, which is what every other
    rung does. Decoys are drawn from the same category first so they're plausible;
    a decoy you'd never confuse teaches nothing. */
-function hintPrimeStep(c, lib) {
+function hintPrimeStep(c, lib, hard) {
   /* Split on non-Hebrew-letter runs, same as bankUses — plain whitespace-splitting
      left punctuation stuck to a token, which broke the lookup the same way an
      unstripped prefix did. Then libKeyFor peels off the definite article/conjunction
      so "המחשב" (the computer) still finds the library's "מחשב" — this was the actual
      bug George hit: the sentence's one word he didn't know carried a prefix, so it
      silently never became a hint candidate at all. */
-  const raw = c.kind === "word" ? [c.key]
-            : c.kind === "chunk" ? String(c.key || "").split(/[^֐-׿]+/)
-            : String((c.item || {}).he || "").split(/[^֐-׿]+/);
-  const targets = [];
-  raw.forEach(w => {
-    const k = libKeyFor(String(w || "").trim(), lib);
-    if (k && targets.indexOf(k) === -1) targets.push(k);
-  });
+  /* The targets arrive already filtered by learnHardKeys — function words and words he
+     is strong at are not candidates. Every word in the sentence used to qualify, which
+     is why a hint for "I don't have a computer" offered "ein" and "li" alongside the one
+     word he wanted, three chips in seven and no way to tell them apart. */
+  const targets = (hard || []).slice();
   if (!targets.length) return null;
   const want = Math.max(5, Math.min(7, targets.length + 4));
   const cat = (lib[targets[0]] || {}).cat || "";
-  const pool = Object.keys(lib).filter(k => targets.indexOf(k) === -1);
+  /* Stoplisted words make poor decoys too: he would rule them out instantly, so they
+     pad the row without ever making it harder. */
+  const pool = Object.keys(lib).filter(k => targets.indexOf(k) === -1 && !STOPLIST.has(k));
   const sameCat = pool.filter(k => (lib[k] || {}).cat === cat);
   const rest = pool.filter(k => (lib[k] || {}).cat !== cat);
   const pick = arr => arr.sort(() => Math.random() - 0.5);
@@ -17394,7 +17454,8 @@ function hintPrimeStep(c, lib) {
     .map(k => ({ he: k, tr: (lib[k] || {}).tr || k }));
   if (chips.length < 2) return null;
   return { label: targets.length > 1 ? "These are in it, mixed with some that aren't"
-                                     : "One of these is the word", chips: chips };
+                                     : "One of these is the word",
+           chips: chips, exposes: targets };
 }
 
 function learnTakeHint(btn, c) {
@@ -17402,6 +17463,9 @@ function learnTakeHint(btn, c) {
   const step = steps[learnHints];
   if (!step) return;
   learnHints++;
+  /* Charged to exactly what it showed. */
+  if (step.exposes === "all") learnHintAll = true;
+  else (step.exposes || []).forEach(k => { learnHinted[k] = true; });
   const card = document.getElementById("lCard");
   const act = card.querySelector(".lactions");
   if (step.slow) {
@@ -17429,10 +17493,15 @@ function learnTakeHint(btn, c) {
   /* Stated the moment the help is taken, never applied silently afterwards. A
      hinted answer isn't a recalled one, and letting it bank as "Got it" would
      stretch that word's next interval on evidence that doesn't exist. */
-  if (learnHints === 1 && !card.querySelector(".lcap")) {
-    const cap = document.createElement("div"); cap.className = "lcap";
-    cap.textContent = "Hint taken — this one banks as \"Nearly\" at best.";
-    card.insertBefore(cap, act);
+  const charged = learnHintAll || Object.keys(learnHinted).length;
+  if (charged) {
+    let cap = card.querySelector(".lcap");
+    if (!cap) { cap = document.createElement("div"); cap.className = "lcap"; card.insertBefore(cap, act); }
+    /* Says which it was. Capping the whole card and capping one word are different
+       prices, and the old wording quoted the higher one for both. */
+    cap.textContent = learnHintAll
+      ? "Hint taken — this one banks as \"Nearly\" at best."
+      : "Hint taken — only the word you were shown banks lower.";
   }
   if (learnHints >= steps.length) btn.disabled = true;
   syncPadOffset();
@@ -17845,11 +17914,23 @@ async function learnWhy(btn, c) {
   } finally { busy(false); }
 }
 
-/* Help is always available and always honest about what it cost: a hinted answer
-   can never bank better than "Nearly". It can still bank WORSE — an explicit
-   "Missed" survives, because the hint didn't make the recall any better than the
-   one you just told us you didn't have. */
-function learnCapGrade(grade) { return learnHints > 0 ? Math.min(grade, 1) : grade; }
+/* Help is always available and always honest about what it cost: a hinted answer can
+   never bank better than "Nearly". It can still bank WORSE — an explicit "Missed"
+   survives, because the hint didn't make the recall any better than the one you just
+   told us you didn't have.
+
+   PER WORD, not per card. This used to cap the whole card, and learnCommit ran every
+   token through it — so one hint taken for the single hard word in a sentence
+   downgraded every OTHER word in it from "Got it" to "Nearly", and "Nearly" is not
+   neutral in the scheduler: it multiplies stability by 0.9 and adds half a miss. Asking
+   for help on the word you were stuck on quietly shortened the interval on every word
+   standing next to it. George, setting the condition that found it: "so long as it
+   doesnt reduce the strength of those words to." */
+function learnCapGrade(grade, key) {
+  if (learnHintAll) return Math.min(grade, 1);
+  if (key) return learnHinted[key] ? Math.min(grade, 1) : grade;
+  return learnHints > 0 ? Math.min(grade, 1) : grade;
+}
 
 function learnGrade(grade) {
   const s = learnSession; if (!s || !learnRevealed) return;
@@ -17857,15 +17938,22 @@ function learnGrade(grade) {
   const lib = libAll();
   const srs = srsAll();
   const side = KIND_SIDE[c.kind] || "prod";
-  grade = learnCapGrade(grade);
+  /* The CARD's own verdict — what the review log records and what decides whether this
+     counted as clean for the stats and the measured level. Any help at all makes the
+     card not-clean, which is unchanged; what changed is that this no longer decides what
+     each individual word banks. */
+  const helped = learnHints > 0;
+  if (helped) grade = Math.min(grade, 1);
   /* A chunk's SRS key is the whole phrase, which is deliberately NOT a library
      word — so the library guard below would silently drop every chunk grade and
      the schedule would look like it was working while recording nothing. */
   const freeKey = (c.kind === "chunk");
   (c.words || []).forEach(k => {
     if (!freeKey && !srsGradable(k, lib)) return;
-    srsApply(srs, k, grade, side);
-    if (grade === 2) s.strengthened[k] = true; else s.back[k] = true;
+    /* Capped against THIS word, so a hint spent on one of them leaves the rest alone. */
+    const g = learnCapGrade(grade, freeKey ? null : k);
+    srsApply(srs, k, g, side);
+    if (g === 2) s.strengthened[k] = true; else s.back[k] = true;
   });
   srsSave(srs);
   /* Recorded HERE, while `learnSpoken` still holds the transcript. One card later it
@@ -17923,7 +18011,7 @@ function learnCommit() {
 
   learnCardTokens.forEach((t, i) => {
     const m = learnMarks[i];
-    const grade = learnCapGrade(m === 0 ? 2 : m === 1 ? 0 : 1);   // mark 1 = missed, 2 = nearly
+    const grade = learnCapGrade(m === 0 ? 2 : m === 1 ? 0 : 1, t.key);   // mark 1 = missed, 2 = nearly
     if (grade !== 2) clean = false;
     if (t.key) {
       if (!srsGradable(t.key, lib)) return;
@@ -20614,6 +20702,117 @@ T("campWearFront: it follows him down as he actually works nodes", () => {
     const at = L.nodes.filter(n => n.id === deep.id)[0];
     assertEq(campWearFront(L, camp), at.y, "the trail is worn as far as the node he is on");
   });
+});
+
+/* ---- the hint ladder ----
+   George's report, which turned out to be two separate faults: "The current hints will
+   give words that I am already dtong with (like lo or ein) and not the word that I
+   actualyl dont know." */
+const HINT_LIB = {
+  "אין": { tr: "ein", en: "there isn't", cat: "other" },
+  "לי": { tr: "li", en: "to me", cat: "other" },
+  "מחשב": { tr: "machshev", en: "computer", cat: "thing" },
+  "בית": { tr: "bayit", en: "house", cat: "thing" },
+  "ספר": { tr: "sefer", en: "book", cat: "thing" }
+};
+function hintCard(he) {
+  return { kind: "sentence", item: { he: he, tr: "ein li machshev", en: "I don't have a computer" },
+           words: [ "מחשב" ] };
+}
+T("learnHardKeys: a function word is never what he is stuck on", () => {
+  const he = "אין לי מחשב";
+  const hard = learnHardKeys(hintCard(he), HINT_LIB, {}, "prod");
+  assertTrue(STOPLIST.has("אין") && STOPLIST.has("לי"),
+             "this test is only meaningful because both really are stoplisted");
+  assertEq(hard, ["מחשב"],
+           "ein and li were offered as things to teach him, which is what he reported");
+});
+T("learnHardKeys: nor is a word he is already strong at", () => {
+  const he = "מחשב בית";
+  const srs = {};
+  srs["בית"] = { prod: srsBandRecord("strong"), recv: srsBlank() };
+  assertEq(learnHardKeys(hintCard(he), HINT_LIB, srs, "prod"), ["מחשב"]);
+  /* The side matters: strong at SAYING it says nothing about hearing it. */
+  assertEq(learnHardKeys(hintCard(he), HINT_LIB, srs, "recv").length, 2,
+           "a card testing comprehension must not skip a word only proven in production");
+});
+T("hintPrimeStep: offers the word he needs, not the ones he owns", () => {
+  const c = hintCard("אין לי מחשב");
+  const hard = learnHardKeys(c, HINT_LIB, {}, "prod");
+  const step = hintPrimeStep(c, HINT_LIB, hard);
+  assertTrue(!!step, "there is a word here he does not have");
+  assertEq(step.exposes, ["מחשב"], "and exactly one of them is it");
+  const shown = step.chips.map(ch => ch.he);
+  assertTrue(shown.indexOf("מחשב") !== -1, "the word he needs is in the row");
+  assertTrue(shown.indexOf("אין") === -1 && shown.indexOf("לי") === -1,
+             "and the function words are not \u2014 not even as decoys, which he would rule out on sight");
+});
+T("hintPrimeStep: nothing to offer when he already has all of it", () => {
+  const c = hintCard("מחשב בית");
+  const srs = {};
+  [ "מחשב", "בית" ].forEach(k => {
+    srs[k] = { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") };
+  });
+  const hard = learnHardKeys(c, HINT_LIB, srs, "prod");
+  assertEq(hard, [], "every word is his");
+  assertNull(hintPrimeStep(c, HINT_LIB, hard), "so the rung must not fire at all");
+});
+/* The scaffolding rung. George: "if hte sentence is 'I dont have a computer' What I
+   might struggle with is computer, and thats what I want in the hint." */
+T("learnScaffold: spells out what he owns, blanks what he does not", () => {
+  const he = "אין לי מחשב";
+  const out = learnScaffold(he, HINT_LIB, {}, "prod");
+  assertTrue(out.indexOf("אין") !== -1 && out.indexOf("לי") !== -1,
+             "the words he has are given whole \u2014 that is the scaffolding");
+  assertTrue(out.indexOf("מחשב") === -1, "the word he needs is not handed over");
+  assertTrue(/___/.test(out), "it is blanked to its first letter instead");
+  assertTrue(out.indexOf("מחשב"[0]) !== -1, "which is still shown");
+});
+T("learnScaffold: nothing to scaffold is not a hint", () => {
+  const srs = {};
+  srs["מחשב"] = { prod: srsBandRecord("strong"), recv: srsBlank() };
+  assertEq(learnScaffold("אין מחשב", HINT_LIB, srs, "prod"), "",
+           "restating the whole answer is the most expensive rung wearing the cheapest hat");
+});
+/* The second fault, and the more damaging one: help taken for one word used to be
+   charged to every word beside it. */
+T("learnCapGrade: a hint is charged to the word it was spent on", () => {
+  const keepHints = learnHints, keepMap = learnHinted, keepAll = learnHintAll;
+  try {
+    learnHints = 1; learnHintAll = false; learnHinted = {};
+    learnHinted["מחשב"] = true;
+    assertEq(learnCapGrade(2, "מחשב"), 1, "the word he was shown banks lower");
+    assertEq(learnCapGrade(2, "בית"), 2,
+             "the word standing next to it keeps what it earned \u2014 this is the bug");
+    assertEq(learnCapGrade(0, "מחשב"), 0, "and a hint never rescues a miss");
+  } finally { learnHints = keepHints; learnHinted = keepMap; learnHintAll = keepAll; }
+});
+T("learnCapGrade: a rung that hands over the whole target charges the whole card", () => {
+  const keepHints = learnHints, keepMap = learnHinted, keepAll = learnHintAll;
+  try {
+    learnHints = 1; learnHinted = {}; learnHintAll = true;
+    assertEq(learnCapGrade(2, "בית"), 1, "nothing survives being told the answer");
+    assertEq(learnCapGrade(2), 1);
+  } finally { learnHints = keepHints; learnHinted = keepMap; learnHintAll = keepAll; }
+});
+T("learnCapGrade: an untouched card banks exactly what it earned", () => {
+  const keepHints = learnHints, keepMap = learnHinted, keepAll = learnHintAll;
+  try {
+    learnHints = 0; learnHinted = {}; learnHintAll = false;
+    assertEq(learnCapGrade(2, "מחשב"), 2);
+    assertEq(learnCapGrade(2), 2);
+  } finally { learnHints = keepHints; learnHinted = keepMap; learnHintAll = keepAll; }
+});
+/* A replay is not a reveal. Playing the line again more slowly tells you nothing about
+   your own answer, so it must not cost anything. */
+T("learnHintSteps: a slow replay exposes nothing", () => {
+  const c = { kind: "shadow", item: { he: "מחשב", tr: "machshev" },
+              words: [ "מחשב" ] };
+  const steps = learnHintSteps(c);
+  assertTrue(steps.length >= 1);
+  assertTrue(steps[0].slow, "the cheapest rung on a listening card is hearing it again");
+  assertEq(steps[0].exposes, []);
+  assertEq(steps[steps.length - 1].exposes, "all", "and the last one is the answer");
 });
 
 /* ---- the paper ---- */

@@ -1528,6 +1528,15 @@
   /* The sheet. */
   .ppaper { fill: url(#camppaper); }
   .pfleck circle { fill: #9c8b6a; opacity: .13; }
+  /* The coast. Cool enough to read as water against warm paper, pale enough that it is
+     still the same sheet. */
+  .psea { fill: #dfe4e0; opacity: .55; }
+  .pshoreline { fill: none; stroke: #8fa39d; stroke-width: 2.2; opacity: .5; }
+  .pshorehatch { fill: none; stroke: #8fa39d; stroke-width: 1.3; }
+  .pdock { pointer-events: none; }
+  .pdock .pdeck { fill: #d3c2a2; stroke: #8a7148; stroke-width: 1.8; stroke-linejoin: round; }
+  .pdock .pplank { stroke: #8a7148; stroke-width: 1.2; opacity: .65; }
+  .pdock .ppost { fill: #8a7148; }
   /* The country. Faint enough to be ground the map is drawn ON, never a thing competing
      with the towns or the road for a look. */
   .pterrain { pointer-events: none; }
@@ -13996,7 +14005,7 @@ function campR(v) { return Math.round(v * 10) / 10; }
 function campTrailPoints(c) {
   const cc = c || campAll();
   const pts = [], crossings = [];
-  let entry;
+  let entry, dock = null;
   (cc.chapters.length ? cc.chapters : [{ nodes: [], sketch: [] }]).forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const count = (ch.nodes || []).length || (ch.sketch || []).length || 1;
@@ -14011,8 +14020,17 @@ function campTrailPoints(c) {
       pts.push(at);
     });
     entry = pts.length ? pts[pts.length - 1].x : entry;
+    if (ci === 0 && pts.length) dock = pts[0].x;
   });
-  return { pts: pts, crossings: crossings };
+  /* The road comes off the jetty rather than starting at the first band line. Two points
+     between the two, so it leaves the water heading inland instead of kinking at the
+     shore. */
+  if (dock !== null) {
+    const sy = campShoreYAt(campShorePoints(), dock);
+    pts.unshift({ x: dock, y: sy + (CAMP_TOP - 40 - sy) * 0.55 });
+    pts.unshift({ x: dock, y: sy - 34 });
+  }
+  return { pts: pts, crossings: crossings, dock: dock };
 }
 
 /* Catmull-Rom through the waypoints, written out as cubics. The curve passes THROUGH
@@ -14058,7 +14076,7 @@ function campTrailSamples(pts, per) {
 function campTrail(c) {
   const p = campTrailPoints(c);
   const samples = campTrailSamples(p.pts, 16);
-  return { d: campTrailPath(p.pts), points: p.pts, crossings: p.crossings,
+  return { d: campTrailPath(p.pts), points: p.pts, crossings: p.crossings, dock: p.dock,
            samples: samples, total: samples.length ? samples[samples.length - 1].len : 0 };
 }
 function campTrailAt(samples, len) {
@@ -14235,10 +14253,10 @@ function campSpur(node, samples, others) {
    nothing has been walked. */
 const CAMP_WEAR_FADE = 280;
 function campWearFront(L, c, srs) {
-  /* A whole fade ABOVE the map's first line, not merely on it: the wear runs from the
-     front upwards, so a front sitting on the top line would still leave the first
-     stretch of trail warm on a map nobody had touched. */
-  let y = CAMP_TOP - 40 - CAMP_WEAR_FADE;
+  /* A whole fade above the START of the road, which is the jetty, not the first band
+     line: wear runs from the front upwards, so a front any lower would leave the stretch
+     coming off the dock warm on a map nobody had touched. */
+  let y = -CAMP_PAD_TOP - CAMP_WEAR_FADE;
   L.nodes.forEach(n => {
     if (n.fog) return;
     const st = campNodeState(n.id, c, srs);
@@ -14420,6 +14438,67 @@ function campWordSet(node, others, avoid, srs, samples) {
   return { words: words, strong: strong, drift: drift, halo: halo,
            at: words.map((w, i) => strong[i] ? halo[i] : drift[i]) };
 }
+/* ---- the coast ----------------------------------------------------------------
+   Where the map begins. Above the first chapter there was nothing but blank sheet, and
+   on a phone that is most of the screen before you reach anything. George: "I think it
+   owuld be a cool idea to have liek a 'dock, a rough shaw line ocean at the top, the
+   path starts a bit before the current dashed start line. Just to give it context."
+
+   So the country has a shore, and the road starts at a jetty on it rather than at the
+   top edge of a band. It is fixed rather than generated — there is only ever one coast
+   and it is always in the same place, so it wants to be a piece of scenery rather than
+   another thing the seed decides.
+
+   The sea is drawn the way an old chart draws it: the coastline, then a few lines
+   running parallel to it and fading out to seaward. Not waves — a wave symbol is what
+   George threw out of the terrain, and hachures following the coast read unmistakably
+   as water without borrowing that shape. */
+const CAMP_SHORE_DROP = 210;
+function campShoreY() { return CAMP_TOP - 40 - CAMP_SHORE_DROP; }
+function campShorePoints() {
+  const y = campShoreY(), lo = -CAMP_PAD_X, hi = CAMP_W + CAMP_PAD_X, step = 132;
+  const pts = [];
+  for (let x = lo; x <= hi + step; x += step) {
+    const at = Math.min(x, hi);
+    pts.push({ x: at, y: y + (campJitter(Math.round(at) + 5, 111) - 0.5) * 52 });
+  }
+  return pts;
+}
+function campShoreYAt(pts, x) {
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].x >= x) {
+      const a = pts[i - 1], b = pts[i], t = (x - a.x) / ((b.x - a.x) || 1);
+      return a.y + (b.y - a.y) * t;
+    }
+  }
+  return pts.length ? pts[pts.length - 1].y : campShoreY();
+}
+function campSea(dockX) {
+  const pts = campShorePoints();
+  const lo = -CAMP_PAD_X, hi = CAMP_W + CAMP_PAD_X, top = -CAMP_PAD_TOP;
+  const line = campTrailPath(pts);
+  let out = '<path class="psea" d="' + line + " L" + campR(hi) + " " + campR(top) +
+            " L" + campR(lo) + " " + campR(top) + ' Z"/>';
+  out += '<path class="pshoreline" d="' + line + '"/>';
+  /* Fading out to seaward, the way soundings thin on a chart. */
+  for (let k = 1; k <= 4; k++) {
+    const up = k * 17 + k * k * 4;
+    out += '<path class="pshorehatch" d="' + line + '" transform="translate(0 ' +
+           campR(-up) + ')" opacity="' + campR(0.34 - k * 0.065) + '"/>';
+  }
+  /* The jetty the road runs off. Planks out into the water, and two posts at the head
+     of it — the smallest thing that says someone lands here. */
+  const dy = campShoreYAt(pts, dockX);
+  out += '<g class="pdock" transform="translate(' + campR(dockX) + ' ' + campR(dy) + ')">' +
+         '<path class="pdeck" d="M-10 10 L-10 -50 L10 -50 L10 10 Z"/>';
+  for (let i = 0; i < 5; i++)
+    out += '<line class="pplank" x1="-10" y1="' + (6 - i * 13) + '" x2="10" y2="' +
+           (6 - i * 13) + '"/>';
+  out += '<circle class="ppost" cx="-14" cy="-50" r="4"/>' +
+         '<circle class="ppost" cx="14" cy="-50" r="4"/></g>';
+  return out;
+}
+
 /* ---- the paper ---------------------------------------------------------------
    The fog's top edge was a gradient stop, which is a clean horizontal line across the
    whole board — unmistakably a CSS effect laid over a map rather than a fact about the
@@ -14709,10 +14788,15 @@ function campRender() {
     wordPlan.reduce((acc, w) =>
       acc.concat(w.show.map(i => campWordBox(w.set.at[i]))), []));
 
-  /* The land, first of all and under everything: the country the towns stand in. */
+  /* The sea, then the land, both under everything else. The first chapter's country
+     runs all the way up to the shoreline rather than stopping at its own band line —
+     otherwise the strip between the water and the first chapter is bare paper, which is
+     the emptiness the coast was added to fill. */
+  svg += campSea(trail.dock === null || trail.dock === undefined ? CAMP_W / 2 : trail.dock);
   L.bands.forEach((b, bi) => {
+    const reach = bi === 0 ? { top: campShoreY() + 34, bottom: b.bottom, label: b.label } : b;
     let land = "";
-    campTerrain(b, bi, L.nodes.filter(n => n.band === bi), keepOff, trail.samples)
+    campTerrain(reach, bi, L.nodes.filter(n => n.band === bi), keepOff, trail.samples)
       .forEach(t => { land += campTerrainGlyph(t.kind, t.x, t.y, t.k, t.seed); });
     if (land) svg += '<g class="pterrain" data-band="' + bi + '">' + land + '</g>';
   });

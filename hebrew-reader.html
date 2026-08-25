@@ -13695,7 +13695,14 @@ const CAMP_BAND = 470, CAMP_TOP = 150, CAMP_W = 1220;
    blank margin instead of the map. Overflowing leaves every coordinate, the zoom maths
    and the fitting untouched, and the surround simply paints out into the scroller's
    own padding — which is precisely the space that was showing bare page before. */
-const CAMP_PAD_X = 1400, CAMP_PAD_TOP = 400, CAMP_PAD_BOTTOM = 1800;
+/* CAMP_PAD_TOP has to outlast the scroller's own pan room, not just look generous. The
+   view can be panned 45vh above the board (.lmapview's padding, "Freedom to pan into
+   empty space around the map"), and at the most zoomed-out setting on a tall phone that
+   is upward of 1270 board units above the shoreline — a figure that only shows up once
+   someone actually pans there, which is exactly what George did: "Extend the blue all
+   hte way up from the water so it doesnt stop at hte boundary." 1800 clears it with
+   margin, and matches CAMP_PAD_BOTTOM rather than introducing a third figure. */
+const CAMP_PAD_X = 1400, CAMP_PAD_TOP = 1800, CAMP_PAD_BOTTOM = 1800;
 
 /* ---- a different country every chapter ---------------------------------------
    A chapter used to take one of six hand-authored arrangements, chosen by node count,

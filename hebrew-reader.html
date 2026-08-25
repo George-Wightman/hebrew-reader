@@ -905,50 +905,55 @@
   .lchip.mute { background: #f0ece4; color: var(--muted); }
   .btn.big { font-size: 1.05rem; padding: 12px 32px; }
 
-  .lprog { height: 4px; background: var(--border); border-radius: 2px; margin-bottom: 12px; }
-  .lprog > i { display: block; height: 100%; width: 0; background: var(--accent);
-               border-radius: 2px; transition: width .25s ease; }
+  /* ---- the drill, on the road ----
+     The map spent a whole redesign making paper, ink and a road mean something, and the
+     drill sat behind a button in a different visual world: white panels, teal chrome,
+     emoji. Same sheet now — but no terrain, which is the map's job and would fight
+     the thing being read here. */
+  /* Full-bleed under the nav, exactly like the map. The drill is the same world, and a
+     sheet of paper that stops two-thirds down the screen with page showing beneath it
+     reads as a panel again — which is the thing this redesign is getting rid of. */
+  #lRun { position: fixed; left: 0; right: 0; top: var(--navh, 57px); bottom: 0; z-index: 5;
+          overflow: auto; display: flex; flex-direction: column;
+          background: linear-gradient(150deg, #f8f3e9, #f2ece0 48%, #eae1d0);
+          padding: 18px 16px 26px; }
+  /* margin:auto rather than justify-content:center — it centres the same way while a
+     tall card is still fully reachable instead of having its top clipped off. */
+  .lrunin { margin: auto; width: 100%; max-width: 620px; }
+  .lroadwrap { margin: 0 2px 12px; }
+  .lroad { display: block; width: 100%; height: 42px; }
+  .lroadworn { fill: none; stroke: #ac8046; stroke-width: 3.4; stroke-linecap: round; }
+  .lroadpale { fill: none; stroke: #ddd5c1; stroke-width: 3; stroke-linecap: round; }
+  .lwaydone { fill: #b3803a; }
+  .lwaynow { fill: #f8f3e9; stroke: var(--accent); stroke-width: 2.4; }
+  .lwaynowdot { fill: var(--accent); }
+  .lwayahead { fill: none; stroke: #cfc4ab; stroke-width: 1.7; }
 
+  /* A leaf of lighter paper laid on the ground. The road runs across the sheet BEHIND
+     it rather than inside it, so finishing a card turns the page while the road stays
+     put and the ring moves on. */
   .lcard {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 2px 16px rgba(34,48,60,.07); padding: 20px 26px;
+    background: linear-gradient(150deg, #fdfaf3, #f8f3e9);
+    border: 1px solid #ded3ba; border-radius: 5px;
+    box-shadow: 0 3px 16px rgba(70,55,30,.11); padding: 26px 24px 22px;
     /* Sized so the whole card — prompt, answer and grade buttons — clears a 690px
        laptop viewport without scrolling. Reaching for a scrollbar mid-drill breaks
        the one-key-per-beat rhythm the page is built around. */
     min-height: 250px; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
-    /* room for the pinned task strip */
-    position: relative; padding-top: 64px;
+    position: relative;
   }
-  /* The task strip is pinned rather than in flow: .lcard centres its children both
-     ways, which would shrink-wrap the strip and float it in the middle of the card.
-     Taking it out of the flex flow lets it be a full-width header band while the
-     card's content stays vertically centred beneath it. */
-  .lstrip {
-    position: absolute; top: 0; left: 0; right: 0;
-    display: flex; align-items: center; gap: 10px; text-align: left;
-    padding: 12px 22px 12px 26px;
-    border-bottom: 1px solid var(--hair); border-radius: 14px 14px 0 0; background: var(--bg);
-  }
-  .lstrip-g { font-size: 1.05rem; line-height: 1; flex: 0 0 auto; }
-  .lstrip-t { font-weight: 700; font-size: .95rem; color: var(--ink); min-width: 0; }
-  /* The pill that was missing entirely. It, not the wording, is what separates
-     "say what it meant" from "say it back". */
-  .lstrip-d {
-    margin-left: auto; flex: 0 0 auto; font-size: .68rem; font-weight: 700; letter-spacing: .04em;
-    border-radius: 999px; padding: 3px 10px; white-space: nowrap;
-  }
-  .lstrip-n { flex: 0 0 auto; font-size: .72rem; color: var(--faint); font-weight: 600;
-              white-space: nowrap; }
-  .lstrip.flow-out { box-shadow: inset 3px 0 0 var(--accent); }
-  .lstrip.flow-out .lstrip-d { background: var(--accent-soft); color: var(--accent); }
-  .lstrip.flow-in { box-shadow: inset 3px 0 0 #5a6b8c; }
-  .lstrip.flow-in .lstrip-d { background: #e9edf4; color: #4a5a78; }
   /* Was muted grey and the same size as everything else — the sentence answering
      "what counts as done" is not a footnote. */
-  .lask { color: var(--ink); font-size: .9rem; margin-top: 15px; }
-  .lask.lquiet { color: var(--muted); font-size: .82rem; margin-top: 6px; }
-  .lprompt { font-size: 1.6rem; font-weight: 600; margin: 12px 0 4px; line-height: 1.35; }
+  /* The one line that says what this card wants. Small, tracked and quiet, because it
+     is the same sentence every time you meet this kind — it should be findable, not
+     loud. It replaced four overlapping layers of the same information. */
+  .lask { color: #8b8271; font-size: .7rem; letter-spacing: .14em; text-transform: uppercase;
+          margin: 0 0 20px; }
+  .lask.lquiet { text-transform: none; letter-spacing: 0; font-size: .8rem; margin: 6px 0 0; }
+  /* The prompt takes the map's face. It is the thing on the card you actually read. */
+  .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
+             margin: 0 0 4px; line-height: 1.25; color: var(--ink); }
   .laudio { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 16px 0; }
   .lspeaker { font-size: 2.5rem; cursor: pointer; background: none; border: 0;
               line-height: 1; padding: 0; transition: transform .12s; }
@@ -963,10 +968,11 @@
      694px viewport, and this sits below content that's already there rather than
      being the card's main visual (that's the pre-reveal prompt speaker's job). */
   .laudio.lreplay { gap: 12px; margin: 8px 0 0; }
-  .laudio.lreplay button { font-size: 1.25rem; opacity: .7; }
+  .laudio.lreplay button { font-size: 1.25rem; opacity: .7; background: none; border: 0;
+                          padding: 0; line-height: 1; cursor: pointer; font-family: inherit; }
   .laudio.lreplay button:hover { opacity: 1; }
-  .lrule { width: 56px; height: 1px; background: var(--border); margin: 14px 0 12px; }
-  .lhe { font-family: "David", "Times New Roman", serif; font-size: 2.2rem;
+  .lrule { width: 64px; height: 1px; background: #d8cdb2; margin: 16px 0 13px; }
+  .lhe { font-family: "David", "Times New Roman", serif; font-size: 2.3rem;
          color: var(--hebrew); direction: rtl; line-height: 1.45; }
   .ltr { font-size: 1.28rem; color: var(--accent); font-weight: 600; margin-top: 7px; }
   /* A long sentence at full size wraps to three lines and pushes the grade buttons
@@ -980,16 +986,27 @@
   .lwhy { margin-top: 18px; background: var(--accent-soft); border-radius: 8px;
           padding: 12px 14px; text-align: left; font-size: .88rem; white-space: pre-wrap; }
 
-  .lactions { margin-top: 16px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .lactions { margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .lactions .btn { padding: 12px 32px; font-size: 1rem; border-radius: 10px; }
+  /* The whole help path, in one quiet link under the one loud button. */
+  .lhintlab { display: block; direction: ltr; text-align: center; font-size: .68rem;
+              letter-spacing: .1em; text-transform: uppercase; color: #a49b88;
+              margin-bottom: 3px; }
+  .lhinttxt { display: block; unicode-bidi: isolate; }
+  .lstuck { display: block; margin: 14px auto 0; font-size: .84rem; color: #8b8271;
+            text-underline-offset: 3px; }
+  .lstuck:hover { color: var(--accent); }
   .lgrade {
-    border: 1px solid var(--border); background: #fff; border-radius: 9px; cursor: pointer;
-    padding: 9px 20px; font-size: .95rem; font-weight: 600; color: var(--ink); font-family: inherit;
+    border: 1px solid #ded3ba; background: #fffdf8; border-radius: 9px; cursor: pointer;
+    padding: 11px 22px; font-size: .95rem; font-weight: 600; color: var(--ink);
+    font-family: inherit;
   }
   .lgrade:hover { border-color: var(--accent); color: var(--accent); }
-  .lgrade i { display: block; font-style: normal; font-size: .67rem;
-              color: var(--muted); font-weight: 500; margin-top: 2px; }
   .lgrade.g0:hover { border-color: #b3403a; color: #b3403a; }
-  .lgrade.g2:hover { border-color: #2e7d5b; color: #2e7d5b; }
+  /* Gold, because the map reserves gold for "you did this" and this is the button that
+     means it. */
+  .lgrade.g2 { border-color: #d8bb84; }
+  .lgrade.g2:hover { border-color: var(--gold); color: #8a6520; background: var(--gold-soft); }
   /* Tappable pronunciation. Correct by default, so a clean sentence needs no taps
      at all; one tap is "completely wrong" because that's the common case. */
   .ltrow { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 7px; }
@@ -1030,7 +1047,7 @@
 
   /* The mic. Prominent, because on a production card it's the button that should
      be pressed — "Show me" is the giving-up path. */
-  .lmic { border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  .lmic { border: 1px solid #0a5551; background: var(--accent); color: #fff;
     border-radius: 9px; cursor: pointer; padding: 9px 20px; font-size: .95rem;
     font-weight: 600; font-family: inherit; }
   .lmic:disabled { opacity: .55; cursor: default; }
@@ -2020,10 +2037,15 @@
 
   <!-- Card -->
   <div id="lRun" style="display:none">
-    <div class="lprog"><i id="lProgBar"></i></div>
-    <div class="lcard" id="lCard"></div>
-    <p class="lhint" id="lRunHint"></p>
-    <p class="lhint"><button class="linkbtn" id="lQuitBtn">End session</button></p>
+    <!-- The stretch of road this session covers. Replaced a 4px progress bar: the map
+         spent a whole redesign making a road mean something, and the drill is where the
+         walking actually happens. -->
+    <div class="lrunin">
+      <div class="lroadwrap" id="lRoad"></div>
+      <div class="lcard" id="lCard"></div>
+      <p class="lhint" id="lRunHint"></p>
+      <p class="lhint"><button class="linkbtn" id="lQuitBtn">End session</button></p>
+    </div>
   </div>
 
   <!-- End -->
@@ -16865,20 +16887,53 @@ function convoThread(c, cards) {
    learns where to look instead of re-reading the card each time. Progress moved in
    here and got quieter — it was sharing a line with the instruction, competing with
    the one thing that actually needed to be loud. */
-function learnCardStrip(meta, n, total) {
-  const strip = document.createElement("div");
-  strip.className = "lstrip " + (meta.flow === "in" ? "flow-in" : "flow-out");
-  const g = document.createElement("span"); g.className = "lstrip-g"; g.textContent = meta.glyph;
-  const t = document.createElement("span"); t.className = "lstrip-t"; t.textContent = meta.label;
-  const d = document.createElement("span"); d.className = "lstrip-d"; d.textContent = meta.dir;
-  d.title = meta.flow === "in" ? "Hebrew comes to you" : "You produce the Hebrew";
-  strip.append(g, t, d);
-  if (total) {
-    const c = document.createElement("span"); c.className = "lstrip-n";
-    c.textContent = n + " / " + total;
-    strip.append(c);
+/* ---- the stretch of road ------------------------------------------------------
+   One waymark per card, in the map's own ink: worn and warm behind you, pale ahead, a
+   ring where you are. The road is the world and the page below is what you are doing at
+   this stop — so this stays put while the card changes, and finishing one turns the
+   page and moves the ring.
+
+   Past LEARN_ROAD_MAX cards it shows a WINDOW rather than the whole session. Thirty
+   waymarks across a phone are dots too small to count, and the question this answers is
+   "how far along am I", which a stretch around you answers as well as the whole road
+   does. */
+const LEARN_ROAD_MAX = 12;
+function learnRoadWindow(i, total) {
+  if (total <= LEARN_ROAD_MAX) return { from: 0, to: Math.max(0, total - 1) };
+  const from = Math.max(0, Math.min(i - Math.floor(LEARN_ROAD_MAX / 2), total - LEARN_ROAD_MAX));
+  return { from: from, to: from + LEARN_ROAD_MAX - 1 };
+}
+function learnRoadStrip(idx, total) {
+  const win = learnRoadWindow(idx, total);
+  const n = win.to - win.from + 1;
+  const pts = [];
+  for (let k = 0; k < n; k++) {
+    const card = win.from + k;
+    /* Seeded off the card's own index, not its position in the window, so a waymark
+       does not hop up and down as the window scrolls past it. */
+    pts.push({ x: 18 + k * (484 / Math.max(1, n - 1)),
+               y: 24 + (campJitter(card, 121) - 0.5) * 8 });
   }
-  return strip;
+  const cur = Math.max(0, Math.min(n - 1, idx - win.from));
+  let svg = '<svg class="lroad" viewBox="0 0 520 48" preserveAspectRatio="none" role="img" ' +
+            'aria-label="Card ' + (idx + 1) + ' of ' + total + '">';
+  const ahead = pts.slice(cur), worn = pts.slice(0, cur + 1);
+  if (ahead.length > 1) svg += '<path class="lroadpale" d="' + campTrailPath(ahead) + '"/>';
+  if (worn.length > 1) svg += '<path class="lroadworn" d="' + campTrailPath(worn) + '"/>';
+  pts.forEach((pt, k) => {
+    const card = win.from + k;
+    const x = campR(pt.x), y = campR(pt.y);
+    if (card < idx) svg += '<circle class="lwaydone" cx="' + x + '" cy="' + y + '" r="3.6"/>';
+    else if (card === idx)
+      svg += '<circle class="lwaynow" cx="' + x + '" cy="' + y + '" r="6.2"/>' +
+             '<circle class="lwaynowdot" cx="' + x + '" cy="' + y + '" r="2.5"/>';
+    else svg += '<circle class="lwayahead" cx="' + x + '" cy="' + y + '" r="3.1"/>';
+  });
+  return svg + '</svg>';
+}
+function learnRenderRoad(i, total) {
+  const el = document.getElementById("lRoad");
+  if (el) el.innerHTML = learnRoadStrip(i, total);
 }
 
 function learnRenderCard() {
@@ -16898,11 +16953,17 @@ function learnRenderCard() {
   if (learnMicBusy) micStop();
   learnMicBusy = false;
   if (learnAutoAdvanceTimer) { clearTimeout(learnAutoAdvanceTimer); learnAutoAdvanceTimer = null; }
-  document.getElementById("lProgBar").style.width = Math.round((s.i / s.cards.length) * 100) + "%";
+  learnRenderRoad(s.i, s.cards.length);
   statsCardBegin();
 
+  /* One line, not four. The card used to carry a glyph, a label, an EN → עב direction
+     pill AND this sentence, all describing the same task, plus a fifth line of keyboard
+     hints underneath repeating the first half of it. The pill existed because the labels
+     could not tell listen from shadow — both play Hebrew at you — but what actually
+     distinguishes them is the thing you ANSWER with: listen hands you a text box, shadow
+     hands you a mic. That is concrete and you touch it, where a pill reading עב → עב
+     is a label to decode. And the counter is the road's job now. */
   const meta = LEARN_KINDS[c.kind];
-  card.append(learnCardStrip(meta, s.i + 1, s.cards.length));
   const ask = document.createElement("div"); ask.className = "lask"; ask.textContent = meta.ask;
   card.append(ask);
 
@@ -16999,32 +17060,61 @@ function learnRenderCard() {
        attempt a reply before the English gist is available at all. */
   }
 
+  /* ONE loud button. There used to be three across this row — the mic, "Show me"
+     and "Hint" — with the first two both filled and the same size, so the row read:
+     do the work / give up / get help, all equally loud.
+
+     And "Show me" was doing two different jobs under one label. On a production card it
+     is the giving-up path. On a comprehension card there is no Hebrew mic at all
+     (learnMicKinds excludes them), so you type your guess and pressing it runs
+     matchMeaning and GRADES you — which is not surrender, it is submitting. */
+  const micOK = learnMicKinds(c) && speechSupported();
   const act = document.createElement("div"); act.className = "lactions";
-  /* The mic leads on a production card: it's the button that SHOULD be pressed,
-     and "Show me" is the giving-up path. Listening cards are answered in English,
-     so there is nothing for a Hebrew recogniser to do there. */
-  if (learnMicKinds(c) && speechSupported()) {
+  if (micOK) {
     const mic = document.createElement("button");
-    mic.className = "lmic"; mic.type = "button"; mic.textContent = "🎤 Say it";
+    mic.className = "lmic"; mic.type = "button"; mic.textContent = "Say it";
     mic.onclick = () => learnSpeakAttempt(mic, c);
     act.append(mic);
-  }
-  const show = document.createElement("button");
-  show.className = "btn"; show.type = "button"; show.textContent = "Show me";
-  show.onclick = () => learnReveal();
-  act.append(show);
-  if (learnHintSteps(c).length) {
-    const hint = document.createElement("button");
-    hint.className = "btn secondary"; hint.type = "button"; hint.textContent = "Hint";
-    hint.onclick = () => learnTakeHint(hint, c);
-    act.append(hint);
+  } else {
+    const go = document.createElement("button");
+    go.className = "btn"; go.type = "button";
+    go.textContent = isHearKind(c.kind) ? "Check it" : "Show me";
+    go.onclick = () => learnReveal();
+    act.append(go);
   }
   card.append(act);
 
-  document.getElementById("lRunHint").textContent = isTouchPrimary()
-    ? "Say it out loud first"
-    : "Say it out loud first · Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : "");
+  /* Help is a ladder, not a button standing beside the answer. learnCapGrade already
+     believes help costs something; the old row offered a free bypass right next to it
+     — skip the rungs, press Show me, pay the same price. The answer is the bottom
+     of the ladder now, so you cannot reach it without passing the cheaper help. */
+  const stuck = document.createElement("button");
+  stuck.className = "linkbtn lstuck"; stuck.type = "button";
+  stuck.dataset.reveals = micOK ? "" : "1";
+  learnStuckLabel(stuck, c);
+  stuck.onclick = () => learnStuckPress(stuck, c);
+  card.append(stuck);
+
+  /* Keyboard only. The "say it out loud first" half of this line is what .lask says
+     directly above it, and on touch the whole thing was already empty. */
+  document.getElementById("lRunHint").textContent = isTouchPrimary() ? ""
+    : "Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : "");
   learnSpeakPrompt();
+}
+
+/* Where you are on the ladder, said on the button itself. */
+function learnStuckLabel(btn, c) {
+  const left = learnHintSteps(c).length - learnHints;
+  if (left > 0) { btn.textContent = learnHints ? "Still stuck?" : "Stuck?"; return; }
+  /* Out of rungs. On a card whose primary button already reveals, there is nothing left
+     for this to do, and it says so by going away rather than duplicating it. */
+  if (btn.dataset.reveals) { btn.style.display = "none"; return; }
+  btn.textContent = "Show me the answer";
+}
+function learnStuckPress(btn, c) {
+  if (learnHints < learnHintSteps(c).length) learnTakeHint(btn, c);
+  else if (!btn.dataset.reveals) { learnReveal(); return; }
+  learnStuckLabel(btn, c);
 }
 
 /* ---- speaking it, and being marked on it ------------------------------------
@@ -17485,9 +17575,20 @@ function learnTakeHint(btn, c) {
     box.append(lab, row);
     card.insertBefore(box, act);
   } else {
+    /* Label and text as separate elements. Concatenating them put an English label
+       inside a right-to-left box, so "Starts with: ס" rendered as "ס :Starts with"
+       — the colon flipped to the far side and the label read backwards into it. */
     const box = document.createElement("div");
     box.className = "lhintbox" + (step.rtl ? "" : " ltr-hint");
-    box.textContent = step.label ? step.label + ": " + step.text : step.text;
+    if (step.label) {
+      const lab = document.createElement("span"); lab.className = "lhintlab";
+      lab.textContent = step.label;
+      box.append(lab);
+    }
+    const txt = document.createElement("span"); txt.className = "lhinttxt";
+    txt.dir = step.rtl ? "rtl" : "ltr";
+    txt.textContent = step.text;
+    box.append(txt);
     card.insertBefore(box, act);
   }
   /* Stated the moment the help is taken, never applied silently afterwards. A
@@ -17503,7 +17604,8 @@ function learnTakeHint(btn, c) {
       ? "Hint taken — this one banks as \"Nearly\" at best."
       : "Hint taken — only the word you were shown banks lower.";
   }
-  if (learnHints >= steps.length) btn.disabled = true;
+  /* The button's own label carries what happens next now — see learnStuckLabel —
+     so running out of rungs is not a dead end, it is the last one. */
   syncPadOffset();
 }
 
@@ -17515,6 +17617,11 @@ function learnReveal() {
   const card = document.getElementById("lCard");
   const old = card.querySelector(".lactions");
   if (old) old.remove();
+  /* The ladder is finished the moment the answer is on screen. It lives outside
+     .lactions so that it survives a hint being taken, which also meant it survived
+     this. */
+  const ladder = card.querySelector(".lstuck");
+  if (ladder) ladder.remove();
 
   /* Frozen rather than cleared. Its whole value is being an honest record of what
      you thought BEFORE you knew, sitting right above the real answer — editing it
@@ -17620,17 +17727,33 @@ function learnReveal() {
     }
   }
 
+  /* ONE audio control per card, not two. There used to be a large speaker-and-turtle
+     pair before the reveal and a second small pair after it, same two functions in two
+     places at two sizes. The card that already has one keeps it and it is simply rebound
+     to the answer and shrunk; a card with no audio of its own grows one here.
+
+     Rebound rather than reused-as-is because the two are not always the same sound: on a
+     reply card the prompt is THEIR question and the answer is yours. */
   const answerKey = cardAudioKey(c, "answer");
   if (hasHeVoice()) {
-    const replay = document.createElement("div"); replay.className = "laudio lreplay";
-    const rp = document.createElement("button");
-    rp.type = "button"; rp.textContent = "🔊"; rp.title = "Play again (R)";
-    rp.onclick = () => playHe(answerKey, he);
-    const rs = document.createElement("button");
-    rs.type = "button"; rs.textContent = "🐢"; rs.title = "Play slower (Shift+R)";
-    rs.onclick = () => playHe(answerKey, he, true);
-    replay.append(rp, rs);
-    card.append(replay);
+    let replay = card.querySelector(".laudio");
+    if (replay) replay.className = "laudio lreplay";
+    else {
+      replay = document.createElement("div"); replay.className = "laudio lreplay";
+      replay.append(document.createElement("button"), document.createElement("button"));
+      card.append(replay);
+    }
+    const btns = replay.querySelectorAll("button");
+    if (btns[0]) {
+      btns[0].className = ""; btns[0].type = "button";
+      btns[0].textContent = "🔊"; btns[0].title = "Play again (R)";
+      btns[0].onclick = () => playHe(answerKey, he);
+    }
+    if (btns[1]) {
+      btns[1].className = ""; btns[1].type = "button";
+      btns[1].textContent = "🐢"; btns[1].title = "Play slower (Shift+R)";
+      btns[1].onclick = () => playHe(answerKey, he, true);
+    }
   }
 
   /* Conversation never splits into tappable per-word chips, even when the word
@@ -17705,17 +17828,9 @@ function learnReveal() {
     card.append(enEl);
   }
 
-  if (c.kind === "reply") {
-    const fit = (c.item.uses || []).filter(u => lib[u]);
-    if (fit.length) {
-      const f = document.createElement("div"); f.className = "lfit";
-      f.append(document.createTextNode("Words you already have for this: "));
-      fit.slice(0, 6).forEach(u => {
-        const sp = document.createElement("span"); sp.textContent = lib[u].tr || u; f.append(sp);
-      });
-      card.append(f);
-    }
-  }
+  /* "Words you already have for this" used to render here, after the answer, where it
+     is a list of words you no longer need. The same list is a rung on the ladder, where
+     it can actually help — see learnHintSteps. One place, and the useful one. */
 
   const act = document.createElement("div"); act.className = "lactions";
   if (learnCardTokens) {
@@ -17723,10 +17838,10 @@ function learnReveal() {
     cont.className = "btn"; cont.type = "button"; cont.textContent = "Continue";
     cont.onclick = () => learnCommit();
     act.append(cont);
+    /* The standing "tap any word to see what it means" line is gone. It rendered under
+       the chips on every multi-word card forever, and instruction you have read three
+       hundred times is wallpaper. The chips carry it in their own title attribute. */
     card.append(act);
-    const tap = document.createElement("div"); tap.className = "ltaphint";
-    tap.textContent = "Tap any word to see what it means — and to mark it if you didn't get it";
-    card.append(tap);
   } else if (c.kind === "conversation" && learnSuggested !== null) {
     /* Silent scoring: no button row, no wait for a click. You spoke, it's scored —
        the conversation just continues, the way a real exchange doesn't stop for a
@@ -17743,14 +17858,16 @@ function learnReveal() {
       learnGrade(learnSuggested);
     }, 1100);
   } else {
-    [["Missed", 0, "g0", "1"], ["Nearly", 1, "g1", "2"], ["Got it", 2, "g2", "3"]].forEach(g => {
+    /* The 1 / 2 / 3 key labels used to be printed inside these buttons. They are still
+       the shortcuts, and #lRunHint still names them on a keyboard — but on the phone,
+       which is where this is actually used, they were three numbers meaning nothing. */
+    [["Missed", 0, "g0"], ["Nearly", 1, "g1"], ["Got it", 2, "g2"]].forEach(g => {
       const b = document.createElement("button");
       /* Marked, not pressed. The mic is good enough to recommend an answer and not
          good enough to be the answer, so accepting it stays one deliberate key. */
       b.className = "lgrade " + g[2] + (learnSuggested === g[1] ? " suggested" : "");
       b.type = "button";
-      b.append(document.createTextNode(g[0]));
-      const i = document.createElement("i"); i.textContent = g[3]; b.append(i);
+      b.textContent = g[0];
       b.onclick = () => learnGrade(g[1]);
       act.append(b);
     });
@@ -18091,7 +18208,7 @@ function learnFinish() {
   setTimeout(() => syncRun("session", { quiet: true }), 400);
   micRelease();
   statsSnapshotBands();
-  document.getElementById("lProgBar").style.width = "100%";
+  learnRenderRoad(s.cards.length - 1, s.cards.length);
   const strong = Object.keys(s.strengthened).filter(k => !s.back[k]).length;
   const back = Object.keys(s.back).length;
   document.getElementById("lEndScore").textContent = s.got + " / " + s.cards.length;

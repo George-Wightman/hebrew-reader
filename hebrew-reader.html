@@ -1197,12 +1197,10 @@
      exploration is meant to feel.
      vw/vh rather than a flat pixel figure so the room scales with the actual screen:
      roughly a screen and a half of blank space either side on a phone, more on a
-     desktop where there is more to give. Zeroed in fit mode, where the whole board
-     is already the point and there is nothing to pan into. */
+     desktop where there is more to give. */
   .lmapview { padding: 45vh 40vw; }
-  .lmapview.fit { overflow: hidden; padding: 0; }
 
-  .lmaptop { position: absolute; left: 12px; top: 12px; right: 128px; display: flex;
+  .lmaptop { position: absolute; left: 12px; top: 12px; right: 12px; display: flex;
              flex-direction: column; align-items: flex-start; gap: 8px; }
   /* A <button> now, not a <div> — the real element rather than a click handler bolted
      onto a div, so it is focusable and reachable by keyboard for free. Reset the
@@ -1224,17 +1222,6 @@
   .lmapweek i.zero { background: var(--border); }
   .lmaptop .lbanner { margin: 0; max-width: 340px; font-size: .76rem; padding: 8px 12px;
                       box-shadow: var(--shadow); }
-
-  .lmapzoomwrap { position: absolute; right: 12px; top: 12px; display: flex;
-                  flex-direction: column; align-items: flex-end; gap: 7px; }
-  .lmapzoom { background: var(--panel); border: 1px solid var(--border);
-              border-radius: 99px; padding: 4px 13px; box-shadow: var(--shadow);
-              font-size: .76rem; }
-  .lmapsteps { display: flex; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
-  .lmapsteps button { background: none; border: 0; cursor: pointer; color: var(--accent);
-                      font-size: 1.05rem; line-height: 1; padding: 5px 15px; font-family: inherit; }
-  .lmapsteps button:active { background: var(--accent-soft); }
-  .lmapzoomsep { width: 1px; background: var(--border); }
 
   /* The action floats bottom-right so the thing you came to do is always reachable,
      however far you have scrolled the board — and deliberately SMALL. The first
@@ -1284,13 +1271,11 @@
        anyway and a hugged edge reads as a mistake. Still short: the map must remain
        the thing you are looking at. */
     .lact { left: 10px; right: 10px; bottom: 10px; width: auto; padding: 11px 13px 9px; }
-    /* Clears the zoom cluster in the opposite corner — "Whole map" is ~101px wide
-       plus its 12px inset, so anything under ~120 puts the streak pill underneath it. */
-    .lmaptop { right: 124px; gap: 6px; }
+    .lmaptop { gap: 6px; }
     .lmapbar { font-size: .72rem; gap: 10px; padding: 4px 11px; }
-    /* The bar and the zoom control are both pinned to the top and collide on a phone.
-       The week total is the part to drop: the seven bars beside it already say
-       whether the week happened, which is the question this is answering. */
+    /* The week total is the part to drop on a narrow phone: the seven bars beside it
+       already say whether the week happened, which is the question this is
+       answering. */
     .lmapbar .lmaptot { display: none; }
     .lmaptop .lbanner { max-width: none; font-size: .72rem; }
   }
@@ -1985,15 +1970,6 @@
               <li>Restart Chrome and come back</li>
             </ol>
           </div>
-        </div>
-      </div>
-
-      <div class="lmapzoomwrap">
-        <div class="lmapzoom"><button class="linkbtn" id="lMapFit">Whole map</button></div>
-        <div class="lmapzoom lmapsteps">
-          <button type="button" id="lMapOut" aria-label="Zoom out">−</button>
-          <span class="lmapzoomsep"></span>
-          <button type="button" id="lMapIn" aria-label="Zoom in">+</button>
         </div>
       </div>
 
@@ -15236,11 +15212,10 @@ function mapZoom() {
 function mapZoomSave(z) {
   lsSet(MAP_ZOOM_KEY, String(Math.max(MAP_ZOOM_MIN, Math.min(MAP_ZOOM_MAX, z))));
 }
-function pathBoardWidth(fit) {
+function pathBoardWidth() {
   const view = document.getElementById("lMapView");
   if (!view) return MAP_BOARD_MIN;
   const w = view.clientWidth || MAP_BOARD_MIN;
-  if (fit) return Math.max(240, w);
   const base = Math.max(MAP_BOARD_MIN, Math.min(MAP_BOARD_MAX, w * 1.7));
   return Math.round(base * mapZoom());
 }
@@ -15252,10 +15227,10 @@ function pathBoardWidth(fit) {
 function pathZoomTo(z, anchorX, anchorY) {
   const view = document.getElementById("lMapView");
   const tree = document.getElementById("pathTree");
-  if (!view || !tree || view.classList.contains("fit")) return;
+  if (!view || !tree) return;
   const before = tree.getBoundingClientRect().width || 1;
   mapZoomSave(z);
-  const after = pathBoardWidth(false);
+  const after = pathBoardWidth();
   tree.style.width = after + "px";
   const k = after / before;
   const r = view.getBoundingClientRect();
@@ -15271,15 +15246,6 @@ function pathZoomTo(z, anchorX, anchorY) {
   view.scrollLeft = padX * (1 - k) + (view.scrollLeft + ax) * k - ax;
   view.scrollTop = padY * (1 - k) + (view.scrollTop + ay) * k - ay;
 }
-/* Pressing + or − while the whole map is showing means "stop showing me the whole
-   map"; without this the press is silently swallowed, because pathZoomTo refuses to
-   fight the fit width. */
-function pathZoomStep(mult) {
-  const view = document.getElementById("lMapView");
-  if (view && view.classList.contains("fit")) { pathApplyZoom(false); pathFocusCurrent(); }
-  pathZoomTo(mapZoom() * mult);
-}
-
 /* Two-finger pinch on the board. Pointer events rather than touch events so it works
    the same for a trackpad-driven pen or a touchscreen laptop, and so the pointer ids
    can be tracked individually — a pinch is two pointers, and treating the second one
@@ -15345,28 +15311,24 @@ window.addEventListener("resize", () => {
   syncNavOffset();
   const view = document.getElementById("lMapView");
   if (!view || !view.offsetParent) return;
-  pathApplyZoom(view.classList.contains("fit"));
+  pathApplyZoom();
   pathFocusCurrent();
 });
-function pathApplyZoom(fit) {
-  const view = document.getElementById("lMapView");
+function pathApplyZoom() {
   const tree = document.getElementById("pathTree");
-  if (!view || !tree) return;
-  view.classList.toggle("fit", !!fit);
-  tree.style.width = pathBoardWidth(fit) + "px";
-  const btn = document.getElementById("lMapFit");
-  if (btn) btn.textContent = fit ? "Back to me" : "Whole map";
+  if (!tree) return;
+  tree.style.width = pathBoardWidth() + "px";
 }
 /* Centres the view on where you are. Called on every entry, so the map always opens
    showing the thing the action card is offering. */
 function pathFocusCurrent() {
   const view = document.getElementById("lMapView");
-  if (!view || view.classList.contains("fit")) return;
+  if (!view) return;
   const L = campLayout();
   const sec = campCurrentNode() || L.nodes[0];
   if (!sec) return;
   const at = L.nodes.filter(n => n.id === sec.id)[0] || L.nodes[0];
-  const w = pathBoardWidth(false), h = w * (L.h / L.w);
+  const w = pathBoardWidth(), h = w * (L.h / L.w);
   const px = x => (x / L.w) * w;
 
   /* Centre on the CHAPTER when the chapter fits, and only fall back to centring on the
@@ -16612,7 +16574,7 @@ function learnRenderStart() {
      completes the chapter, which is what lets campWarmNext below write the next one. */
   campAutoPass();
   pathRender();
-  pathApplyZoom(false);
+  pathApplyZoom();
   pathWirePinch();
   pathFocusCurrent();
   learnRenderAct();
@@ -16769,14 +16731,6 @@ document.getElementById("lResumeBtn").onclick = () => {
   learnShow("lRun");
   learnRenderCard();
 };
-document.getElementById("lMapFit").onclick = () => {
-  const view = document.getElementById("lMapView");
-  const fit = !view.classList.contains("fit");
-  pathApplyZoom(fit);
-  if (!fit) pathFocusCurrent();
-};
-document.getElementById("lMapIn").onclick = () => pathZoomStep(1.25);
-document.getElementById("lMapOut").onclick = () => pathZoomStep(0.8);
 document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
 
 document.getElementById("lResumeDrop").onclick = () => {

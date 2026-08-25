@@ -951,6 +951,18 @@
   .lask { color: #8b8271; font-size: .7rem; letter-spacing: .14em; text-transform: uppercase;
           margin: 0 0 20px; }
   .lask.lquiet { text-transform: none; letter-spacing: 0; font-size: .8rem; margin: 6px 0 0; }
+  /* The one word in this sentence he is not expected to have. Sits between the ask and
+     the prompt because that is the reading order of the thought: what to do, what is
+     new, then the thing itself. Warm rather than warning-coloured — it is an
+     introduction, not an error. */
+  .lnew { display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+          justify-content: center; margin: -8px 0 16px; padding: 6px 12px;
+          border-radius: 999px; background: rgba(176,137,74,.10);
+          border: 1px solid rgba(176,137,74,.28); }
+  .lnewlab { color: #8b7350; font-size: .62rem; letter-spacing: .12em;
+             text-transform: uppercase; }
+  .lnew b { font-size: 1.15rem; color: var(--ink); font-weight: 600; }
+  .lnewen { color: #8b8271; font-size: .8rem; }
   /* The prompt takes the map's face. It is the thing on the card you actually read. */
   .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
              margin: 0 0 4px; line-height: 1.25; color: var(--ink); }
@@ -12269,6 +12281,11 @@ function heTokens(he) { return String(he || "").trim().split(/\s+/).filter(Boole
 function bankNearDuplicate(he, type, bank) {
   const a = heTokens(he);
   if (a.length < 2) return false;              // too short for a shape to mean anything
+  /* Windowed for the same reason bankFrameFull is — see the note there. An exact
+     repeat is still caught by the `he === it.he` check in learnIngest, which is not
+     windowed; this is only the fuzzy one-token-apart test, and "one token apart from
+     something retired six months ago" is not a repetition he would ever notice. */
+  if (bank.length > BANK_FRAME_WINDOW) bank = bank.slice(bank.length - BANK_FRAME_WINDOW);
   return bank.some(it => {
     if (!it || it.type !== type) return false;
     const b = heTokens(it.he);
@@ -12284,11 +12301,22 @@ function bankNearDuplicate(he, type, bank) {
    ISN'T in a fixed position ("זה בית גדול" / "זה בית מאוד גדול"). Three items
    sharing an opening pair is a frame establishing itself; refuse the fourth. */
 const BANK_FRAME_MAX = 3;
+/* Checked against a WINDOW of the bank rather than all of it. The guard asks "is a
+   frame establishing itself", which is a question about recent material — but it used
+   to read every sentence ever banked, so it got monotonically stricter as the bank
+   grew and a frame that established itself months ago (and has since been retired out
+   of the session entirely) could still veto a good sentence today. Harmless while
+   generation was rare; it becomes the binding constraint the moment generation gets
+   aggressive, and it fails SILENTLY — the batch just comes back short.
+
+   The newest items, because that is where a frame that matters would be. */
+const BANK_FRAME_WINDOW = 80;
 function bankFrameFull(he, bank) {
   const a = heTokens(he);
   if (a.length < 2) return false;
   let n = 0;
-  for (let i = 0; i < bank.length; i++) {
+  const from = Math.max(0, bank.length - BANK_FRAME_WINDOW);
+  for (let i = from; i < bank.length; i++) {
     const b = heTokens(bank[i] && bank[i].he);
     if (b.length >= 2 && b[0] === a[0] && b[1] === a[1] && ++n >= BANK_FRAME_MAX) return true;
   }
@@ -12305,10 +12333,39 @@ function bankFrameFull(he, bank) {
 function bankContentWords(it, lib) {
   return (it.uses || []).filter(u => lib[u] && !STOPLIST.has(u));
 }
-function bankServable(it, lib, srs) {
+/* `carry` is THE ONE NEW THING RULE, and it is the whole reason a node can teach
+   rather than only consolidate. Without it this gate is absolute: every content word
+   must already be trained, so a sentence can only ever REHEARSE vocabulary that was
+   learned somewhere else. A word he keeps missing is `weak`, `weak` fails wordReady,
+   and the only card left that can carry it is a solo word card — which is precisely
+   the drill that already failed him. Fail it, stay weak, get it again. George, at
+   4 of 6 on a node: "its not even giving me the words that I dont have".
+
+   So: ONE not-ready word may ride along, if the session explicitly asked for it, and
+   only when every other content word is `strong`. Not merely ready — STRONG. Carrying
+   an unknown word is fair only when everything holding it up is solid; a sentence with
+   one weak word and two half-learned ones is the impossible card this gate was built
+   to stop, wearing a permission slip.
+
+   Called with three arguments everywhere that isn't deliberately relaxing the rule,
+   and behaves then exactly as it always has. */
+function bankServable(it, lib, srs, carry) {
   const content = bankContentWords(it, lib);
   if (!content.length) return false;          // nothing but filler: not a drill
-  return content.every(u => wordReady(u, srs));
+  const unready = content.filter(u => !wordReady(u, srs));
+  if (!unready.length) return true;
+  if (!carry || unready.length > 1) return false;
+  const rescue = unready[0];
+  if (!carry.has(rescue)) return false;
+  return content.every(u => u === rescue || srsStrengthOf(srs, u, "prod") === "strong");
+}
+/* Which word an item is carrying for this session, or null if it is fully within
+   reach. The card uses this to say so out loud — being handed a sentence with a word
+   you were never taught reads as a bug unless the card admits it is deliberate. */
+function bankCarried(it, lib, srs, carry) {
+  if (!carry) return null;
+  const unready = bankContentWords(it, lib).filter(u => !wordReady(u, srs));
+  return (unready.length === 1 && carry.has(unready[0])) ? unready[0] : null;
 }
 /* A sentence is as hard as its hardest word, then as hard as it is long. Lower is
    easier, so the first sentence he ever sees is the shortest one built from the
@@ -12491,14 +12548,46 @@ function glossMap(item) {
 
 /* ---- picking what to drill ------------------------------------------------- */
 const SESSION_CARDS = 15;
-const SESSION_BANK_MAX = 7;
+/* ---- COUNT THE CARDS --------------------------------------------------------
+   The old split was 2 shadow, 3 word, 4 bank, 3 chunk, 2 note, 1 reply. Written out
+   like that the problem is obvious and it went unnoticed for months: FOUR of fifteen
+   cards were sentences. The exercise the whole app is built around was a minority of
+   its own session, and two thirds of the time went on mimicry, isolated words and
+   fixed phrases.
+
+   That is most of the real answer to "its looking quite basic sentences a lot". It
+   was never mainly that the sentences were basic — it is that there were four, so
+   whatever those four happened to be WAS the impression, with no volume to average
+   it out. A Quick session was worse still: the arithmetic gave it exactly one.
+
+   Now 1 shadow, 2 word, 8 bank, 2 chunk, 1 note, 1 reply. Sentences double. So does
+   the evidence `levelRecord` runs on — it only counts sentence/listen/reply cards, so
+   the measured level was being decided by about five samples a session, of which
+   roughly one and a half sat above his current band. Nothing else had to change to
+   fix that; there just had to be more sentences. */
+const SESSION_BANK_MAX = 8;
 /* Never-drilled words get their own reserved slots at the front of the session —
-   see the soft launch in learnBuild. Three, and the bank gives up the room: a
-   session that meets four new words and practises none of them in context is the
-   flashcard app this one exists not to be. SESSION_BANK_MIN is the floor that
-   guarantees that context survives. */
-const NEW_WORD_CARDS = 3;
-const SESSION_BANK_MIN = 4;
+   see the soft launch in learnBuild. SESSION_BANK_MIN is the floor that guarantees
+   the context survives a session heavy with new words.
+
+   Was three. Two, because the soft launch only ever needed to be a door rather than a
+   wing: one isolated card is all a word needs to reach `progressing`, and from there
+   it is eligible for sentences the very next session, which is where it should be
+   learned. Three cards of vocabulary in isolation was spending the session on the
+   flashcard app this one exists not to be. */
+const NEW_WORD_CARDS = 2;
+const SESSION_BANK_MIN = 5;
+/* Repeat-after-me, on material already seen. A real exercise, but mimicry proves
+   nothing about production — `levelRecord` deliberately refuses to count it — so two
+   of fifteen was buying very little. One keeps the exercise. */
+const SHADOW_CARDS = 1;
+/* Fixed phrases from PHRASES. Their own retrieval, worth having, not worth a fifth
+   of the session. */
+const CHUNK_CARDS = 2;
+/* Sentences in a daily session that may carry a word he is still weak at. Three of
+   eight: enough that a stuck word turns up more than once in different company, few
+   enough that most of the session is still material entirely within reach. */
+const CARRY_CARDS = 3;
 /* The most of a session that review material may occupy. The rest is always kept
    for words he hasn't drilled yet, so no amount of accumulated failure can stop
    new words appearing. */
@@ -15181,6 +15270,9 @@ function campOpenNode(id) {
   sheet.classList.add("open");
   document.getElementById("pathSheetBackdrop").classList.add("open");
   document.getElementById("campSheetX").onclick = pathCloseSheet;
+  /* Started here rather than on the Practise tap: the three calls run while he reads
+     the word list, which is the difference between an instant session and a spinner. */
+  try { campWarm(n); } catch (e) { /* never block opening the sheet */ }
   document.getElementById("campMeet").onclick = () => campStartMeet(id);
   document.getElementById("campPractise").onclick = () => campStartPractise(id);
   const cv = document.getElementById("campConvo");
@@ -15227,15 +15319,217 @@ function campStartMeet(id) {
     campSay("Nothing to meet here — these words are already in your library.");
 }
 
-function campStartPractise(id) {
+/* =====================  A NODE SESSION  =====================
+   `campStartPractise` used to be `learnBuild({only, size: 10})` — the ordinary daily
+   recipe with one instruction taped to it. Four things went wrong with that, and each
+   was the daily recipe doing exactly its job:
+
+   1. learnTargets sorts overdue material by REACHABILITY, most familiar first. That
+      is a deliberate fix for a real bug ("Its just looping those old words now, the
+      hard ones") and it is precisely backwards inside a node, whose entire purpose is
+      the words at the bottom of that sort.
+   2. Chunks and voice notes were pushed regardless of `only`, so half a node session
+      was not the node.
+   3. The slices sum to fourteen and a node asked for ten, so `cards.length = size`
+      discarded four of them AT RANDOM. Every careful reservation above it — the soft
+      launch, the level mix, the coverage sort — was decided by a coin flip.
+   4. Nothing generated. The comment here said carry words existed "so the bank has
+      something servable to build sentences from"; every node in the app ships with
+      `carry: []` and always has. So a servable node sentence had to be built from six
+      words plus filler, of which only the ready ones counted, and the bank contained
+      none. `hits` was zero everywhere, the coverage sort decided nothing, and what he
+      got was the general bank shuffled. George: "I have 4/6 and its not even giving
+      me the words that I dont have in the lessons."
+
+   What must NOT fork is the scheduler — wordReady, srsApply, bankServable, the level
+   rubric, the card renderer, the grading. Those stay single, and everything below
+   uses them unchanged. What forks is the MENU, which is already forked in practice:
+   campStartMeet builds its own card list by hand, and the conversation shape returns
+   from learnBuild before a line of its logic runs. */
+
+/* Ten cards. Small on purpose: a node is a focused piece of work on six words, not a
+   second full session. */
+const CAMP_SESSION_CARDS = 10;
+/* The words a node session is FOR: its own words that he cannot yet say. Weakest
+   first — the inverse of learnTargets, deliberately, and safe here for the reason it
+   is dangerous there. Globally, weak-first is an unbounded pile that crowds out
+   everything new forever. Here the pool is six words, fixing exactly those six is the
+   node's whole definition of done, and there is nothing else it could reasonably be
+   about. */
+function campWeakWords(node, srs) {
+  const s = srs || srsAll();
+  const rank = { "new": 0, weak: 1, progressing: 2, strong: 3 };
+  return (node.words || [])
+    .filter(k => !STOPLIST.has(k))
+    .filter(k => !wordReady(k, s))
+    .sort((a, b) => (rank[srsStrengthOf(s, a, "prod")] || 0) -
+                    (rank[srsStrengthOf(s, b, "prod")] || 0));
+}
+
+/* Built in priority order and stopped at the ceiling — no shuffle, no truncation. The
+   order below IS the design, so a coin flip must not be allowed to edit it. */
+function campBuild(node, size) {
+  const lib = libAll(), srs = srsAll();
+  size = size || CAMP_SESSION_CARDS;
+  const words = (node.words || []).filter(k => lib[k] && srsGradable(k, lib));
+  if (!words.length) return null;
+  const weak = campWeakWords(node, srs).filter(k => lib[k] && srsGradable(k, lib));
+  const carry = new Set(weak);
+  const isNodeWord = {}; words.forEach(k => { isNodeWord[k] = true; });
+
+  /* Same once-per-session level bookkeeping the daily builder does, for the same
+     reason: a run of node sessions must still age the evidence, or a fortnight of
+     them leaves a stale level waiting when he comes back. */
+  const lvlStore = levelDecay(levelAll());
+  const level = levelSettle(lvlStore);
+  levelSave(lvlStore);
+
+  const voice = hasHeVoice();
+  const bank = bankPrune(bankAll(), lib);
+  const ranked = bank
+    .filter(it => voice || it.type !== "listen")
+    .filter(it => bankServable(it, lib, srs, carry))
+    .map(it => ({ it: it,
+                  hits: (it.uses || []).filter(u => isNodeWord[u]).length,
+                  carry: bankCarried(it, lib, srs, carry) }))
+    /* Only material that touches this node. A node session containing a sentence
+       about something else is the bug being fixed, not a graceful fallback — if there
+       is not enough, the session is shorter and honest about it. */
+    .filter(x => x.hits > 0 || x.carry)
+    /* Carrying a stuck word beats covering a known one, then most coverage, then
+       least seen. `for` — the word an item was COMMISSIONED to rescue — outranks a
+       word it merely happens to carry: those are the sentences written for this
+       exact problem. */
+    .sort((a, b) => ((b.carry && b.it.for === b.carry) - (a.carry && a.it.for === a.carry)) ||
+                    ((b.carry ? 1 : 0) - (a.carry ? 1 : 0)) ||
+                    (b.hits - a.hits) ||
+                    ((a.it.seen || 0) - (b.it.seen || 0)));
+
+  /* Rotation, as everywhere else: anything served in the last few sessions goes to the
+     back without disturbing the order. On a pool this narrow it is a preference rather
+     than a filter — falling back to recent material beats running out. */
+  const seq = parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0;
+  const split = bankCooldownSplit(ranked, recencyAll(), seq,
+                                  BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
+  const pool = split.fresh.concat(split.recent);
+
+  const cards = [];
+  const used = new Set();
+  const take = (list, n) => {
+    for (let i = 0; i < list.length && n > 0; i++) {
+      if (used.has(list[i].it.id)) continue;
+      used.add(list[i].it.id);
+      cards.push({ kind: list[i].it.type, item: list[i].it,
+                   carry: list[i].carry || "", words: list[i].it.uses || [] });
+      n--;
+    }
+  };
+
+  /* The reply closes the session, so it is reserved before anything else can spend
+     its slot — same reasoning as the daily builder. */
+  const replyPick = pool.filter(x => x.it.type === "reply")[0] || null;
+  if (replyPick) used.add(replyPick.it.id);
+  let room = size - (replyPick ? 1 : 0);
+
+  /* 1. One solo card per stuck word. One, not more: isolated recall is the drill that
+        already failed him, so it is here to put the word cleanly in front of him once
+        before the sentences do the actual work. */
+  weak.slice(0, CAMP_SOLO_CARDS).forEach(k => {
+    if (cards.length < room) cards.push({ kind: "word", key: k, words: [k] });
+  });
+
+  /* 2. The point of the session: sentences carrying a stuck word. */
+  const carrying = pool.filter(x => x.carry && x.it.type !== "reply");
+  take(carrying, Math.min(CAMP_CARRY_CARDS, room - cards.length));
+
+  /* 3. Consolidation on the node words he already holds. */
+  const holding = pool.filter(x => !x.carry && x.it.type !== "reply");
+  take(holding, room - cards.length);
+
+  /* 4. Still short — a narrow node with a thin bank. Top up with the node's own words
+        as solo cards rather than reaching outside the node for filler. */
+  for (let i = 0; i < words.length && cards.length < room; i++) {
+    if (!cards.some(c => c.kind === "word" && c.key === words[i]))
+      cards.push({ kind: "word", key: words[i], words: [words[i]] });
+  }
+
+  /* 5. A voice note only if it genuinely uses one of this node's words, and only if
+        there is room left over. Opportunistic, never a reserved slot. */
+  if (cards.length < room) {
+    noteTargets(1, words).forEach(n => cards.push({
+      kind: "note",
+      item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
+              uses: n.uses || [] },
+      words: n.uses || []
+    }));
+  }
+
+  if (!cards.length) return null;
+  shuffleArr(cards);
+  if (replyPick) cards.push({ kind: "reply", item: replyPick.it,
+                              carry: replyPick.carry || "", words: replyPick.it.uses || [] });
+
+  const shown = {};
+  cards.forEach(c => (c.words || []).forEach(w => { shown[w] = true; }));
+  cards.forEach(c => { if (c.item && c.item.id) shown[c.item.id] = true; });
+  markShown(Object.keys(shown));
+  return cards;
+}
+/* One clean look at each stuck word before the sentences carry it. */
+const CAMP_SOLO_CARDS = 2;
+/* About half the session. The rest is consolidation, so a node still feels like
+   practice rather than an exam on the two words he cannot say. */
+const CAMP_CARRY_CARDS = 5;
+
+/* Has this node got sentences written for the words it is stuck on? The session is
+   worth running without them — the solo cards and the consolidation are real — but it
+   is not worth running SILENTLY without them, which is what used to happen. */
+function campHasRescue(node, srs, lib) {
+  const s = srs || srsAll(), l = lib || libAll();
+  const carry = new Set(campWeakWords(node, s));
+  if (!carry.size) return true;                 // nothing stuck: nothing to rescue
+  return bankPrune(bankAll(), l).some(it => bankCarried(it, l, s, carry));
+}
+
+/* Commissions sentences for whatever this node is stuck on. Fired when the node sheet
+   OPENS, so it runs while he reads the word list and Practise starts instantly —
+   and again on every session, because George asked for exactly that: "new ones every
+   session there is no reason not too."
+
+   De-duplicated per node per page load rather than persisted: a fresh tab should try
+   again, but one dead quota must not mean a wasted attempt on every node open for the
+   rest of the day. */
+const campWarmed = {};
+function campWarm(node, force) {
+  if (!node || !geminiKeys().length) return Promise.resolve(0);
+  const srs = srsAll(), lib = libAll();
+  const weak = campWeakWords(node, srs).filter(k => lib[k]);
+  if (!weak.length) return Promise.resolve(0);
+  if (!force && campWarmed[node.id]) return campWarmed[node.id];
+  const run = Promise.resolve(sentenceCommission({
+    lib: lib, srs: srs, rescue: weak.slice(0, RESCUE_MAX),
+    setting: node.situation || node.name
+  })).catch(() => 0);
+  campWarmed[node.id] = run;
+  return run;
+}
+
+async function campStartPractise(id) {
   const n = campNode(id);
   if (!n) return;
-  /* The whole point: an ordinary session, narrowed. Carry words are included so the
-     bank has something servable to build sentences from — a node made only of words
-     he has never drilled cannot produce a single sentence, because bankServable
-     requires every content word to be ready already. */
-  const only = (n.words || []).concat(n.carry || []);
-  const cards = learnBuild({ only: only, size: 10 });
+  /* Wait ONLY when there is genuinely nothing written for the stuck words. With
+     something on the shelf the session starts now and the warm-up keeps running
+     behind it, landing in time for the next one. */
+  if (!campHasRescue(n)) {
+    const weak = campWeakWords(n, srsAll());
+    campSay(weak.length ? "Writing you practice for " + weak.join(", ") + "…"
+                        : "Getting the session ready…");
+    try { await campWarm(n); }
+    catch (e) { campSay("Couldn't reach the AI — running on what's already banked."); }
+  } else {
+    campWarm(n, true);
+  }
+  const cards = campBuild(n);
   if (!campBegin(cards, id, CAMP_PRACTISE_LESSON))
     campSay("Meet the words first — there is nothing to practise with yet.");
 }
@@ -15564,24 +15858,38 @@ function learnShape() {
   return SHAPES[s] ? s : "balanced";
 }
 
-/* How many real voice notes a full session may include. Two, not more: they are the
-   most valuable cards in the app but also the longest, and a session that is mostly
-   grandad talking stops being the vocabulary practice the rest of the page is for. */
-const NOTES_PER_SESSION = 2;
+/* How many real voice notes a full session may include. They are the most valuable
+   cards in the app but also the longest, and a session that is mostly grandad talking
+   stops being the vocabulary practice the rest of the page is for.
 
-/* Least-recently-drilled first, so the same note isn't the one that always comes up,
-   and notes whose words he actually has ahead of ones he can't touch yet. A note with
-   no library words in it at all is still worth hearing — comprehension of the gist is
-   the skill — so it isn't excluded, just ranked last. */
-function noteTargets(limit) {
+   One, and only when it actually uses a word he has — see noteTargets. George:
+   "Lets get rid of the Grandads notes thing as a hard requirment if it is, they arent
+   frequesnt and not somehting to be at the core." They were a RESERVED slice of two,
+   which on a fifteen-card session is a seventh of it spent on material that arrives a
+   few times a month. Opportunistic now: present when there is a relevant one, absent
+   without leaving a hole. */
+const NOTES_PER_SESSION = 1;
+
+/* Least-recently-drilled first, so the same note isn't the one that always comes up.
+   `only` narrows to notes that use a particular word list, for a node session.
+
+   A note with NO library word in it at all used to be kept and merely ranked last, on
+   the reasoning that comprehension of the gist is its own skill. True, but it was
+   holding a reserved slot: with the slice guaranteed two cards, a library full of
+   irrelevant notes still spent a seventh of every session on them. Now the slice is
+   opportunistic, so "rank it last" and "drop it" have the same effect when there is
+   something better — and dropping it means the session simply gets another sentence
+   instead of a note he cannot act on. */
+function noteTargets(limit, only) {
   const lib = libAll();
   const notes = vnotesAll();
-  if (!notes.length) return [];
+  if (!notes.length || limit <= 0) return [];
+  const allow = only && only.length ? new Set(only) : null;
   const scored = notes.map(n => {
     const uses = noteUses(n.he, lib);
     return { id: n.id, he: n.he, en: n.en, tr: n.tr || "", uses: uses,
              known: uses.length, seen: n.seen || 0, ts: n.ts || 0 };
-  });
+  }).filter(n => n.known > 0 && (!allow || n.uses.some(u => allow.has(u))));
   scored.sort((a, b) => (a.seen - b.seen) || (b.known - a.known) || (b.ts - a.ts));
   return scored.slice(0, limit);
 }
@@ -15648,6 +15956,18 @@ function learnBuild(opts) {
   const size = (opts && opts.size) || SHAPES[shape].cards;
 
   const srsNow = srsAll();
+  /* The words this session is allowed to carry one of — see bankServable. His three
+     worst, which are precisely the ones the gate below would otherwise lock out of
+     every sentence he owns.
+
+     Deliberately NOT filtered against today's targets, though that reads like the
+     tidier rule. learnTopUp commissions rescue sentences for exactly this list, and
+     `targets` is partly shuffled — so filtering here would mean writing sentences for
+     a word and then, on the toss of a coin, refusing to serve them. The two have to
+     ask the same question or the pipeline quietly wastes its calls. rescueWords is
+     already only his three worst words in the whole library; there is nothing in it
+     that is not worth carrying on any day it can be. */
+  const carry = new Set(rescueWords(lib, srsNow));
   const rankedAll = bank
     /* Without a Hebrew voice, "hear and answer" isn't a degraded listening drill,
        it's a reading drill wearing its coat. Withhold it rather than fake it. */
@@ -15655,9 +15975,14 @@ function learnBuild(opts) {
     /* THE GATE. A sentence made of words he's never drilled is not a hard card,
        it's an impossible one — and impossible cards are what made the page unusable.
        Gated items stay in the bank untouched and become servable later; nothing is
-       deleted for being too hard today. */
-    .filter(it => bankServable(it, lib, srsNow))
+       deleted for being too hard today.
+
+       `carry` opens it by exactly one word, under the conditions bankServable spells
+       out. Without that the gate is absolute and a sentence can only ever rehearse
+       vocabulary learned elsewhere — which is why a weak word had no way back. */
+    .filter(it => bankServable(it, lib, srsNow, carry))
     .map(it => ({ it: it, hits: (it.uses || []).filter(u => isTarget[u]).length,
+                  carry: bankCarried(it, lib, srsNow, carry),
                   diff: bankDifficulty(it, lib, srsNow) }))
     /* THEN THE GRADE. This used to be `diff` ascending — EASIEST FIRST — and that
        one clause is most of why George could write "its looking quite basic
@@ -15702,7 +16027,7 @@ function learnBuild(opts) {
      the same card could be a word he has never met. */
   const shadowPicks = (voice && shape !== "quick")
     ? ranked.filter(x => (x.it.seen || 0) > 0 && x.it.type !== "reply" &&
-                         (!replyPick || x.it !== replyPick.it)).slice(0, 2)
+                         (!replyPick || x.it !== replyPick.it)).slice(0, SHADOW_CARDS)
     : [];
   const cards = shadowPicks.map(x => ({ kind: "shadow", item: x.it, words: x.it.uses || [] }));
 
@@ -15728,23 +16053,59 @@ function learnBuild(opts) {
   const launching = newWords.slice(0, newRoom);
   launching.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
 
+  /* Chunks and notes are chosen HERE, before the bank room is worked out, though they
+     are not pushed until below. They used to be picked afterwards, which meant the
+     bank took a fixed allocation and everything else was added on top — and whatever
+     the total came to, `cards.length = size` then trimmed it back at random.
+
+     Sentences are the residual now: every other slice takes what it needs, the bank
+     gets the rest, and the session comes out at exactly `size` by construction rather
+     than by a shuffle and a truncation. That is what actually delivers the doubling
+     the constants above describe — raising SESSION_BANK_MAX alone would have been
+     eaten by the fill loop padding the session back out with isolated word cards. */
+  const chunkPicks = learnChunkTargets(shape === "quick" ? 1 : CHUNK_CARDS);
+  const notePicks = noteTargets(shape === "quick" ? 0 : NOTES_PER_SESSION, only);
+
   /* Paid for out of the bank's allocation rather than out of chunks or notes, and
      floored so a session heavy with new words still practises them in context. */
-  const bankRoom = shape === "quick"
-                 ? Math.max(1, 2 - launching.length)
-                 : Math.max(SESSION_BANK_MIN, SESSION_BANK_MAX - launching.length);
+  const reserved = cards.length + launching.length + chunkPicks.length + notePicks.length;
+  const bankRoom = Math.max(shape === "quick" ? 1 : SESSION_BANK_MIN,
+                            size - (replyPick ? 1 : 0) - reserved);
   const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1);
   /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
      list. Mostly his own level, with a deliberate reach above it — "it should be
      trying ot push me". pickByLevel preserves bankPool's ordering inside each level,
-     so every ranking decision above still stands. */
-  pickByLevel(bankPool, levelQuota(bankRoom, level))
-    .forEach(x => cards.push({ kind: x.it.type, item: x.it, words: x.it.uses || [] }));
+     so every ranking decision above still stands.
+
+     COVERAGE FIRST, then level. `hits` is the first key of the sort above, but
+     pickByLevel then re-buckets by level and takes the first item AT that level —
+     which quietly threw the coverage ranking away: an item touching none of today's
+     target words won every time it happened to sit at the wanted band, over one
+     touching two of them that did not. So the pool is split, the quota is filled from
+     the target-hitting half first, and only what is left over is drawn from the rest.
+     The level mix is preserved either way, because pickByLevel runs on both halves. */
+  /* Carried items go FIRST and are CAPPED, in that order of importance. First because
+     they are the only cards in the app that can teach a stuck word, and if they had to
+     out-rank ordinary material on coverage or level they would lose — a sentence
+     carrying an unknown is by construction not one of the strongest matches. Capped
+     because a session of nothing but sentences containing a word he cannot say is the
+     impossible-card problem rebuilt from the other end. */
+  const bankCarrying = bankPool.filter(x => x.carry);
+  const bankHits = bankPool.filter(x => !x.carry && x.hits > 0);
+  const bankRest = bankPool.filter(x => !x.carry && x.hits === 0);
+  const bankTake = pickByLevel(bankCarrying,
+                               levelQuota(Math.min(CARRY_CARDS, bankRoom), level));
+  [bankHits, bankRest].forEach(pool => {
+    if (bankTake.length >= bankRoom) return;
+    pickByLevel(pool, levelQuota(bankRoom - bankTake.length, level))
+      .forEach(x => bankTake.push(x));
+  });
+  bankTake.forEach(x => cards.push({ kind: x.it.type, item: x.it,
+                                     carry: x.carry || "", words: x.it.uses || [] }));
 
   /* Chunks are their own retrieval, not a variant of the word cards, so they get
      their own slice rather than competing for the word budget. */
-  learnChunkTargets(shape === "quick" ? 1 : 3)
-    .forEach(p => cards.push({ kind: "chunk", key: p, words: [p] }));
+  chunkPicks.forEach(p => cards.push({ kind: "chunk", key: p, words: [p] }));
 
   /* Real voice notes. Their own slice for the same reason chunks get one: this is a
      different exercise, not a variant of the generated listening drill, and it must
@@ -15753,13 +16114,12 @@ function learnBuild(opts) {
      Crucially NOT gated on hasHeVoice() — the recording already exists, so this is
      the one listening drill that works on a stock Windows machine with nothing
      installed. */
-  noteTargets(shape === "quick" ? 1 : NOTES_PER_SESSION)
-    .forEach(n => cards.push({
-      kind: "note",
-      item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
-              uses: n.uses || [] },
-      words: n.uses || []
-    }));
+  notePicks.forEach(n => cards.push({
+    kind: "note",
+    item: { id: "note:" + n.id, noteId: n.id, he: n.he, tr: n.tr || "", en: n.en || "",
+            uses: n.uses || [] },
+    words: n.uses || []
+  }));
 
   const covered = {};
   cards.forEach(c => (c.words || []).forEach(w => { covered[w] = true; }));
@@ -15839,25 +16199,307 @@ const LEARN_FUNCTIONS = [
   "asking how someone is and following it up with a real second question",
   "saying what you want or are going to do later"
 ];
-/* THE JOIN BETWEEN THE TWO HALVES. If there is a live campaign node, the sentences
-   generated for ordinary quick sessions are about ITS situation — so the drilling he
-   does between lessons rehearses the chapter he is actually in, and the campaign
-   stops being a side quest without a single pixel of new UI.
+/* SETTING AND FUNCTION ARE DIFFERENT QUESTIONS, and conflating them cost most of the
+   variety this rotation exists to create.
 
-   It also removes the need for a per-node generation call: the shared bank fills with
-   material about the node by itself. Four requests a chapter saved, by using the
-   machinery that was already there. */
-function learnNextFunction() {
+   This used to `return node.situation` outright whenever a campaign node was live —
+   INSTEAD of rotating, not as well as. The intent was good and is kept below: the
+   drilling he does between lessons should rehearse the chapter he is actually in. But
+   a chapter lasts weeks, so for weeks every batch was generated against one identical
+   brief and the eight functions never came round at all. George: "I feel like its
+   giving me the same lesson over and over." He was describing a node — but this was
+   quietly doing the same thing to his ordinary sessions, where no node is in sight.
+
+   The FUNCTION is what drives grammar: "ask someone to do something later" cannot be
+   written in one present-tense clause, which is how a batch reaches the levels the
+   prompt asks for. The SETTING only supplies nouns. So losing the rotation flattened
+   the LEVEL as well as the subject matter, which is the more expensive half.
+
+   Both now, as two fields the prompt keeps deliberately apart. */
+/* The setting half of the brief on its own — the live node's situation, or "". Split
+   out so the commissioning pipeline can take it without also spinning the function
+   rotation, which is per-batch state and must only advance when a batch is drafted. */
+function learnSetting() {
   try {
     const node = campCurrentNode();
     if (node && node.situation) return node.situation;
   } catch (e) { /* a campaign that cannot be read is not a reason to skip the batch */ }
+  return "";
+}
+function learnNextFunction() {
   let done = {};
   try { const o = JSON.parse(lsGet(FN_KEY)); if (o && typeof o === "object") done = o; } catch (e) {}
   const pick = LEARN_FUNCTIONS.slice().sort((a, b) => (done[a] || 0) - (done[b] || 0))[0];
   done[pick] = (done[pick] || 0) + 1;
   lsSet(FN_KEY, JSON.stringify(done));
-  return pick;
+  return { fn: pick, setting: learnSetting() };
+}
+
+/* =====================  COMMISSIONING SENTENCES  =====================
+   Three calls where there was one and a half, and the reason is the complaint that
+   started this: "I feel like its giving me the same lesson over and over ... its not
+   even giving me the words that I dont have."
+
+   The old top-up drafted a whole batch in a single call from a single brief. A model
+   given one brief and told "write twelve" writes one sentence twelve times — that is
+   not a flaw in the prompt, it is what the request asks for. So the batch is PLANNED
+   first, as a list of separate jobs, and only then written. The planner is the variety
+   device; the builder just executes.
+
+   Budget is not the constraint people assume. AI_POOL_CAPS is 20 strong and 500 lite
+   per day, and this app was using about one of the 500. George: "Be aggressive with
+   hte sentences generation in the API, we have loads of usage. We can make plenty of
+   sentences, new ones every session there is no reason not too." Planner and evaluator
+   are lite; only the builder — the one call where quality is actually decided — takes
+   from the scarce pool, and falls back to lite when that pool is gone.
+
+   ONE pipeline for both halves of the app. The node path and the daily path differ
+   only in what they put in the spec, which is what stops the two drifting apart the
+   way the schedulers nearly did. */
+
+/* How many struggling words a single batch may be commissioned to rescue. Three: the
+   planner spreads its briefs across them, so more than three means roughly two
+   sentences each, which is too thin to move a word that is genuinely stuck. */
+const RESCUE_MAX = 3;
+/* Unseen sentences carrying a given stuck word, below which that word is starved and
+   a batch is commissioned for it. Two: one sentence is a single encounter and proves
+   nothing, and the point is that the word turns up repeatedly in different company
+   until it sticks. */
+const RESCUE_MIN_EACH = 2;
+/* Briefs asked of the planner. Deliberately more than survive: the evaluator is told
+   that returning fewer is a success, and a plan of ten that lands seven is the shape
+   this is tuned for. */
+const PLAN_ITEMS = 10;
+/* Scaffolding offered to the builder. Enough to write freely, few enough that the
+   list is all words he genuinely holds. */
+const SCAFFOLD_MAX = 40;
+
+/* The words this whole exercise exists for: evidence of struggle, not merely
+   unfamiliarity. `weak` is srsStrength's own verdict — high difficulty or a miss rate
+   at or above 40% — so this is "words he has tried and got wrong", which is exactly
+   the set that the servable gate locks out of every sentence.
+
+   Worst first, and unapologetically. That ordering is a documented disaster in
+   learnTargets ("Its just looping those old words now, the hard ones") and correct
+   here for the opposite reason: nothing is being SERVED from this list. It is being
+   WRITTEN FOR. A word that is hard to say is not a reason to write less about it. */
+function rescueWords(lib, srs, limit, only) {
+  const allow = only && only.length ? new Set(only) : null;
+  const missRate = k => {
+    const r = srs[k] && srs[k].prod;
+    return (r && r.n) ? (r.miss || 0) / r.n : 0;
+  };
+  return Object.keys(lib)
+    .filter(k => !STOPLIST.has(k) && srsGradable(k, lib))
+    .filter(k => !allow || allow.has(k))
+    .filter(k => srsStrengthOf(srs, k, "prod") === "weak")
+    .sort((a, b) => missRate(b) - missRate(a))
+    .slice(0, limit === undefined ? RESCUE_MAX : limit);
+}
+/* The scaffolding. STRONG only — see bankServable's carry rule for why "ready" is not
+   good enough when a sentence is already carrying one unknown. Strongest first so a
+   truncated list is the most solid end of it. */
+function scaffoldWords(lib, srs, limit) {
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  return Object.keys(lib)
+    .filter(k => srsStrengthOf(srs, k, "prod") === "strong")
+    .sort((a, b) => stabOf(b) - stabOf(a))
+    .slice(0, limit || SCAFFOLD_MAX);
+}
+function wordLine(k, lib) {
+  const e = lib[k] || {};
+  return k + " (" + (e.tr || "") + ") = " + (e.en || "");
+}
+
+/* ---- call one: the plan ----------------------------------------------------- */
+/* No Hebrew at all. Asking for briefs rather than sentences is what makes the variety
+   real: the model has to commit to ten DIFFERENT jobs before it can reach for its
+   favourite construction, and a list of ten jobs is visibly repetitive in a way that
+   ten finished sentences are not. */
+async function sentencePlan(spec) {
+  const lib = spec.lib;
+  const rescue = spec.rescue || [];
+  const prompt =
+    "You are planning a batch of spoken-Hebrew practice items for an English speaker " +
+    "learning conversational Hebrew. He replies to WhatsApp voice notes from his " +
+    "partner's grandad, so everything is warm, everyday and spoken.\n\n" +
+    "DO NOT WRITE ANY HEBREW. You are writing the PLAN — a list of separate jobs that " +
+    "someone else will then write. Planning first is the whole point: it is what stops " +
+    "the batch being one idea repeated.\n\n" +
+    "THE DIFFICULTY SCALE:\n" + LEVEL_RUBRIC + "\n\n" +
+    "HE IS AT LEVEL " + spec.level + ". Spread the plan: about half at level " +
+    spec.level + ", about a third at " + Math.min(LEVEL_MAX, spec.level + 1) +
+    ", one or two at " + Math.min(LEVEL_MAX, spec.level + 2) + ".\n\n" +
+    (rescue.length
+      ? "WORDS HE IS STUCK ON. This batch exists to rescue these — he has met them and " +
+        "keeps getting them wrong, and drilling them alone is not working, so each one " +
+        "needs to appear inside real sentences where the context carries it:\n" +
+        rescue.map(k => wordLine(k, lib)).join("\n") + "\n" +
+        "Spread the briefs roughly evenly across those words. Every brief must name " +
+        "exactly one of them as its \"for\".\n\n"
+      : "") +
+    (spec.setting
+      ? "THE SETTING: he is working through " + spec.setting + ". Prefer that setting " +
+        "where it fits — but it supplies the NOUNS, it is not the job. The job is the " +
+        "function.\n\n"
+      : "") +
+    "THE FUNCTIONS — every brief must pick one, and NO TWO BRIEFS MAY USE THE SAME " +
+    "FUNCTION FOR THE SAME WORD:\n" + LEARN_FUNCTIONS.map(f => "- " + f).join("\n") + "\n\n" +
+    "Write " + (spec.count || PLAN_ITEMS) + " briefs. Return JSON only, no markdown:\n" +
+    '{"briefs":[{"for":"","fn":"","lvl":2,"kind":"sentence","en":""}]}\n\n' +
+    "- for = the Hebrew word from the stuck list this item is for, copied exactly. " +
+    (rescue.length ? "Required.\n" : "Leave it \"\" — there is no stuck list this time.\n") +
+    "- fn = which function above, copied exactly.\n" +
+    "- lvl = 1-5 by the scale.\n" +
+    "- kind = \"sentence\" (something HE says), \"listen\" (something grandad says to " +
+    "him), or \"reply\" (grandad asks, he answers). Mostly sentence; a few listen; at " +
+    "most two reply.\n" +
+    "- en = one line of plain English saying what this item should DO. Not the " +
+    "sentence itself — the intention. \"tell someone when you'll be at work\", not " +
+    "\"I am going to work at eight\".\n\n" +
+    "THE TEST OF A GOOD PLAN: read your briefs back as a list. If two of them could be " +
+    "satisfied by the same sentence, the plan has failed — rewrite them until every " +
+    "one does something the others do not.";
+  const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+  const briefs = (out && Array.isArray(out.briefs)) ? out.briefs : [];
+  const okFor = new Set(rescue);
+  return briefs.map(b => ({
+    for: (b && okFor.has(String(b.for))) ? String(b.for) : "",
+    fn: String((b && b.fn) || ""),
+    lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(b && b.lvl)) || LEVEL_DEFAULT)),
+    kind: ["sentence", "listen", "reply"].indexOf(b && b.kind) !== -1 ? b.kind : "sentence",
+    en: String((b && b.en) || "")
+  })).filter(b => b.en);
+}
+
+/* ---- call two: the writing --------------------------------------------------- */
+/* The only call that takes from the scarce pool, and only because this is the one
+   place quality is actually decided. GEMINI_MODELS falls through to lite by itself
+   once the strong pool is gone, so a heavy day degrades rather than stops. */
+async function sentenceWrite(spec, briefs) {
+  const lib = spec.lib;
+  const scaffold = spec.scaffold || [];
+  const rescue = spec.rescue || [];
+  const listing = briefs.map((b, i) =>
+    i + ". [" + b.kind + "] [level " + b.lvl + "]" +
+    (b.for ? " [MUST USE: " + b.for + "]" : "") +
+    " " + b.en + (b.fn ? "  (function: " + b.fn + ")" : "")).join("\n");
+  const prompt =
+    "You are writing spoken-Hebrew practice for an English speaker learning " +
+    "conversational Hebrew. He replies to WhatsApp voice notes from his partner's " +
+    "grandad, so keep everything warm, everyday and spoken — not textbook.\n\n" +
+    "THE DIFFICULTY SCALE — his answers are graded on this same scale, so apply it " +
+    "exactly:\n" + LEVEL_RUBRIC + "\n\n" +
+    "WRITE ONE ITEM FOR EACH BRIEF BELOW. Same index, same order:\n" + listing + "\n\n" +
+    (rescue.length
+      ? "THE WORDS BEING RESCUED. He has met these and keeps getting them wrong. A " +
+        "brief marked MUST USE has to contain its word, used naturally and doing real " +
+        "work in the sentence — not tacked on the end:\n" +
+        rescue.map(k => wordLine(k, lib)).join("\n") + "\n\n"
+      : "") +
+    "EVERY OTHER WORD MUST COME FROM THIS LIST — words he holds solidly — plus basic " +
+    "grammar words (אני, אתה, זה, של, את, לא, כן, יש, ה):\n" +
+    scaffold.map(k => k + " (" + ((lib[k] || {}).tr || "") + ")").join(", ") + "\n" +
+    "This is not a style note, it is a hard gate: an item using a word outside that " +
+    "list and outside the rescue list will be thrown away by the app before he ever " +
+    "sees it. One unknown word per sentence, and it must be the rescue word.\n\n" +
+    "Return JSON only, no markdown:\n" +
+    '{"items":[{"i":0,"type":"sentence","for":"","he":"","tr":"","en":"",' +
+    '"gloss":[{"he":"","tr":"","en":"","why":""}]},' +
+    '{"i":1,"type":"reply","for":"","qhe":"","qtr":"","qen":"","he":"","tr":"","en":"","gloss":[]}]}\n\n' +
+    "- i = the brief index this answers. for = the MUST USE word, copied exactly, or \"\".\n" +
+    "- type \"reply\": qhe/qtr/qen is grandad's question, he/tr/en is the natural short answer.\n" +
+    "- tr is plain English letters the way he would type them: \"ani rotze lalechet la'avoda\". No diacritics.\n" +
+    "- Hebrew without nikud.\n" +
+    "- gloss: one entry per word of the \"he\" line, same words, same spelling, same order. " +
+    "he = that single Hebrew word exactly as it appears, tr = its pronunciation, en = what " +
+    "that one word means on its own.\n" +
+    "- gloss why: ONLY where there is genuinely something a learner needs told — a verb form " +
+    "or tense, an attached prefix or suffix, gender/number agreement, a word order rule, or " +
+    "an idiom that doesn't translate literally. One short sentence, and give the RULE so it " +
+    "carries into his next sentence. Most words should have an empty why. For the rescue " +
+    "word, ALWAYS write one — that word is why the item exists.\n\n" +
+    "THE MOST IMPORTANT RULE — EVERY ITEM MUST BE SOMETHING A REAL PERSON WOULD " +
+    "ACTUALLY SAY. A grammatical sentence that no one would utter is worse than " +
+    "useless: it teaches him to produce nonsense confidently. Before including any " +
+    "item, ask: would a real Israeli say this to their grandson, or their grandson say " +
+    "it back? If the honest answer is no, write a different one.\n" +
+    "Real failures this task has produced: \"there is a big wind\", \"this is a medium " +
+    "end\". Both grammatical, both meaningless. His vocabulary is heavy on adjectives " +
+    "and that is exactly how it happens — resist stapling one to a noun.\n\n" +
+    "RETURN FEWER IF A BRIEF CANNOT BE DONE WELL. Skipping a brief is a success; " +
+    "padding it with something awkward is a failure.\n" +
+    "BEFORE YOU ANSWER: re-read each item aloud as a native speaker. Delete any you " +
+    "would not say yourself. Then read the survivors as a SET — if two of them are the " +
+    "same idea in different clothes, rewrite one.";
+  const out = extractJSON(await geminiRequest([{ text: prompt }]));
+  const items = (out && Array.isArray(out.items)) ? out.items : [];
+  return items.map(it => {
+    const b = briefs[Number(it && it.i)] || null;
+    return Object.assign({}, it, {
+      lvl: b ? b.lvl : LEVEL_DEFAULT,
+      for: (it && it.for) ? String(it.for) : (b ? b.for : "")
+    });
+  });
+}
+
+/* ---- the gate the model cannot argue with ------------------------------------
+   The prompt says "hard gate" and models do not always believe prompts. This is the
+   gate: checked in code, exact, and free.
+
+   Two jobs. Every content word must be the rescue word or scaffolding — that is what
+   makes the one-new-word rule true rather than hoped for. And every Hebrew token must
+   RESOLVE to something known, which is a subtler hole: bankContentWords only counts
+   words that exist in the library, so a sentence containing invented or untaught
+   Hebrew has no content words to fail on and sails through bankServable looking
+   perfectly reachable. Rare enough to ignore while generation was occasional; not
+   something to leave standing underneath a pipeline built to run every session. */
+function commissionAcceptable(it, lib, scaffoldSet, rescueSet) {
+  const he = String((it && it.he) || "");
+  if (!he) return false;
+  if (it.for && he.indexOf(it.for) === -1) return false;   // the brief was not met
+  const toks = he.split(/[^֐-׿]+/).filter(Boolean);
+  if (!toks.length) return false;
+  let carried = 0;
+  for (let i = 0; i < toks.length; i++) {
+    if (STOPLIST.has(toks[i])) continue;
+    const k = libKeyFor(toks[i], lib);
+    if (!k) return false;                                  // untaught or invented
+    if (STOPLIST.has(k) || scaffoldSet.has(k)) continue;
+    if (rescueSet.has(k)) { carried++; continue; }
+    return false;                                          // outside the allowed list
+  }
+  return carried <= 1;                                     // one new thing, at most
+}
+
+/* ---- the whole pipeline ------------------------------------------------------ */
+/* Returns how many items were banked. Never throws for an ordinary failure: a batch
+   that cannot be written is a session that runs on what is already there, which is
+   the behaviour every caller here already relies on. */
+async function sentenceCommission(spec) {
+  if (!geminiKeys().length) return 0;
+  const lib = spec.lib || libAll();
+  const srs = spec.srs || srsAll();
+  spec = Object.assign({}, spec, {
+    lib: lib, srs: srs,
+    level: spec.level || learnerLevel(),
+    rescue: spec.rescue || [],
+    scaffold: spec.scaffold || scaffoldWords(lib, srs)
+  });
+  /* Nothing solid to build from. Below this the builder has no honest way to satisfy
+     "every other word from this list", and it will either ignore the instruction or
+     write three-word fragments — both worse than not spending the call. */
+  if (spec.scaffold.length < READY_MIN_FOR_SENTENCES) return 0;
+  const briefs = await sentencePlan(spec);
+  if (!briefs.length) return 0;
+  const drafted = await sentenceWrite(spec, briefs);
+  if (!drafted.length) return 0;
+  const scaffoldSet = new Set(spec.scaffold);
+  const rescueSet = new Set(spec.rescue);
+  const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet));
+  if (!clean.length) return 0;
+  const kept = await learnReviewItems({ items: clean });
+  return learnIngest(kept);
 }
 
 /* ---- throwing away what's finished with -------------------------------------
@@ -15906,11 +16548,49 @@ async function learnTopUp(quiet) {
   const retired = bankRetire(full, level);
   if (retired.length !== full.length) bankSave(retired);
   const bank = bankPrune(retired, lib);
-  /* Counts only material he could actually be SERVED. Counting gated sentences
-     here would let a bank full of unreachable ones convince the app it had plenty. */
-  const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
-  if (unseen >= BANK_MIN_UNSEEN) return 0;      // already have material he can reach
   if (!geminiKeys().length) return 0;           // no key: library-only session, no error
+  let made = 0;
+
+  /* ---- pass one: rescue ------------------------------------------------------
+     THE PASS THAT DID NOT EXIST, and the reason a weak word could never recover.
+     Generation used to ask one question — "is the cupboard bare" — and a stocked
+     cupboard of material about words he is already good at answered it perfectly
+     while he was stuck on the same six words for weeks.
+
+     So the question is now "is there material for what I am actually bad at", asked
+     per word. A word he keeps missing needs sentences written FOR it, and nothing in
+     the old top-up could produce one: its vocabulary list was readyWords, which
+     excludes a weak word by definition. It could not write the needed sentence even
+     if it had somehow been asked to.
+
+     Costs a plan, a write and a review — three of a daily allowance of 500 that this
+     app was using about one of. George: "Be aggressive with hte sentences generation
+     in the API, we have loads of usage." */
+  const rescue = rescueWords(lib, srs);
+  if (rescue.length) {
+    const carry = new Set(rescue);
+    const stock = {};
+    bank.forEach(it => {
+      if (it.seen) return;
+      const c = bankCarried(it, lib, srs, carry);
+      if (c) stock[c] = (stock[c] || 0) + 1;
+    });
+    const starved = rescue.filter(k => (stock[k] || 0) < RESCUE_MIN_EACH);
+    if (starved.length) {
+      try {
+        made += await sentenceCommission({ lib: lib, srs: srs, level: level,
+                                           rescue: starved, setting: learnSetting() });
+      } catch (e) { /* a failed rescue must not stop the breadth pass below */ }
+    }
+  }
+
+  /* ---- pass two: breadth -----------------------------------------------------
+     Unchanged in purpose: keep enough ordinary, fully-reachable material on the shelf
+     that a session is never short. Counts only what he could actually be SERVED —
+     counting gated sentences would let a bank full of unreachable ones convince the
+     app it had plenty. */
+  const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
+  if (unseen >= BANK_MIN_UNSEEN) return made;   // already have material he can reach
 
   /* Built from what he can already SAY, not from what arrived most recently. The
      old prompt sent the target list as "words he is working on", which by then meant
@@ -15937,7 +16617,7 @@ async function learnTopUp(quiet) {
      loop between "meet a word" and "use it in a sentence". */
   const fresh = readyRanked.slice(-12).reverse()
     .map(k => k + " (" + (lib[k].tr || "") + ") = " + (lib[k].en || "")).join("\n");
-  const fn = learnNextFunction();
+  const brief = learnNextFunction();
   const prompt =
     "You are writing speaking practice for an English speaker learning conversational Hebrew. " +
     "He replies to WhatsApp voice notes from his partner's grandad, so keep everything warm, " +
@@ -15964,10 +16644,17 @@ async function learnTopUp(quiet) {
     /* The variety lever. Without it the model reaches for the safest possible
        construction every time, which is a noun with an adjective stapled to it —
        and then the whole bank is "this is a big house" wearing different nouns. */
-    "WHAT THIS BATCH IS ABOUT: " + fn + ". Every item should belong to that, so the " +
+    "WHAT THIS BATCH IS ABOUT: " + brief.fn + ". Every item should belong to that, so the " +
     "batch hangs together instead of being a list of unrelated facts. This is also " +
-    "how you reach the higher levels — that situation naturally needs tenses and " +
+    "how you reach the higher levels — that function naturally needs tenses and " +
     "joins that a bare description never does.\n\n" +
+    /* The setting, kept strictly separate from the function above — see
+       learnNextFunction for what happened when the two were the same field. */
+    (brief.setting
+      ? "WHERE TO SET IT: he is working through " + brief.setting + " at the moment, " +
+        "so prefer that setting where it fits. It supplies the NOUNS only — it is not " +
+        "what the batch is about, and it must not replace the function above.\n\n"
+      : "") +
     "WORDS HE CAN ALREADY SAY (he has been drilled on these and got them right):\n" + working + "\n\n" +
     /* The other half of the soft launch. A word gets one isolated card, becomes
        eligible for sentences the next session, and would then sit unused forever
@@ -16050,7 +16737,7 @@ async function learnTopUp(quiet) {
   if (!quiet) busy(true);
   try {
     const drafted = extractJSON(await geminiRequest([{ text: prompt }]));
-    return learnIngest(await learnReviewItems(drafted));
+    return made + learnIngest(await learnReviewItems(drafted));
   } finally { if (!quiet) busy(false); }
 }
 
@@ -16207,6 +16894,12 @@ function learnIngest(data) {
       qhe: it.qhe ? String(it.qhe) : "", qtr: it.qtr ? String(it.qtr) : "",
       qen: it.qen ? String(it.qen) : "",
       gloss: cleanGloss(it.gloss),
+      /* The word this item was WRITTEN TO RESCUE, when it was commissioned for one.
+         Not the same as `uses`: uses is what happens to be in the sentence, `for` is
+         the reason the sentence exists. It is what lets the node builder ask for "the
+         sentences that exist to teach היום" rather than inferring it, and what the
+         card reads to say which word is the new one. Empty for ordinary batches. */
+      for: it.for ? String(it.for) : "",
       /* Set by the reviewer. An item that arrived without one (old prompt shape,
          malformed reply, review skipped for lack of a key) is left unset rather
          than guessed at, and bankLevel reads it as LEVEL_DEFAULT. */
@@ -17030,6 +17723,27 @@ function learnRenderCard() {
   const meta = LEARN_KINDS[c.kind];
   const ask = document.createElement("div"); ask.className = "lask"; ask.textContent = meta.ask;
   card.append(ask);
+
+  /* THE CARD ADMITS WHAT IT IS DOING. This sentence deliberately contains one word he
+     cannot yet say — that is the whole point of it, and everything else in it is a
+     word he holds solidly. Unannounced, that reads as the app handing him something
+     impossible, which is the exact complaint the servable gate was built to answer.
+     Announced, it is a lesson.
+
+     It also tells him where to look. Per-word commit already does the rest properly:
+     he can mark this one word missed and still bank the other four as clean, so being
+     stuck on it costs him nothing he had earned. */
+  if (c.carry) {
+    const nw = document.createElement("div"); nw.className = "lnew";
+    const lab = document.createElement("span"); lab.className = "lnewlab";
+    lab.textContent = "New in this one";
+    const w = document.createElement("b"); w.dir = "rtl"; w.textContent = c.carry;
+    nw.append(lab, w);
+    const e = (lib[c.carry] || {}).en || "";
+    if (e) { const en = document.createElement("span"); en.className = "lnewen";
+             en.textContent = e; nw.append(en); }
+    card.append(nw);
+  }
 
   /* The thread goes above everything: a conversation you can't see the shape of is
      just a queue of reply cards. */
@@ -21808,6 +22522,130 @@ T("levelRecord: a miss counts as evidence too", () => {
   const st = levelBlank();
   levelRecord(st, 3, true); levelRecord(st, 3, false);
   assertEq(st.lv["3"], { n: 2, c: 1 });
+});
+
+/* ====================  THE ONE NEW THING RULE  ====================
+   The gate that lets a node teach rather than only consolidate. Fake stores only —
+   `strong` needs stab >= 21 and diff <= 5, `weak` needs diff >= 6.5 or a miss rate at
+   or above 40%, and `progressing` is anything drilled that is neither. */
+function carryStores() {
+  return {
+    lib: { "עובד": { tr: "oved", en: "working" }, "בית": { tr: "bayit", en: "house" },
+           "היום": { tr: "hayom", en: "today" }, "לומד": { tr: "lomed", en: "studying" } },
+    srs: { "עובד": { prod: { n: 9, stab: 40, diff: 3, miss: 0 } },     // strong
+           "בית":  { prod: { n: 9, stab: 40, diff: 3, miss: 0 } },     // strong
+           "לומד": { prod: { n: 3, stab: 5,  diff: 5, miss: 0 } },     // progressing
+           "היום": { prod: { n: 5, stab: 2,  diff: 8, miss: 3 } } }    // weak
+  };
+}
+T("bankServable: with no carry, one weak word still bars the sentence", () => {
+  const st = carryStores();
+  const it = { he: "עובד היום", uses: ["עובד", "היום"] };
+  assertTrue(!bankServable(it, st.lib, st.srs), "unchanged without the fourth argument");
+});
+T("bankServable: carry lets exactly one weak word ride on strong scaffolding", () => {
+  const st = carryStores();
+  const it = { he: "עובד היום", uses: ["עובד", "היום"] };
+  assertTrue(bankServable(it, st.lib, st.srs, new Set(["היום"])), "one new thing, everything else strong");
+  assertEq(bankCarried(it, st.lib, st.srs, new Set(["היום"])), "היום");
+});
+T("bankServable: carry refuses a word the session did not ask for", () => {
+  const st = carryStores();
+  const it = { he: "עובד היום", uses: ["עובד", "היום"] };
+  assertTrue(!bankServable(it, st.lib, st.srs, new Set(["בית"])),
+             "carrying is per-session permission, not a general amnesty");
+});
+T("bankServable: scaffolding must be STRONG, not merely ready", () => {
+  const st = carryStores();
+  /* לומד is `progressing` — ready enough for an ordinary sentence, not solid enough
+     to hold up an unknown one. */
+  const it = { he: "לומד היום", uses: ["לומד", "היום"] };
+  assertTrue(!bankServable(it, st.lib, st.srs, new Set(["היום"])),
+             "one weak word plus a half-learned one is the impossible card again");
+});
+T("bankServable: two unready words is never carried, however permissive the set", () => {
+  const st = carryStores();
+  st.srs["לומד"] = { prod: { n: 4, stab: 2, diff: 9, miss: 3 } };      // now weak too
+  const it = { he: "לומד היום", uses: ["לומד", "היום"] };
+  assertTrue(!bankServable(it, st.lib, st.srs, new Set(["היום", "לומד"])), "ONE new thing");
+});
+T("bankCarried: a fully reachable sentence carries nothing", () => {
+  const st = carryStores();
+  const it = { he: "עובד בבית", uses: ["עובד", "בית"] };
+  assertNull(bankCarried(it, st.lib, st.srs, new Set(["היום"])));
+});
+
+/* ====================  WHAT A NODE SESSION IS FOR  ==================== */
+T("campWeakWords: only the words he cannot say, worst first", () => {
+  const st = carryStores();
+  st.srs["לומד"] = { prod: { n: 0 } };                                  // never drilled: new
+  const node = { words: ["עובד", "בית", "היום", "לומד"] };
+  /* new sorts ahead of weak, and the two strong words are not in the list at all —
+     a node session is about what is missing, not about what is already held. */
+  assertEq(campWeakWords(node, st.srs), ["לומד", "היום"]);
+});
+T("campWeakWords: a node he has finished has nothing to rescue", () => {
+  const st = carryStores();
+  assertEq(campWeakWords({ words: ["עובד", "בית"] }, st.srs), []);
+});
+
+/* ====================  THE GATE THE MODEL CANNOT ARGUE WITH  ==================== */
+function commissionStores() {
+  const st = carryStores();
+  return { lib: st.lib, srs: st.srs,
+           scaffold: new Set(["עובד", "בית"]), rescue: new Set(["היום"]) };
+}
+T("commissionAcceptable: the rescue word plus scaffolding is exactly what was asked for", () => {
+  const c = commissionStores();
+  assertTrue(commissionAcceptable({ he: "אני עובד היום", for: "היום" },
+                                  c.lib, c.scaffold, c.rescue));
+});
+T("commissionAcceptable: a brief that was not met is thrown away", () => {
+  const c = commissionStores();
+  assertTrue(!commissionAcceptable({ he: "אני עובד בבית", for: "היום" },
+                                   c.lib, c.scaffold, c.rescue),
+             "MUST USE means must use");
+});
+T("commissionAcceptable: a word outside both lists is thrown away", () => {
+  const c = commissionStores();
+  assertTrue(!commissionAcceptable({ he: "אני עובד היום ומחר", for: "היום" },
+                                   c.lib, c.scaffold, c.rescue),
+             "מחר is neither scaffolding nor the rescue word");
+});
+T("commissionAcceptable: invented Hebrew is thrown away rather than ignored", () => {
+  const c = commissionStores();
+  /* The subtle one. bankContentWords only counts words that exist in the library, so
+     a sentence full of untaught Hebrew has nothing to fail on and sails through
+     bankServable looking perfectly reachable. */
+  assertTrue(!commissionAcceptable({ he: "אני גלופרניק היום", for: "היום" },
+                                   c.lib, c.scaffold, c.rescue));
+});
+T("commissionAcceptable: stoplist grammar is always allowed", () => {
+  const c = commissionStores();
+  assertTrue(commissionAcceptable({ he: "אני לא עובד היום", for: "היום" },
+                                  c.lib, c.scaffold, c.rescue));
+});
+T("commissionAcceptable: two rescue words in one item is one too many", () => {
+  const c = commissionStores();
+  c.rescue = new Set(["היום", "לומד"]);
+  assertTrue(!commissionAcceptable({ he: "לומד היום", for: "היום" },
+                                   c.lib, c.scaffold, c.rescue));
+});
+
+/* ====================  GUARDS THAT MUST NOT TIGHTEN FOREVER  ==================== */
+T("bankFrameFull: a frame in recent material still blocks", () => {
+  const bank = [];
+  for (let i = 0; i < 3; i++) bank.push({ type: "sentence", he: "זה בית " + i });
+  assertTrue(bankFrameFull("זה בית חדש", bank), "three sharing an opening pair is a frame");
+});
+T("bankFrameFull: a frame that scrolled out of the window no longer blocks", () => {
+  const bank = [];
+  for (let i = 0; i < 3; i++) bank.push({ type: "sentence", he: "זה בית " + i });
+  /* Pushed far enough back that the window no longer reaches them. Without this the
+     guard gets monotonically stricter as the bank grows and silently starves an
+     aggressive generator — the batch just comes back short, with nothing said. */
+  for (let i = 0; i < BANK_FRAME_WINDOW; i++) bank.push({ type: "sentence", he: "משהו אחר " + i });
+  assertTrue(!bankFrameFull("זה בית חדש", bank));
 });
 
 /* ====================  NOT THE SAME SENTENCE AGAIN  ==================== */

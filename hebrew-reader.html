@@ -1070,6 +1070,9 @@
     min-height: 1.4em; }
   .lheardlabel { font-size: .72rem; color: var(--muted); margin-top: 12px; letter-spacing: .04em;
     text-transform: uppercase; font-weight: 700; }
+  .lqhe { font-family: "David", "Times New Roman", serif; font-size: 1.25rem;
+    color: var(--hebrew); direction: rtl; line-height: 1.3; margin-top: 3px; }
+  .lqline { font-size: .86rem; color: var(--muted); margin-top: 2px; }
   .lheard.empty { color: var(--muted); direction: ltr; font-style: italic; font-size: .9rem; }
   .lspokenote { font-size: .82rem; color: var(--muted); margin-top: 7px; }
   .lspokenote b { color: #a86a34; font-weight: 600; }
@@ -17492,6 +17495,31 @@ function learnReveal() {
       noteEl.insertAdjacentElement("afterend", v);
       learnSuggested = verdict === "good" ? 2 : verdict === "partial" ? 1 : 0;
     }
+  }
+
+  /* Reply is the only kind with a genuinely separate question — qhe/qtr/qen are
+     what grandad asked, he/tr/en (below) are the natural short answer. Before this,
+     the question only ever existed as audio (or a hint you had to spend), so once
+     you'd answered there was no way to re-check what you were actually replying
+     to. George: "I would like to know what the question originally was so I know
+     what I was responding to." Placed first among the reveal content, above the
+     answer — deliberately still AFTER everything pre-answer (the audio buttons,
+     the ask line), so it stays audio-first before you answer and only shows the
+     English meaning of the question once you've already had to listen for it. */
+  if (c.kind === "reply" && c.item.qhe) {
+    const qWrap = document.createElement("div"); qWrap.className = "lqwrap";
+    const qLab = document.createElement("div"); qLab.className = "lheardlabel";
+    qLab.textContent = "Their question";
+    const qHe = document.createElement("div"); qHe.className = "lqhe";
+    qHe.dir = "rtl"; qHe.textContent = c.item.qhe;
+    const qLine = document.createElement("div"); qLine.className = "lqline";
+    if (c.item.qtr) qLine.append(document.createTextNode(c.item.qtr));
+    if (c.item.qen) {
+      if (c.item.qtr) qLine.append(document.createTextNode(" — "));
+      qLine.append(document.createTextNode("“" + c.item.qen + "”"));
+    }
+    qWrap.append(qLab, qHe, qLine);
+    card.append(qWrap);
   }
 
   const rule = document.createElement("div"); rule.className = "lrule";

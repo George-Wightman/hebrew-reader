@@ -1440,10 +1440,10 @@
      the ring would make the map feel broken. */
   .pword { pointer-events: none; }
   .pword text { font-family: "David", "Times New Roman", serif; }
-  .pword.drift text { fill: #a3977b; opacity: .38; }
-  /* Settled: a little bolder and a little darker, still nowhere near obvious. */
-  .pword.halo text { fill: #96875e; opacity: .6; }
-  .pword.loose text { fill: #b0894c; opacity: .46; }
+  .pword.drift text { fill: #a3977b; opacity: .34; }
+  /* Settled: gold, and clearer. Still not loud — it has to stay a record rather than a
+     label — but a mastered word should look like it was worth mastering. */
+  .pword.halo text { fill: #a07a2c; opacity: .78; }
   .pring { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2.5; }
   /* The curtain wall. Matches whatever the ring under it is doing, per state below. */
   .pmerlon { fill: var(--panel); stroke: #cfc3a6; stroke-width: 2; stroke-linejoin: round; }
@@ -14267,18 +14267,18 @@ function campWearFront(L, c, srs) {
 
    Drift appears only in the chapter he is in, the same rule the `why` line follows.
    Halos persist on every finished node in every chapter, forever. */
-const CAMP_WORDS_SHOWN = 3;
+const CAMP_WORDS_SHOWN = 6;
 function campSeedOf(id) {
   const s = String(id);
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return Math.abs(h) % 100000;
 }
-/* Three, not five: a chapter of six finished nodes at five words each is thirty pieces
-   of Hebrew on one band, and "faint" stops being faint when there is that much of it.
-   Seeded shuffle rather than the first three — the first three are whatever the planner
-   happened to list first, and every node showing its opening words makes the map look
-   like it is reading off a table. */
+/* All of them, not a sample. George: "I htink it would be good if all/ most of hte
+   words that we in a node were in hte halo" — and once the ring assembles a word at a
+   time, showing only three would hide most of the progress it exists to record. The
+   seeded shuffle survives to decide which slot each word takes, so two nodes with
+   similar vocabulary do not read off in the same order. */
 function campNodeWordsFor(node) {
   const ws = ((node && node.words) || []).filter(k => k && !STOPLIST.has(k));
   const seed = campSeedOf(node && node.id);
@@ -14322,43 +14322,103 @@ function campWordClashes(p, node, others, avoid) {
   return false;
 }
 /* The halo sits in the upper arc and the sides, never below. A node that grew downward
-   when it completed would shove its own name box out of the way and jolt the whole
-   constellation at the moment it is meant to feel settled. */
-const CAMP_HALO_R = 79, CAMP_DRIFT_MIN = 64, CAMP_DRIFT_MAX = 114;
-const CAMP_HALO_ANGLES = { 1: [90], 2: [142, 38], 3: [154, 90, 26] };
-function campWordSet(node, others, avoid) {
+   as it settled would shove its own name box out of the way and jolt the constellation
+   at the moment it is meant to look composed. It is an ellipse rather than a circle,
+   flattened to 0.72, because two nodes need only 200 of vertical clearance and a round
+   halo that size would reach up into the label of whatever is above it.
+
+   The ring holds a slot for EVERY word of the node, and a word takes its slot when the
+   SRS calls it strong. So the ring assembles a word at a time as he masters them rather
+   than snapping into place all at once, and a word that decays simply leaves it again —
+   which is the unravelling, told properly, per word instead of per node. Slots are
+   fixed, so a word arriving never shuffles the ones already there. */
+const CAMP_HALO_MIN = 84, CAMP_HALO_MAX = 156, CAMP_HALO_SIZE = 14.5;
+const CAMP_HALO_FROM = 170, CAMP_HALO_TO = 10, CAMP_HALO_FLAT = 0.72;
+/* Wide and messy before they settle. George: "before they become neet they can be
+   scattered a lot more messy and wider from the node." */
+const CAMP_DRIFT_MIN = 78, CAMP_DRIFT_MAX = 198;
+function campHaloGeometry(words) {
+  /* Wide enough that the words on it do not touch: the ring grows with what it has to
+     carry rather than being a fixed radius that six words would collide on. */
+  let need = 0;
+  words.forEach(w => { need += String(w).length * CAMP_HALO_SIZE * 0.62 + 17; });
+  const span = (CAMP_HALO_FROM - CAMP_HALO_TO) * Math.PI / 180;
+  const r = Math.max(CAMP_HALO_MIN, Math.min(CAMP_HALO_MAX, need / span));
+  return { rx: r, ry: r * CAMP_HALO_FLAT };
+}
+function campHaloSlots(node, words, spin, grow) {
+  const g = campHaloGeometry(words), n = words.length, k = grow || 1;
+  return words.map((w, i) => {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const a = (CAMP_HALO_FROM - t * (CAMP_HALO_FROM - CAMP_HALO_TO) + spin) * Math.PI / 180;
+    return { w: w, x: node.x + Math.cos(a) * g.rx * k, y: node.y - Math.sin(a) * g.ry * k,
+             size: CAMP_HALO_SIZE, rot: 0 };
+  });
+}
+/* A settled word must not sit under the road. George: "they shouldnt be under the path
+   once htey are mastered (when just rough before learning htey can be)". The whole ring
+   is turned to find a clear position rather than individual words being nudged off it,
+   because a ring with one word out of line is no longer ordered, and being ordered is
+   the entire message. */
+/* Turned in small steps and, failing that, pushed outwards. Six words on a ring are
+   40 degrees apart and a road crossing it is forbidden over about the same span, so
+   coarse steps can miss the gap entirely — the first version stepped by 9 degrees and
+   could not thread a road passing straight over the node, while 20 degrees would have
+   cleared it. Growing the ring is the second lever, for when no rotation works. */
+const CAMP_HALO_SPINS = (function () {
+  const out = [0];
+  for (let d = 3; d <= 45; d += 3) { out.push(-d); out.push(d); }
+  return out;
+})();
+const CAMP_HALO_GROWTH = [1, 1.14, 1.3];
+function campHaloPlace(node, words, strong, others, avoid, samples) {
+  let best = null, bestBad = Infinity;
+  for (let gi = 0; gi < CAMP_HALO_GROWTH.length; gi++) {
+    for (let si = 0; si < CAMP_HALO_SPINS.length; si++) {
+      const slots = campHaloSlots(node, words, CAMP_HALO_SPINS[si], CAMP_HALO_GROWTH[gi]);
+      let bad = 0;
+      slots.forEach((p, i) => {
+        /* Only the settled words have to keep clear. An empty slot is not on the map. */
+        if (!strong[i]) return;
+        if (campWordClashes(p, node, others, avoid)) bad += 2;
+        const near = samples && campTrailNearest(samples, p.x, p.y);
+        if (near && near.dist < 24 + p.size * 0.55) bad += 3;
+      });
+      if (!bad) return slots;
+      if (bad < bestBad) { bestBad = bad; best = slots; }
+    }
+  }
+  return best;
+}
+function campWordSet(node, others, avoid, srs, samples) {
   const words = campNodeWordsFor(node);
   const seed = campSeedOf(node.id);
-  const angles = CAMP_HALO_ANGLES[words.length] || CAMP_HALO_ANGLES[3];
-  const drift = [], halo = [], loose = [];
-  words.forEach((w, i) => {
-    /* Each word takes its own third of the circle and wanders inside it, rather than
+  const s = srs || srsAll();
+  const strong = words.map(w => srsStrengthBoth(s, w) === "strong");
+  const n = words.length || 1;
+  const drift = words.map((w, i) => {
+    /* Each word takes its own share of the circle and wanders inside it, rather than
        taking a free angle from the seed. A genuinely random scatter clusters, and a
-       cluster of three words in one quadrant reads as a rendering fault. */
+       cluster of words in one quadrant reads as a rendering fault. Before they are
+       learned they may lie across the road — they are not settled yet. */
     let placed = null, first = null;
-    for (let t = 0; t < 12; t++) {
+    for (let t = 0; t < 14; t++) {
       const j1 = campJitter(seed + i * 17 + t * 131, 31);
       const j2 = campJitter(seed + i * 17 + t * 131, 32);
       const j3 = campJitter(seed + i * 17 + t * 131, 33);
-      const a = ((i * 120) + 34 + j1 * 88) * Math.PI / 180;
+      const a = ((i * (360 / n)) + 22 + j1 * (300 / n)) * Math.PI / 180;
       const r = CAMP_DRIFT_MIN + j2 * (CAMP_DRIFT_MAX - CAMP_DRIFT_MIN);
       const p = { w: w, x: node.x + Math.cos(a) * r, y: node.y - Math.sin(a) * r,
-                  size: 12.5 + j3 * 6.5, rot: -8 + j1 * 18 };
+                  size: 11.5 + j3 * 8, rot: -15 + j1 * 30 };
       if (!first) first = p;
       if (!campWordClashes(p, node, others, avoid)) { placed = p; break; }
     }
-    drift.push(placed || first);
-    const ha = (angles[i] || 90) * Math.PI / 180;
-    const h = { w: w, x: node.x + Math.cos(ha) * CAMP_HALO_R,
-                y: node.y - Math.sin(ha) * CAMP_HALO_R, size: 15, rot: 0 };
-    halo.push(h);
-    /* Part of the way back out, not all of it: a node that has slipped is not a node
-       that was never done, and it should not look like one. */
-    const d = drift[i];
-    loose.push({ w: w, x: h.x + (d.x - h.x) * 0.42, y: h.y + (d.y - h.y) * 0.42,
-                 size: h.size + (d.size - h.size) * 0.42, rot: d.rot * 0.42 });
+    return placed || first;
   });
-  return { words: words, drift: drift, halo: halo, loose: loose };
+  const halo = campHaloPlace(node, words, strong, others, avoid, samples) ||
+               campHaloSlots(node, words, 0);
+  return { words: words, strong: strong, drift: drift, halo: halo,
+           at: words.map((w, i) => strong[i] ? halo[i] : drift[i]) };
 }
 /* ---- the paper ---------------------------------------------------------------
    The fog's top edge was a gradient stop, which is a clean horizontal line across the
@@ -14592,8 +14652,8 @@ function campNodeProgress(node, srs) {
   return { have: words.filter(k => wordReady(k, s)).length, need: words.length };
 }
 
-/* Which nodes were gold at the last render, so the settle can fire for the ones that
-   have just become so. Null until the first render has happened — see the settle. */
+/* Which words were settled at the last render, so the settle can fire only for the ones
+   that have just become so. Null until the first render — see the settle. */
 let campWordsSeen = null;
 function campRender() {
   const tree = document.getElementById("pathTree");
@@ -14631,18 +14691,23 @@ function campRender() {
   const wordPlan = [];
   L.nodes.forEach(n => {
     if (n.fog) return;
-    const st = campNodeState(n.id, c, srs);
-    if (st === "done") doneNow[n.id] = true;
-    const mode = st === "done" ? "halo" : st === "stale" ? "loose"
-               : (n.chState === "live" ? "drift" : null);
-    if (!mode) return;
-    const set = campWordSet(n, L.nodes, regionBoxes);
+    if (campNodeState(n.id, c, srs) === "done") doneNow[n.id] = true;
+    /* A settled word is shown wherever it is, forever — it is the record. An unsettled
+       one only in the chapter he is in, because a past chapter still carrying every
+       word he never mastered is a page of clutter rather than a country. */
+    const live = n.chState === "live";
+    const set = campWordSet(n, L.nodes, regionBoxes, srs, trail.samples);
     if (!set.words.length) return;
     hasWords[n.id] = true;
-    wordPlan.push({ node: n, mode: mode, set: set });
+    const show = [];
+    set.words.forEach((w, i) => {
+      if (set.strong[i] || live) show.push(i);
+    });
+    if (show.length) wordPlan.push({ node: n, set: set, show: show });
   });
   const keepOff = regionBoxes.concat(
-    wordPlan.reduce((acc, w) => acc.concat(w.set[w.mode].map(campWordBox)), []));
+    wordPlan.reduce((acc, w) =>
+      acc.concat(w.show.map(i => campWordBox(w.set.at[i]))), []));
 
   /* The land, first of all and under everything: the country the towns stand in. */
   L.bands.forEach((b, bi) => {
@@ -14703,16 +14768,17 @@ function campRender() {
      among it. Each halo word also carries where it would have drifted, which is what
      the settle animates FROM — see the end of this function. */
   wordPlan.forEach(w => {
-    const n = w.node, set = w.set, mode = w.mode;
-    set[mode].forEach((p, i) => {
-      const from = set.drift[i];
-      svg += '<g class="pword ' + mode + '" data-w="' + campEscape(n.id) +
+    const n = w.node, set = w.set;
+    w.show.forEach(i => {
+      const p = set.at[i], from = set.drift[i], settled = set.strong[i];
+      svg += '<g class="pword ' + (settled ? "halo" : "drift") +
+             '" data-w="' + campEscape(n.id) + '" data-word="' + campEscape(set.words[i]) +
              '" data-fx="' + campR(from.x) + '" data-fy="' + campR(from.y) +
              '" data-fr="' + campR(from.rot) + '" data-fs="' + campR(from.size) +
              '" transform="translate(' + campR(p.x) + ' ' + campR(p.y) +
              ') rotate(' + campR(p.rot) + ')">' +
              '<text text-anchor="middle" font-size="' + campR(p.size) + '">' +
-             campEscape(p.w) + '</text></g>';
+             campEscape(set.words[i]) + '</text></g>';
     });
   });
 
@@ -14810,30 +14876,28 @@ function campRender() {
     t.parentNode.insertBefore(rect, t);
   });
 
-  /* The settle. campRender replaces the whole SVG, so the elements are new every time
-     and a CSS transition has nothing to transition FROM — the words would simply be
-     found already gathered the next time he looked. Animating explicitly after
-     insertion is what makes them visibly fall into order at the moment the node turns
-     gold, which is the only moment the halo means anything.
+  /* The settle, one word at a time. campRender replaces the whole SVG, so the elements
+     are new every render and a CSS transition has nothing to transition FROM — the word
+     would simply be found already in place the next time he looked. Animating it
+     explicitly after insertion is what makes it visibly leave the scatter and take its
+     slot at the moment the SRS calls it strong, which is the only moment that matters.
 
      Nothing animates on the first render of a session: arriving at the map should not
-     replay every graduation he has ever earned. */
-  if (campWordsSeen) {
-    Object.keys(doneNow).forEach(id => {
-      if (campWordsSeen[id]) return;
-      tree.querySelectorAll('.pword.halo').forEach(g => {
-        if (g.dataset.w !== id || !g.dataset.fx) return;
-        const m = /translate\(([-\d.]+) ([-\d.]+)\) rotate\(([-\d.]+)\)/.exec(g.getAttribute("transform"));
-        if (!m || !g.animate) return;
-        g.animate([
-          { transform: "translate(" + g.dataset.fx + "px," + g.dataset.fy + "px) rotate(" +
-                       g.dataset.fr + "deg)", opacity: 0.45 },
-          { transform: "translate(" + m[1] + "px," + m[2] + "px) rotate(" + m[3] + "deg)", opacity: 1 }
-        ], { duration: 950, easing: "cubic-bezier(.22,.7,.3,1)" });
-      });
-    });
-  }
-  campWordsSeen = doneNow;
+     replay every word he has ever mastered. */
+  const settledNow = {};
+  tree.querySelectorAll(".pword.halo").forEach(g => {
+    const key = g.dataset.w + "::" + g.dataset.word;
+    settledNow[key] = true;
+    if (!campWordsSeen || campWordsSeen[key] || !g.dataset.fx || !g.animate) return;
+    const m = /translate\(([-\d.]+) ([-\d.]+)\) rotate\(([-\d.]+)\)/.exec(g.getAttribute("transform"));
+    if (!m) return;
+    g.animate([
+      { transform: "translate(" + g.dataset.fx + "px," + g.dataset.fy + "px) rotate(" +
+                   g.dataset.fr + "deg)", opacity: 0.4 },
+      { transform: "translate(" + m[1] + "px," + m[2] + "px) rotate(" + m[3] + "deg)", opacity: 1 }
+    ], { duration: 950, easing: "cubic-bezier(.22,.7,.3,1)" });
+  });
+  campWordsSeen = settledNow;
 
   /* The reveal. When the planner commits a chapter, the map has ground on it that it
      has never drawn before, and the trail extending itself into that ground is the
@@ -20541,51 +20605,86 @@ T("campTerrain: each region is its own kind of country", () => {
 });
 
 /* ---- the words around a node ---- */
-T("campNodeWordsFor: three words, stable, never a pronoun", () => {
+T("campNodeWordsFor: every word a node teaches, stable, never a pronoun", () => {
   const node = { id: "c1-day", words: ["עובד", "אני", "בוקר", "לומד", "של", "עייף", "יום"] };
   const got = campNodeWordsFor(node);
-  assertEq(got.length, CAMP_WORDS_SHOWN);
+  assertEq(got.length, 5, "five real words here, and all five get a slot on the ring");
   assertEq(got, campNodeWordsFor(node), "the same node always shows the same words");
   assertTrue(got.every(w => !STOPLIST.has(w)), "a halo of pronouns teaches nothing");
-  assertTrue(got.join("") !== ["עובד", "בוקר", "לומד"].join(""),
-             "and it is not simply the first three off the list");
+  assertTrue(got.join("") !== ["עובד", "בוקר", "לומד", "עייף", "יום"].join(""),
+             "and the slot order is shuffled, not the order the planner wrote them in");
 });
 T("campNodeWordsFor: a node with nothing showable shows nothing", () => {
   assertEq(campNodeWordsFor({ id: "x", words: ["אני", "של", "לי"] }), []);
   assertEq(campNodeWordsFor({ id: "y" }), []);
 });
-/* The arrangement is the whole message: scattered while he is working it, ordered once
-   it is gold. If the two ever coincided the settle would say nothing. */
-T("campWordSet: the halo is ordered and the drift is not", () => {
-  const node = { id: "c1-day", x: 600, y: 400, name: "Your day",
-                 words: ["עובד", "בוקר", "לומד", "עייף", "יום"] };
-  const set = campWordSet(node, [node]);
-  const rr = set.halo.map(p => Math.round(Math.hypot(p.x - node.x, p.y - node.y)));
-  assertEq(new Set(rr).size, 1, "every halo word sits at one radius — that is what ordered means");
-  const dr = set.drift.map(p => Math.round(Math.hypot(p.x - node.x, p.y - node.y)));
-  assertTrue(new Set(dr).size > 1, "drifted words at one radius is a halo with extra steps");
+/* The arrangement is the whole message: scattered while he is learning a word, ordered
+   once he has it. If the two ever coincided the settle would say nothing. */
+const WORDY = { id: "c1-day", x: 600, y: 400, name: "Your day",
+                words: ["עובד", "בוקר", "לומד", "עייף", "יום"] };
+function strongSrs(words) {
+  const s = {};
+  (words || []).forEach(k => {
+    s[k] = { prod: srsBandRecord("strong"), recv: srsBandRecord("strong") };
+  });
+  return s;
+}
+T("campWordSet: the ring is ordered and the scatter is not", () => {
+  const set = campWordSet(WORDY, [WORDY], [], {});
+  const rr = set.halo.map(p => Math.round(Math.hypot(p.x - WORDY.x,
+                                                     (p.y - WORDY.y) / CAMP_HALO_FLAT)));
+  assertEq(new Set(rr).size, 1, "every slot sits at one radius - that is what ordered means");
+  assertTrue(campHaloSlots(WORDY, WORDY.words, 0, 1)[0].y < WORDY.y,
+             "and the ring starts above the node");
+  const dr = set.drift.map(p => Math.round(Math.hypot(p.x - WORDY.x, p.y - WORDY.y)));
+  assertTrue(new Set(dr).size > 1, "scattered words at one radius is a ring with extra steps");
   assertTrue(new Set(set.drift.map(p => Math.round(p.size))).size > 1,
              "and they are not all one size either");
+  assertTrue(Math.max.apply(null, dr) > Math.max.apply(null, rr),
+             "the scatter must reach further out than the ring, or settling shows nothing");
 });
-/* A node that grew downwards on completion would shove its own name box aside and jolt
-   the constellation at the exact moment it is meant to feel settled. */
-T("campWordSet: the halo never sits below the node", () => {
-  const node = { id: "c1-day", x: 600, y: 400, name: "Your day",
-                 words: ["עובד", "בוקר", "לומד"] };
-  const set = campWordSet(node, [node]);
-  assertTrue(set.halo.every(p => p.y < node.y + 12), "the upper arc and the sides, never under it");
-  set.halo.forEach(p => assertTrue(!campBoxesHit(campWordBox(p), campLabelBox(node)),
+/* The point of the rebuild: the ring fills a word at a time as each is mastered, rather
+   than the whole node flipping at once. */
+T("campWordSet: a word takes its slot when the SRS calls it strong", () => {
+  const none = campWordSet(WORDY, [WORDY], [], {});
+  assertTrue(none.strong.every(v => !v), "nothing is settled before anything is known");
+  assertEq(JSON.stringify(none.at), JSON.stringify(none.drift), "so every word is scattered");
+  const some = campWordSet(WORDY, [WORDY], [], strongSrs(["בוקר", "יום"]));
+  assertEq(some.strong.filter(Boolean).length, 2, "two of them are his");
+  some.words.forEach((w, i) => {
+    const settled = w === "בוקר" || w === "יום";
+    assertEq(some.strong[i], settled, w + " is in the wrong state");
+    assertEq(some.at[i], settled ? some.halo[i] : some.drift[i],
+             w + " is drawn in the wrong place for its state");
+  });
+});
+/* Decay, per word rather than per node: a word that slips simply leaves the ring again,
+   which is the unravelling without needing a separate idea for it. */
+T("campWordSet: a word that is no longer strong goes back to the scatter", () => {
+  const held = campWordSet(WORDY, [WORDY], [], strongSrs(WORDY.words));
+  assertTrue(held.strong.every(Boolean), "all of them held");
+  const slipped = strongSrs(WORDY.words);
+  slipped["לומד"] = { prod: srsBandRecord("weak"), recv: srsBandRecord("weak") };
+  const now = campWordSet(WORDY, [WORDY], [], slipped);
+  now.words.forEach((w, i) => assertEq(now.strong[i], w !== "לומד",
+                                       w + " should only have left the ring if it slipped"));
+});
+T("campWordSet: the ring never sits below the node", () => {
+  const set = campWordSet(WORDY, [WORDY], [], strongSrs(WORDY.words));
+  assertTrue(set.halo.every(p => p.y < WORDY.y + 12),
+             "the upper arc and the sides, never under it");
+  set.halo.forEach(p => assertTrue(!campBoxesHit(campWordBox(p), campLabelBox(WORDY)),
                                    "and never over the name box"));
 });
-T("campWordSet: a loosened halo is between the two, not back to scattered", () => {
-  const node = { id: "c1-day", x: 600, y: 400, name: "Your day",
-                 words: ["עובד", "בוקר", "לומד"] };
-  const set = campWordSet(node, [node]);
-  set.loose.forEach((p, i) => {
-    const toHalo = Math.hypot(p.x - set.halo[i].x, p.y - set.halo[i].y);
-    const span = Math.hypot(set.drift[i].x - set.halo[i].x, set.drift[i].y - set.halo[i].y);
-    assertTrue(toHalo > 0.5, "a node whose gold has slipped must not look untouched");
-    assertTrue(toHalo < span, "nor as though it was never finished at all");
+/* A settled word sitting on the road is what George photographed. Scattered ones may
+   lie across it - they are not settled yet. */
+T("campWordSet: a settled word is turned off the road, a scattered one need not be", () => {
+  const road = campTrailSamples([{ x: 600, y: 200 }, { x: 600, y: 640 }], 16);
+  const set = campWordSet(WORDY, [WORDY], [], strongSrs(WORDY.words), road);
+  set.halo.forEach((p, i) => {
+    if (!set.strong[i]) return;
+    assertTrue(campTrailNearest(road, p.x, p.y).dist > 20,
+               p.w + " has settled on top of the road");
   });
 });
 /* Words landing on a neighbour's label is the failure this placement exists to avoid,
@@ -20595,7 +20694,7 @@ T("campWordSet: drifted words keep off the region's name", () => {
   camp.chapters[0].theme = "More of your life";
   const L = campLayout(camp), boxes = L.bands.map(campRegionBox);
   const near = L.nodes.slice().sort((a, b) => a.x - b.x)[0];
-  campWordSet(near, L.nodes, boxes).drift.forEach(p => {
+  campWordSet(near, L.nodes, boxes, {}).drift.forEach(p => {
     assertTrue(!campBoxesHit(campWordBox(p), boxes[0]),
                p.w + " lands on the region name — the collision George photographed");
   });
@@ -20610,7 +20709,7 @@ T("campWordSet: drifted words keep off the labels, at every chapter size", () =>
     camp.chapters[0].nodes = nodes;
     const L = campLayout(camp);
     L.nodes.forEach(node => {
-      campWordSet(node, L.nodes).drift.forEach(p => {
+      campWordSet(node, L.nodes, [], {}).drift.forEach(p => {
         const box = campWordBox(p);
         L.nodes.forEach(o => {
           assertTrue(!campBoxesHit(box, campLabelBox(o)),

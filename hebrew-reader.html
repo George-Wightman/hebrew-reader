@@ -6489,7 +6489,13 @@ function syncAfterApply() {
   try {
     renderLibrary();
     learnBadge();
-    if (lsGet(VIEW_KEY) === "learn" && !learnSession) learnRenderStart();
+    /* `!learnSession` used to stand in for "he isn't in the middle of anything", and
+       it is true in two situations that want opposite treatment: before a session,
+       and immediately after one. learnFinish nulls the session and then fires a sync
+       400ms later, so any sync that pulled a change repainted the start screen
+       straight over the end screen he was still reading. Ask what is actually on
+       screen instead — which covers the walk home for free. */
+    if (lsGet(VIEW_KEY) === "learn" && learnStartVisible()) learnRenderStart();
     if (lsGet(VIEW_KEY) === "path") pathRender();
   } catch (e) { /* a repaint must never break the sync that succeeded */ }
 }
@@ -17445,10 +17451,23 @@ function learnTokens(c) {
   });
 }
 
+const LEARN_SCREENS = ["lStart", "lRun", "lSpeed", "lEnd"];
 function learnShow(which) {
-  ["lStart", "lRun", "lSpeed", "lEnd"].forEach(id =>
+  LEARN_SCREENS.forEach(id =>
     document.getElementById(id).style.display = (id === which) ? "block" : "none");
 }
+/* Which Learn screen is up, asked of the DOM rather than inferred from learnSession.
+   `get` exists so the suite can drive this against plain stubs — there is no screen
+   in a test run, and the predicate is the part worth pinning down. */
+function learnScreenShowing(get) {
+  const g = get || (id => document.getElementById(id));
+  for (let i = 0; i < LEARN_SCREENS.length; i++) {
+    const el = g(LEARN_SCREENS[i]);
+    if (el && el.style && el.style.display !== "none") return LEARN_SCREENS[i];
+  }
+  return null;
+}
+function learnStartVisible(get) { return learnScreenShowing(get) === "lStart"; }
 
 /* ---- the progress screen ---------------------------------------------------- */
 function fmtMins(sec) {
@@ -21349,6 +21368,22 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- which Learn screen is up ---- */
+T("learnStartVisible: an end screen is not a start screen", () => {
+  const screens = which => id => ({ style: { display: id === which ? "block" : "none" } });
+  assertTrue(learnStartVisible(screens("lStart")), "before a session the repaint is welcome");
+  assertTrue(!learnStartVisible(screens("lEnd")),
+             "learnFinish nulls the session and syncs 400ms later — a repaint here " +
+             "wipes the end screen out from under him mid-read");
+  assertTrue(!learnStartVisible(screens("lSpeed")), "the walk home had the same exposure");
+  assertTrue(!learnStartVisible(screens("lRun")));
+  assertEq(learnScreenShowing(screens("lEnd")), "lEnd");
+});
+T("learnScreenShowing: a missing element must not read as visible", () => {
+  assertNull(learnScreenShowing(() => null));
+  assertTrue(!learnStartVisible(() => null));
 });
 
 /* ---- the walk home ---- */

@@ -11799,6 +11799,54 @@ function srsFuzz(days, rnd) {
    he actually knows within a few days, high enough that a word he has merely
    guessed right twice does not qualify. */
 const FORGIVE_STREAK = 3;
+
+/* ---- retrievability: how much of the word is still there ----------------------
+   `last` was written on every answer and read for exactly one thing: a boolean asking
+   whether this was the same day. The scheduler never asked HOW LONG it had been — so a
+   word answered forty days late earned the same bump as one answered on its due date,
+   the same-day guard needed a special case AND an escape hatch to undo its own side
+   effect, and there was no quantity anywhere in this app that could be checked against
+   what actually happened.
+
+   R is the probability he still has the word: 1 the moment he answers it, 0.9 by the
+   time it falls due, decaying from there. The exponential form rather than FSRS's power
+   curve because it is one line AND because R(stab) = 0.9 exactly — which is the property
+   that makes this a retrofit rather than a migration. `due` is already `last + stab`, so
+   every schedule already on disk is reproduced unchanged and nothing is rescheduled
+   behind him.
+
+   A record with no usable `last` is read as ON TIME rather than as anything else. That
+   returns R = 0.9, which is exactly the old ladder, so a legacy record written before
+   any of this existed behaves today the way it behaved yesterday. */
+function srsDaysSince(last, today) {
+  if (!last) return null;
+  const a = new Date(last + "T00:00:00"), b = new Date(today + "T00:00:00");
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000));
+}
+function srsR(rec, today) {
+  const t = srsDaysSince(rec && rec.last, today);
+  if (t === null) return 0.9;                    // nothing to measure from: read as on time
+  return Math.pow(0.9, t / Math.max(0.5, (rec && rec.stab) || 1));
+}
+/* The stability multiplier on a clean answer.
+
+   Tuned to be EXACTLY the old ladder for a word answered on its due date. At R = 0.9
+   this reduces to 1 + 1.6*(1 - (diff-1)*0.075), which equals the old
+   `2.6 - (diff-1)*0.12` term for term: 2.6 at difficulty 1, 2.12 at 5, 1.52 at 10. It
+   is not a new curve, it is the same curve with lateness added as an axis it never had.
+   An early answer now earns less and a late one more, which is the spacing effect the
+   fixed ladder could not express.
+
+   Capped, because uncapped a word answered long after its date jumps 5.5x, and a
+   fortnight away from the app would inflate every schedule it touched. One constant
+   stating the ceiling where it can be read and tested beats leaving it emergent. */
+const SRS_GAIN = 16, SRS_GAIN_MAX = 3.5;
+function srsGain(R, diff) {
+  const byDiff = Math.max(0, 1 - (((diff || 5) - 1) * 0.075));
+  return Math.max(1, Math.min(SRS_GAIN_MAX, 1 + SRS_GAIN * (1 - R) * byDiff));
+}
+
 function srsApply(srs, key, grade, side, todayOverride) {
   const r = srsSide(srs, key, side || "prod");
   const today = todayOverride || todayISO();
@@ -11844,7 +11892,19 @@ function srsApply(srs, key, grade, side, todayOverride) {
      whichever branch runs, so a second consecutive miss gets the full lapse
      treatment. At that point it isn't noise any more. */
   const forgiven = grade === 0 && (r.streak || 0) >= FORGIVE_STREAK;
-  const dd = grade === 0 ? (forgiven ? 0.5 : 1.1) : grade === 1 ? 0.1 : -0.6;
+  /* Measured before anything is written, because every branch below reads it. */
+  const R = srsR(r, today);
+  const t = srsDaysSince(r.last, today);
+  /* A miss at high retrievability is "he should have known that". A miss at low
+     retrievability is ordinary forgetting, and charging the WORD for that is how a
+     perfectly normal word gets driven into the weak band by a fortnight's absence.
+     Weighted by R/0.9 so an on-time miss is, again, exactly unchanged.
+
+     The miss term only. Errors are the diagnostic signal; making the clean answer's
+     -0.6 depend on R as well would be inventing a mechanism nothing claims. */
+  const missWeight = Math.max(0, Math.min(1.25, R / 0.9));
+  const dd = grade === 0 ? (forgiven ? 0.5 : 1.1) * missWeight
+           : grade === 1 ? 0.1 : -0.6;
   r.diff = Math.min(10, Math.max(1, r.diff + dd + (5 - r.diff) * 0.05));
   r.n = (r.n || 0) + 1;
   /* Nearly is deliberately neutral — it neither earns progress toward forgiveness
@@ -11861,8 +11921,12 @@ function srsApply(srs, key, grade, side, todayOverride) {
 
      Succeeding twice in one sitting is not new evidence that a word has stuck — it
      is the same evidence, read twice. Failing twice in one sitting IS new evidence,
-     so a miss still shortens the interval below. */
-  const repeat = r.last === today;
+     so a miss still shortens the interval below.
+
+     This no longer needs a flag. A same-day answer gives t = 0, so R = 1, so
+     srsGain returns exactly 1 and stability cannot compound — the arithmetic
+     refuses it, which is a better guarantee than a boolean somebody has to
+     remember to check in every branch. */
 
   if (forgiven) {
     /* The miss is still RECORDED — srsStrength must keep seeing the evidence, or
@@ -11889,10 +11953,10 @@ function srsApply(srs, key, grade, side, todayOverride) {
     r.due = addDays(today, Math.min(7, Math.max(0, (r.lapses || 1) - 1)));
   } else if (grade === 1) {
     r.miss = (r.miss || 0) + 0.5;
-    if (!repeat) {
-      r.stab = Math.max(1, (r.stab || 0) * 0.9);
-      r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
-    }
+    /* "Nearly" is not a success, so there is no gain for (1 - R) to scale. The
+       same-day guard survives here alone, stated in elapsed days like everything else
+       rather than as a date comparison. */
+    if (t !== 0) r.stab = Math.max(1, (r.stab || 0) * 0.9);
   } else {
     /* ---- F4: the miss ratio has to be able to recover --------------------
        `miss` used to be a lifetime counter that only ever rose, so srsStrength's
@@ -11901,27 +11965,31 @@ function srsApply(srs, key, grade, side, todayOverride) {
        little of it, which is what makes "weak" a description of where you are
        rather than of where you once were. */
     r.miss = (r.miss || 0) * 0.9;
-    if (!repeat) {
-      /* Easy words stretch out fast, hard ones stay close. Tuned so that at baseline
-         difficulty the sequence runs ~1 → 2 → 5 → 12 → 28 days. */
-      r.stab = Math.min(365, !r.stab ? 1 : r.stab * (2.6 - (r.diff - 1) * 0.12));
-      r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab))));
-    }
+    /* Easy words stretch out fast, hard ones stay close — and a word answered late
+       stretches further than one answered early, which the old fixed ladder
+       (2.6 - (diff-1)*0.12) had no way to say. srsGain reproduces that ladder exactly
+       for an on-time answer, so this line is a strict widening of what it replaced.
+       At baseline difficulty and on time the sequence still runs ~1 → 2 → 5 → 12 → 28. */
+    r.stab = Math.min(365, !r.stab ? 1 : r.stab * srsGain(R, r.diff));
   }
-  /* ---- the same-day guard must not PIN a word to today -----------------------
-     `repeat` above exists to stop a word met twice in one session from compounding
-     its interval, and that part is right. But it also skipped the `due` write, and a
-     record can be sitting at due <= today when the repeat happens — a miss earlier in
-     the day puts it there deliberately, and so does setting a band by hand. From that
-     moment nothing could move it: every clean answer was a "repeat", so due stayed on
-     today, learnTargets re-served it, and the loop never closed. Measured on George's
-     own backup: seven clean answers in a row, still due today, still leading the queue.
-     George: "they keep coming up... just as repeat the single word back to me".
+  /* ---- ONE place where `due` is written --------------------------------------
+     There used to be three: a write inside the "nearly" branch, another inside the
+     clean branch, and this block afterwards repairing the case both of them skipped.
+     A record can be sitting at due <= today when a same-day repeat happens — a miss
+     earlier in the day puts it there deliberately, and so does setting a band by hand
+     — and from that moment nothing could move it: every clean answer was a "repeat",
+     so due stayed on today, learnTargets re-served it, and the loop never closed.
+     Measured on George's own backup: seven clean answers in a row, still due today,
+     still leading the queue. George: "they keep coming up... just as repeat the single
+     word back to me".
 
-     Stability is still left alone — the same evidence read twice is not new evidence —
-     so this only spends the interval the word has ALREADY earned. Misses are excluded
-     because a first lapse is meant to come back today; that is the repair, not the bug. */
-  if (grade !== 0 && (!r.due || r.due <= today)) {
+     One clause now. Re-fuzz when a day has actually passed, or when the record is
+     sitting on a date it has already spent. Not otherwise: a same-day repeat must not
+     rescatter an interval it did not earn the right to change, and stability is
+     already untouched on that path, so this only spends what the word has EARNED.
+     Misses are excluded because a first lapse is meant to come back today; that is
+     the repair, not the bug. */
+  if (grade !== 0 && (t !== 0 || !r.due || r.due <= today)) {
     r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab || 1))));
   }
   r.last = today;
@@ -20481,6 +20549,68 @@ T("srsApply: a word drilled clean for a fortnight stops reading as weak", () => 
   assertEq(srsStrength(s["מילה"].prod), "strong", "six clean answers must clear it");
 });
 
+/* ---- retrievability ----
+   The safety argument for adding R is that it changes NOTHING for a word answered on
+   its due date — so that argument is a test rather than a paragraph. If the first one
+   here ever drifts, every schedule already on disk has been quietly rewritten. */
+T("srsGain: an on-time answer is EXACTLY the ladder it replaced", () => {
+  for (let d = 1; d <= 10; d++) {
+    const ladder = 2.6 - (d - 1) * 0.12;
+    assertTrue(Math.abs(srsGain(0.9, d) - ladder) < 1e-9,
+               "difficulty " + d + ": got " + srsGain(0.9, d) + ", the ladder gave " + ladder);
+  }
+});
+T("srsGain: a same-day answer cannot grow the interval at all", () => {
+  /* What used to need a `repeat` flag checked in two branches, and an escape hatch
+     below them to undo what the flag broke. */
+  assertEq(srsGain(1, 1), 1);
+  assertEq(srsGain(1, 5), 1);
+  assertEq(srsGain(1, 10), 1);
+});
+T("srsGain: late is worth more, early is worth less, and the boost is capped", () => {
+  assertTrue(srsGain(0.8, 5) > srsGain(0.9, 5), "a hard-won late answer is worth more");
+  assertTrue(srsGain(0.97, 5) < srsGain(0.9, 5), "an early one is worth less");
+  assertTrue(srsGain(0.97, 5) > 1, "but still worth something");
+  assertEq(srsGain(0.1, 1), SRS_GAIN_MAX, "a long absence cannot hand a word a year");
+});
+T("srsR: 1 the day it is answered, 0.9 the day it falls due", () => {
+  assertEq(srsR({ last: DAY1, stab: 10 }, DAY1), 1);
+  assertTrue(Math.abs(srsR({ last: "2026-08-10", stab: 10 }, DAY1) - 0.9) < 1e-9,
+             "ten days into a ten-day interval is exactly the target retention");
+  assertTrue(srsR({ last: "2026-07-01", stab: 10 }, DAY1) <
+             srsR({ last: "2026-08-10", stab: 10 }, DAY1), "and it keeps falling");
+});
+T("srsR: a record with no `last` reads as on time, so legacy records do not move", () => {
+  assertEq(srsR({ last: "", stab: 10 }, DAY1), 0.9);
+  assertEq(srsR({ stab: 10 }, DAY1), 0.9);
+});
+T("srsApply: a word answered exactly on its due date lands where it always did", () => {
+  const s = { "מילה": { prod: seasoned({ last: "2026-08-10", stab: 10, diff: 5 }), recv: srsBlank() } };
+  srsApply(s, "מילה", 2, "prod", DAY1);
+  /* Difficulty moves to 4.4 first and the ladder is read at THAT difficulty — the same
+     order the old code used, so the same number falls out. */
+  const ladder = 10 * (2.6 - (4.4 - 1) * 0.12);
+  assertTrue(Math.abs(s["מילה"].prod.stab - ladder) < 1e-9,
+             "got " + s["מילה"].prod.stab + ", the old ladder gave " + ladder);
+});
+T("srsApply: answering late is worth more than answering early", () => {
+  const early = { "מ": { prod: seasoned({ last: "2026-08-18", stab: 10 }), recv: srsBlank() } };
+  const late  = { "מ": { prod: seasoned({ last: "2026-07-21", stab: 10 }), recv: srsBlank() } };
+  srsApply(early, "מ", 2, "prod", DAY1);
+  srsApply(late, "מ", 2, "prod", DAY1);
+  assertTrue(late["מ"].prod.stab > early["מ"].prod.stab,
+             "the spacing effect is the whole reason R exists");
+});
+T("srsApply: a miss he was long overdue for is not evidence the word is hard", () => {
+  const ontime = { "מ": { prod: seasoned({ last: "2026-08-10", stab: 10, diff: 5 }), recv: srsBlank() } };
+  const stale  = { "מ": { prod: seasoned({ last: "2026-05-01", stab: 10, diff: 5 }), recv: srsBlank() } };
+  srsApply(ontime, "מ", 0, "prod", DAY1);
+  srsApply(stale, "מ", 0, "prod", DAY1);
+  assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
+             "forgetting after three months away says less than forgetting on the day");
+  assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
 /* ---- what must NOT change ---- */
 T("srsApply: an ordinary due review still grows the interval", () => {
   const s = { "מילה": { prod: seasoned({ stab: 10, diff: 5 }), recv: srsBlank() } };
@@ -21230,7 +21360,12 @@ T("srsApply: a miss on a young word is unchanged — no streak to spend", () => 
   srsApply(srs, "א", 0, "prod", "2026-08-03");
   const r = srsSide(srs, "א", "prod");
   assertEq(r.lapses, 1, "under the threshold this is a real lapse");
-  assertTrue(r.stab <= before * 0.31, "and the full cut applies");
+  /* Against the one-day floor, not the raw 0.3, because `before` is now small enough
+     to hit it: the 08-02 answer came a day EARLY on a two-day interval, and under R an
+     early answer earns less than a due one. The floor has always been there; the
+     shorter interval is what made it reachable. Still discriminates — the forgiven
+     0.6 cut would land at 1.9 and fail this. */
+  assertTrue(r.stab <= Math.max(1, before * 0.31), "and the full cut applies");
 });
 T("srsApply: Nearly neither builds nor breaks the streak", () => {
   const srs = {};

@@ -15769,9 +15769,9 @@ function campBuild(node, size) {
     }
   };
 
-  /* The reply closes the session, so it is reserved before anything else can spend
-     its slot — same reasoning as the daily builder. */
-  const replyPick = pool.filter(x => x.it.type === "reply")[0] || null;
+  /* Out of node sessions for the same reason it is out of daily ones — see
+     learnBuild. Kept as a null so the `room` arithmetic below refills the slot. */
+  const replyPick = null;
   if (replyPick) used.add(replyPick.it.id);
   let room = size - (replyPick ? 1 : 0);
 
@@ -16452,11 +16452,15 @@ function learnBuild(opts) {
                                       BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
   const ranked = bankSplit.fresh.concat(bankSplit.recent);
 
-  /* Levelled like everything else — the session closes on the real moment, and that
-     moment should be at his level rather than whichever reply happens to be easiest.
-     A quota of one, so pickByLevel returns at most one item and falls back through
-     the neighbouring levels if he has no reply at his own. */
-  const replyPick = pickByLevel(ranked.filter(x => x.it.type === "reply"), [level])[0] || null;
+  /* "Answer them" no longer runs in ordinary practice. George: "Remove the 'say your
+     answer to this' question that is what the conversations do I feel like they dont
+     fit in the normal practice sections" — and he is right that it was the one card
+     asking for an unscripted reply in a session built entirely of scripted ones.
+
+     Held as a null rather than deleted, because the `size - (replyPick ? 1 : 0)`
+     arithmetic below is what refills the slot, and because the existing reply items
+     in the bank are still readable if this ever comes back. */
+  const replyPick = null;
 
   /* Shadowing runs on material he has ALREADY seen — repeating something he
      doesn't understand yet is a listening test with extra steps. Needs a voice
@@ -16850,10 +16854,8 @@ async function sentenceWrite(spec, briefs) {
     "sees it. One unknown word per sentence, and it must be the rescue word.\n\n" +
     "Return JSON only, no markdown:\n" +
     '{"items":[{"i":0,"type":"sentence","for":"","he":"","tr":"","en":"",' +
-    '"gloss":[{"he":"","tr":"","en":"","why":""}]},' +
-    '{"i":1,"type":"reply","for":"","qhe":"","qtr":"","qen":"","he":"","tr":"","en":"","gloss":[]}]}\n\n' +
+    '"gloss":[{"he":"","tr":"","en":"","why":""}]}]}\n\n' +
     "- i = the brief index this answers. for = the MUST USE word, copied exactly, or \"\".\n" +
-    "- type \"reply\": qhe/qtr/qen is grandad's question, he/tr/en is the natural short answer.\n" +
     "- tr is plain English letters the way he would type them: \"ani rotze lalechet la'avoda\". No diacritics.\n" +
     "- Hebrew without nikud.\n" +
     "- gloss: one entry per word of the \"he\" line, same words, same spelling, same order. " +
@@ -17111,8 +17113,7 @@ async function learnTopUp(quiet) {
     "Return JSON only, no markdown:\n" +
     '{"items":[' +
     '{"type":"sentence","he":"","tr":"","en":"","gloss":[{"he":"","tr":"","en":"","why":""}]},' +
-    '{"type":"listen","he":"","tr":"","en":"","gloss":[]},' +
-    '{"type":"reply","qhe":"","qtr":"","qen":"","he":"","tr":"","en":"","gloss":[]}' +
+    '{"type":"listen","he":"","tr":"","en":"","gloss":[]}' +
     '],"newWords":[{"hebrew":"","translit":"","english":"","category":""}]}\n\n' +
     /* THE BAR THAT WAS MISSING. Every constraint in this prompt used to be about
        difficulty and form; not one was about meaning, so "there is a big wind"
@@ -17136,9 +17137,8 @@ async function learnTopUp(quiet) {
     /* "short" used to be in both of these lines and had to come out: the level
        spread above deliberately asks for items at 3-5, and every one of those is
        longer than the three words "short" was quietly enforcing. */
-    "- Up to 6 of type \"sentence\": everyday sentences HE might say, spread across the levels above. en = the English he'll be shown and must produce from.\n" +
+    "- Up to 8 of type \"sentence\": everyday sentences HE might say, spread across the levels above. en = the English he'll be shown and must produce from.\n" +
     "- Up to 4 of type \"listen\": things grandad might say to him. en = what it means.\n" +
-    "- Up to 2 of type \"reply\": qhe/qtr/qen is a question grandad asks; he/tr/en is a natural short answer.\n" +
     "- RETURN FEWER IF THAT IS ALL YOU CAN DO WELL. Four sentences a person would " +
     "really say beat twelve that are merely grammatical. Never pad to reach a count. " +
     "Returning 3 good items is a success; returning 12 with 6 awkward ones is a failure.\n" +

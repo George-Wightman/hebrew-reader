@@ -5850,9 +5850,18 @@ function openSettings() {
   try { document.getElementById("geminiKey").value = lsGet(GEMINI_KEY) || ""; } catch (e) {}
   try { document.getElementById("geminiKey2").value = lsGet(GEMINI_KEY2) || ""; } catch (e) {}
   const n = Object.keys(store.userDict).length;
+  /* The generation reject rate sits here rather than in the practice stats: it is a
+     fact about the prompt, not about him, and this is the panel where facts about the
+     machinery live. Shown only once there is enough to mean anything, and only while
+     it is actually happening — a permanent "0% rejected" line is wallpaper. */
+  const gs = genStat();
+  const tmr = gs.n >= 20 && gs.oov / gs.n >= 0.05
+    ? " Sentence generation is using words you don't have in " +
+      Math.round((gs.oov / gs.n) * 100) + "% of what it writes; those are thrown away."
+    : "";
   document.getElementById("dictStats").textContent =
     "Built-in dictionary: " + Object.keys(DICT).length + " words + " + Object.keys(PHRASES).length +
-    " phrases. Words you've taught it: " + n + ".";
+    " phrases. Words you've taught it: " + n + "." + tmr;
   vnotesRenderStatus();
   paintStorageRow();
   paintAiQuotaRow();
@@ -12473,6 +12482,76 @@ function bankUses(he, lib) {
   });
   return out;
 }
+/* ---- the words the gate could not see -----------------------------------------
+   bankUses keeps only tokens that resolve to a library key, and SILENTLY DROPS every
+   other one. So a generated sentence containing a word he has never met produced a
+   `uses` list that did not mention it, bankContentWords could not see it, and
+   bankServable — the gate whose entire job is "never hand him an impossible card" —
+   passed the sentence as fully within reach. The one-new-word rule was enforced
+   against words the app knew about and blind to the ones it did not.
+
+   Deliberately MORE forgiving about prefixes than bankUses is, and the asymmetry is
+   the point: bankUses decides what to CREDIT and should be strict, this decides what
+   to REJECT and should be lenient. Hebrew stacks prefixes (ושהוא, ובבית) and
+   libKeyFor only peels one, so a strict version here would bin perfectly good
+   sentences over a tokeniser limit rather than a vocabulary problem. */
+/* Peeling is a way of FINDING a known word, never a way of shortening an unknown one.
+   You cannot tell a prefix from a first letter without something underneath to confirm
+   it: מכוער opens with מ, and stripping speculatively turns an unmet word into וער,
+   which is not a word at all. So this only ever returns a peel that RESOLVED, and
+   otherwise hands back the token exactly as written. */
+function bankStripPrefixes(tok, lib) {
+  let t = tok;
+  for (let i = 0; i < 3; i++) {
+    if (lib[t] || STOPLIST.has(t)) return t;
+    if (!(t.length > 2 && BANK_PREFIXES.indexOf(t[0]) !== -1)) break;
+    t = t.slice(1);
+  }
+  return (lib[t] || STOPLIST.has(t)) ? t : tok;
+}
+/* A comparison key, never shown. Strips every leading letter that COULD be a prefix so
+   that מכוער and ומכוער collapse into one gap rather than reading as two.
+   Over-stripping is safe here precisely because nothing but the dedupe reads it. */
+function bankPeel(tok) {
+  let t = tok;
+  while (t.length > 2 && BANK_PREFIXES.indexOf(t[0]) !== -1) t = t.slice(1);
+  return t;
+}
+function bankUnknowns(he, lib) {
+  const out = [], seen = {};
+  String(he || "").split(/[^֐-׿]+/).forEach(tok => {
+    if (!tok) return;
+    if (libKeyFor(tok, lib)) return;
+    const bare = bankStripPrefixes(tok, lib);
+    if (lib[bare] || STOPLIST.has(bare)) return;
+    const id = bankPeel(tok);
+    if (seen[id]) return;
+    seen[id] = 1;
+    out.push(tok);                 // reported as written: that is what was in the sentence
+  });
+  return out;
+}
+/* Token Miss Rate, measured locally rather than bought. The generation prompt is
+   already told to build only from words he has; this is the only thing that ever
+   checks whether it did. A rising rate means the prompt has stopped being obeyed —
+   which the literature says is the normal failure of constrained generation, and
+   which nothing in this app could previously have detected. */
+const GENSTAT_KEY = "hvr_genstat";
+function genStat() {
+  try { const o = JSON.parse(lsGet(GENSTAT_KEY)); return (o && typeof o === "object") ? o : { n: 0, oov: 0 }; }
+  catch (e) { return { n: 0, oov: 0 }; }
+}
+function genStatAdd(seen, dropped) {
+  const s = genStat();
+  /* Decayed rather than cumulative, same reasoning as `miss` and the level counters:
+     a prompt fixed in August should not still be reading badly in October. */
+  s.n = (s.n || 0) * 0.98 + seen;
+  s.oov = (s.oov || 0) * 0.98 + dropped;
+  try { lsSet(GENSTAT_KEY, JSON.stringify({ n: Math.round(s.n * 10) / 10, oov: Math.round(s.oov * 10) / 10 })); }
+  catch (e) {}
+  return s;
+}
+
 /* An item whose words have all since been deleted from the library can never be
    scheduled against anything again. */
 function bankPrune(bank, lib) {
@@ -17086,7 +17165,7 @@ function learnIngest(data) {
   }
   const lib = libAll();
   const bank = bankAll();
-  let n = 0;
+  let n = 0, seen = 0, oov = 0;
   items.forEach(it => {
     if (!it || !it.he || !it.tr) return;
     const type = ["sentence", "listen", "reply"].indexOf(it.type) !== -1 ? it.type : "sentence";
@@ -17094,6 +17173,17 @@ function learnIngest(data) {
     /* Drills none of his words — it'd be a reading comprehension puzzle, not
        production practice. Drop it rather than pad the session with it. */
     if (!uses.length) return;
+    seen++;
+    /* A word he has never met, that the servable gate would never have seen — see
+       bankUnknowns. Strict rather than budgeted: the gate's whole character is
+       "absolute except for the one explicitly permitted carry", and an undeclared
+       unknown is by definition not the permitted one. Words the model deliberately
+       introduces still take their own road, through `newWords` into Pending, above.
+
+       Rejecting is cheap. AI_POOL_CAPS.fast is 500 a day and this app spends a
+       handful, so the correct response to a bad batch is another batch. */
+    const unknown = bankUnknowns(it.he, lib);
+    if (unknown.length) { oov++; return; }
     if (bank.some(b => b.he === it.he && b.type === type)) return;
     /* Checked against `bank` as it grows, so the guards apply WITHIN a batch too —
        a single generation call that returns "a big house" and "a new house" only
@@ -17122,6 +17212,7 @@ function learnIngest(data) {
   });
   bankSave(bank);
   rebuildTrIndex();
+  if (seen) genStatAdd(seen, oov);
   return n;
 }
 
@@ -20980,6 +21071,35 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- the words the gate could not see ---- */
+T("bankUnknowns: finds the word bankUses silently dropped", () => {
+  const lib = { "בית": {}, "גדול": {} };
+  assertEq(bankUses("בית גדול ומכוער", lib).join(","), "בית,גדול",
+           "the third word never appears in `uses` at all — this was the hole");
+  assertEq(bankUnknowns("בית גדול ומכוער", lib).join(","), "ומכוער",
+           "and here it is — reported as written, because you cannot tell a prefix " +
+           "from a first letter with no known word underneath to confirm it");
+});
+T("bankUnknowns: a sentence entirely within reach has none", () => {
+  const lib = { "בית": {}, "גדול": {} };
+  assertEq(bankUnknowns("הבית גדול", lib).length, 0, "prefixed, but known");
+});
+T("bankUnknowns: function words are not unknowns", () => {
+  assertEq(bankUnknowns("זה לא של אני", {}).length, 0,
+           "STOPLIST words carry no schedule and are not something he was never taught");
+});
+T("bankUnknowns: stacked prefixes are a tokeniser limit, not a vocabulary gap", () => {
+  /* libKeyFor peels ONE prefix, so ובבית looks unresolvable to bankUses. Rejecting a
+     sentence over that would bin good Hebrew for the wrong reason — hence the second
+     peel, and hence this test. */
+  assertEq(bankUnknowns("ובבית", { "בית": {} }).length, 0);
+  assertEq(bankUnknowns("ושלא", {}).length, 0, "and onto a function word underneath");
+});
+T("bankUnknowns: two spellings of the same unmet word are one gap, not two", () => {
+  assertEq(bankUnknowns("מכוער מכוער ומכוער", {}).join(","), "מכוער",
+           "the conjunction does not make it a second thing he has never met");
 });
 
 /* ---- the recogniser is not the judge ----

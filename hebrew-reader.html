@@ -1409,6 +1409,17 @@
   .lstackrow { display: grid; grid-template-columns: 78px 1fr; gap: 10px; align-items: center;
                margin-bottom: 7px; font-size: .74rem; color: var(--muted); }
   .lstatnote { font-size: .82rem; color: var(--muted); margin-top: 10px; }
+  /* Calibration. Two bars per row rather than a number pair, because the whole
+     question is "are these the same length" and the eye answers that faster than it
+     reads two percentages. Grey is the app's claim, gold is what he actually did —
+     gold longer than grey means the schedule is underselling him. */
+  .lcalrow { display: flex; align-items: center; gap: 8px; margin: 7px 0; font-size: .82rem; }
+  .lcalrow > span { width: 72px; flex: none; color: var(--muted); }
+  .lcalrow > u { width: 62px; flex: none; text-align: right; text-decoration: none; color: var(--muted); }
+  .lcalrow.thin { opacity: .45; }
+  .lcalbars { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 40px; }
+  .lcalbars i { display: block; height: 7px; border-radius: 4px; background: var(--muted); min-width: 2px; }
+  .lcalbars i.got { background: var(--gold); }
 
   .lshapes { display: flex; gap: 7px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
   .lshape { font-family: inherit; font-size: .82rem; font-weight: 600; cursor: pointer;
@@ -2080,6 +2091,8 @@
       <div id="lStatBands"></div>
       <h3 class="lstats-sub">Speaking</h3>
       <div id="lStatSpoken"></div>
+      <h3 class="lstats-sub">Is the schedule right?</h3>
+      <div id="lStatCalib"></div>
     </div>
   </div>
 
@@ -11996,6 +12009,95 @@ function srsApply(srs, key, grade, side, todayOverride) {
   return r;
 }
 
+/* ---- the log ------------------------------------------------------------------
+   One line per answer, kept so the scheduler can be checked against what actually
+   happened. Until R existed there was nothing to check: the app made no prediction,
+   so no amount of history could have told you whether it was any good. R is a
+   probability, and a probability is falsifiable.
+
+   A ring buffer, not a growing store, for the same reason the stats are daily buckets
+   — this has to cost a fixed number of kilobytes forever rather than needing pruning
+   later. Two thousand entries is a few months of real practice at roughly 120 bytes
+   each. Keys are short because they are repeated two thousand times, not to be clever. */
+const SRSLOG_KEY = "hvr_srslog", SRSLOG_MAX = 2000;
+function srsLogAll() {
+  try { const a = JSON.parse(lsGet(SRSLOG_KEY)); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+function srsLogSave(v) {
+  try { lsSet(SRSLOG_KEY, JSON.stringify(v.slice(-SRSLOG_MAX))); } catch (e) {}
+}
+/* `before` is the record as it stood BEFORE srsApply touched it. The prediction has to
+   be read from the state that made it, and one line later that state is gone — which
+   is the same reason reviewNote is called while learnSpoken still holds the transcript.
+
+   A first meeting is skipped: the app predicted nothing, so there is nothing to score.
+   Scoring it would put a pile of R = 0.9 guesses about untaught words into the
+   calibration and make the scheduler look far worse than it is. */
+function srsLogEntry(key, side, grade, before, extra, todayOverride) {
+  if (!before || !before.n) return null;
+  const today = todayOverride || todayISO();
+  const e = { t: Date.now(), k: String(key || "").slice(0, 24), s: side || "prod", g: grade,
+              r: Math.round(srsR(before, today) * 1000) / 1000,
+              st: Math.round((before.stab || 0) * 10) / 10,
+              d: Math.round((before.diff || 5) * 10) / 10 };
+  if (extra) Object.keys(extra).forEach(x => {
+    if (extra[x] !== undefined && extra[x] !== null && extra[x] !== "") e[x] = extra[x];
+  });
+  return e;
+}
+function srsLogPush(key, side, grade, before, extra, todayOverride) {
+  const e = srsLogEntry(key, side, grade, before, extra, todayOverride);
+  if (!e) return null;
+  const log = srsLogAll();
+  log.push(e);
+  srsLogSave(log);
+  return e;
+}
+/* srsApply plus its log entry. Every card path goes through this rather than calling
+   srsApply directly, so no answer is recorded twice and none is missed — and srsApply
+   itself stays pure, driven by the suite with no store and no clock, which is worth
+   protecting. A failed write must never cost him the schedule, so the log is wrapped. */
+function srsAnswer(srs, key, grade, side, extra, todayOverride) {
+  side = side || "prod";
+  const before = Object.assign({}, srsSide(srs, key, side));
+  const r = srsApply(srs, key, grade, side, todayOverride);
+  /* The same day the schedule was written against, or the log would score its own
+     prediction against a different calendar than the one that made it. */
+  try { srsLogPush(key, side, grade, before, extra, todayOverride); } catch (e) {}
+  return r;
+}
+
+/* ---- is the scheduler telling the truth? --------------------------------------
+   One question: of the answers where the app reckoned he had about a 70% chance of
+   still having the word, did he actually have it about 70% of the time? A scheduler
+   can be perfectly self-consistent and still systematically wrong, and until now there
+   was no way to find out — which is most of why every constant in here had to be
+   argued from first principles rather than measured.
+
+   Brier is the mean squared error of the prediction: 0 is perfect, 0.25 is what you
+   get by always guessing 50%, lower is better. "Nearly" is excluded rather than
+   counted either way, because the prediction is about whether the word came back and
+   nearly is genuinely neither. */
+const CALIB_BANDS = [0.5, 0.7, 0.8, 0.9, 0.95, 1.01];
+function srsCalibration(log) {
+  const rows = (log || srsLogAll())
+    .filter(e => e && (e.g === 0 || e.g === 2) && typeof e.r === "number");
+  if (!rows.length) return { n: 0, brier: null, bands: [] };
+  let sq = 0;
+  const bands = CALIB_BANDS.map((hi, i) =>
+    ({ lo: i ? CALIB_BANDS[i - 1] : 0, hi: hi, n: 0, pred: 0, got: 0 }));
+  rows.forEach(e => {
+    const got = e.g === 2 ? 1 : 0;
+    sq += (e.r - got) * (e.r - got);
+    const b = bands.filter(x => e.r < x.hi)[0] || bands[bands.length - 1];
+    b.n++; b.pred += e.r; b.got += got;
+  });
+  return { n: rows.length, brier: sq / rows.length,
+           bands: bands.filter(b => b.n).map(b => ({ lo: b.lo, hi: Math.min(1, b.hi),
+             n: b.n, pred: b.pred / b.n, got: b.got / b.n })) };
+}
+
 /* ---- correcting schedules earned under the old rule --------------------------
    Existing records were built by a scheduler that compounded same-day repeats, so
    their due dates describe practice that never happened: six days of real use
@@ -17214,6 +17316,64 @@ function learnRenderStats() {
     });
     sp.append(r);
   }
+  learnRenderCalib();
+}
+
+/* The scheduler grading its own homework. Every time it hands over a card it is
+   implicitly claiming "you have about an X% chance of still having this"; this is
+   the only place in the app that ever checks whether that was true.
+
+   Deliberately shown rather than kept internal. It is an honest number about the
+   machinery rather than about him, and if it is bad he should be able to see that it
+   is bad instead of wondering why the sessions feel wrong. */
+const CALIB_MIN_TOTAL = 25, CALIB_MIN_BAND = 8;
+function learnRenderCalib() {
+  const box = document.getElementById("lStatCalib");
+  if (!box) return;
+  box.innerHTML = "";
+  const cal = srsCalibration();
+  if (cal.n < CALIB_MIN_TOTAL) {
+    box.className = "lstatnote";
+    box.textContent = cal.n
+      ? "Only " + cal.n + " answers recorded so far. This needs about " + CALIB_MIN_TOTAL +
+        " before it means anything."
+      : "Nothing recorded yet. Once you've answered a few dozen cards, this will say " +
+        "whether the schedule is putting words in front of you at the right time.";
+    return;
+  }
+  box.className = "";
+  const pct = x => Math.round(x * 100) + "%";
+  cal.bands.forEach(b => {
+    const row = document.createElement("div");
+    row.className = "lcalrow" + (b.n < CALIB_MIN_BAND ? " thin" : "");
+    const lab = document.createElement("span");
+    lab.textContent = pct(b.lo) + "–" + pct(b.hi);
+    const bars = document.createElement("div"); bars.className = "lcalbars";
+    const want = document.createElement("i");
+    want.style.width = (b.pred * 100) + "%";
+    want.title = "expected " + pct(b.pred);
+    const got = document.createElement("i"); got.className = "got";
+    got.style.width = (b.got * 100) + "%";
+    got.title = "actually " + pct(b.got);
+    bars.append(want, got);
+    const n = document.createElement("u");
+    n.textContent = pct(b.got) + " · " + b.n;
+    row.append(lab, bars, n);
+    box.append(row);
+  });
+  const note = document.createElement("div"); note.className = "lstatnote";
+  /* Named plainly. "Brier score" alone is a number he has no way to judge, and a
+     progress bar with no scale would be worse — see the rule about a metric never
+     contradicting its own caption. */
+  note.textContent = "Each row: how likely the app thought you were to remember (grey), " +
+    "against how often you actually did (gold). Close together means the timing is " +
+    "honest. Brier score " + cal.brier.toFixed(3) + " over " + cal.n +
+    " answers — 0 is perfect, 0.25 is a coin toss." +
+    /* Only when there is actually a faded row. A caption describing something that
+       isn't on screen is the same fault as a bar contradicting its own label. */
+    (cal.bands.some(b => b.n < CALIB_MIN_BAND)
+      ? " Faded rows have too few answers to trust yet." : "");
+  box.append(note);
 }
 function learnVoiceBanner() {
   document.getElementById("lVoiceBanner").style.display =
@@ -18905,6 +19065,11 @@ function learnMark(s, srs, key) {
   s.moved[key] = { prod: srsReachOf(srs, key, "prod"), recv: srsReachOf(srs, key, "recv") };
 }
 
+/* What the log wants to know about the card an answer came from, so a later pass can
+   ask whether he misses a word inside a sentence more often than on its own. Phase 2
+   adds the mic's confidence and the time he took to the same object. */
+function learnLogExtra(c) { return { kd: (c && c.kind) || "" }; }
+
 function learnGrade(grade) {
   const s = learnSession; if (!s || !learnRevealed) return;
   const c = s.cards[s.i];
@@ -18926,7 +19091,7 @@ function learnGrade(grade) {
     learnMark(s, srs, k);
     /* Capped against THIS word, so a hint spent on one of them leaves the rest alone. */
     const g = learnCapGrade(grade, freeKey ? null : k);
-    srsApply(srs, k, g, side);
+    srsAnswer(srs, k, g, side, learnLogExtra(c));
     if (g === 2) s.strengthened[k] = true; else s.back[k] = true;
   });
   srsSave(srs);
@@ -18990,7 +19155,7 @@ function learnCommit() {
     if (t.key) {
       if (!srsGradable(t.key, lib)) return;
       learnMark(s, srs, t.key);
-      srsApply(srs, t.key, grade, side);
+      srsAnswer(srs, t.key, grade, side, learnLogExtra(c));
       if (grade === 2) s.strengthened[t.key] = true; else s.back[t.key] = true;
     } else if (grade !== 2) {
       /* Not one of his words yet, but he just fumbled it. Tally it, and once
@@ -20609,6 +20774,60 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- the log and what it is for ---- */
+T("srsLogEntry: records the R that was predicted BEFORE the answer", () => {
+  /* The whole value of the log is that it holds a falsifiable claim. Reading R from
+     the record AFTER srsApply has moved `last` to today would store 1.0 every time
+     and quietly turn the calibration into a straight line. */
+  const before = seasoned({ last: "2026-08-10", stab: 10, diff: 5 });
+  const e = srsLogEntry("מילה", "prod", 2, before, null, DAY1);
+  assertEq(e.r, 0.9, "ten days into a ten-day interval");
+  assertEq(e.st, 10, "and the stability that prediction was made from");
+  assertEq(e.g, 2);
+});
+T("srsLogEntry: a first meeting predicted nothing, so it is not scored", () => {
+  assertEq(srsLogEntry("מילה", "prod", 0, srsBlank(), null, DAY1), null,
+           "scoring untaught words would make the scheduler look far worse than it is");
+});
+T("srsLogEntry: carries the card kind through, and drops empty extras", () => {
+  const before = seasoned({ last: "2026-08-10" });
+  assertEq(srsLogEntry("א", "prod", 2, before, { kd: "sentence" }, DAY1).kd, "sentence");
+  assertTrue(!("kd" in srsLogEntry("א", "prod", 2, before, { kd: "" }, DAY1)),
+             "an empty field is 2000 wasted bytes, not a value");
+});
+T("srsAnswer: schedules exactly as srsApply does", () => {
+  const a = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
+  const b = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
+  srsApply(a, "א", 2, "prod", DAY1);
+  srsAnswer(b, "א", 2, "prod", null, DAY1);
+  assertEq(b["א"].prod.stab, a["א"].prod.stab, "the log must never change the schedule");
+});
+T("srsCalibration: a perfect predictor scores 0, a backwards one scores badly", () => {
+  const right = [{ g: 2, r: 1 }, { g: 0, r: 0 }, { g: 2, r: 1 }];
+  const wrong = [{ g: 0, r: 1 }, { g: 2, r: 0 }, { g: 0, r: 1 }];
+  assertEq(srsCalibration(right).brier, 0);
+  assertEq(srsCalibration(wrong).brier, 1);
+});
+T("srsCalibration: Nearly is neither, so it is left out", () => {
+  const cal = srsCalibration([{ g: 2, r: 0.9 }, { g: 1, r: 0.9 }, { g: 0, r: 0.9 }]);
+  assertEq(cal.n, 2, "a partial answer cannot be scored against a yes/no prediction");
+});
+T("srsCalibration: bands report predicted against actual", () => {
+  /* Four answers all predicted at 0.9, three of which came back. A well-calibrated
+     scheduler would want those two numbers close. */
+  const cal = srsCalibration([{ g: 2, r: 0.92 }, { g: 2, r: 0.92 },
+                              { g: 2, r: 0.92 }, { g: 0, r: 0.92 }]);
+  const b = cal.bands.filter(x => x.n === 4)[0];
+  assertTrue(!!b, "all four sit in one band");
+  assertEq(Math.round(b.pred * 100), 92, "what the app claimed");
+  assertEq(b.got, 0.75, "what actually happened");
+});
+T("srsCalibration: nothing to score is not an error", () => {
+  const cal = srsCalibration([]);
+  assertEq(cal.n, 0);
+  assertEq(cal.brier, null, "no answers means no score, not a score of zero");
 });
 
 /* ---- what must NOT change ---- */

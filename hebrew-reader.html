@@ -1106,6 +1106,9 @@
   .lspokenote { font-size: .82rem; color: var(--muted); margin-top: 7px; }
   .lspokenote b { color: #a86a34; font-weight: 600; }
   .lmicerr { font-size: .82rem; color: #a86a34; margin-top: 9px; }
+  /* Quieter than lmicerr on purpose: nothing has gone wrong, the mic is just saying
+     it would rather not guess. Muted, not the warning colour. */
+  .lmicsoft { font-size: .82rem; color: var(--muted); margin-top: 9px; }
   .lgrade.suggested { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
   /* Hints are deliberately plain — they're a concession, not a reward. */
@@ -11595,6 +11598,21 @@ function micRelease() {
    instead of file://, which is a bigger decision than this file can make alone. */
 let micRecInstance = null;
 let micRecBusy = null;   // {resolve, opts} for whichever card is currently waiting
+/* The recogniser's runners-up, assembled into whole utterances. It returns alternatives
+   per SEGMENT, and "did he say this word" wants them as sentences. A segment that
+   offered fewer alternatives falls back to its own top guess, so one five-way segment
+   in the middle of an utterance still yields five readable candidates rather than four
+   truncated ones. Index 0 is `best` itself and is left out. */
+function micAltStrings(segs, best) {
+  if (!segs || !segs.length) return [];
+  const depth = Math.min(5, Math.max.apply(null, segs.map(s => s.length)));
+  const out = [];
+  for (let j = 1; j < depth; j++) {
+    const s = segs.map(seg => seg[j] || seg[0]).join("").trim();
+    if (s && s !== best && out.indexOf(s) === -1) out.push(s);
+  }
+  return out;
+}
 function micRecGet() {
   const SR = speechCtor();
   if (!SR || micRecInstance) return micRecInstance;
@@ -11602,19 +11620,32 @@ function micRecGet() {
   r.lang = "he-IL";
   r.interimResults = true;
   r.continuous = false;
-  r.maxAlternatives = 1;
-  let best = "", conf = 0;
+  /* Was 1, which threw away the runners-up. A word the recogniser ranked second is a
+     word it HEARD — grading that as "he didn't say it" is the false negative the whole
+     of learnScoreSpoken's softening now exists to prevent. Costs nothing: the engine
+     has already computed them. */
+  r.maxAlternatives = 5;
+  let best = "", conf = 0, segs = [];
   r.onresult = e => {
     let txt = "";
-    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    segs = [];
+    for (let i = 0; i < e.results.length; i++) {
+      const res = e.results[i];
+      txt += res[0].transcript;
+      const alt = [];
+      for (let j = 0; j < res.length; j++) alt.push(String(res[j].transcript || ""));
+      segs.push(alt);
+    }
     best = txt;
     const last = e.results[e.results.length - 1];
     if (last && last[0] && last[0].confidence) conf = last[0].confidence;
     if (micRecBusy && micRecBusy.opts && micRecBusy.opts.onInterim) micRecBusy.opts.onInterim(txt);
   };
-  const finish = v => { const b = micRecBusy; best = ""; conf = 0; micRecBusy = null; if (b) b.resolve(v); };
+  const finish = v => { const b = micRecBusy; best = ""; conf = 0; segs = []; micRecBusy = null; if (b) b.resolve(v); };
   r.onerror = e => finish({ ok: false, error: e.error || "unknown" });
-  r.onend = () => finish(best.trim() ? { ok: true, text: best.trim(), confidence: conf } : { ok: false, error: "no-speech" });
+  r.onend = () => finish(best.trim()
+    ? { ok: true, text: best.trim(), confidence: conf, alts: micAltStrings(segs, best.trim()) }
+    : { ok: false, error: "no-speech" });
   micRecInstance = r;
   return r;
 }
@@ -12062,6 +12093,17 @@ function srsAnswer(srs, key, grade, side, extra, todayOverride) {
   side = side || "prod";
   const before = Object.assign({}, srsSide(srs, key, side));
   const r = srsApply(srs, key, grade, side, todayOverride);
+  /* How long he took, as a decaying average rather than a lifetime one — the same
+     reasoning that made `miss` stop being a running total. How fast he can produce it
+     TODAY is the fluency signal; a slow fortnight in July should not hold the number
+     down in September.
+
+     Recorded, deliberately NOT graded. Response latency is a well-validated
+     PROFICIENCY signal and is not a validated grading one, and this app has no data of
+     its own yet to say otherwise. It is what the speed pass draws, and what a later
+     pass over the log could argue from. */
+  const ms = extra && extra.ms;
+  if (ms > 0) r.ms = r.ms ? Math.round(r.ms * 0.7 + ms * 0.3) : Math.round(ms);
   /* The same day the schedule was written against, or the log would score its own
      prediction against a different calendar than the one that made it. */
   try { srsLogPush(key, side, grade, before, extra, todayOverride); } catch (e) {}
@@ -17932,6 +17974,7 @@ function learnRenderCard() {
   learnHints = 0; learnHinted = {}; learnHintAll = false;
   learnNote = "";                              // and neither must a previous card's help
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
+  learnSuggestPaint = null;                    // nor a repaint bound to buttons now gone
   /* A listen must never span two cards. Stopping it is not enough on its own — the
      in-flight attempt also checks the card hasn't moved before it scores anything,
      because its result arrives after this point. */
@@ -17940,6 +17983,10 @@ function learnRenderCard() {
   if (learnAutoAdvanceTimer) { clearTimeout(learnAutoAdvanceTimer); learnAutoAdvanceTimer = null; }
   learnRenderRoad(s.i, s.cards.length);
   statsCardBegin();
+  /* Kept separate from the stats clock rather than reusing it: statsCardEnd() zeroes
+     that one when it fires, and the two are read at different moments. Two variables
+     is cheaper than an ordering dependency between them. */
+  learnCardShownAt = Date.now();
 
   /* One line, not four. The card used to carry a glyph, a label, an EN → עב direction
      pill AND this sentence, all describing the same task, plus a fifth line of keyboard
@@ -18136,6 +18183,8 @@ function learnExpectedHe(c) {
 
 let learnSpoken = null;          // {text, status[], extra[], english{}} for the card on screen
 let learnSuggested = null;       // grade the mic suggests on a whole-card grade
+let learnSuggestPaint = null;    // redraws that recommendation if it changes late
+let learnCardShownAt = 0;        // when this card went up, for response latency
 /* Conversation only: the pending "move on automatically" timer after a silently-
    scored attempt. Cleared on every fresh card render — learnGrade's own
    learnRevealed guard is the real safety net against a stale timer double-firing,
@@ -18233,8 +18282,102 @@ async function learnSpeakAttempt(btn, c) {
     if (msg) learnMicError(card, msg);
     return;
   }
-  learnScoreSpoken(c, res.text);
+  learnScoreSpoken(c, res.text, res);
   learnReveal();
+  const card2 = document.getElementById("lCard");
+  if (learnSpoken.unsure) learnMicUnsure(card2);
+  /* Fired AFTER the reveal, deliberately not awaited. The card is already on screen
+     and gradeable; this catches up with it or it doesn't. */
+  const spoken = learnSpoken;
+  learnAdjudicate(c, spoken, askedAt).catch(() => {});
+}
+
+/* Said out loud rather than left for him to notice. A card that quietly declines to
+   pre-fill looks identical to a card that heard him perfectly, and the difference
+   matters: one of them wants checking. Transient, on the card, in the app's own
+   register — not a standing instruction. */
+function learnMicUnsure(card) {
+  if (!card || card.querySelector(".lmicsoft")) return;
+  const el = document.createElement("div"); el.className = "lmicsoft";
+  el.textContent = "The mic wasn't confident it caught that — check the words before you continue.";
+  const act = card.querySelector(".lactions");
+  if (act) card.insertBefore(el, act); else card.append(el);
+  syncPadOffset();
+}
+
+/* ---- asking a second opinion ---------------------------------------------------
+   Layer three, and the only one that knows something the others don't: what the word
+   was SUPPOSED to be. That turns "is this string in the transcript" into "is this a
+   plausible mishearing of the word he was asked for", which is a different and much
+   better question — and it is the one the local alignment can never ask, because
+   nearEnough compares letters and this compares Hebrew.
+
+   Runs CONCURRENTLY with the reveal and can only ever soften. The card appears
+   immediately from the local alignment; if this returns before he has committed, the
+   marks correct themselves where they still say "missed". If he has moved on, the
+   answer is dropped. A grading pass he has to WAIT for would be worse than the false
+   negatives it is fixing.
+
+   Only ever raises a `missed` to `nearly`, never to `got it`: a second opinion that
+   the recogniser probably mangled it is not evidence he said it perfectly, and
+   "nearly" is exactly the grade for "this counted, but not cleanly".
+
+   Budget is not the constraint people assume. AI_POOL_CAPS.fast is 500 a day against
+   a handful in real use, so a session with five imperfect cards spends five. */
+function learnAdjudicateWanted(spoken) {
+  const out = [];
+  (spoken.status || []).forEach((st, i) => {
+    if (st === "missed" && spoken.expected && spoken.expected[i]) out.push(i);
+  });
+  return out;
+}
+function learnAdjudicatePrompt(spoken, want) {
+  return "A learner of Hebrew was asked to say this out loud:\n  " +
+    (spoken.expected || []).join(" ") + "\n\n" +
+    "A speech recogniser heard:\n  " + (spoken.text || "(nothing)") + "\n" +
+    ((spoken.alts && spoken.alts.length)
+      ? "Its other guesses were:\n" + spoken.alts.map(s => "  " + s).join("\n") + "\n" : "") +
+    "\nSpeech recognition is markedly less accurate on non-native speech, so a word " +
+    "missing from the transcript may well have been SAID and misheard — a swallowed " +
+    "prefix, an unfamiliar vowel, a consonant an English speaker substitutes.\n\n" +
+    "For each numbered word, decide whether what the recogniser produced is consistent " +
+    "with him having said it:\n" +
+    want.map(i => i + ". " + spoken.expected[i]).join("\n") + "\n\n" +
+    "Return JSON only, no markdown: {\"said\":[0,2]} — the indexes he PROBABLY did say. " +
+    "Be conservative. If the transcript shows something genuinely different at that " +
+    "point, or shows nothing at all, leave the index out. Returning an empty list is a " +
+    "correct answer.";
+}
+async function learnAdjudicate(c, spoken, askedAt) {
+  if (!spoken || !geminiKeys().length) return;
+  const want = learnAdjudicateWanted(spoken);
+  if (!want.length) return;
+  let said;
+  try {
+    const out = extractJSON(await geminiRequest(
+      [{ text: learnAdjudicatePrompt(spoken, want) }], GEMINI_MODELS_FAST));
+    said = (out && Array.isArray(out.said)) ? out.said : null;
+  } catch (e) { return; }              // a second opinion that never arrives is fine
+  if (!said || !said.length) return;
+  /* He has moved on, or answered, or the mic ran again. Any of those makes this stale,
+     and quietly rewriting a card he has already left is worse than saying nothing. */
+  if (!learnSession || learnSession.i !== askedAt || learnSpoken !== spoken) return;
+  let moved = 0;
+  said.forEach(i => {
+    i = Number(i);
+    if (want.indexOf(i) === -1) return;              // only what we actually asked about
+    spoken.status[i] = "near";
+    /* Marks he has already corrected by hand are left alone — only a standing
+       "missed" is softened, so this can never undo a deliberate tap. */
+    if (learnMarks && learnMarks[i] === 1) { learnMarks[i] = 2; moved++; }
+  });
+  if (moved && learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
+  /* Whole-card grading: recompute the recommendation from the softened statuses and
+     redraw the buttons, rather than rebuilding the card under him. */
+  if (!learnMarks && learnSuggested === 0 && learnMicGrades(c)) {
+    learnSuggested = 1;
+    if (learnSuggestPaint) learnSuggestPaint();
+  }
 }
 
 function learnMicError(card, msg) {
@@ -18345,7 +18488,32 @@ function convoBestMatch(item, saidWords, lib) {
 
 /* Fills learnSpoken for the reveal to consume. Kept separate from the reveal so it
    can be tested without a microphone anywhere in the picture. */
-function learnScoreSpoken(c, text) {
+/* ---- the recogniser is not the judge -------------------------------------------
+   "Not in the transcript" conflates two very different events: he did not say it, and
+   the recogniser did not hear it. Speech recognition is materially worse on non-native
+   speech than on native speech, so the second is common — and being told you are wrong
+   when you were right is the most demotivating thing this app is capable of. Every
+   mark being one tap from correction is most of the defence. These are the rest.
+
+   Note the asymmetry, which is deliberate and load-bearing: NOTHING here can mark a
+   word wrong. Every layer can only ever soften a miss. A false "you got it" costs one
+   review; a false "you got it wrong" costs the word's difficulty, its interval, and
+   his trust in the grading. */
+const ASR_CONF_FLOOR = 0.55;
+/* Was the word heard at all, anywhere the recogniser was willing to consider? */
+function micHeardIn(word, alts) {
+  if (!word || !alts || !alts.length) return false;
+  return alts.some(s => heWords(s).some(w => w === word || nearEnough(w, word)));
+}
+/* Below the floor the recogniser is guessing, and a guess must not pre-fill a miss he
+   then has to notice and undo. Zero means "no opinion offered" on some engines rather
+   than "no confidence", so it is not treated as low. */
+function micUnsure(conf) {
+  const n = Number(conf);
+  return isFinite(n) && n > 0 && n < ASR_CONF_FLOOR;
+}
+
+function learnScoreSpoken(c, text, res) {
   const said = heWords(text);
   const lib = libAll();
   let expected, a, convoCoverage = null;
@@ -18364,7 +18532,16 @@ function learnScoreSpoken(c, text) {
     expected = heWords(learnExpectedHe(c));
     a = alignSpoken(expected, said);
   }
-  learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {} };
+  /* Layer one: the runners-up, applied before anything reads `status`, so the chips,
+     the suggested grade and the adjudication below all see the softened version. */
+  const alts = (res && res.alts) || [];
+  if (alts.length) {
+    a.status = a.status.map((st, i) =>
+      (st === "missed" && micHeardIn(expected[i], alts)) ? "near" : st);
+  }
+  learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {},
+                  alts: alts, conf: (res && res.confidence) || 0,
+                  unsure: micUnsure(res && res.confidence), expected: expected };
 
   /* The he-IL recogniser transcribes English perfectly well — the finding that made
      this worth building. So "you reached for the English word" is detectable, and
@@ -18408,6 +18585,11 @@ function learnScoreSpoken(c, text) {
   } else {
     learnSuggested = null;
   }
+  /* Layer two: below the confidence floor the mic recommends nothing at all. A card
+     with no recommendation falls back to the three grade buttons, which is the honest
+     outcome — "I didn't catch that, you tell me" rather than a guess dressed as a
+     verdict and accepted with one press of Space. */
+  if (learnSpoken.unsure) learnSuggested = null;
 }
 
 /* ---- hints ------------------------------------------------------------------
@@ -18781,7 +18963,11 @@ function learnReveal() {
        but never final: every one is still a tap away from being corrected, because
        a recogniser mishearing him is not the same as him getting it wrong. */
     learnMarks = learnCardTokens.map(() => 0);
-    if (learnSpoken && learnMicGrades(c) && learnSpoken.status.length === learnCardTokens.length) {
+    /* `unsure` is the confidence floor — see micUnsure. Everything stays "got it" and
+       the card says the mic wasn't confident, rather than pre-filling misses off a
+       reading the recogniser itself did not believe. */
+    if (learnSpoken && learnMicGrades(c) && !learnSpoken.unsure &&
+        learnSpoken.status.length === learnCardTokens.length) {
       learnSpoken.status.forEach((st, i) => {
         learnMarks[i] = st === "matched" ? 0 : st === "near" ? 2 : 1;
       });
@@ -18867,16 +19053,23 @@ function learnReveal() {
     /* The 1 / 2 / 3 key labels used to be printed inside these buttons. They are still
        the shortcuts, and #lRunHint still names them on a keyboard — but on the phone,
        which is where this is actually used, they were three numbers meaning nothing. */
+    const gradePaints = [];
     [["Missed", 0, "g0"], ["Nearly", 1, "g1"], ["Got it", 2, "g2"]].forEach(g => {
       const b = document.createElement("button");
       /* Marked, not pressed. The mic is good enough to recommend an answer and not
          good enough to be the answer, so accepting it stays one deliberate key. */
-      b.className = "lgrade " + g[2] + (learnSuggested === g[1] ? " suggested" : "");
+      const paint = () => {
+        b.className = "lgrade " + g[2] + (learnSuggested === g[1] ? " suggested" : "");
+      };
+      gradePaints.push(paint); paint();
       b.type = "button";
       b.textContent = g[0];
       b.onclick = () => learnGrade(g[1]);
       act.append(b);
     });
+    /* So a late second opinion can move the recommendation without rebuilding the
+       card underneath him — see learnAdjudicate. */
+    learnSuggestPaint = () => gradePaints.forEach(p => p());
     card.append(act);
   }
 
@@ -19066,9 +19259,22 @@ function learnMark(s, srs, key) {
 }
 
 /* What the log wants to know about the card an answer came from, so a later pass can
-   ask whether he misses a word inside a sentence more often than on its own. Phase 2
-   adds the mic's confidence and the time he took to the same object. */
-function learnLogExtra(c) { return { kd: (c && c.kind) || "" }; }
+   ask whether he misses a word inside a sentence more often than on its own, and
+   whether the answers the mic was least sure about are the ones it got wrong.
+
+   `ms` is capped at the same three minutes the stats clock uses: a card left open
+   while he made a cup of tea is not a response time. */
+function learnLogExtra(c) {
+  const e = { kd: (c && c.kind) || "" };
+  if (learnCardShownAt) {
+    e.ms = Math.min(STATS_CARD_CAP_SEC * 1000, Date.now() - learnCardShownAt);
+  }
+  if (learnSpoken) {
+    if (learnSpoken.conf) e.cf = Math.round(learnSpoken.conf * 100) / 100;
+    if (learnSpoken.unsure) e.u = 1;
+  }
+  return e;
+}
 
 function learnGrade(grade) {
   const s = learnSession; if (!s || !learnRevealed) return;
@@ -20774,6 +20980,57 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- the recogniser is not the judge ----
+   Every one of these is a softening. If any of them ever learns to mark a word WRONG,
+   the asymmetry the whole layer rests on has been broken. */
+T("micAltStrings: assembles per-segment runners-up into whole utterances", () => {
+  const segs = [["אני", "אנחנו"], ["רוצה"]];
+  /* Second segment offered nothing else, so it falls back to its own top guess rather
+     than truncating the candidate. */
+  assertEq(micAltStrings(segs, "אנירוצה").join("|"), "אנחנורוצה");
+});
+T("micAltStrings: never returns the winner, or the same runner-up twice", () => {
+  assertEq(micAltStrings([["כן", "כן", "כן"]], "כן").length, 0,
+           "three ways of saying the same thing is one candidate, and it already won");
+});
+T("micAltStrings: nothing to work with is not an error", () => {
+  assertEq(micAltStrings([], "x").length, 0);
+  assertEq(micAltStrings(null, "x").length, 0);
+});
+T("micHeardIn: a word the recogniser ranked second is a word it heard", () => {
+  assertTrue(micHeardIn("שלום", ["מה שלום שלך"]), "present in an alternative");
+  assertTrue(!micHeardIn("שלום", ["מה נשמע"]), "genuinely absent stays absent");
+  assertTrue(!micHeardIn("שלום", []), "and no alternatives means no rescue");
+});
+T("micHeardIn: tolerates the near-miss the aligner already tolerates", () => {
+  /* Same nearEnough the alignment uses, so the two layers cannot disagree about what
+     counts as close. */
+  assertTrue(micHeardIn("שלום", ["שלוט"]), "one letter on a five-letter word");
+});
+T("micUnsure: zero means no opinion offered, not no confidence", () => {
+  assertTrue(!micUnsure(0), "some engines always report 0 — treating that as low " +
+             "would silently disable pre-filling everywhere");
+  assertTrue(!micUnsure(undefined));
+  assertTrue(micUnsure(0.3), "a real low reading");
+  assertTrue(!micUnsure(0.9));
+});
+T("learnAdjudicateWanted: asks only about the words that look missed", () => {
+  const spoken = { status: ["matched", "missed", "near", "missed"],
+                   expected: ["א", "ב", "ג", "ד"] };
+  assertEq(learnAdjudicateWanted(spoken).join(","), "1,3");
+});
+T("learnAdjudicateWanted: a clean card asks nothing, and costs nothing", () => {
+  assertEq(learnAdjudicateWanted({ status: ["matched"], expected: ["א"] }).length, 0);
+});
+T("learnAdjudicatePrompt: hands over the runners-up, which are half the evidence", () => {
+  const p = learnAdjudicatePrompt(
+    { expected: ["אני", "רוצה"], status: ["matched", "missed"],
+      text: "אני רוסה", alts: ["אני רוצה"] }, [1]);
+  assertTrue(p.indexOf("אני רוסה") !== -1, "what it heard");
+  assertTrue(p.indexOf("אני רוצה") !== -1, "and what else it considered");
+  assertTrue(p.indexOf("1. רוצה") !== -1, "asked about by index, so the reply can be applied");
 });
 
 /* ---- the log and what it is for ---- */

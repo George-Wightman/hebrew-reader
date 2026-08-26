@@ -1105,6 +1105,22 @@
   .lheard.empty { color: var(--muted); direction: ltr; font-style: italic; font-size: .9rem; }
   .lspokenote { font-size: .82rem; color: var(--muted); margin-top: 7px; }
   .lspokenote b { color: #a86a34; font-weight: 600; }
+  /* The walk home sits in the WORLD register, not the interface one — it is the road
+     after the drill, so old-style serif and paper, no panel chrome. */
+  .lspeed { text-align: center; padding: 26px 18px 20px; }
+  .lspeedlab { font-family: var(--map-display); font-size: 1.5rem; color: var(--ink); }
+  .lspeedask { font-size: .86rem; color: var(--muted); margin: 6px auto 22px; max-width: 30em; }
+  .lspeedhe { font-family: var(--map-display); font-size: 1.9rem; direction: rtl;
+    color: var(--ink); line-height: 1.5; }
+  .lspeedtr { font-size: .95rem; color: var(--muted); margin-top: 6px; }
+  /* Reserves its line so the card does not jump when a time lands in it. */
+  .lspeedtime { font-family: var(--map-display); font-size: 1.25rem; margin: 16px 0 4px;
+    min-height: 1.6em; color: var(--muted); }
+  .lspeedtime.fast { color: var(--gold); }
+  .lspeeddots { display: flex; gap: 7px; justify-content: center; margin-top: 22px; }
+  .lspeeddots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .lspeeddots i.done { background: var(--gold); }
+  .lspeeddots i.at { background: var(--accent); }
   .lmicerr { font-size: .82rem; color: #a86a34; margin-top: 9px; }
   /* Quieter than lmicerr on purpose: nothing has gone wrong, the mic is just saying
      it would rather not guess. Muted, not the warning colour. */
@@ -2115,6 +2131,25 @@
   </div>
 
   <!-- End -->
+  <!-- The walk home. Deliberately not a card kind: keeping it off the drill's rails is
+       what makes "this never writes a schedule" a structural fact rather than a flag
+       every branch has to remember. -->
+  <div id="lSpeed" style="display:none">
+    <div class="lspeed">
+      <div class="lspeedlab">The walk home</div>
+      <div class="lspeedask">Say each one again, as fast as you can still say it well.
+        Nothing here is marked.</div>
+      <div class="lspeedhe" id="lSpeedHe"></div>
+      <div class="lspeedtr" id="lSpeedTr"></div>
+      <div class="lspeedtime" id="lSpeedTime"></div>
+      <div class="lactions">
+        <button class="btn" id="lSpeedMic" type="button">🎤 Say it</button>
+        <button class="linkbtn" id="lSpeedSkip" type="button">Skip this one</button>
+      </div>
+      <div class="lspeeddots" id="lSpeedDots"></div>
+    </div>
+  </div>
+
   <div id="lEnd" style="display:none">
     <div class="lend">
       <div class="lbig" id="lEndScore"></div>
@@ -13572,7 +13607,7 @@ function reviewStartDrill() {
   if (store.obs) { store.obs.seen = true; reviewSave(store); }
   learnStatsOpen(false);
   sessionClear();
-  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {} };
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
   statsBump({ sessions: 1 });
   learnShow("lRun");
   learnRenderCard();
@@ -15606,7 +15641,7 @@ function campBegin(cards, id, lesson) {
   if (!cards || !cards.length) return false;
   pathCloseSheet();
   sessionClear();
-  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {},
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [],
                    path: { id: id, lesson: lesson, camp: true } };
   statsBump({ sessions: 1 });
   learnShow("lRun");
@@ -17411,7 +17446,7 @@ function learnTokens(c) {
 }
 
 function learnShow(which) {
-  ["lStart", "lRun", "lEnd"].forEach(id =>
+  ["lStart", "lRun", "lSpeed", "lEnd"].forEach(id =>
     document.getElementById(id).style.display = (id === which) ? "block" : "none");
 }
 
@@ -17994,6 +18029,9 @@ document.getElementById("lResumeBtn").onclick = () => {
   learnRenderCard();
 };
 document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
+document.getElementById("lSpeedMic").onclick = function () { learnSpeedAttempt(this); };
+/* Skipping one is not failing it — there is nothing here to fail. */
+document.getElementById("lSpeedSkip").onclick = () => learnSpeedNext();
 
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they
@@ -18045,7 +18083,7 @@ document.getElementById("lStartBtn").onclick = async () => {
     return;
   }
   sessionClear();          // a new draw replaces whatever was stashed
-  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {} };
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
   statsBump({ sessions: 1 });
   if (!/new practice|limit|Couldn't|conversation/.test(hint.textContent)) hint.textContent = before;
   learnShow("lRun");
@@ -19614,9 +19652,18 @@ function learnAdvance(clean) {
               hints: learnHints ? 1 : 0,
               spoken: learnSpoken ? 1 : 0,
               spokenOk: (learnSpoken && clean) ? 1 : 0 });
-  if (clean) s.got++;
+  if (clean) {
+    s.got++;
+    /* Kept for the walk home. Collected here rather than reconstructed at the end
+       because `clean` is only known at this moment — by the time the session is over,
+       nothing on the card says whether it was answered cleanly or clawed back. */
+    try {
+      const f = learnSpeedFrom(c, libAll());
+      if (f && !s.fluent.some(x => x.he === f.he)) s.fluent.push(f);
+    } catch (e) {}
+  }
   s.i++;
-  if (s.i >= s.cards.length) learnFinish();
+  if (s.i >= s.cards.length) learnSpeedStart();
   else { sessionStash(); learnRenderCard(); }
 }
 
@@ -19738,6 +19785,120 @@ function learnRenderReport(rep) {
    home. Set unconditionally on every finish (to null for a non-path session),
    so it never goes stale from a previous lesson. */
 let lastFinishedPath = null;
+/* ---- the walk home --------------------------------------------------------------
+   Nation's four strands are meaning-focused input, meaning-focused output,
+   language-focused learning and fluency development. This app has always been the
+   first three. Fluency development is the missing one, and it is specific: material
+   you ALREADY know, pushed on speed alone. It is what turns a word you can produce
+   into a word you can produce in conversation.
+
+   So whatever he got clean in this session comes back once more, against a clock.
+
+   No reveal, no hints, and deliberately NO schedule write. A fluency drill that fed
+   the scheduler would be a fifth review of material that just passed — volume for its
+   own sake, which is precisely what the SRS spends its effort refusing to reward.
+   Keeping it off the drill's rails entirely, rather than adding a card kind with a
+   "don't grade this" flag, is what makes that a structural guarantee.
+
+   Not a mode. The two session shapes deleted in August were deleted for being modes
+   nobody picked, and a fluency strand you have to choose is one that never runs. */
+const SPEED_ITEMS = 4, SPEED_MIN = 2;
+let learnSpeed = null;
+
+/* The Hebrew he just produced, whatever kind of card produced it. Hear-kinds are
+   excluded: he answered those in English, so saying the Hebrew back is a different
+   exercise from the one he just passed. */
+function learnSpeedFrom(c, lib) {
+  if (!c || isHearKind(c.kind)) return null;
+  const he = learnExpectedHe(c);
+  if (!he || he.split(/\s+/).length > 8) return null;   // too long to be a speed run
+  let tr = "";
+  if (c.kind === "word") tr = (lib[c.key] && lib[c.key].tr) || "";
+  else if (c.kind === "chunk") tr = (chunkAll()[c.key] || [])[0] || "";
+  else if (c.item) tr = c.item.tr || "";
+  return { he: he, tr: tr };
+}
+function learnSpeedStart() {
+  const s = learnSession;
+  const items = (s && s.fluent) || [];
+  /* Timing with nothing listening is theatre, and one item is not a pass. */
+  if (!speechSupported() || items.length < SPEED_MIN) { learnFinish(); return; }
+  /* The graded work is done, so there is nothing left worth resuming. Cleared here
+     rather than in learnFinish so a reload during the walk home cannot restore a
+     session sitting one past its last card. */
+  sessionClear();
+  learnSpeed = { items: items.slice(0, SPEED_ITEMS), i: 0, at: 0, times: [] };
+  learnShow("lSpeed");
+  learnSpeedRender();
+}
+function learnSpeedRender() {
+  const sp = learnSpeed;
+  if (!sp) return;
+  const it = sp.items[sp.i];
+  document.getElementById("lSpeedHe").textContent = it.he;
+  document.getElementById("lSpeedTr").textContent = it.tr || "";
+  const t = document.getElementById("lSpeedTime");
+  t.textContent = ""; t.className = "lspeedtime";
+  const mic = document.getElementById("lSpeedMic");
+  mic.textContent = "🎤 Say it"; mic.disabled = false;
+  const dots = document.getElementById("lSpeedDots");
+  dots.innerHTML = "";
+  sp.items.forEach((x, i) => {
+    const d = document.createElement("i");
+    d.className = i < sp.i ? "done" : i === sp.i ? "at" : "";
+    dots.append(d);
+  });
+  sp.at = Date.now();
+}
+/* Advances, or hands over to the end screen once the road runs out. */
+function learnSpeedNext() {
+  const sp = learnSpeed;
+  if (!sp) return;
+  sp.i++;
+  if (sp.i >= sp.items.length) { learnSpeed = null; learnFinish(); return; }
+  learnSpeedRender();
+}
+/* Shown, not scored. The number is the whole point of the strand — a word you can say
+   in one second is a different possession from the same word at four — and there is
+   nothing to compare it against but the run before it, which is honest. */
+function learnSpeedTimeText(ms, best) {
+  const sec = Math.max(0.1, ms / 1000);
+  const txt = sec.toFixed(1) + "s";
+  return (best && ms < best) ? { txt: txt + " — your quickest yet", fast: true }
+                             : { txt: txt, fast: false };
+}
+async function learnSpeedAttempt(btn) {
+  const sp = learnSpeed;
+  if (!sp) return;
+  btn.disabled = true; btn.textContent = "Listening…";
+  const started = Date.now();
+  let res;
+  try {
+    if (micNeedsStreamHold()) {
+      const got = await micAcquire();
+      if (!got) { btn.disabled = false; btn.textContent = "🎤 Say it"; return; }
+    }
+    res = await micListen({});
+  } catch (e) { res = null; }
+  if (learnSpeed !== sp) return;                 // walked out mid-listen
+  btn.textContent = "🎤 Say it";
+  if (!res || !res.ok) {
+    /* Silence is not a slow answer. Move on without a time rather than recording one
+       the microphone invented. */
+    document.getElementById("lSpeedTime").textContent = "Didn't catch that";
+    setTimeout(() => learnSpeedNext(), 700);
+    return;
+  }
+  const ms = Date.now() - started;
+  sp.times.push(ms);
+  const best = sp.times.length > 1 ? Math.min.apply(null, sp.times.slice(0, -1)) : 0;
+  const shown = learnSpeedTimeText(ms, best);
+  const t = document.getElementById("lSpeedTime");
+  t.textContent = shown.txt;
+  t.className = "lspeedtime" + (shown.fast ? " fast" : "");
+  setTimeout(() => learnSpeedNext(), 900);
+}
+
 function learnFinish() {
   const s = learnSession;
   sessionClear();          // finished is not resumable
@@ -21188,6 +21349,32 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- the walk home ---- */
+T("learnSpeedFrom: takes the Hebrew he just produced, whatever card produced it", () => {
+  const lib = { "שלום": { tr: "shalom" } };
+  assertEq(learnSpeedFrom({ kind: "word", key: "שלום" }, lib).he, "שלום");
+  assertEq(learnSpeedFrom({ kind: "word", key: "שלום" }, lib).tr, "shalom");
+  assertEq(learnSpeedFrom({ kind: "sentence", item: { he: "הבית גדול", tr: "habait gadol" } }, lib).he,
+           "הבית גדול");
+});
+T("learnSpeedFrom: a hear-kind is not something he just said", () => {
+  const lib = {};
+  assertNull(learnSpeedFrom({ kind: "listen", item: { he: "שלום" } }, lib),
+             "he answered that one in English — saying the Hebrew back is a " +
+             "different exercise from the one he passed");
+  assertNull(learnSpeedFrom({ kind: "note", item: { he: "שלום" } }, lib));
+});
+T("learnSpeedFrom: too long to be a speed run", () => {
+  const long = { kind: "sentence", item: { he: "א ב ג ד ה ו ז ח ט", tr: "" } };
+  assertNull(learnSpeedFrom(long, {}), "nine words is a recitation, not a fluency rep");
+});
+T("learnSpeedTimeText: says the number, and marks only a genuine best", () => {
+  assertEq(learnSpeedTimeText(2100, 0).txt, "2.1s", "nothing to compare against yet");
+  assertTrue(!learnSpeedTimeText(2100, 0).fast);
+  assertTrue(learnSpeedTimeText(1400, 2100).fast, "quicker than the run before it");
+  assertTrue(!learnSpeedTimeText(2600, 2100).fast, "slower is just a number, not a scold");
 });
 
 /* ---- chunks he has actually heard ---- */

@@ -5454,8 +5454,16 @@ function audioPrompt() {
     "to a learner).\n" +
     "Return ONLY valid JSON, no markdown fences:\n" +
     '{"transcript":"the Hebrew exactly as spoken","translation":"natural English translation",' +
-    '"words":[{"hebrew":"...","translit":"...","english":"...","category":"..."}]}\n' +
+    '"words":[{"hebrew":"...","translit":"...","english":"...","category":"..."}],' +
+    '"chunks":[{"hebrew":"...","translit":"...","english":"..."}]}\n' +
     "transcript = Hebrew script, exactly what is said, including punctuation.\n" +
+    /* Costs no extra request: this call was already being made, and the model is
+       already reading the whole transcript to gloss it word by word. */
+    "chunks = the FIXED multi-word expressions in this transcript — greetings, set " +
+    "phrases and collocations a native speaker retrieves whole rather than assembling " +
+    "(מה נשמע, בסדר גמור, יום הולדת שמח). Two to five words each. Only genuinely " +
+    "formulaic ones: an ordinary sentence is not a chunk. Return an empty list if " +
+    "there are none, which is a normal answer.\n" +
     "words = one entry per word of the transcript, in the same order, including attached " +
     "punctuation with its word. translit = simple English-letters pronunciation as an English " +
     "speaker would read it (e.g. \"shalom\", \"ma nishma\"). Keep prefixes visible in the " +
@@ -5586,6 +5594,10 @@ async function transcribeAudio(file) {
          breakdown is what he is waiting for, and storing a blob must never sit
          between him and it. */
       const kept = noteRecord(file, transcript, String(data.translation || "").trim());
+      /* The phrases in what he was actually sent, banked as drillable chunks. Wrapped
+         and unannounced: the transcript is what he asked for, and this arriving or
+         not must never come between him and it. */
+      try { chunkHarvest(data.chunks); } catch (e) {}
       if (Array.isArray(data.words) && data.words.length) {
         /* renderAIWords reads #input for result.source, so the transcript must be
            in place before this runs. */
@@ -16185,12 +16197,113 @@ function noteTargets(limit, only) {
   return scored.slice(0, limit);
 }
 
+/* ---- chunks he has actually heard ----------------------------------------------
+   Fluent speech is substantially assembled from prefabricated multi-word units rather
+   than composed word by word, which is why this app has always scheduled chunks as
+   first-class items with their own key and a card that deliberately refuses to break
+   into per-word chips.
+
+   What it could not do is GROW them. PHRASES is sixty expressions that ship with the
+   app and never change. They are good ones — but the chunks most worth having are the
+   ones his grandfather actually says, and those arrive in voice notes a few times a
+   month and were being taken apart word by word and thrown away as phrases.
+
+   The transcription call already returns transcript, translation and a per-word gloss
+   in ONE request. Asking it to also name the formulaic expressions costs no extra
+   call, which is the whole reason this is cheap enough to be worth doing.
+
+   Merged, not migrated. PHRASES stays exactly as it is and harvested chunks sit
+   beside it in the same [translit, english] shape, so scheduling, the card and the
+   grading are all untouched. */
+const CHUNKS_KEY = "hvr_chunks";
+function chunksStored() {
+  try { const o = JSON.parse(lsGet(CHUNKS_KEY)); return (o && typeof o === "object") ? o : {}; }
+  catch (e) { return {}; }
+}
+function chunksSave(v) { lsSet(CHUNKS_KEY, JSON.stringify(v)); }
+/* Everything the app can schedule as a chunk. Built-ins win a collision: their glosses
+   were written for this app rather than read off one recording. */
+function chunkAll() {
+  const store = chunksStored(), out = {};
+  Object.keys(store).forEach(k => { out[k] = store[k]; });
+  Object.keys(PHRASES).forEach(k => { out[k] = PHRASES[k]; });
+  return out;
+}
+/* Two to five words. Guarded because a model asked for "fixed expressions" will
+   happily return whole sentences, and a sentence on a card whose entire claim is
+   "this comes out in one piece" teaches the opposite of what the card is for. */
+const CHUNK_MIN_WORDS = 2, CHUNK_MAX_WORDS = 5;
+/* Whether this is a chunk at all, and what it looks like if it is. Pure and separate
+   from the store, so the suite can drive it without writing anything — the harness has
+   no localStorage isolation, and a test that banks a phrase would leave it in his
+   real vocabulary. */
+function chunkNormalise(c) {
+  const he = String((c && c.hebrew) || "").trim().replace(/[.,!?;:]+$/, "");
+  if (!he) return null;
+  const words = he.split(/\s+/).filter(Boolean).length;
+  if (words < CHUNK_MIN_WORDS || words > CHUNK_MAX_WORDS) return null;
+  const en = String((c && c.english) || "").trim();
+  if (!en) return null;               // no meaning means no card, whatever the Hebrew
+  return { he: he, tr: String((c && c.translit) || "").trim(), en: en };
+}
+/* ---- the notes that arrived before this existed ---------------------------------
+   Voice notes arrive a few times a month, so without a backfill this feature does
+   nothing at all for weeks and then quietly starts working — the worst of both. One
+   batched call over everything already stored fixes that on the first run.
+
+   Once, ever. Not because the call is expensive (it is one of five hundred a day) but
+   because re-reading the same notes every session would fill the store with the same
+   phrases wearing slightly different punctuation. The flag is set only on a reply that
+   actually parsed, so a network failure retries rather than silently skipping. */
+const CHUNK_BACKFILL_KEY = "hvr_chunkbackfill", CHUNK_BACKFILL_NOTES = 40;
+function chunkBackfillPrompt(notes) {
+  return "Below are transcripts of Hebrew voice notes sent to a learner by an older " +
+    "relative, in a casual family register.\n\n" +
+    notes.map((n, i) => (i + 1) + ". " + n.he).join("\n") + "\n\n" +
+    "List the FIXED multi-word expressions that appear in them — greetings, set " +
+    "phrases and collocations a native retrieves whole rather than assembling word by " +
+    "word (מה נשמע, בסדר גמור, יום הולדת שמח). Two to five words each. An ordinary " +
+    "sentence is not a chunk, however common its words are.\n\n" +
+    "Return JSON only, no markdown: " +
+    '{"chunks":[{"hebrew":"...","translit":"...","english":"..."}]}\n' +
+    "translit = simple English-letters pronunciation. english = what the whole phrase " +
+    "means, not word by word. Prefer the phrases that recur across several notes. " +
+    "Returning few is better than padding the list with sentences.";
+}
+async function chunkBackfill() {
+  if (lsGet(CHUNK_BACKFILL_KEY) || !geminiKeys().length) return 0;
+  const notes = vnotesAll().filter(n => n && n.he).slice(0, CHUNK_BACKFILL_NOTES);
+  if (!notes.length) return 0;
+  let out;
+  try {
+    out = extractJSON(await geminiRequest(
+      [{ text: chunkBackfillPrompt(notes) }], GEMINI_MODELS_FAST));
+  } catch (e) { return 0; }
+  if (!out || !Array.isArray(out.chunks)) return 0;
+  lsSet(CHUNK_BACKFILL_KEY, "1");
+  return chunkHarvest(out.chunks);
+}
+
+function chunkHarvest(list) {
+  if (!Array.isArray(list) || !list.length) return 0;
+  const store = chunksStored();
+  let n = 0;
+  list.forEach(c => {
+    const e = chunkNormalise(c);
+    if (!e || PHRASES[e.he] || store[e.he]) return;
+    store[e.he] = [e.tr, e.en];
+    n++;
+  });
+  if (n) chunksSave(store);
+  return n;
+}
+
 /* Phrases whose words he already has come first — all 60 are common spoken Hebrew,
    but one built from words he knows is the one most likely to come out of his
    mouth this week. Due-then-never-drilled, same ordering rule as words. */
 function learnChunkTargets(limit) {
   const lib = libAll(), srs = srsAll(), today = todayISO();
-  const scored = Object.keys(PHRASES).map(p => {
+  const scored = Object.keys(chunkAll()).map(p => {
     const words = p.split(/\s+/).filter(Boolean);
     const known = words.filter(w => lib[w]).length / (words.length || 1);
     const r = srs[p] && srs[p].prod;
@@ -17579,6 +17692,10 @@ function sessionResumeOffer() {
 
 function learnEnter() {
   learnVoiceBanner();
+  /* Not awaited and never surfaced. It runs once in the app's life, and whether it
+     lands before or after this session starts changes nothing he can see — the chunks
+     it finds are scheduled from the next session onwards either way. */
+  try { Promise.resolve(chunkBackfill()).catch(() => {}); } catch (e) {}
   if (learnSession) { learnShow("lRun"); return; }   // resume, don't restart
   learnRenderStart();
 }
@@ -18121,7 +18238,7 @@ function learnRenderCard() {
     card.append(p);
   } else if (c.kind === "chunk") {
     const p = document.createElement("div"); p.className = "lprompt";
-    p.textContent = (PHRASES[c.key] || [])[1] || c.key;
+    p.textContent = (chunkAll()[c.key] || [])[1] || c.key;
     card.append(p);
   } else if (c.kind === "sentence") {
     const p = document.createElement("div"); p.className = "lprompt";
@@ -18653,7 +18770,7 @@ function learnScoreSpoken(c, text, res) {
     /* A chunk has no per-word tokens by design, so its English comes from the
        phrase table — checked once against the whole phrase rather than per word. */
     const en = (info && info.en) || (tok && tok.key && lib[tok.key] ? lib[tok.key].en : "")
-            || (c.kind === "chunk" && i === 0 ? (PHRASES[c.key] || [])[1] : "");
+            || (c.kind === "chunk" && i === 0 ? (chunkAll()[c.key] || [])[1] : "");
     if (!en) return;
     const firstWord = String(en).split(/[\s,;/(]+/)[0].toLowerCase();
     if (firstWord.length > 2 && lower.indexOf(firstWord) !== -1) learnSpoken.english[i] = firstWord;
@@ -18762,7 +18879,7 @@ function learnHintSteps(c) {
     if (prime) steps.push(Object.assign({}, prime, { exposes: "all" }));
     const fl = firstLetters(c.key);
     if (fl) steps.push({ label: "Each word starts with", text: fl, rtl: true, exposes: "all" });
-    const p = PHRASES[c.key];
+    const p = chunkAll()[c.key];
     if (p && p[0]) steps.push({ label: "How it sounds", text: p[0], rtl: false, exposes: "all" });
   } else if (isHearKind(c.kind) || c.kind === "shadow") {
     steps.push({ label: "", text: "", slow: true, exposes: [] });
@@ -18923,7 +19040,7 @@ function learnReveal() {
 
   let he = "", tr = "", en = "";
   if (c.kind === "word") { const e = lib[c.key] || {}; he = c.key; tr = e.tr || ""; en = e.en || ""; }
-  else if (c.kind === "chunk") { const p = PHRASES[c.key] || []; he = c.key; tr = p[0] || ""; en = p[1] || ""; }
+  else if (c.kind === "chunk") { const p = chunkAll()[c.key] || []; he = c.key; tr = p[0] || ""; en = p[1] || ""; }
   /* Whichever answer the attempt actually matched, not always the primary — if you
      said one of the alternatives, that's what should be shown as correct, not the
      scripted one you never attempted. Falls back to the primary when there's been
@@ -21073,6 +21190,36 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
 });
 
+/* ---- chunks he has actually heard ---- */
+T("chunkNormalise: a sentence is not a chunk, however common its words are", () => {
+  assertNull(chunkNormalise({ hebrew: "אני רוצה ללכת הביתה עכשיו בבקשה", english: "..." }),
+             "six words is a sentence, and a sentence on a chunk card teaches the " +
+             "opposite of what the card is for");
+  assertNull(chunkNormalise({ hebrew: "שלום", english: "hello" }), "one word is a word");
+});
+T("chunkNormalise: a chunk with no meaning cannot be a card", () => {
+  assertNull(chunkNormalise({ hebrew: "מה נשמע", translit: "ma nishma" }));
+});
+T("chunkNormalise: keeps a real one, and drops the trailing punctuation", () => {
+  const c = chunkNormalise({ hebrew: "מה נשמע?", translit: "ma nishma", english: "how's it going" });
+  assertEq(c.he, "מה נשמע", "the question mark is not part of the phrase to be said");
+  assertEq(c.en, "how's it going");
+});
+T("chunkNormalise: nothing at all is not an error", () => {
+  assertNull(chunkNormalise(null));
+  assertNull(chunkNormalise({ hebrew: "   ", english: "x" }));
+});
+T("chunkAll: the built-in phrases are all still schedulable", () => {
+  const all = chunkAll();
+  assertTrue(Object.keys(PHRASES).every(k => !!all[k]),
+             "harvesting must extend the table, never replace it");
+});
+T("chunkBackfillPrompt: hands over the transcripts it is meant to read", () => {
+  const p = chunkBackfillPrompt([{ he: "מה נשמע חביבי" }, { he: "יום הולדת שמח" }]);
+  assertTrue(p.indexOf("1. מה נשמע חביבי") !== -1);
+  assertTrue(p.indexOf("2. יום הולדת שמח") !== -1);
+});
+
 /* ---- the words the gate could not see ---- */
 T("bankUnknowns: finds the word bankUses silently dropped", () => {
   const lib = { "בית": {}, "גדול": {} };
@@ -21175,11 +21322,19 @@ T("srsLogEntry: carries the card kind through, and drops empty extras", () => {
              "an empty field is 2000 wasted bytes, not a value");
 });
 T("srsAnswer: schedules exactly as srsApply does", () => {
-  const a = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
-  const b = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
-  srsApply(a, "א", 2, "prod", DAY1);
-  srsAnswer(b, "א", 2, "prod", null, DAY1);
-  assertEq(b["א"].prod.stab, a["א"].prod.stab, "the log must never change the schedule");
+  /* The one test in this file that writes to a real store, so it puts it back. The
+     harness has no localStorage isolation and a stray synthetic answer would sit in
+     his calibration forever. */
+  const keep = lsGet(SRSLOG_KEY);
+  try {
+    const a = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
+    const b = { "א": { prod: seasoned({ last: "2026-08-10" }), recv: srsBlank() } };
+    srsApply(a, "א", 2, "prod", DAY1);
+    srsAnswer(b, "א", 2, "prod", null, DAY1);
+    assertEq(b["א"].prod.stab, a["א"].prod.stab, "the log must never change the schedule");
+  } finally {
+    if (keep) lsSet(SRSLOG_KEY, keep); else localStorage.removeItem(SRSLOG_KEY);
+  }
 });
 T("srsCalibration: a perfect predictor scores 0, a backwards one scores badly", () => {
   const right = [{ g: 2, r: 1 }, { g: 0, r: 0 }, { g: 2, r: 1 }];

@@ -1113,14 +1113,27 @@
   .lspeedhe { font-family: var(--map-display); font-size: 1.9rem; direction: rtl;
     color: var(--ink); line-height: 1.5; }
   .lspeedtr { font-size: .95rem; color: var(--muted); margin-top: 6px; }
-  /* Reserves its line so the card does not jump when a time lands in it. */
-  .lspeedtime { font-family: var(--map-display); font-size: 1.25rem; margin: 16px 0 4px;
-    min-height: 1.6em; color: var(--muted); }
-  .lspeedtime.fast { color: var(--gold); }
-  .lspeeddots { display: flex; gap: 7px; justify-content: center; margin-top: 22px; }
-  .lspeeddots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
-  .lspeeddots i.done { background: var(--gold); }
-  .lspeeddots i.at { background: var(--accent); }
+  /* The deadline. Drains by transform rather than width so the card is not relaid out
+     sixty times a second on a phone while the recogniser is running. Teal because it
+     is the thing he is acting against; gold only once he has beaten it. */
+  .lspeedtrack { width: min(22rem, 78%); height: 3px; margin: 20px auto 0;
+    background: var(--border); border-radius: 2px; overflow: hidden; }
+  .lspeedbar { display: block; width: 100%; height: 100%; transform-origin: left center;
+    background: var(--accent); }
+  .lspeedbar.landed { background: var(--gold); }
+  .lspeedbar.missed { background: var(--border); }
+  /* Reserves its line so the card does not jump when a word lands in it. */
+  .lspeednote { font-family: var(--map-display); font-size: 1.05rem; margin: 10px 0 2px;
+    min-height: 1.5em; color: var(--muted); }
+  /* One row per round, one mark per phrase. Gold is "you did this" and nothing else,
+     so an unbeaten round leaves its row plain rather than colouring it a failure. */
+  .lspeedmarks { display: flex; flex-direction: column; gap: 6px; align-items: center;
+    margin-top: 22px; }
+  .lspeedrow { display: flex; gap: 7px; }
+  .lspeedrow i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .lspeedrow i.landed { background: var(--gold); }
+  .lspeedrow i.missed { background: var(--border); opacity: .45; }
+  .lspeedrow i.at { background: var(--accent); }
   .lmicerr { font-size: .82rem; color: #a86a34; margin-top: 9px; }
   /* Quieter than lmicerr on purpose: nothing has gone wrong, the mic is just saying
      it would rather not guess. Muted, not the warning colour. */
@@ -2137,16 +2150,20 @@
   <div id="lSpeed" style="display:none">
     <div class="lspeed">
       <div class="lspeedlab">The walk home</div>
-      <div class="lspeedask">Say each one again, as fast as you can still say it well.
-        Nothing here is marked.</div>
+      <div class="lspeedask">The same few again, three times over, each round a little
+        quicker. Nothing here is marked.</div>
       <div class="lspeedhe" id="lSpeedHe"></div>
       <div class="lspeedtr" id="lSpeedTr"></div>
-      <div class="lspeedtime" id="lSpeedTime"></div>
+      <!-- The deadline, and the only thing that states it. A bar draining does not
+           need a caption saying it is a bar draining. -->
+      <div class="lspeedtrack"><i class="lspeedbar" id="lSpeedBar"></i></div>
+      <div class="lspeednote" id="lSpeedNote"></div>
       <div class="lactions">
-        <button class="btn" id="lSpeedMic" type="button">🎤 Say it</button>
+        <button class="btn" id="lSpeedMic" type="button">Say it</button>
         <button class="linkbtn" id="lSpeedSkip" type="button">Skip this one</button>
       </div>
-      <div class="lspeeddots" id="lSpeedDots"></div>
+      <!-- One mark per phrase per round: the tally IS the arrangement. -->
+      <div class="lspeedmarks" id="lSpeedMarks"></div>
     </div>
   </div>
 
@@ -18204,7 +18221,14 @@ document.getElementById("lResumeBtn").onclick = () => {
 document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
 document.getElementById("lSpeedMic").onclick = function () { learnSpeedAttempt(this); };
 /* Skipping one is not failing it — there is nothing here to fail. */
-document.getElementById("lSpeedSkip").onclick = () => learnSpeedNext();
+/* Stops the mic on the way past, or the pending listen resolves against a turn that
+   has already moved on. learnSpeedAttempt's `at` check catches that, but leaving a
+   recogniser running into the next phrase is its own bug. */
+document.getElementById("lSpeedSkip").onclick = () => {
+  const sp = learnSpeed;
+  if (sp && sp.busy) micStop();
+  learnSpeedNext();
+};
 
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they
@@ -19975,7 +19999,36 @@ let lastFinishedPath = null;
 
    Not a mode. The two session shapes deleted in August were deleted for being modes
    nobody picked, and a fluency strand you have to choose is one that never runs. */
-const SPEED_ITEMS = 4, SPEED_MIN = 2;
+/* Three phrases, three times over. Nation's technique is 4/3/2 — the SAME material
+   against a shrinking clock — and the repetition is the mechanism, not a side effect.
+   What was here before cited him and then implemented a stopwatch over four different
+   phrases seen once each, which trains recall speed and calls it fluency. */
+const SPEED_PHRASES = 3, SPEED_PASSES = 3, SPEED_MIN = 2;
+/* Seconds per word, tightening each round, and a floor underneath so a one-word phrase
+   is still winnable with the mic's own start-up inside the window. Guesses, and
+   deliberately so: they want tuning against a real walk home in a real street, not
+   deriving. */
+const SPEED_PER_WORD = [1.5, 1.2, 0.95], SPEED_FLOOR = [3.0, 2.5, 2.1];
+
+/* How long he has. Scaled by the phrase, because one word and an eight-word sentence
+   cannot share a bar. */
+function learnSpeedDeadline(he, pass) {
+  const p = Math.max(0, Math.min(SPEED_PASSES - 1, pass || 0));
+  const n = Math.max(1, heWords(he).length);
+  return Math.round(Math.max(SPEED_FLOOR[p], n * SPEED_PER_WORD[p]) * 1000);
+}
+/* Landed = he said it, and said it in time. Graded with alignSpoken, the same softened
+   comparison the drill itself uses, so the walk home is never stricter about what
+   counts as the phrase than the card he just passed it on. Nothing is written to the
+   scheduler either way — this only decides which colour a mark takes. */
+function learnSpeedLanded(expected, said, ms, deadline) {
+  if (!said || ms > deadline) return false;
+  const exp = heWords(expected);
+  if (!exp.length) return false;
+  return alignSpoken(exp, heWords(said)).status
+    .every(s => s === "matched" || s === "near");
+}
+
 let learnSpeed = null;
 
 /* The Hebrew he just produced, whatever kind of card produced it. Hear-kinds are
@@ -20000,7 +20053,8 @@ function learnSpeedStart() {
      rather than in learnFinish so a reload during the walk home cannot restore a
      session sitting one past its last card. */
   sessionClear();
-  learnSpeed = { items: items.slice(0, SPEED_ITEMS), i: 0, at: 0, times: [] };
+  learnSpeed = { items: items.slice(0, SPEED_PHRASES), pass: 0, i: 0,
+                 marks: {}, busy: false };
   learnShow("lSpeed");
   learnSpeedRender();
 }
@@ -20010,66 +20064,108 @@ function learnSpeedRender() {
   const it = sp.items[sp.i];
   document.getElementById("lSpeedHe").textContent = it.he;
   document.getElementById("lSpeedTr").textContent = it.tr || "";
-  const t = document.getElementById("lSpeedTime");
-  t.textContent = ""; t.className = "lspeedtime";
+  document.getElementById("lSpeedNote").textContent = "";
   const mic = document.getElementById("lSpeedMic");
-  mic.textContent = "🎤 Say it"; mic.disabled = false;
-  const dots = document.getElementById("lSpeedDots");
-  dots.innerHTML = "";
-  sp.items.forEach((x, i) => {
-    const d = document.createElement("i");
-    d.className = i < sp.i ? "done" : i === sp.i ? "at" : "";
-    dots.append(d);
-  });
-  sp.at = Date.now();
+  mic.textContent = "Say it"; mic.disabled = false;
+  const bar = document.getElementById("lSpeedBar");
+  bar.className = "lspeedbar";
+  bar.style.transition = "none";
+  bar.style.transform = "scaleX(1)";
+  learnSpeedMarks();
 }
-/* Advances, or hands over to the end screen once the road runs out. */
+/* One row per round, one mark per phrase — the whole run at a glance, and the only
+   scorekeeping there is. */
+function learnSpeedMarks() {
+  const sp = learnSpeed, box = document.getElementById("lSpeedMarks");
+  if (!sp || !box) return;
+  box.innerHTML = "";
+  for (let p = 0; p < SPEED_PASSES; p++) {
+    const row = document.createElement("div");
+    row.className = "lspeedrow";
+    for (let i = 0; i < sp.items.length; i++) {
+      const m = document.createElement("i");
+      const v = sp.marks[p + ":" + i];
+      m.className = v === true ? "landed" : v === false ? "missed"
+                  : (p === sp.pass && i === sp.i) ? "at" : "";
+      row.append(m);
+    }
+    box.append(row);
+  }
+}
+/* Drains by transform, not width: a width transition relays out the card sixty times a
+   second on a phone, which is the one thing this screen cannot afford while the
+   recogniser is running. */
+function learnSpeedBarRun(bar, ms) {
+  bar.className = "lspeedbar";
+  bar.style.transition = "none";
+  bar.style.transform = "scaleX(1)";
+  void bar.offsetWidth;                    // commit the reset before animating off it
+  bar.style.transition = "transform " + ms + "ms linear";
+  bar.style.transform = "scaleX(0)";
+}
+function learnSpeedBarStop(bar) {
+  const at = getComputedStyle(bar).transform;
+  bar.style.transition = "none";
+  bar.style.transform = at;
+}
+/* Advances through the round, then through the rounds, then hands over to the end
+   screen once the road runs out. */
 function learnSpeedNext() {
   const sp = learnSpeed;
   if (!sp) return;
   sp.i++;
-  if (sp.i >= sp.items.length) { learnSpeed = null; learnFinish(); return; }
+  if (sp.i >= sp.items.length) { sp.i = 0; sp.pass++; }
+  if (sp.pass >= SPEED_PASSES) { learnSpeed = null; learnFinish(); return; }
   learnSpeedRender();
-}
-/* Shown, not scored. The number is the whole point of the strand — a word you can say
-   in one second is a different possession from the same word at four — and there is
-   nothing to compare it against but the run before it, which is honest. */
-function learnSpeedTimeText(ms, best) {
-  const sec = Math.max(0.1, ms / 1000);
-  const txt = sec.toFixed(1) + "s";
-  return (best && ms < best) ? { txt: txt + " — your quickest yet", fast: true }
-                             : { txt: txt, fast: false };
 }
 async function learnSpeedAttempt(btn) {
   const sp = learnSpeed;
   if (!sp) return;
-  btn.disabled = true; btn.textContent = "Listening…";
-  const started = Date.now();
-  let res;
+  /* A second tap ends the turn, like every other mic in the app — learnSpeakAttempt and
+     learnHearSpeakAttempt have always toggled, and this was the one surface that
+     disabled its button and waited for the recogniser to decide he had stopped. George:
+     "its just relying on the auto cut off for the mic if it's noisy it doesn't work."
+     Nothing waits on end-of-speech detection any more, so noise cannot strand a turn. */
+  if (sp.busy) { micStop(); return; }
+  const at = sp.pass + ":" + sp.i;
+  const it = sp.items[sp.i];
+  const deadline = learnSpeedDeadline(it.he, sp.pass);
+  const note = document.getElementById("lSpeedNote");
+  const bar = document.getElementById("lSpeedBar");
+  sp.busy = true;
+  btn.textContent = "Done";
+  note.textContent = "";
+  let res = null, started = 0;
   try {
-    if (micNeedsStreamHold()) {
-      const got = await micAcquire();
-      if (!got) { btn.disabled = false; btn.textContent = "🎤 Say it"; return; }
+    let ok = true;
+    if (micNeedsStreamHold()) ok = await micAcquire();
+    if (!ok) note.textContent = "Microphone blocked.";
+    else {
+      /* The bar starts with the LISTENING, not with the tap. Acquiring the stream on
+         file:// takes a moment, and billing that to him would make the last round
+         unwinnable for a reason that has nothing to do with how fast he speaks. */
+      started = Date.now();
+      learnSpeedBarRun(bar, deadline);
+      res = await micListen({});
     }
-    res = await micListen({});
   } catch (e) { res = null; }
-  if (learnSpeed !== sp) return;                 // walked out mid-listen
-  btn.textContent = "🎤 Say it";
-  if (!res || !res.ok) {
-    /* Silence is not a slow answer. Move on without a time rather than recording one
-       the microphone invented. */
-    document.getElementById("lSpeedTime").textContent = "Didn't catch that";
-    setTimeout(() => learnSpeedNext(), 700);
-    return;
-  }
+  finally { sp.busy = false; btn.textContent = "Say it"; }
+  if (learnSpeed !== sp || sp.pass + ":" + sp.i !== at) return;   // skipped, or walked out
+  if (!started) return;                                          // never got as far as listening
   const ms = Date.now() - started;
-  sp.times.push(ms);
-  const best = sp.times.length > 1 ? Math.min.apply(null, sp.times.slice(0, -1)) : 0;
-  const shown = learnSpeedTimeText(ms, best);
-  const t = document.getElementById("lSpeedTime");
-  t.textContent = shown.txt;
-  t.className = "lspeedtime" + (shown.fast ? " fast" : "");
-  setTimeout(() => learnSpeedNext(), 900);
+  learnSpeedBarStop(bar);
+  const heard = !!(res && res.ok);
+  const landed = heard && learnSpeedLanded(it.he, res.text, ms, deadline);
+  sp.marks[at] = landed;
+  bar.classList.add(landed ? "landed" : "missed");
+  /* Said plainly, because a bar that simply stops is ambiguous between "too slow" and
+     "never heard you", and those want different things from him next time. */
+  note.textContent = landed ? "Landed."
+    : !heard ? "Didn't catch that."
+    : ms > deadline ? "Just over."
+    : "Not quite that one.";
+  learnSpeedMarks();
+  setTimeout(() => learnSpeedNext(), 850);
 }
 
 function learnFinish() {
@@ -21603,11 +21699,32 @@ T("learnSpeedFrom: too long to be a speed run", () => {
   const long = { kind: "sentence", item: { he: "א ב ג ד ה ו ז ח ט", tr: "" } };
   assertNull(learnSpeedFrom(long, {}), "nine words is a recitation, not a fluency rep");
 });
-T("learnSpeedTimeText: says the number, and marks only a genuine best", () => {
-  assertEq(learnSpeedTimeText(2100, 0).txt, "2.1s", "nothing to compare against yet");
-  assertTrue(!learnSpeedTimeText(2100, 0).fast);
-  assertTrue(learnSpeedTimeText(1400, 2100).fast, "quicker than the run before it");
-  assertTrue(!learnSpeedTimeText(2600, 2100).fast, "slower is just a number, not a scold");
+T("learnSpeedDeadline: tightens each round, and never below the floor", () => {
+  const long = "אני רוצה ללכת הביתה עכשיו";        // five words
+  assertTrue(learnSpeedDeadline(long, 0) > learnSpeedDeadline(long, 1),
+             "the second round is the point — same phrase, less time");
+  assertTrue(learnSpeedDeadline(long, 1) > learnSpeedDeadline(long, 2));
+  assertEq(learnSpeedDeadline("שלום", 0), Math.round(SPEED_FLOOR[0] * 1000),
+           "one word times a per-word budget is under the mic's own start-up");
+  assertTrue(learnSpeedDeadline(long, 0) > learnSpeedDeadline("שלום", 0),
+             "one word and a five-word sentence cannot share a bar");
+});
+T("learnSpeedDeadline: an out-of-range round is clamped, not indexed off the end", () => {
+  assertEq(learnSpeedDeadline("שלום", 9), learnSpeedDeadline("שלום", SPEED_PASSES - 1));
+  assertEq(learnSpeedDeadline("שלום", -1), learnSpeedDeadline("שלום", 0));
+});
+T("learnSpeedLanded: said it, and said it in time", () => {
+  assertTrue(learnSpeedLanded("אני רוצה", "אני רוצה", 2000, 3000));
+  assertTrue(!learnSpeedLanded("אני רוצה", "אני רוצה", 3400, 3000),
+             "over the bar is not landed, however well he said it");
+  assertTrue(!learnSpeedLanded("אני רוצה", "", 500, 3000), "silence is not a fast answer");
+  assertTrue(!learnSpeedLanded("אני רוצה", "אני", 900, 3000),
+             "half the phrase inside the time is still half the phrase");
+});
+T("learnSpeedLanded: no stricter than the card he just passed it on", () => {
+  assertTrue(learnSpeedLanded("אני רוצה", "אני  רוצה!", 2000, 3000),
+             "normalisation and the softened alignment are shared with the drill — the " +
+             "walk home must not fail a phrase the drill would have accepted");
 });
 
 /* ---- chunks he has actually heard ---- */

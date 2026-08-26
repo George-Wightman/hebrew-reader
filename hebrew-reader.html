@@ -13252,6 +13252,10 @@ function campApplyPlan(plan) {
 
   campRestate(c);
   campSave(c);
+  /* Nothing to enqueue: a node with no conversation written IS the queue — see
+     convoQNext. Nothing is written here either, deliberately. This runs inside
+     campWarmNext's three-chapter loop, and eighteen conversations in one visit to the
+     map is the whole day's Flash. */
   return c.chapters[n - 1];
 }
 
@@ -13697,20 +13701,51 @@ function convoNextScene() {
    Turns come back shaped exactly like a `reply` bank item (their line in q*, his
    answer in he/tr/en) so the card, the mic, the hints and the grading all work
    unchanged — a conversation turn IS a reply card with a thread above it. */
-async function learnMakeConversation(sceneOverride) {
+/* One line of "what this word is" for the prompt, from the library or from DICT.
+   A node's words may not have reached the library yet — campEnsureWords only admits
+   what DICT knows — and telling the model a word with no meaning attached is worse
+   than not mentioning it, so a word we can say nothing true about is dropped. */
+function convoWordLine(k, lib) {
+  const e = lib[k], d = DICT[k];
+  const tr = (e && e.tr) || (d ? String(d[0]).split("/")[0].trim() : "");
+  const en = (e && e.en) || (d ? d[1] : "");
+  if (!tr && !en) return "";
+  return tr + " = " + en + " (" + k + ")";
+}
+
+async function learnMakeConversation(sceneOverride, opts) {
+  const o = opts || {};
   const lib = libAll(), srs = srsAll();
   const ready = readyWords(lib, srs);
-  if (ready.length < READY_MIN_FOR_SENTENCES) return null;
+  /* `must` is a node's own word list. It exempts the call from the general ready-pool
+     floor, because a node conversation is written from the node rather than from what
+     he happens to hold today — otherwise it could not be written until he was already
+     past needing the node, which is exactly the wrong way round. George: "its not like
+     a different non node conversation, so Its safer to use hte words in the node
+     despite them not being ready yet". */
+  const must = (o.must || []).filter(Boolean);
+  if (!must.length && ready.length < READY_MIN_FOR_SENTENCES) return null;
   if (!geminiKeys().length) return null;
   /* The Path supplies its own scene so a section's closing conversation is about that
      section, rather than whatever happened to be next in the general rotation. */
   const scene = sceneOverride || convoNextScene();
   if (!scene) return null;
 
-  const vocab = ready.map(k => (lib[k].tr || "") + " = " + (lib[k].en || "") + " (" + k + ")").join("\n");
+  const pool = ready.slice();
+  must.concat(o.extra || []).forEach(k => { if (pool.indexOf(k) === -1) pool.push(k); });
+  const vocab = pool.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n");
+  if (!vocab) return null;
+  const mustLines = must.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n");
   const prompt =
     "Write a short spoken Hebrew conversation for a NEAR-BEGINNER to practise out loud.\n\n" +
     "SETTING: " + scene.en + " — " + (scene.hint || "") + "\n\n" +
+    /* Without this a node's graduation could be written entirely from his general
+       vocabulary and contain not one word the node taught — which is a conversation
+       he could have had before he started. */
+    (mustLines
+      ? "THE WORDS THIS CONVERSATION EXISTS TO PRACTISE. Every one of these must appear, " +
+        "doing real work in a line rather than tacked on the end of one:\n" + mustLines + "\n\n"
+      : "") +
     "He can only use these words. This is a hard limit, not a preference:\n" + vocab + "\n\n" +
     "Write exactly " + CONVO_TURNS + " turns. In each turn the OTHER PERSON speaks first, " +
     "then he answers.\n\n" +
@@ -13769,7 +13804,11 @@ async function learnMakeConversation(sceneOverride) {
   if (!clean.length) return null;
   const convo = { id: "c" + Date.now(), scene: scene.id, sceneEn: scene.en,
                   turns: clean, seen: 0, ts: Date.now() };
-  const all = convoAll(); all.push(convo); convoSave(all);
+  /* A node's graduation is not general practice. Left in this store it becomes
+     servable by convoPick the moment its words go ready — so the exchange he is
+     supposed to graduate on gets handed to him first as an ordinary Talk session.
+     The Path keeps its own copy in pathContentAll(). */
+  if (o.store !== false) { const all = convoAll(); all.push(convo); convoSave(all); }
   return convo;
 }
 
@@ -13783,6 +13822,90 @@ async function convoTopUp() {
   if (spare >= 2) return;
   convoMaking = true;
   try { await learnMakeConversation(); } catch (e) {} finally { convoMaking = false; }
+}
+
+/* ---- conversations written before they are wanted ------------------------------
+   George: "Convos should be pre generated after the nodes at emade. But locked behind
+   mastering words." The gate does not move — campNodeWordsReady still decides when the
+   button lights. What moves is WHEN the exchange gets written, from the moment he taps
+   to the moment the node is created.
+
+   That is only possible because a node's conversation is now written from the node's
+   own word list (see learnMakeConversation's `must`). While the vocabulary came from
+   readyWords, writing early meant writing from a smaller vocabulary than the one he
+   would have on arrival, and there was a real reason to wait.
+
+   Throttled, because eager is not free: campWarmNext plans up to three chapters in one
+   visit to the map, at four to six nodes each, so writing them all on the spot is up to
+   eighteen Flash calls against a daily allowance of twenty.
+
+   The queue is DERIVED, not stored: it is simply the nodes that have no conversation
+   written yet, in campNodes' own order. A stored list would need pushing on creation,
+   dropping on success, sweeping when a chapter is re-planned, and a migration for every
+   node that already exists — all to answer a question the two stores already answer
+   between them. */
+const CONVOQ_DAY_KEY = "hvr_convoqday";
+const CONVOQ_PER_DAY = 6, CONVOQ_FAIL_MAX = 3;
+
+/* Today's spend. Date-keyed rather than a rolling count so it resets on its own and
+   an unused day is never banked into a burst on the next one. */
+function convoQSpentToday(today) {
+  try {
+    const r = JSON.parse(lsGet(CONVOQ_DAY_KEY));
+    return (r && r.day === (today || todayISO())) ? (r.n || 0) : 0;
+  } catch (e) { return 0; }
+}
+function convoQSpend(today) {
+  const d = today || todayISO();
+  lsSet(CONVOQ_DAY_KEY, JSON.stringify({ day: d, n: convoQSpentToday(d) + 1 }));
+}
+/* The next node wanting one, nearest chapter first — campNodes walks chapter by
+   chapter, so the node he will reach next comes out ahead of one four chapters away
+   without needing to be sorted.
+
+   `convoFail` is what stops a node that CANNOT be written (nothing in DICT for its
+   words, so there is no honest vocabulary line to send) from taking the head of the
+   queue every day forever and starving everything behind it. */
+function convoQNext(campaign, content) {
+  const c = campaign || campAll(), store = content || pathContentAll();
+  const nodes = campNodes(c);
+  for (let i = 0; i < nodes.length; i++) {
+    const rec = store[nodes[i].id];
+    if (rec && rec.convo) continue;
+    if (rec && (rec.convoFail || 0) >= CONVOQ_FAIL_MAX) continue;
+    return nodes[i];
+  }
+  return null;
+}
+/* A node that produced nothing. Recorded so convoQNext can step past it, and kept in
+   the same store the conversation itself lives in rather than inventing a second one. */
+function convoQFailed(id) {
+  const st = pathContentAll();
+  st[id] = st[id] || {};
+  st[id].convoFail = (st[id].convoFail || 0) + 1;
+  pathContentSave(st);
+}
+/* Fire-and-forget and never concurrent with itself, the same shape as convoTopUp —
+   he should never learn that this was attempted, and a background spend he did not ask
+   for has no business surfacing an error. */
+let convoQRunning = false;
+async function convoQWork() {
+  if (convoQRunning) return;
+  if (!geminiKeys().length) return;
+  if (convoQSpentToday() >= CONVOQ_PER_DAY) return;
+  const node = convoQNext();
+  if (!node) return;
+  convoQRunning = true;
+  try {
+    /* Counted BEFORE the call: a request that fails still spent a request, and a
+       broken key must not be free to retry six times a tick. */
+    convoQSpend();
+    if (!await campNodeConversation(node)) convoQFailed(node.id);
+  } catch (e) {
+    /* A throw is a bad afternoon — a dead quota or no signal — not a node that cannot
+       be written, so it is NOT counted against convoFail. Today's attempt is spent and
+       the node is first in the queue again tomorrow. */
+  } finally { convoQRunning = false; }
 }
 
 /* =====================  RECENCY  =====================
@@ -15881,6 +16004,11 @@ async function campStartPractise(id) {
 async function campStartConvo(id) {
   const n = campNode(id);
   if (!n) return;
+  /* The second guard, and the one that stops three sessions stacking. campNodeConversation
+     already de-duplicates the REQUEST; this stops three taps each arriving at campBegin
+     with the same answer and starting the conversation three times over. */
+  const btn = document.getElementById("campConvo");
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   campSay("Getting the conversation ready…");
   try {
     const c = await campNodeConversation(n);
@@ -15890,17 +16018,35 @@ async function campStartConvo(id) {
   } catch (e) {
     campSay(/limit/.test(e.message || "") ? "Daily AI limit reached — try tomorrow."
                                           : "Couldn't reach the AI just now.");
+  } finally {
+    /* Re-enabled on every exit, including the throw — a button left reading "The
+       conversation" and refusing to open one is worse than the bug this fixes. The
+       sheet is torn down on success anyway, so this only ever matters on a failure. */
+    if (btn) btn.disabled = false;
   }
 }
 
 /* Cached per node, so a graduation retried tomorrow is the same exchange rather than
-   a fresh spend. */
+   a fresh spend.
+
+   `campConvoMaking` is the guard that actually matters. Without it every tap of the
+   button missed the cache and started its own request: George pressed it three times
+   waiting for the first, "and I was spammed with different convos when the response
+   came back" — three requests, three cache writes where the last one won, and three
+   sessions stacked on top of each other. Concurrent callers now SHARE one promise,
+   which holds however the second caller arrived — the queue below is one of them. */
+const campConvoMaking = {};
 function campNodeConversation(node) {
   const store = pathContentAll();
   const rec = store[node.id];
   if (rec && rec.convo) return Promise.resolve(rec.convo);
-  return Promise.resolve(learnMakeConversation({ id: node.id, en: node.name,
-                                                 hint: node.situation || node.name }))
+  if (campConvoMaking[node.id]) return campConvoMaking[node.id];
+  /* Whatever DICT knows of the node's words joins the library first, so the prompt can
+     say what they mean rather than listing bare Hebrew. */
+  try { campEnsureWords(node); } catch (e) {}
+  const run = Promise.resolve(learnMakeConversation(
+      { id: node.id, en: node.name, hint: node.situation || node.name },
+      { must: node.words || [], extra: node.carry || [], store: false }))
     .then(c => {
       if (!c) return null;
       const st = pathContentAll();
@@ -15908,7 +16054,10 @@ function campNodeConversation(node) {
       st[node.id].convo = c;
       pathContentSave(st);
       return c;
-    });
+    })
+    .finally(() => { delete campConvoMaking[node.id]; });
+  campConvoMaking[node.id] = run;
+  return run;
 }
 
 function campSay(msg) {
@@ -17904,6 +18053,11 @@ function learnRenderStart() {
   /* The review's two tiers, behind the planner so three requests never leave at once
      on a phone that has just opened the app. */
   setTimeout(() => { try { Promise.resolve(reviewTick()).catch(() => {}); } catch (e) {} }, 6000);
+  /* And one node's graduation conversation, last in the queue of background spends —
+     it is the least urgent of the three, because nothing is waiting on it until he has
+     mastered a node's words. Behind campWarmNext on purpose: the chapter it just
+     planned has queued its nodes by the time this runs. */
+  setTimeout(() => { try { Promise.resolve(convoQWork()).catch(() => {}); } catch (e) {} }, 9500);
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -19924,6 +20078,9 @@ function learnFinish() {
   /* A finished session is the single best moment to sync: the day’s grades are
      written, and nothing is on screen that a merge could pull out from under. */
   setTimeout(() => syncRun("session", { quiet: true }), 400);
+  /* The other good moment: he is reading the end screen, nothing is waiting on the
+     network, and a session is exactly when a node's last word tends to go ready. */
+  setTimeout(() => { try { Promise.resolve(convoQWork()).catch(() => {}); } catch (e) {} }, 3000);
   micRelease();
   statsSnapshotBands();
   learnRenderRoad(s.cards.length - 1, s.cards.length);
@@ -21368,6 +21525,47 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- conversations written before they are wanted ---- */
+T("convoWordLine: reaches DICT for a node word the library has not admitted yet", () => {
+  assertEq(convoWordLine("בית", { "בית": { tr: "bait", en: "house" } }), "bait = house (בית)");
+  assertTrue(convoWordLine("שלום", {}).indexOf("(שלום)") !== -1,
+             "a node's words can be queued before campEnsureWords has run, so the " +
+             "prompt has to be able to say what they mean without the library");
+  assertEq(convoWordLine("זזזזזז", {}), "",
+           "telling the model a word with no meaning attached is worse than omitting it");
+});
+T("convoQNext: nearest chapter first, and skips what is already written", () => {
+  const camp = { chapters: [{ nodes: [{ id: "a" }, { id: "b" }] }, { nodes: [{ id: "c" }] }] };
+  assertEq(convoQNext(camp, {}).id, "a", "the node he reaches first is worth writing first");
+  assertEq(convoQNext(camp, { a: { convo: {} } }).id, "b");
+  assertEq(convoQNext(camp, { a: { convo: {} }, b: { convo: {} } }).id, "c",
+           "a later chapter is still worth writing once the near ones are done");
+  assertNull(convoQNext(camp, { a: { convo: {} }, b: { convo: {} }, c: { convo: {} } }),
+             "nothing left to write, and nothing to spend on finding that out");
+});
+T("convoQNext: a node that cannot be written stops starving the ones behind it", () => {
+  const camp = { chapters: [{ nodes: [{ id: "a" }, { id: "b" }] }] };
+  assertEq(convoQNext(camp, { a: { convoFail: CONVOQ_FAIL_MAX - 1 } }).id, "a",
+           "a couple of failures is a bad afternoon, not a verdict");
+  assertEq(convoQNext(camp, { a: { convoFail: CONVOQ_FAIL_MAX } }).id, "b",
+           "otherwise it takes the head of the queue every day and nothing behind it " +
+           "is ever written");
+});
+T("convoQSpentToday: the cap resets on the date, and an unused day is not banked", () => {
+  const before = lsGet(CONVOQ_DAY_KEY);
+  try {
+    lsSet(CONVOQ_DAY_KEY, JSON.stringify({ day: "2026-08-26", n: 4 }));
+    assertEq(convoQSpentToday("2026-08-26"), 4);
+    assertEq(convoQSpentToday("2026-08-27"), 0, "yesterday's spend is not today's");
+    convoQSpend("2026-08-27");
+    assertEq(convoQSpentToday("2026-08-27"), 1,
+             "and today starts from one — an unused day must not bank into a burst");
+    assertEq(convoQSpentToday("2026-08-26"), 0, "the old day is gone, not kept alongside");
+  } finally {
+    if (before === null) localStorage.removeItem(CONVOQ_DAY_KEY); else lsSet(CONVOQ_DAY_KEY, before);
+  }
 });
 
 /* ---- which Learn screen is up ---- */

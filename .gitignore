@@ -10,3 +10,6 @@ Thumbs.db
 
 # Brainstorming visual-companion scratch state
 .superpowers/
+
+# Isolated agent worktrees — ephemeral, never meant to be committed
+.claude/worktrees/

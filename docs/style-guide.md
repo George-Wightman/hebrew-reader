@@ -178,16 +178,38 @@ routes the checker then rejected, because they disagreed about how wide a label 
 folder for fonts or textures is acceptable and would need adding to `sw.js`'s shell list.
 
 **Tests:** open `hebrew-reader.html?selftest`. `document.title` becomes
-`selftest <pass>/<total>`; failures land on `window.__selftest.failures`. There were 386
-at the end of this work.
+`selftest <pass>/<total>`; failures land on `window.__selftest.failures`. There were 442
+at the end of the retrievability work (386 at the end of the map-and-drill redesign).
 
-**The service worker is stale-while-revalidate, so the first reload after an edit serves
-the previous version.** Always reload twice before believing what you see. This will
-waste an hour if you don't know it.
+**The suite has no localStorage isolation.** Tests assert against plain objects for
+exactly this reason. If a test genuinely must touch a real store, it has to put it back
+in a `finally` — an earlier version of the `srsAnswer` test did not, and left synthetic
+answers sitting in the scheduler's own calibration log.
 
-**Line endings are CRLF and `.gitattributes` says `* -text`.** `sed -i` strips them and
-turns a three-line change into a 20,000-line diff. Edit with Python opened
-`newline=""`, or with the editing tools.
+**The service worker is stale-while-revalidate, and reloading twice is NOT enough.**
+The old advice here was "reload twice"; it is wrong, and it will cost you a round of
+confusion where the test count refuses to move. The worker re-registers on every load
+and re-serves the cached shell, so a plain reload — and a cache-busting query string —
+can both keep showing you the previous file. What actually works, run in the page
+before navigating:
+
+```js
+navigator.serviceWorker.getRegistrations()
+  .then(rs => Promise.all(rs.map(r => r.unregister())))
+  .then(() => caches.keys())
+  .then(ks => Promise.all(ks.map(k => caches.delete(k))));
+```
+
+Then navigate with a query string you have not used before. Do this after *every* edit
+you intend to verify.
+
+**Line endings are LF, despite what this guide used to say.** `.gitattributes` says
+`* -text`, so git does no conversion and the working file is LF throughout — checked
+against the file as committed, not assumed. The editing tools and Python opened
+`newline=""` are both safe. The real hazard was never the tool, it was believing a
+claim about the file instead of measuring it: `git show <rev>:hebrew-reader.html | wc`
+settles it in one command, and after any large edit `grep -oE "^(async )?function
+[A-Za-z0-9_]+" | sort | uniq -d` must print nothing.
 
 **Splicing between two markers is dangerous.** `s[:start] + new + s[end:]` with the end
 marker *before* the start marker silently duplicates thousands of lines — including whole

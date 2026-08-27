@@ -5,7 +5,9 @@ Open **`hebrew-reader.html`** in any browser (double-click it — no internet ne
 > **Working on the code?** Start with [`docs/handoff-2026-08-21.md`](docs/handoff-2026-08-21.md) —
 > where the app stands, what the last cycle changed, and what to pick up next. Behind it sits
 > [`docs/audit-2026-08-20.md`](docs/audit-2026-08-20.md), the full critical review with 20
-> numbered findings that the work is measured against. For the quest map specifically, see
+> numbered findings that the work is measured against, and
+> [`docs/audit-2026-08-27.md`](docs/audit-2026-08-27.md), a second general review with 8 more
+> (`G1`–`G8`) not yet acted on. For the quest map specifically, see
 > [`docs/path-handoff.md`](docs/path-handoff.md).
 >
 > The app is live at **https://george-wightman.github.io/hebrew-reader/** and installs to a

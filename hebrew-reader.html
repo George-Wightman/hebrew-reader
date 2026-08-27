@@ -12538,9 +12538,37 @@ const BANK_PREFIXES = "ובהלמשכ";
    that knows how to peel the prefix off and find the library entry underneath; anything
    that needs to map a raw sentence token back to a library key should call this rather
    than re-deriving its own (weaker) version of the same check. */
+/* ---- a form of a known word IS a known word ------------------------------------
+   This used to stop at the bare lemma and a single peeled prefix, which meant every
+   INFLECTED form read as an untaught word. Hebrew agrees for gender and number on
+   nearly every adjective and verb, so that was most of real Hebrew: קטנה, קטנים,
+   גבוהה, קרים, נמוכות — 674 forms in George's library alone, all of them already
+   sitting in FORM_INDEX with their lemma attached, and none of them visible here.
+
+   Everything downstream reads this: bankUses, bankUnknowns, commissionAcceptable and
+   the servable gate. So the sentence generator was being asked for natural Hebrew
+   written only in uninflected base forms — not a hard instruction but an impossible
+   one. It produced ungrammatical output when obeyed (התחלה גדול: a masculine
+   adjective on a feminine noun, wrong exactly BECAUSE גדולה was forbidden) and output
+   that was binned wholesale when not. Measured on one real batch, teaching this
+   function what the app already knew took 13 of 30 accepted to 18.
+
+   Returns the LEMMA, never the surface form, so nothing downstream changes shape: a
+   sentence using קטנה credits קטן, schedules קטן, and counts toward קטן. This is not
+   a loosening of the gate — the gate was rejecting known words by omission. */
 function libKeyFor(tok, lib) {
   if (lib[tok]) return tok;
-  if (tok.length > 2 && BANK_PREFIXES.indexOf(tok[0]) !== -1 && lib[tok.slice(1)]) return tok.slice(1);
+  const bare = (tok.length > 2 && BANK_PREFIXES.indexOf(tok[0]) !== -1) ? tok.slice(1) : null;
+  if (bare && lib[bare]) return bare;
+  /* FORM_INDEX is empty until rebuildTrIndex runs, and holds only forms marked
+     verified — so this degrades to the old behaviour rather than throwing, and never
+     credits a form the library has not confirmed. */
+  const fi = formInfo(tok);
+  if (fi && fi.lemma && lib[fi.lemma]) return fi.lemma;
+  if (bare) {
+    const fb = formInfo(bare);
+    if (fb && fb.lemma && lib[fb.lemma]) return fb.lemma;
+  }
   return null;
 }
 function bankUses(he, lib) {
@@ -21755,6 +21783,52 @@ T("chunkBackfillPrompt: hands over the transcripts it is meant to read", () => {
   const p = chunkBackfillPrompt([{ he: "מה נשמע חביבי" }, { he: "יום הולדת שמח" }]);
   assertTrue(p.indexOf("1. מה נשמע חביבי") !== -1);
   assertTrue(p.indexOf("2. יום הולדת שמח") !== -1);
+});
+
+/* ---- a form of a known word IS a known word ----
+   FORM_INDEX is a module global, so these swap it and put it back — the suite has no
+   storage isolation and a left-behind index would follow every later test. */
+function withForms(idx, fn) {
+  const save = FORM_INDEX;
+  FORM_INDEX = idx;
+  try { return fn(); } finally { FORM_INDEX = save; }
+}
+T("libKeyFor: an inflected form resolves to its lemma", () => {
+  const lib = { "קטן": {} };
+  withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
+    assertEq(libKeyFor("קטנה", lib), "קטן",
+             "returns the LEMMA, so `uses` and the scheduler keep working in lemmas");
+  });
+});
+T("libKeyFor: a prefixed inflected form resolves too", () => {
+  /* הקטנה — the definite article on a feminine form. Both peels have to happen, and
+     this is the shape most real sentences actually produce. */
+  const lib = { "קטן": {} };
+  withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
+    assertEq(libKeyFor("הקטנה", lib), "קטן");
+  });
+});
+T("libKeyFor: a form whose lemma is not in the library is still unknown", () => {
+  /* The index is global and the library is not — a form left over from a deleted word
+     must not resurrect it. */
+  withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
+    assertNull(libKeyFor("קטנה", {}));
+  });
+});
+T("libKeyFor: an empty index degrades to the old behaviour rather than throwing", () => {
+  /* FORM_INDEX is empty until rebuildTrIndex runs, which is after first paint. */
+  withForms({}, () => {
+    assertEq(libKeyFor("בית", { "בית": {} }), "בית", "bare lemma still works");
+    assertEq(libKeyFor("הבית", { "בית": {} }), "בית", "and so does one peeled prefix");
+    assertNull(libKeyFor("קטנה", { "קטן": {} }), "with no index, a form is still unknown");
+  });
+});
+T("bankUses: credits the lemma for a sentence written in real Hebrew", () => {
+  /* The whole point of the fix, at the level the generator is judged on. */
+  const lib = { "קטן": {}, "ילד": {} };
+  withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
+    assertEq(bankUses("הילד קטנה", lib).sort().join(","), ["ילד", "קטן"].sort().join(","));
+  });
 });
 
 /* ---- the words the gate could not see ---- */

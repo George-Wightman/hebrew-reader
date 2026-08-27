@@ -13810,6 +13810,39 @@ function convoScenes() {
    called it — the extra-scenes half of CONVO_SCENES_KEY has never been written by
    anything — so the reader above is really just CORE_SCENES with a hook left in for
    whatever was going to fill it. The hook stays; the unused writer does not. */
+/* ---- a turn read as a BEAT -----------------------------------------------------
+   A conversation is six beats — things the exchange needs to cover — and the scripted
+   lines stored alongside them are ONE realisation of those beats, the one used when
+   there is no network, no key, or no time to write a better one.
+
+   This is the reader that makes that true of data written before beats existed. Every
+   conversation already in storage has qhe/he/alts and no intent, and rather than
+   migrate them (a rewrite of a store that syncs between devices, to add a field that
+   can be derived) they are read as beats whose intent is unstated. A beat with no
+   intent is one the live turn cannot improve on, so it falls back to its scripted line
+   — which is precisely the behaviour those conversations already had.
+
+   `want` falls back to askEn because that is what askEn always was: the gist of what he
+   should convey. It was already the right field under the wrong name. */
+function convoBeat(t) {
+  if (!t) return null;
+  return {
+    intent: String(t.intent || "").trim(),
+    want: String(t.want || t.askEn || "").trim(),
+    must: Array.isArray(t.must) ? t.must.filter(Boolean) : [],
+    lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(t.lvl)) || LEVEL_DEFAULT)),
+    /* Whether this beat can be realised live at all. Without an intent there is nothing
+       to tell the writer to aim at, so the scripted line is not a fallback — it is the
+       only honest answer. */
+    live: !!String(t.intent || "").trim()
+  };
+}
+/* How many beats a conversation covers, for the gold gate — see the spec's note on why
+   this replaces `got / cards.length` once a conversation can run longer than its beats. */
+function convoBeatCount(c) {
+  return (c && Array.isArray(c.turns)) ? c.turns.length : 0;
+}
+
 /* Same gate as sentences: every content word across every turn has to be one he has
    actually trained, or the conversation is a wall rather than a drill. */
 function convoServable(c, lib, srs) {
@@ -13908,8 +13941,23 @@ async function learnMakeConversation(sceneOverride, opts) {
     "2-3 ALTERNATIVE answers he could equally naturally give instead of \"he\" — " +
     "genuinely different wording or content, not trivial rephrasings, still using " +
     "ONLY the listed words, still exactly the kind of thing a real person would say here.\n\n" +
+    /* THE BEAT. The scripted lines above are one realisation of the conversation; this
+       is the conversation itself, described so a later call can realise it differently
+       against what he actually said. Asked for in the SAME request because the model is
+       already deciding all of this in order to write the lines — it just never had to
+       say it out loud, so nothing downstream could read it. */
+    "EACH TURN ALSO HAS A JOB — the thing that turn needs to cover, separate from the " +
+    "particular words you chose to cover it with. State it, because the app may realise " +
+    "the same turn with different wording later:\n" +
+    "- intent = what THEY are doing in this turn, in plain English (\"they ask whether " +
+    "he worked today\"). Not the line, the purpose.\n" +
+    "- want = what HE needs to convey to satisfy it (\"say whether he did, and where\").\n" +
+    "- must = which of the practice words above this turn is built around, copied " +
+    "exactly, or [] if none.\n" +
+    "- lvl = 1-5, how hard his answer to this turn should be.\n\n" +
     "Reply with JSON only:\n" +
-    "{\"turns\":[{\"qhe\":\"their line\",\"qtr\":\"english letters\",\"qen\":\"english\"," +
+    "{\"turns\":[{\"intent\":\"\",\"want\":\"\",\"must\":[],\"lvl\":2," +
+    "\"qhe\":\"their line\",\"qtr\":\"english letters\",\"qen\":\"english\"," +
     "\"askEn\":\"the gist of what he should convey, in plain English\"," +
     "\"he\":\"his model answer\",\"tr\":\"english letters\",\"en\":\"english\"," +
     "\"alts\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]," +
@@ -13926,8 +13974,20 @@ async function learnMakeConversation(sceneOverride, opts) {
   }
   /* `uses` is derived here, never taken from the model — the app knows what's in the
      library and a hallucinated list would poison the scheduler with no way to notice. */
+  /* `must` is filtered against the list actually sent, exactly as sentencePlan filters
+     its briefs' `for`: a beat built around a word nobody asked about would send the live
+     turn chasing vocabulary the node has nothing to do with. */
+  const mustSet = new Set(must);
   const clean = turns.filter(t => t && t.qhe && t.he && t.tr)
     .map(t => ({
+      /* The beat — what this turn is FOR. Absent on every conversation written before
+         this existed, which is exactly what convoBeat() below is for. */
+      intent: String(t.intent || "").trim(),
+      want: String(t.want || t.askEn || "").trim(),
+      must: (Array.isArray(t.must) ? t.must : [])
+        .map(k => String(k || "").trim()).filter(k => mustSet.has(k)),
+      lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX,
+             Math.round(Number(t.lvl)) || LEVEL_DEFAULT)),
       qhe: t.qhe, qtr: t.qtr || "", qen: t.qen || "",
       askEn: t.askEn || t.en || "", he: t.he, tr: t.tr, en: t.en || "",
       /* Capped at 2 and validated the same as the primary answer — an alt that's
@@ -22048,6 +22108,53 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- a turn read as a beat ----
+   The whole live-conversation rework rests on one claim: every conversation ALREADY in
+   storage can be read as a beat sheet and still behave exactly as it does today. If that
+   is wrong, the rework needs a migration of a store that syncs between devices. These
+   are the tests that would catch it being wrong. */
+T("convoBeat: a turn written before beats existed is readable, and is not live", () => {
+  /* Exactly the shape learnMakeConversation produced yesterday — no intent anywhere. */
+  const old = { qhe: "מה נשמע?", qtr: "ma nishma", qen: "how are you",
+                askEn: "say how you are", he: "אני בסדר", tr: "ani beseder",
+                en: "I'm fine", alts: [], rhe: "", uses: ["בסדר"] };
+  const b = convoBeat(old);
+  assertEq(b.live, false, "no intent means nothing to realise it against");
+  assertEq(b.want, "say how you are", "askEn was always the beat's `want` under another name");
+  assertEq(b.must, []);
+  assertEq(b.lvl, LEVEL_DEFAULT, "an ungraded turn reads as the modal band, like bankLevel");
+});
+T("convoBeat: a turn written WITH a beat is live and keeps its own fields", () => {
+  const b = convoBeat({ intent: "they ask whether he worked today",
+                        want: "say whether he did, and where",
+                        must: ["עובד"], lvl: 3, askEn: "ignored when want is set" });
+  assertEq(b.live, true);
+  assertEq(b.intent, "they ask whether he worked today");
+  assertEq(b.want, "say whether he did, and where", "`want` outranks the older askEn");
+  assertEq(b.must, ["עובד"]);
+  assertEq(b.lvl, 3);
+});
+T("convoBeat: a blank or whitespace intent is not live", () => {
+  /* The distinction the fallback rests on: "" and "   " must both mean "use the script".
+     A whitespace intent reaching the live writer would send it an empty instruction. */
+  assertEq(convoBeat({ intent: "" }).live, false);
+  assertEq(convoBeat({ intent: "   " }).live, false);
+  assertEq(convoBeat({ intent: "\n" }).live, false);
+});
+T("convoBeat: junk fields degrade rather than propagating", () => {
+  const b = convoBeat({ intent: "x", must: "עובד", lvl: 99 });
+  assertEq(b.must, [], "a string is not a word list — it would iterate as characters");
+  assertEq(b.lvl, LEVEL_MAX, "clamped, like every other level in the app");
+  assertEq(convoBeat({ intent: "x", lvl: -4 }).lvl, LEVEL_MIN);
+  assertNull(convoBeat(null));
+});
+T("convoBeatCount: the gold gate's denominator, however malformed the store is", () => {
+  assertEq(convoBeatCount({ turns: [{}, {}, {}] }), 3);
+  assertEq(convoBeatCount({ turns: [] }), 0);
+  assertEq(convoBeatCount({}), 0, "a conversation with no turns must not divide by undefined");
+  assertEq(convoBeatCount(null), 0);
 });
 
 /* ---- conversations written before they are wanted ---- */

@@ -57,6 +57,25 @@ real store (not a passed-in plain object) must restore what it found in a
 forever. Prefer driving pure functions with plain objects; only touch a real
 store when the thing under test is the store itself.
 
+## Audio is the device, not the API
+
+Practice audio comes from the **device's own TTS voice** (`speakHe` → `HE_VOICE`),
+not from Gemini. `playHe` looks for a cached neural clip first and calls
+`audioEnsure` to make one, but that path has been broken since 2026-08-07 and
+was re-verified broken on 2026-08-21: every model in `GEMINI_TTS_MODELS` returns
+`HTTP 400 "Developer instruction is not enabled for this model"`, Google
+rejecting the `systemInstruction` field. So it always falls through.
+
+Two things follow, and both have already misled one session:
+
+- **Audio costs no API quota**, and no amount of newly generated bank material
+  leaves anything "waiting to be synthesised". If audio is silent, the cause is
+  the device — no Hebrew voice installed, muted, or routed to Bluetooth — not
+  the key and not the quota.
+- George practises on a Pixel, so `speechRateFor` takes the
+  `SPEECH_RATE_NATURAL` branch (0.90 / 0.65). The slower Windows figures only
+  apply to the flat SAPI voice.
+
 ## AI usage
 
 Gemini quota is `AI_POOL_CAPS = { strong: 20, fast: 500 }` per key per day.

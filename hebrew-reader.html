@@ -1581,6 +1581,14 @@
   .pnode.stale .pring { fill: var(--panel); stroke: var(--warn); stroke-width: 3; }
   .pnode.stale .phe { fill: var(--warn); }
   .pnode.stale .pnmbox { fill: var(--gold-soft); stroke: #e0c48c; }
+  /* Walked: he has been here and it held, but not all of it. Gold-soft rather than
+     gold — the same family, visibly short of the real thing — and no warn colour,
+     because nothing has gone wrong. Distinct from stale, which IS a warning. */
+  .pnode.walked .pmerlon { fill: var(--gold-soft); stroke: #c9a86a; }
+  .pnode.walked .pring { fill: var(--gold-soft); stroke: #c9a86a; stroke-width: 2.6; }
+  .pnode.walked .pring2 { stroke: #e0c48c; }
+  .pnode.walked .pnmbox { fill: #fbf3e2; stroke: #e0c48c; }
+  .pnode.walked .phe { fill: #8a6520; }
   .pstale { fill: var(--warn); font-weight: 700; }
   .pfrom { fill: var(--accent); }
   .pauto { fill: var(--gold); }
@@ -1673,6 +1681,7 @@
   .pp-why { margin: 6px 0 0; font-size: .86rem; color: var(--ink); font-style: italic; }
   .pp-sit { margin: 4px 0 0; font-size: .8rem; color: var(--muted); }
   .pp-stale { margin: 8px 0 0; font-size: .8rem; color: var(--warn); }
+  .pp-walked { margin: 8px 0 0; font-size: .8rem; color: var(--muted); }
   /* The words themselves, each with the strength dot the rest of the app already
      uses — this panel is the one place the node's whole vocabulary is visible, and a
      bare list without the dots would say nothing about what is left to do. */
@@ -13370,7 +13379,7 @@ async function campWarmNext() {
     for (let round = 0; round < CAMP_WARM_MAX_PER_RUN; round++) {
       /* Re-read every round: the chapter written last time round may have been passed
          outright by campAutoPass, which is exactly the case this loop exists for. */
-      campAutoPass();
+      campAutoPass(); campStampGold();
       const c = campAll(), srs = srsAll();
       const real = c.chapters.filter(ch => (ch.nodes || []).length);
       if (!real.length) return;
@@ -13399,7 +13408,7 @@ async function campWarmNext() {
       if (!made) return;
       campLogChapter(last, brief);
       if (document.getElementById("lStart").style.display !== "none") {
-        campAutoPass(); pathRender(); learnRenderAct();
+        campAutoPass(); campStampGold(); pathRender(); learnRenderAct();
       }
     }
   } catch (e) {
@@ -14173,15 +14182,68 @@ function campNodeAuto(id) {
   const r = pathLessonRec(id, CAMP_CONVO_LESSON);
   return !!(r && r.auto);
 }
+/* ---- did this node ever actually reach gold? --------------------------------
+   The one fact that separates the two things the warm ring means. A node that WAS
+   complete and has since decayed needs repair and should say so; a node that was
+   walked at 70% and never finished has not decayed at all — it was never gold.
+   Nothing recorded that, so both looked identical the moment `walked` existed.
+
+   Stamped where the pass is already written rather than computed on read, because
+   "it was gold once" is history and history has to be kept, not re-derived. */
+function campNodeEverGold(id) {
+  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
+  return !!(r && r.gold);
+}
+function campStampGold(c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const store = pathScoresAll();
+  let n = 0;
+  campNodes(cc).forEach(node => {
+    if (!campNodeDone(node.id, cc, ss)) return;
+    const rec = store[node.id] && store[node.id][CAMP_CONVO_LESSON];
+    if (!rec || rec.gold) return;
+    rec.gold = true;
+    n++;
+  });
+  if (n) pathScoresSave(store);
+  return n;
+}
 
 /* Gold is not permanent. A node whose words have since decayed reopens with a marker
    — the SRS made visible. The map only REPORTS this; repair happens in ordinary quick
    sessions, because decayed words are overdue and learnTargets already leads with
    overdue. That is the division of labour: the campaign teaches, quick sessions
    maintain, and the map is what tells you maintenance is due. */
+/* Two different things wore this one state. `campNodeStale` was "conversation passed
+   and not all words ready" and never asked whether the node had EVER been complete —
+   so a node he walked but never took to 100% rendered with the decay marker and was
+   told "You had this. Some of it has slipped", which he never had. */
 function campNodeStale(id, c, srs) {
   const n = campNode(id, c);
-  return !!n && campConvoPassed(id) && !campNodeWordsReady(n, srs);
+  if (!n || !campConvoPassed(id) || campNodeWordsReady(n, srs)) return false;
+  /* Decay means it was gold once. Without this a node walked at 70% and never
+     finished claimed "You had this. Some of it has slipped" about words it never had. */
+  return campNodeEverGold(id);
+}
+/* ---- walked, and gold -------------------------------------------------------
+   George: "I dont want a situation where I have to just drill the same like 2 words 10
+   times to pass gold ... maybe to progress we dont need 100% but for gold we do."
+
+   Walked is the conversation passed plus most of the words held. It opens the next
+   chapter; it is not gold, and it does not claim to be. Gold still means all of it.
+
+   CAMP_WALKED_SHARE is the same 0.7 campThreshold uses on chapters, deliberately: one
+   number meaning one thing across the map beats two similar numbers meaning different
+   things. Debt left behind is not abandoned — campDebtWords feeds it back into later
+   nodes' sentences. */
+const CAMP_WALKED_SHARE = 0.7;
+function campNodeWalked(id, c, srs) {
+  const n = campNode(id, c);
+  if (!n || !campConvoPassed(id)) return false;
+  if (campNodeEverGold(id)) return false;      // it was gold; slipping from that is decay
+  const p = campNodeProgress(n, srs || srsAll());
+  if (!p.need) return false;
+  return p.have >= Math.ceil(p.need * CAMP_WALKED_SHARE);
 }
 /* Where a chapter stands, COMPUTED — behind the live one, the live one, or ahead of
    it. `ch.state` in the store is a cache of this and nothing more; read as the truth
@@ -14206,6 +14268,7 @@ function campNodeState(id, c, srs) {
   if (standing === "next") return "next";
   if (campNodeDone(id, cc, ss)) return "done";
   if (campNodeStale(id, cc, ss)) return "stale";
+  if (campNodeWalked(id, cc, ss)) return "walked";
   const rec = pathScoresAll()[id];
   return (rec && Object.keys(rec).length) ? "current" : "open";
 }
@@ -14222,8 +14285,14 @@ function campThreshold(nodeCount) { return Math.max(3, Math.floor(nodeCount * 0.
 function campChapterGold(ch, c, srs) {
   return (ch.nodes || []).filter(n => campNodeDone(n.id, c, srs)).length;
 }
+/* What actually opens the next chapter. Gold above is still counted and still drawn
+   gold; this is the wider bar, so one stubborn word cannot hold a whole chapter shut. */
+function campChapterWalked(ch, c, srs) {
+  return (ch.nodes || []).filter(n => campNodeDone(n.id, c, srs) ||
+                                      campNodeWalked(n.id, c, srs)).length;
+}
 function campChapterComplete(ch, c, srs) {
-  return campChapterGold(ch, c, srs) >= campThreshold((ch.nodes || []).length);
+  return campChapterWalked(ch, c, srs) >= campThreshold((ch.nodes || []).length);
 }
 /* The chapter he is working in: the first that is not yet complete. */
 function campLiveChapter(c, srs) {
@@ -14257,7 +14326,11 @@ function campCurrentNode(c, srs) {
   const open = nodes.filter(n => campNodeState(n.id, cc, ss) === "open");
   if (open.length) return open[0];
   const stale = nodes.filter(n => campNodeState(n.id, cc, ss) === "stale");
-  return stale[0] || null;
+  if (stale.length) return stale[0];
+  /* Walked last: it counted and the chapter moved on, so it is the least urgent thing
+     here — but still better to offer than nothing when everything else is finished. */
+  const walked = nodes.filter(n => campNodeState(n.id, cc, ss) === "walked");
+  return walked[0] || null;
 }
 
 /* ---- day one, and the days generation cannot happen --------------------------
@@ -14960,7 +15033,7 @@ function campWearFront(L, c, srs) {
   L.nodes.forEach(n => {
     if (n.fog) return;
     const st = campNodeState(n.id, c, srs);
-    if (st !== "done" && st !== "stale" && st !== "current") return;
+    if (st !== "done" && st !== "stale" && st !== "walked" && st !== "current") return;
     if (n.y > y) y = n.y;
   });
   return y;
@@ -15784,6 +15857,12 @@ function campOpenNode(id) {
   if (n.situation) h += '<p class="pp-sit">' + campEscape(n.situation) + '</p>';
   if (state === "stale") h += '<p class="pp-stale">You had this. Some of it has slipped — ' +
     'it will come back on its own in your next few quick sessions.</p>';
+  /* Was told "You had this. Some of it has slipped" — which he never had. A node
+     walked but not mastered has not decayed; it is simply not finished, and the words
+     it is short of follow him into later nodes rather than waiting here. */
+  else if (state === "walked") h += '<p class="pp-walked">You have been here and it counted — ' +
+    'the chapter moved on. A few words are still short of yours, and they will keep ' +
+    'turning up in what comes next.</p>';
 
   h += '<div class="pp-words">' +
        (n.words || []).map(k => campWordRow(k, lib, srs)).join("") + '</div>';
@@ -15918,6 +15997,48 @@ function campWeakWords(node, srs) {
                     (rank[srsStrengthOf(s, b, "prod")] || 0));
 }
 
+/* ---- what an earlier node left behind ------------------------------------------
+   George: "I dont want weak / progressing words from earlier nodes to 'reappear' as
+   the target words for future nodes, I only want them to show up in practice alongside
+   other new words from the node ... I want those older words to naturally be
+   integrating into sentences."
+
+   So debt is an INGREDIENT, never a target. It never enters `node.words`, never moves
+   campNodeProgress, never gates gold — re-teaching it would restage a lesson he has
+   already sat through, and make a node's progress count words it does not claim to
+   teach. It improves the ordinary way: per-word commit grades every word in any
+   sentence it appears in.
+
+   Computed per session rather than baked into a chapter plan. Debt changes as he
+   practises, so a plan would freeze a snapshot — and computing it live means the
+   chapters already on his map benefit immediately, with no regeneration.
+
+   Closest to recovery first, so effort lands where it converts rather than on the
+   hopeless case. */
+const CAMP_DEBT_WORDS = 3;
+function campDebtWords(node, c, srs) {
+  const cc = c || campAll(), ss = srs || srsAll();
+  const own = {}; ((node && node.words) || []).forEach(k => { own[k] = 1; });
+  const out = [];
+  campNodes(cc).forEach(n => {
+    if (!n || n.id === (node && node.id)) return;
+    /* Only from nodes he has actually walked, and never from one that is finished:
+       a gold node's words are held, and anything that slips out of them is the quick
+       sessions' job, not the campaign's. */
+    if (campNodeDone(n.id, cc, ss) || !campNodeWalked(n.id, cc, ss)) return;
+    (n.words || []).forEach(k => {
+      if (own[k] || out.indexOf(k) !== -1) return;
+      if (STOPLIST.has(k) || wordReady(k, ss)) return;
+      out.push(k);
+    });
+  });
+  const rank = { weak: 0, "new": 1 };
+  return out
+    .sort((a, b) => ((rank[srsStrengthOf(ss, a, "prod")] || 0) -
+                     (rank[srsStrengthOf(ss, b, "prod")] || 0)))
+    .slice(0, CAMP_DEBT_WORDS);
+}
+
 /* Built in priority order and stopped at the ceiling — no shuffle, no truncation. The
    order below IS the design, so a coin flip must not be allowed to edit it. */
 function campBuild(node, size) {
@@ -15926,7 +16047,11 @@ function campBuild(node, size) {
   const words = (node.words || []).filter(k => lib[k] && srsGradable(k, lib));
   if (!words.length) return null;
   const weak = campWeakWords(node, srs).filter(k => lib[k] && srsGradable(k, lib));
-  const carry = new Set(weak);
+  /* Debt rides in the SAME allowance as the node's own stuck words — see
+     campDebtWords. Without it every sentence written with a left-behind word in it is
+     refused by the gate on the way to the card, and the phase does nothing. */
+  const debt = campDebtWords(node, null, srs).filter(k => lib[k] && srsGradable(k, lib));
+  const carry = new Set(weak.concat(debt));
   const isNodeWord = {}; words.forEach(k => { isNodeWord[k] = true; });
 
   /* Same once-per-session level bookkeeping the daily builder does, for the same
@@ -15943,17 +16068,22 @@ function campBuild(node, size) {
     .filter(it => bankServable(it, lib, srs, carry, CAMP_SERVE))
     .map(it => ({ it: it,
                   hits: (it.uses || []).filter(u => isNodeWord[u]).length,
+                  debt: (it.uses || []).some(u => debt.indexOf(u) !== -1),
                   carry: bankCarried(it, lib, srs, carry) }))
     /* Only material that touches this node. A node session containing a sentence
        about something else is the bug being fixed, not a graceful fallback — if there
        is not enough, the session is shorter and honest about it. */
-    .filter(x => x.hits > 0 || x.carry)
+    .filter(x => x.hits > 0 || x.carry || x.debt)
     /* Carrying a stuck word beats covering a known one, then most coverage, then
        least seen. `for` — the word an item was COMMISSIONED to rescue — outranks a
        word it merely happens to carry: those are the sentences written for this
        exact problem. */
     .sort((a, b) => ((b.carry && b.it.for === b.carry) - (a.carry && a.it.for === a.carry)) ||
                     ((b.carry ? 1 : 0) - (a.carry ? 1 : 0)) ||
+                    /* An equivalent sentence that also revisits a left-behind word beats
+                       one that does not — otherwise debt gets written and then sits
+                       behind consolidation, never served. */
+                    ((b.debt ? 1 : 0) - (a.debt ? 1 : 0)) ||
                     (b.hits - a.hits) ||
                     ((a.it.seen || 0) - (b.it.seen || 0)));
 
@@ -16072,8 +16202,14 @@ function campWarm(node, force) {
      inside a node every word being taught is not-ready by definition — see
      bankServable's node relaxation, which this has to match or the generator writes
      material the session then refuses. */
+  /* Debt is offered, never demanded. Forcing a left-behind word into a node about
+     something else is what produced "grandpa eats milk in opposites"; permission lets
+     the writer use it where it fits and skip it where it does not, and the reviewer
+     stays the judge of whether it landed naturally. */
+  const debt = campDebtWords(node, null, srs).filter(k => lib[k]);
   const run = Promise.resolve(sentenceCommission({
     lib: lib, srs: srs, rescue: weak,
+    revisit: debt,
     maxCarried: CAMP_MAX_CARRIED,
     scaffold: campScaffold(lib, srs),
     setting: node.situation || node.name
@@ -17128,6 +17264,12 @@ async function sentenceWrite(spec, briefs) {
         "person would say, write the good sentence instead and return \"for\": \"\":\n" +
         rescue.map(k => wordLine(k, lib)).join("\n") + "\n\n"
       : "") +
+    ((spec.revisit || []).length
+      ? "WORDS FROM EARLIER PRACTICE, worth folding back in. Use them where they fit " +
+        "naturally and leave them out where they do not — this is an invitation, not a " +
+        "requirement, and an odd sentence built round one is worse than not using it:\n" +
+        spec.revisit.map(k => wordLine(k, lib)).join("\n") + "\n\n"
+      : "") +
     "EVERY OTHER WORD MUST COME FROM THIS LIST — words he holds solidly — plus basic " +
     "grammar words (אני, אתה, זה, של, את, לא, כן, יש, ה):\n" +
     scaffold.map(k => k + " (" + ((lib[k] || {}).tr || "") + ")").join(", ") + "\n" +
@@ -17233,6 +17375,7 @@ async function sentenceCommission(spec) {
     lib: lib, srs: srs,
     level: spec.level || learnerLevel(),
     rescue: spec.rescue || [],
+    revisit: spec.revisit || [],
     scaffold: spec.scaffold || scaffoldWords(lib, srs)
   });
   /* Nothing solid to build from. Below this the builder has no honest way to satisfy
@@ -17244,7 +17387,10 @@ async function sentenceCommission(spec) {
   const drafted = await sentenceWrite(spec, briefs);
   if (!drafted.length) return 0;
   const scaffoldSet = new Set(spec.scaffold);
-  const rescueSet = new Set(spec.rescue);
+  /* Revisit words are permitted vocabulary alongside the rescue words — they count
+     against the same carried limit, so a sentence may fold one in without becoming
+     the impossible card. */
+  const rescueSet = new Set((spec.rescue || []).concat(spec.revisit || []));
   const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet,
                                                           spec.maxCarried));
   if (!clean.length) return 0;
@@ -18191,7 +18337,7 @@ function learnRenderStart() {
   /* Before the board is drawn, so a node he has already outgrown is gold the first
      time he sees it rather than after he opens it. Cascades on purpose: passing nodes
      completes the chapter, which is what lets campWarmNext below write the next one. */
-  campAutoPass();
+  campAutoPass(); campStampGold();
   pathRender();
   pathApplyZoom();
   pathWirePinch();
@@ -21929,6 +22075,111 @@ T("campScaffold: progressing counts, and the solidest come first", () => {
              "but nothing he cannot yet say");
 });
 
+/* ---- walked, and gold ---- */
+function campWalkStores(readyCount, total) {
+  /* A node of `total` words with `readyCount` of them held, conversation passed. */
+  const words = [], srs = {};
+  for (let i = 0; i < total; i++) {
+    const w = "w" + i;
+    words.push(w);
+    srs[w] = { prod: i < readyCount ? { stab: 8, diff: 4, n: 3, miss: 0 }
+                                    : { stab: 0, diff: 5, n: 0, miss: 0 },
+               recv: { n: 0 } };
+  }
+  return { c: { v: 1, chapters: [{ n: 1, nodes: [{ id: "nd", words: words }] }], log: [] }, srs: srs };
+}
+T("campNodeWalked: 70% of the words plus the conversation counts as walked", () => {
+  const st = campWalkStores(5, 6);                       // 5 of 6 = 83%
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
+    assertTrue(campNodeWalked("nd", st.c, st.srs));
+    assertTrue(!campNodeDone("nd", st.c, st.srs), "walked is not gold");
+  } finally { pathScoresSave(keep); }
+});
+T("campNodeWalked: below the share it has not been walked", () => {
+  const st = campWalkStores(3, 6);                       // 3 of 6 = 50%
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
+    assertTrue(!campNodeWalked("nd", st.c, st.srs));
+  } finally { pathScoresSave(keep); }
+});
+T("campNodeWalked: all the words is gold, and gold is still gold", () => {
+  const st = campWalkStores(6, 6);
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
+    assertTrue(campNodeDone("nd", st.c, st.srs), "100% plus the conversation is gold");
+  } finally { pathScoresSave(keep); }
+});
+T("campNodeWalked: without the conversation it is neither", () => {
+  const st = campWalkStores(6, 6);
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({});
+    assertTrue(!campNodeWalked("nd", st.c, st.srs), "the conversation is the graduation");
+    assertTrue(!campNodeDone("nd", st.c, st.srs));
+  } finally { pathScoresSave(keep); }
+});
+T("campNodeStale: a node walked but never mastered is NOT decay", () => {
+  /* It used to be. campNodeStale never asked whether the node had ever been complete,
+     so a node he walked was told "You had this. Some of it has slipped" — which he
+     never had. */
+  const st = campWalkStores(5, 6);
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
+    assertTrue(!campNodeStale("nd", st.c, st.srs));
+    assertEq(campNodeState("nd", st.c, st.srs), "walked");
+  } finally { pathScoresSave(keep); }
+});
+
+/* ---- nothing is left behind ---- */
+T("campDebtWords: a walked node's outstanding word follows him forward", () => {
+  const srs = { "החזק": { prod: { stab: 8, diff: 4, n: 3, miss: 0 }, recv: { n: 0 } },
+                "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
+                "חדש": { prod: { n: 0 }, recv: { n: 0 } } };
+  const c = { v: 1, log: [], chapters: [{ n: 1, nodes: [
+    { id: "old", words: ["החזק", "החזק2", "החזק3", "החזק4", "החזק5", "החוב"] },
+    { id: "now", words: ["חדש"] }] }] };
+  ["החזק2", "החזק3", "החזק4", "החזק5"].forEach(w => { srs[w] = { prod: { stab: 8, diff: 4, n: 3, miss: 0 }, recv: { n: 0 } }; });
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ old: { 99: { pct: 100, ts: Date.now() } } });      // walked, 5 of 6
+    const debt = campDebtWords({ id: "now", words: ["חדש"] }, c, srs);
+    assertEq(debt, ["החוב"], "the one word that node never got to");
+  } finally { pathScoresSave(keep); }
+});
+T("campDebtWords: a node he never walked owes nothing yet", () => {
+  const srs = { "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
+                "חדש": { prod: { n: 0 }, recv: { n: 0 } } };
+  const c = { v: 1, log: [], chapters: [{ n: 1, nodes: [
+    { id: "old", words: ["החוב"] }, { id: "now", words: ["חדש"] }] }] };
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({});                                   // conversation never passed
+    assertEq(campDebtWords({ id: "now", words: ["חדש"] }, c, srs).length, 0);
+  } finally { pathScoresSave(keep); }
+});
+T("campDebtWords: debt is an ingredient and never the node's own target", () => {
+  /* George's correction, as an assertion: a left-behind word must never end up in
+     node.words, where it would restage a lesson and move the node's progress bar. */
+  const srs = { "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
+                "חדש": { prod: { n: 0 }, recv: { n: 0 } } };
+  const node = { id: "now", words: ["חדש"] };
+  const c = { v: 1, log: [], chapters: [{ n: 1, nodes: [
+    { id: "old", words: ["החוב"] }, node] }] };
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ old: { 99: { pct: 100, ts: Date.now() } } });
+    const before = campNodeProgress(node, srs);
+    campDebtWords(node, c, srs);
+    assertEq(node.words, ["חדש"], "the node's own words are untouched");
+    assertEq(campNodeProgress(node, srs), before, "and its progress cannot move");
+  } finally { pathScoresSave(keep); }
+});
+
 /* ---- chunks he has actually heard ---- */
 T("chunkNormalise: a sentence is not a chunk, however common its words are", () => {
   assertNull(chunkNormalise({ hebrew: "אני רוצה ללכת הביתה עכשיו בבקשה", english: "..." }),
@@ -23106,7 +23357,10 @@ T("campNodeStale: a graduated node whose words have slipped reopens", () => {
   const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
   const weak = campReadySrs(node);
   weak[node.words[0]] = { prod: srsBandRecord("weak"), recv: srsBlank() };
-  withCamp(camp, weak, { "c1-hello": CAMP_PASS }, () => {
+  /* `gold: true` is the stamp campStampGold writes when a node actually reaches 100%.
+     Decay is only decay if it was gold once — without the stamp this node is
+     indistinguishable from one walked at 70% and never finished. */
+  withCamp(camp, weak, { "c1-hello": { 99: Object.assign({}, CAMP_PASS[99], { gold: true }) } }, () => {
     assertTrue(campNodeStale("c1-hello"));
     assertTrue(!campNodeDone("c1-hello"), "stale is not done");
     assertEq(campNodeState("c1-hello"), "stale");

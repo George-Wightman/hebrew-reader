@@ -1188,14 +1188,9 @@
   /* The app's existing "this needs your attention" colour, the same one Pending and
      unknown words use — a repair is exactly that, and reusing it means the colour
      keeps meaning one thing everywhere. */
-  .lrepair { width: 100%; background: var(--unknown-bg); border: 1px solid var(--unknown-border);
-             border-radius: 12px; padding: 10px 14px; margin: 4px 0 10px; }
-  .lrepairlab { font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
-                font-weight: 700; color: #a3691f; margin-bottom: 4px; }
-  .lrepairhe { font-family: "David", "Times New Roman", serif; font-size: 1.25rem;
-               color: var(--hebrew); direction: rtl; line-height: 1.5; }
-  .lrepairtr { font-size: .82rem; color: var(--muted); }
-  .lrepairen { font-size: .82rem; color: #a3691f; margin-top: 2px; }
+  /* The .lrepair* rules were removed with convoShowRepair: a beat that was not
+     covered is approached again by the next line now, so there is no separate
+     restatement panel to style. */
   /* Where the grade buttons would be, on a silently-scored conversation turn — a
      quiet marker that something is happening, not a control to press. */
   .lconvocont { text-align: center; color: var(--faint); font-size: 1.3rem;
@@ -13883,6 +13878,233 @@ function convoBeatCount(c) {
   return (c && Array.isArray(c.turns)) ? c.turns.length : 0;
 }
 
+/* ---- the live turn -------------------------------------------------------------
+   Six beats is a FLOOR, not a script. Between them the exchange may breathe — follow up
+   on something volunteered, answer a question asked back — and it ends when the beats
+   are covered or the cap is reached. George: "The 6 best point can be a good
+   conversation strucutre, like 6 minimum or like 6 things to hit on, but It doesnt
+   neciserily have to be 6 max or jsut super rigid."
+
+   The cap is the guard on the one real risk: a model that enjoys a tangent too much and
+   never lands the remaining beats. Every call is told how many beats are left against
+   how many turns have gone, and told to converge as that tightens — but instructions are
+   not a guarantee, so twelve is the hard stop. */
+const CONVO_TURN_CAP = 12;
+/* Short, deliberately. A slow answer here is worse than no answer: the scripted line is
+   sitting right there and the "…" is on screen while it waits. Past this the turn takes
+   the fallback and the conversation carries on rather than stalling mid-sentence. */
+const CONVO_LIVE_TIMEOUT_MS = 6000;
+
+/* Does the exchange keep going? Pure, because it is the termination condition and a
+   conversation that cannot end is worse than one that ends early. */
+function convoShouldContinue(beatsHit, beatsTotal, turnsUsed, cap) {
+  if (turnsUsed >= (cap || CONVO_TURN_CAP)) return false;   // the hard stop
+  return beatsHit < beatsTotal;
+}
+
+/* What the judge is allowed to say. Anything malformed falls back to null so the caller
+   uses the LOCAL score instead — a live turn that comes back nonsense must degrade to
+   today's behaviour, never to a wrong grade quietly applied. */
+function convoLiveNormalise(json, beatsTotal) {
+  if (!json || typeof json !== "object") return null;
+  const g = Math.round(Number(json.grade));
+  const out = {
+    grade: (g === 0 || g === 1 || g === 2) ? g : null,
+    lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(json.lvl)) || LEVEL_DEFAULT)),
+    beatHit: !!json.beatHit,
+    next: null
+  };
+  const n = json.next;
+  /* No `next` is how the model says the conversation is finished — a legitimate answer,
+     not a malformed one. */
+  if (!n || typeof n !== "object" || !n.qhe) return out;
+  /* Their line needs Hebrew; his model answer needs Hebrew AND a pronunciation, because
+     the hint ladder and the local fallback grader both read it. A next line we cannot
+     build a full card from is worse than no next line — it would render a turn with no
+     answer behind it. */
+  if (!n.he || !n.tr) return out;
+  out.next = {
+    beat: Math.max(0, Math.min((beatsTotal || 1) - 1, Math.round(Number(n.beat)) || 0)),
+    qhe: String(n.qhe), qtr: String(n.qtr || ""), qen: String(n.qen || ""),
+    want: String(n.want || ""),
+    he: String(n.he), tr: String(n.tr), en: String(n.en || ""),
+    alts: (Array.isArray(n.alts) ? n.alts : [])
+      .filter(a => a && a.he && a.tr).slice(0, 3)
+      .map(a => ({ he: String(a.he), tr: String(a.tr), en: String(a.en || "") }))
+  };
+  return out;
+}
+
+/* The thread so far, as the model needs to see it: who said what, in Hebrew. Capped
+   because the whole exchange goes out on every turn and a twelve-turn conversation
+   would otherwise send twelve turns of history on the twelfth call. */
+function convoLiveHistory(cards, upto) {
+  const out = [];
+  for (let i = 0; i < upto && i < cards.length; i++) {
+    const c = cards[i];
+    if (!c || c.kind !== "conversation") continue;
+    out.push("THEM: " + ((c.item && c.item.qhe) || ""));
+    if (c._said) out.push("HIM: " + c._said);
+  }
+  return out.slice(-10).join("\n");
+}
+
+function convoLivePrompt(ctx) {
+  const beat = ctx.beat || {};
+  const nextBeat = ctx.nextBeat || null;
+  return "You are the other person in a spoken Hebrew conversation with a learner. " +
+    "Reply the way a real person would, and judge how he just did.\n\n" +
+    "SETTING: " + (ctx.sceneEn || "a conversation") + "\n\n" +
+    (ctx.history ? "THE EXCHANGE SO FAR:\n" + ctx.history + "\n\n" : "") +
+    "YOUR LAST LINE: " + (ctx.theirLine || "") + "\n" +
+    "WHAT HE JUST SAID: " + (ctx.said || "(nothing was heard)") + "\n\n" +
+    "FIRST, JUDGE IT. This turn wanted him to: " + (beat.want || "reply naturally") + "\n" +
+    "grade 2 = he conveyed it. grade 1 = partly. grade 0 = he did not.\n" +
+    "JUDGE THE MEANING, NEVER THE PARTICULAR WORDS. A synonym is correct. A more " +
+    "advanced construction than you would have used is correct — and is worth a higher " +
+    "lvl, not a lower grade. Extra content he volunteered that you did not ask for is " +
+    "correct. He is being marked on whether he communicated, not on whether he matched " +
+    "a script. Only mark him down for something he genuinely failed to get across.\n" +
+    "lvl = how advanced what he ACTUALLY said was, 1-5, whatever this turn was aiming at.\n" +
+    "beatHit = did this turn's job get done, so the conversation can move on.\n\n" +
+    "THEN WRITE YOUR NEXT LINE.\n" +
+    "RESPOND TO WHAT HE ACTUALLY SAID FIRST. If he asked you something, answer it — " +
+    "walking past a question he asked you is the single worst thing you can do here. If " +
+    "he volunteered something, react to it like a person would before moving on.\n" +
+    (nextBeat
+      ? "Then steer towards the next thing to cover: " + (nextBeat.intent || "") + "\n"
+      : "The things this conversation set out to cover are done — bring it to a natural " +
+        "close and return no \"next\".\n") +
+    "You do not have to reach it this turn. Following up on what he said for one turn is " +
+    "good conversation. But " + ctx.beatsLeft + " thing(s) still need covering and you " +
+    "have used " + ctx.turnsUsed + " of " + ctx.cap + " turns — the tighter that gets, " +
+    "the more directly you should steer.\n\n" +
+    "HIS REPLY TO YOUR NEW LINE must be sayable with ONLY these words. This is a hard " +
+    "limit — a line he cannot answer is a wall, not a conversation:\n" + (ctx.vocab || "") + "\n\n" +
+    "Your own line may use a few common words outside that list if a real speaker would; " +
+    "list any such word in newWords.\n\n" +
+    "Reply with JSON only:\n" +
+    "{\"grade\":2,\"lvl\":2,\"beatHit\":true," +
+    "\"next\":{\"beat\":0,\"qhe\":\"your next line\",\"qtr\":\"english letters\"," +
+    "\"qen\":\"english\",\"want\":\"what he should convey in reply\"," +
+    "\"he\":\"a model reply from him\",\"tr\":\"english letters\",\"en\":\"english\"," +
+    "\"alts\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}," +
+    "\"newWords\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}\n\n" +
+    "Omit \"next\" entirely to end the conversation.";
+}
+
+/* Builds the card for a live line. Shaped exactly like a scripted turn so the hint
+   ladder, the reveal, convoBestMatch and the thread all work on it unchanged — the
+   whole point of the beat sheet is that a live turn and a scripted one are the same
+   kind of thing. */
+/* The call itself. Resolves to a normalised result or null — never throws, because every
+   caller's answer to a failure is the same: use the scripted line and the local score,
+   which is exactly what the app did before any of this existed. */
+async function convoLiveTurn(s, c) {
+  if (!geminiKeys().length) return null;
+  const convo = c.convo;
+  const beats = (convo && convo.turns) || [];
+  const beat = convoBeat(beats[c.beat || 0]);
+  if (!beat || !beat.live) return null;      // written before beats existed: script only
+  const hit = Object.keys(s.beatsHit || {}).length;
+  const nextIdx = Math.min(beats.length - 1, (c.beat || 0) + 1);
+  const lib = libAll(), srs = srsAll();
+  /* The same pool the conversation was planned from, so a live line cannot ask for
+     something he could not have been asked for on turn one. */
+  const pool = readyWords(lib, srs).concat(beat.must || []);
+  const vocab = pool.map(k => convoWordLine(k, lib)).filter(Boolean).slice(0, SCAFFOLD_MAX).join("\n");
+  const prompt = convoLivePrompt({
+    sceneEn: convo.sceneEn, beat: beat,
+    nextBeat: hit + 1 < beats.length ? convoBeat(beats[nextIdx]) : null,
+    history: convoLiveHistory(s.cards, s.i),
+    theirLine: (c.item && c.item.qhe) || "", said: c._said || "",
+    beatsLeft: Math.max(0, beats.length - hit), turnsUsed: s.i + 1, cap: CONVO_TURN_CAP,
+    vocab: vocab
+  });
+  let out = null;
+  try {
+    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                          { timeoutMs: CONVO_LIVE_TIMEOUT_MS }));
+  } catch (e) { return null; }
+  if (out && Array.isArray(out.newWords) && out.newWords.length) {
+    try { padIngest({ words: out.newWords }); } catch (e) {}
+  }
+  return convoLiveNormalise(out, beats.length);
+}
+
+function convoLiveCard(convo, next, ti) {
+  return {
+    kind: "conversation", convo: convo, ti: ti, beat: next.beat, live: true,
+    item: { qhe: next.qhe, qtr: next.qtr, qen: next.qen,
+            askEn: next.want, want: next.want,
+            he: next.he, tr: next.tr, en: next.en, alts: next.alts,
+            rhe: "", rtr: "", ren: "",
+            uses: bankUses(next.he, libAll()) },
+    words: []
+  };
+}
+
+/* A card from a beat's SCRIPTED realisation — the opening line, and every fallback.
+   One builder, so a scripted card and a live one are indistinguishable to everything
+   downstream. */
+function convoScriptedCard(convo, idx, ti) {
+  const t = (convo.turns || [])[idx];
+  if (!t) return null;
+  return { kind: "conversation", convo: convo, ti: ti === undefined ? idx : ti,
+           beat: idx, live: false, item: t, words: t.uses || [] };
+}
+
+/* Which beat to fall back to when there is no live line: the first one not yet covered.
+   Not simply "the next index" — a conversation that lingered two turns on beat 2 should
+   resume at 3, and one where the model skipped ahead should not re-ask what is done. */
+function convoNextScriptedIdx(total, beatsHit) {
+  for (let i = 0; i < total; i++) { if (!beatsHit[i]) return i; }
+  return -1;
+}
+
+/* Everything that happens between his answer being scored and the next line appearing.
+   Both the live path and the fallback end here, which is what keeps them honest: the
+   only difference between them is where the next card came from. */
+function convoAdvance(s, c, live) {
+  const convo = c.convo || {};
+  const beats = convo.turns || [];
+  const beatIdx = c.beat || 0;
+  /* The judge's grade when there is one, the local score when there is not. */
+  const grade = (live && live.grade !== null && live.grade !== undefined)
+    ? live.grade : learnSuggested;
+  s.beatsHit = s.beatsHit || {};
+  /* Without a judge, a clean local score is the only evidence the beat landed. */
+  if (live ? live.beatHit : grade === 2) s.beatsHit[beatIdx] = true;
+
+  /* Phase 3, folded in here because this is the only place that knows what he actually
+     said AND how advanced it was. Conversation turns have never fed levelRecord — the
+     one surface where he is most likely to reach past what was asked was the one the
+     level never saw. The judge reports the level of HIS answer, not the beat's target. */
+  if (live && live.lvl) {
+    try {
+      const lvlStore = levelAll();
+      levelRecord(lvlStore, live.lvl, grade === 2);
+      levelSave(lvlStore);
+    } catch (e) { /* a level write must never cost him the turn */ }
+  }
+
+  const hitCount = Object.keys(s.beatsHit).length;
+  if (convoShouldContinue(hitCount, beats.length, s.i + 1, CONVO_TURN_CAP)) {
+    const ti = s.i + 1;
+    if (live && live.next) {
+      s.cards.push(convoLiveCard(convo, live.next, ti));
+    } else {
+      const idx = convoNextScriptedIdx(beats.length, s.beatsHit);
+      const card = idx === -1 ? null : convoScriptedCard(convo, idx, ti);
+      if (card) s.cards.push(card);
+    }
+  }
+  /* No card appended means the exchange is over: learnAdvance's own `s.i >=
+     s.cards.length` termination then fires exactly as it always has, with no
+     conversation-specific ending to keep in step with it. */
+  learnGrade(grade);
+}
+
 /* Same gate as sentences: every content word across every turn has to be one he has
    actually trained, or the conversation is a wall rather than a drill. */
 function convoServable(c, lib, srs) {
@@ -16407,8 +16629,10 @@ async function campStartConvo(id) {
   try {
     const c = await campNodeConversation(n);
     if (!c) { campSay("Couldn't write the conversation — try again in a moment."); return; }
-    campBegin(c.turns.map((t, i) => ({ kind: "conversation", convo: c, ti: i, item: t,
-                                       words: t.uses || [] })), id, CAMP_CONVO_LESSON);
+    /* One card — see the note in learnBuild's conversation branch. */
+    const first = convoScriptedCard(c, 0, 0);
+    if (!first) { campSay("That conversation has no turns in it."); return; }
+    campBegin([first], id, CAMP_CONVO_LESSON);
   } catch (e) {
     campSay(/limit/.test(e.message || "") ? "Daily AI limit reached — try tomorrow."
                                           : "Couldn't reach the AI just now.");
@@ -16938,9 +17162,13 @@ function learnBuild(opts) {
     const all = convoAll();
     const rec = all.filter(x => x.id === c.id)[0];
     if (rec) { rec.seen = (rec.seen || 0) + 1; convoSave(all); }
-    return c.turns.map((t, i) => ({
-      kind: "conversation", convo: c, ti: i, item: t, words: t.uses || []
-    }));
+    /* ONE card, not all six. The exchange grows a turn at a time now — convoAdvance
+       appends the next line, live or scripted, once he has answered this one. With no
+       key and no network that produces exactly the same six turns in the same order,
+       just built as it goes, so there is one code path rather than a live one and a
+       scripted one drifting apart. */
+    const first = convoScriptedCard(c, 0, 0);
+    return first ? [first] : null;
   }
 
   const targets = learnTargets(SESSION_CARDS, only);
@@ -18800,8 +19028,16 @@ function convoThread(c, cards) {
   scene.textContent = c.convo.sceneEn || "Conversation";
   wrap.append(scene);
   const list = document.createElement("div"); list.className = "lbubbles";
-  for (let i = 0; i < c.ti; i++) {
-    const t = c.convo.turns[i];
+  /* THE CARDS PLAYED, not the turns planned. This walked `c.convo.turns[i]` up to
+     `c.ti`, which held only while a card index was a turn index and there were exactly
+     six of them. Neither is true now: a conversation may run longer than its beats, so
+     `ti` can pass the end of `turns` and index undefined — and a live line does not
+     appear in `turns` AT ALL, so even in range it would have rendered a scripted line
+     that was never said. The thread is a record of what happened, so it has to be built
+     from what happened. */
+  const played = (cards || []).slice(0, c.ti).filter(x => x && x.kind === "conversation");
+  played.forEach((c2, i) => {
+    const t = c2.item || {};
     list.append(convoBubble("them", t.qhe, t.qtr));
     /* What he actually said, word for word, whenever the mic heard him. This used
        to render `_matched` — the candidate the attempt was GRADED against — which is
@@ -18813,12 +19049,11 @@ function convoThread(c, cards) {
        that is the honest record of what the app heard, and the only way to find out
        the recogniser is mishearing you.
 
-       Falls back to the matched candidate, then the scripted line, for turns graded
-       by hand where no mic attempt exists to quote. */
-    const c2 = cards && cards[i];
-    if (c2 && c2._said) list.append(convoBubble("you", c2._said, ""));
-    else { const said = (c2 && c2._matched) || t; list.append(convoBubble("you", said.he, said.tr)); }
-  }
+       Falls back to the matched candidate, then that card's own model answer, for turns
+       graded by hand where no mic attempt exists to quote. */
+    if (c2._said) list.append(convoBubble("you", c2._said, ""));
+    else { const said = c2._matched || t; list.append(convoBubble("you", said.he, said.tr)); }
+  });
   /* THE BUG: the line he's actually replying to right now was never added here —
      it only ever existed as audio and the English gloss below. He'd see the
      conversation jump straight to his own reply with nothing in the thread to be
@@ -18901,8 +19136,17 @@ function learnRenderCard() {
      because its result arrives after this point. */
   if (learnMicBusy) micStop();
   learnMicBusy = false;
-  if (learnAutoAdvanceTimer) { clearTimeout(learnAutoAdvanceTimer); learnAutoAdvanceTimer = null; }
-  learnRenderRoad(s.i, s.cards.length);
+  /* A conversation's road is its BEATS, not its cards. The card list grows a turn at a
+     time, so drawing waymarks from it would show one dot on the opening line and add
+     another every time he answered — a road that builds itself behind him, saying
+     nothing about how far there is left to go. Beats covered answers the question the
+     road is actually asked. */
+  if (c.kind === "conversation") {
+    const total = convoBeatCount(c.convo) || 1;
+    learnRenderRoad(Math.min(total - 1, Object.keys(s.beatsHit || {}).length), total);
+  } else {
+    learnRenderRoad(s.i, s.cards.length);
+  }
   statsCardBegin();
   /* Kept separate from the stats clock rather than reusing it: statsCardEnd() zeroes
      that one when it fires, and the two are read at different moments. Two variables
@@ -19109,11 +19353,11 @@ let learnSpoken = null;          // {text, status[], extra[], english{}} for the
 let learnSuggested = null;       // grade the mic suggests on a whole-card grade
 let learnSuggestPaint = null;    // redraws that recommendation if it changes late
 let learnCardShownAt = 0;        // when this card went up, for response latency
-/* Conversation only: the pending "move on automatically" timer after a silently-
-   scored attempt. Cleared on every fresh card render — learnGrade's own
-   learnRevealed guard is the real safety net against a stale timer double-firing,
-   this is just hygiene so an old timer isn't sitting there pointlessly. */
-let learnAutoAdvanceTimer = null;
+/* learnAutoAdvanceTimer lived here — the handle on the 1100ms setTimeout that used to
+   move a conversation on. There is no timer any more: the "…" awaits the live turn, and
+   the staleness guard that mattered (has the card moved under the reply?) is the `s.i
+   !== at` check at the await's landing site, which is the same shape learnSpeakAttempt
+   already uses for a mic result. */
 
 /* PRESS ONCE TO START, PRESS AGAIN TO STOP — and this is a fix, not a convenience.
    Chrome ends a listen when its endpointer decides you have stopped talking, and that
@@ -19961,18 +20205,29 @@ function learnReveal() {
   } else if (c.kind === "conversation" && learnSuggested !== null) {
     /* Silent scoring: no button row, no wait for a click. You spoke, it's scored —
        the conversation just continues, the way a real exchange doesn't stop for a
-       report card after every line. The ONLY thing that ever interrupts is repair
-       (handled inside learnGrade, unchanged), which is itself just someone
-       naturally re-explaining rather than a grading screen.
+       report card after every line.
        George: "this feels like a string of the answer this sentence task put
        together, not a natural conversation." */
+    /* THE "…" IS NOW HONEST. It used to render a typing indicator and then burn 1100ms
+       on a setTimeout doing nothing — the affordance for someone composing a reply, with
+       no one composing anything. The live turn goes in that slot: under ~1.1s it costs
+       nothing against what this already did, and slower just looks like someone typing,
+       which is what the dots were always pretending.
+
+       Both paths end in the same learnGrade call. A failed, slow or keyless turn takes
+       the local score and the next scripted beat, which is precisely the app as it was
+       before this existed — the fallback is not a degraded mode, it is the old
+       behaviour. */
     const cont = document.createElement("div"); cont.className = "lconvocont";
     cont.textContent = "…";
     card.append(cont);
-    learnAutoAdvanceTimer = setTimeout(() => {
-      learnAutoAdvanceTimer = null;
-      learnGrade(learnSuggested);
-    }, 1100);
+    const at = s.i;
+    Promise.resolve(convoLiveTurn(s, c)).catch(() => null).then(live => {
+      /* The answer lands after an await, by which time quitting the session or any
+         other move may have replaced the card underneath it. */
+      if (!learnSession || learnSession !== s || s.i !== at || !learnRevealed) return;
+      convoAdvance(s, c, live);
+    });
   } else {
     /* The 1 / 2 / 3 key labels used to be printed inside these buttons. They are still
        the shortcuts, and #lRunHint still names them on a keyboard — but on the phone,
@@ -20216,7 +20471,15 @@ function learnGrade(grade) {
      word — so the library guard below would silently drop every chunk grade and
      the schedule would look like it was working while recording nothing. */
   const freeKey = (c.kind === "chunk");
-  (c.words || []).forEach(k => {
+  /* WHAT HE ACTUALLY SAID, on a conversation turn. `c.words` is the words in the MODEL
+     answer, so answering differently — which the whole rework exists to allow — was
+     scheduling words he never uttered and crediting or blaming him for them. His
+     transcript is the only honest evidence of what he produced. Falls back to the model
+     answer's words when there is no transcript (hand-graded, or the mic heard nothing),
+     which is the old behaviour and the best available in that case. */
+  const graded = (c.kind === "conversation" && c._said)
+    ? bankUses(c._said, lib) : (c.words || []);
+  graded.forEach(k => {
     if (!freeKey && !srsGradable(k, lib)) return;
     learnMark(s, srs, k);
     /* Capped against THIS word, so a hint spent on one of them leaves the rest alone. */
@@ -20229,40 +20492,19 @@ function learnGrade(grade) {
      is gone, and a weekly review reading nothing but tallies could only ever guess at
      what went wrong — which is the whole reason the log is written per block. */
   try { reviewNote(c, grade, learnSpoken); } catch (e) {}
-  /* Repair, in character. A miss doesn't move the conversation on and it doesn't
-     break out into a lesson — they simply say it again, more simply, feeding back the
-     word that was missing, and you get one more go at the same idea. Exactly once:
-     a second miss banks it and moves on, because a word you don't know must not
-     become a wall you can't get past. */
-  if (c.kind === "conversation" && grade === 0 && c.item.rhe && !c.repaired) {
-    c.repaired = true;
-    learnRenderCard();
-    convoShowRepair(c);
-    return;
-  }
-  learnAdvance(grade === 2);
-}
+  /* REPAIR USED TO BE A SPECIAL CASE HERE, and it has dissolved into the ordinary loop.
+     It was: grade 0, and the turn has an `rhe`, and it hasn't already been repaired →
+     re-render the same card with a simpler restatement pinned under the thread, exactly
+     once. Every one of those clauses existed because the next line was FIXED, so the
+     only way to respond to a miss was to interrupt the script with a canned one.
 
-function convoShowRepair(c) {
-  const card = document.getElementById("lCard");
-  if (!card) return;
-  const box = document.createElement("div"); box.className = "lrepair";
-  const lab = document.createElement("div"); lab.className = "lrepairlab";
-  lab.textContent = "They say it again, more simply";
-  const he = document.createElement("div"); he.className = "lrepairhe"; he.textContent = c.item.rhe;
-  box.append(lab, he);
-  if (c.item.rtr) {
-    const t = document.createElement("div"); t.className = "lrepairtr"; t.textContent = c.item.rtr;
-    box.append(t);
-  }
-  if (c.item.ren) {
-    const e = document.createElement("div"); e.className = "lrepairen"; e.textContent = c.item.ren;
-    box.append(e);
-  }
-  const thread = card.querySelector(".lthread");
-  if (thread) thread.insertAdjacentElement("afterend", box);
-  else card.append(box);
-  try { playHe(null, c.item.rhe); } catch (e) {}
+     Under beats there is nothing to interrupt. A beat that was not covered is simply
+     still uncovered, so the next line approaches it again — which is what a person does,
+     and it can do it more than once without a flag counting the attempts, because
+     convoShouldContinue's turn cap is what stops it becoming a wall. The `rhe/rtr/ren`
+     fields stay in the stored format and are still written by the planning call; they
+     are just no longer a branch in the grader. */
+  learnAdvance(grade === 2);
 }
 
 /* Per-word commit. Untapped words count as Got it, so a clean sentence is one
@@ -20668,15 +20910,19 @@ function learnFinish() {
             back + " back for another go";
   /* Grading already happens per turn (silently, via the mic) — this isn't a second
      scoring pass, just the one place it's finally SHOWN, the way George asked:
-     "maybe the ranking/grading needs to come at the end." Repair count comes from
-     each card's own .repaired flag, set live during the conversation; word list
-     reuses the same s.back the ordinary end screen already tracks. */
+     "maybe the ranking/grading needs to come at the end."
+
+     BEATS COVERED, not turns landed. A conversation runs as long as it needs to now, so
+     counting turns rewarded a short exchange and quietly punished one that went well
+     enough to keep going — more turns, more chances to stumble, worse number. What the
+     conversation set out to cover is the thing that is actually true of it. */
   if (s.cards.length && s.cards[0].kind === "conversation") {
-    const total = s.cards.length;
-    const repaired = s.cards.filter(c => c.repaired).length;
+    const total = convoBeatCount(s.cards[0].convo);
+    const covered = Object.keys(s.beatsHit || {}).length;
     const lib = libAll();
     const toReview = Object.keys(s.back).slice(0, 4).map(k => (lib[k] && lib[k].tr) || k);
-    sub += " · " + (total - repaired) + " of " + total + " landed clean";
+    if (total) sub += " · " + covered + " of " + total + " covered";
+    if (s.cards.length > total) sub += " · " + s.cards.length + " turns";
     if (toReview.length) sub += " · worth another look: " + toReview.join(", ");
   }
   /* A path lesson only counts once it's actually been finished — walking out halfway
@@ -20687,7 +20933,16 @@ function learnFinish() {
      this text just states the number. */
   if (s.path) {
     const lesson = s.path.lesson;
-    const pct = s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0;
+    /* THE GOLD GATE. For a conversation this is beats covered, not turns answered — see
+       the note above. Every other lesson kind still has a fixed card count, so nothing
+       else changes. Without this a conversation that ran twelve turns to cover six beats
+       could only ever score 50%, and PATH_PASS_PCT is 60: the better the exchange went,
+       the more certainly the node would refuse to turn gold. */
+    const isConvo = s.cards.length && s.cards[0].kind === "conversation";
+    const beats = isConvo ? convoBeatCount(s.cards[0].convo) : 0;
+    const pct = isConvo
+      ? (beats ? Math.round(100 * Object.keys(s.beatsHit || {}).length / beats) : 0)
+      : (s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0);
     const store = pathScoresAll();
     store[s.path.id] = store[s.path.id] || {};
     store[s.path.id][lesson] = { pct: pct, ts: Date.now() };
@@ -22265,6 +22520,101 @@ T("convoBeatCount: the gold gate's denominator, however malformed the store is",
   assertEq(convoBeatCount({ turns: [] }), 0);
   assertEq(convoBeatCount({}), 0, "a conversation with no turns must not divide by undefined");
   assertEq(convoBeatCount(null), 0);
+});
+
+/* ---- the live turn ----
+   The judge's reply is the only thing in the app that can move a grade without George
+   touching it, so what it is allowed to say is the thing worth pinning down. Every
+   malformed shape below must degrade to "no opinion" and let the LOCAL score stand —
+   never to a wrong grade quietly applied, and never to a card with no answer behind it. */
+T("convoLiveNormalise: a good reply passes through with its next line", () => {
+  const r = convoLiveNormalise({ grade: 2, lvl: 3, beatHit: true,
+    next: { beat: 1, qhe: "בבית? יופי. ואיך היה?", qtr: "babayit? yofi", qen: "at home? nice",
+            want: "say how it was", he: "היה טוב", tr: "haya tov", en: "it was good",
+            alts: [{ he: "בסדר", tr: "beseder", en: "fine" }] } }, 6);
+  assertEq(r.grade, 2);
+  assertEq(r.lvl, 3);
+  assertEq(r.beatHit, true);
+  assertEq(r.next.qhe, "בבית? יופי. ואיך היה?");
+  assertEq(r.next.alts.length, 1);
+});
+T("convoLiveNormalise: no `next` ends the conversation, and is not a failure", () => {
+  /* The model's way of saying "we're done" — it must survive as a real answer, or the
+     exchange could never end on its own terms. */
+  const r = convoLiveNormalise({ grade: 2, lvl: 2, beatHit: true }, 6);
+  assertTrue(!!r, "still a usable judgement");
+  assertEq(r.grade, 2);
+  assertNull(r.next);
+});
+T("convoLiveNormalise: a next line with no model answer is refused", () => {
+  /* The hint ladder reads item.he/item.tr and convoBestMatch grades against them. A
+     next line without them renders a turn with nothing behind it — worse than falling
+     back to the script. */
+  assertNull(convoLiveNormalise({ grade: 2, next: { qhe: "מה?" } }, 6).next,
+             "no model answer at all");
+  assertNull(convoLiveNormalise({ grade: 2, next: { qhe: "מה?", he: "כן" } }, 6).next,
+             "he without tr — the ladder would show a blank rung");
+  assertNull(convoLiveNormalise({ grade: 2, next: { he: "כן", tr: "ken" } }, 6).next,
+             "their line missing entirely");
+});
+T("convoLiveNormalise: a grade outside 0/1/2 becomes no opinion, not a guess", () => {
+  assertNull(convoLiveNormalise({ grade: 5 }, 6).grade, "out of range");
+  assertNull(convoLiveNormalise({ grade: "good" }, 6).grade, "not a number");
+  assertNull(convoLiveNormalise({}, 6).grade, "absent");
+  assertEq(convoLiveNormalise({ grade: 0 }, 6).grade, 0, "zero is a real grade, not absent");
+});
+T("convoLiveNormalise: junk in, nothing out", () => {
+  assertNull(convoLiveNormalise(null, 6));
+  assertNull(convoLiveNormalise("nope", 6));
+  assertEq(convoLiveNormalise({ grade: 1, lvl: 99 }, 6).lvl, LEVEL_MAX, "clamped");
+  assertEq(convoLiveNormalise({ grade: 1, beatHit: "yes" }, 6).beatHit, true, "coerced to bool");
+});
+T("convoLiveNormalise: a beat index outside the sheet is clamped into it", () => {
+  const mk = (beat) => convoLiveNormalise(
+    { grade: 2, next: { beat: beat, qhe: "a", he: "b", tr: "c" } }, 6).next.beat;
+  assertEq(mk(99), 5, "past the end would index undefined on the next fallback");
+  assertEq(mk(-3), 0);
+  assertEq(mk(2), 2);
+});
+
+T("convoShouldContinue: stops when the beats are covered", () => {
+  assertEq(convoShouldContinue(6, 6, 6, 12), false, "everything covered");
+  assertEq(convoShouldContinue(3, 6, 6, 12), true, "half covered, room to keep going");
+});
+T("convoShouldContinue: the turn cap is a hard stop whatever the beats say", () => {
+  /* The guard on the one real risk: a model that likes the tangent and never lands the
+     rest. Instructions are not a guarantee, so the cap has to be able to override them. */
+  assertEq(convoShouldContinue(0, 6, 12, 12), false, "nothing covered, but out of turns");
+  assertEq(convoShouldContinue(0, 6, 11, 12), true, "one turn left is still a turn");
+});
+
+T("convoNextScriptedIdx: falls back to the first beat NOT yet covered", () => {
+  /* Not simply "the next index" — an exchange that lingered on beat 1 must resume at the
+     first thing still outstanding, and must not re-ask what the model already covered. */
+  assertEq(convoNextScriptedIdx(4, {}), 0);
+  assertEq(convoNextScriptedIdx(4, { 0: true }), 1);
+  assertEq(convoNextScriptedIdx(4, { 0: true, 1: true, 2: true }), 3);
+  assertEq(convoNextScriptedIdx(4, { 1: true }), 0, "skipping ahead leaves 0 outstanding");
+  assertEq(convoNextScriptedIdx(4, { 0: true, 1: true, 2: true, 3: true }), -1, "nothing left");
+});
+
+T("convoScriptedCard: an opening card carries its beat, and is not live", () => {
+  const convo = { turns: [{ qhe: "מה נשמע?", he: "אני בסדר", tr: "ani beseder", uses: ["בסדר"] }] };
+  const card = convoScriptedCard(convo, 0, 0);
+  assertEq(card.kind, "conversation");
+  assertEq(card.beat, 0);
+  assertEq(card.live, false);
+  assertEq(card.words, ["בסדר"]);
+  assertNull(convoScriptedCard({ turns: [] }, 0, 0), "a conversation with no turns builds nothing");
+});
+T("convoLiveHistory: reads back as an exchange, and only what has happened", () => {
+  const cards = [
+    { kind: "conversation", item: { qhe: "מה נשמע?" }, _said: "אני טוב" },
+    { kind: "conversation", item: { qhe: "אתה עובד?" }, _said: "כן" },
+    { kind: "conversation", item: { qhe: "איפה?" } }
+  ];
+  assertEq(convoLiveHistory(cards, 2), "THEM: מה נשמע?\nHIM: אני טוב\nTHEM: אתה עובד?\nHIM: כן");
+  assertEq(convoLiveHistory(cards, 0), "", "nothing has been said yet");
 });
 
 /* ---- conversations written before they are wanted ---- */

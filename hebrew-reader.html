@@ -2631,7 +2631,7 @@ async function deviceBuildDate() {
 async function latestAppCommits(n) {
   const url = "https://api.github.com/repos/" + REPO +
               "/commits?path=hebrew-reader.html&per_page=" + n;
-  const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  const r = await fetchWithTimeout(url, { headers: { Accept: "application/vnd.github+json" } }, 8000);
   if (!r.ok) throw new Error("github " + r.status);
   const list = await r.json();
   if (!Array.isArray(list)) throw new Error("unexpected shape");
@@ -2730,6 +2730,41 @@ function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return n
 function lsSet(k, v) {
   try { localStorage.setItem(k, v); return true; }
   catch (e) { storageFailed(k, e); return false; }
+}
+
+/* =====================  A REQUEST THAT CANNOT HANG  =====================
+   Every fetch in this file was a bare fetch() with no way out. A connection that hangs
+   rather than failing — a flaky mobile signal doing exactly that is not exotic — never
+   settles, so `busy(true)` never clears, the ring pulses forever, and whatever was
+   awaiting it (a whole session start, in the worst case) waits with it.
+
+   It becomes load-bearing rather than tidy with the live conversation: a turn's reply is
+   fetched behind a "…" that says someone is composing, and a request that never returns
+   is a conversation that never continues.
+
+   Rejects with a normal Error, so every existing retry loop sees a failed request and
+   handles it exactly as it already handles a network error — no call site needs to learn
+   a new failure shape. */
+const FETCH_TIMEOUT_MS = 20000;
+function fetchWithTimeout(url, opts, ms) {
+  const limit = ms || FETCH_TIMEOUT_MS;
+  /* AbortSignal.timeout() would be one line, but it is not in the older WebViews this
+     has to run in, and a missing AbortController must degrade to "no timeout" rather
+     than throwing on the first request. */
+  if (typeof AbortController === "undefined") return fetch(url, opts);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), limit);
+  return fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }))
+    .then(resp => { clearTimeout(timer); return resp; })
+    .catch(err => {
+      clearTimeout(timer);
+      /* An abort reports as a bare "AbortError", which reaches the user as an error
+         message meaning nothing. Say what actually happened. */
+      if (err && err.name === "AbortError") {
+        throw new Error("the request took longer than " + Math.round(limit / 1000) + "s");
+      }
+      throw err;
+    });
 }
 
 /* An uncaught throw mid-render leaves a half-drawn screen and no explanation. Installed
@@ -6148,7 +6183,7 @@ document.getElementById("ttsCheckBtn").onclick = async () => {
   if (!keys.length) { el.textContent = "Add a Gemini key above first."; return; }
   el.textContent = "Asking Google which models this key can reach…";
   try {
-    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" +
+    const resp = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/models?key=" +
                              encodeURIComponent(keys[0]) + "&pageSize=200");
     if (!resp.ok) { el.textContent = "Google refused the request — HTTP " + resp.status +
                     ". That's a key or account problem, not a model-name one."; return; }
@@ -6450,7 +6485,8 @@ function ghHeaders() {
 /* Returns { blob, sha } — or { blob: null, sha: null } when the file does not exist
    yet, which is the normal state on the very first sync and not an error. */
 async function syncPull() {
-  const resp = await fetch(ghURL(SYNC_FILE) + "?ref=HEAD", { headers: ghHeaders(), cache: "no-store" });
+  const resp = await fetchWithTimeout(ghURL(SYNC_FILE) + "?ref=HEAD",
+                                     { headers: ghHeaders(), cache: "no-store" });
   if (resp.status === 404) return { blob: null, sha: null };
   if (resp.status === 401 || resp.status === 403)
     throw new Error("GitHub refused the token — check it hasn't expired, and that it has Contents access to " + syncRepo());
@@ -6467,7 +6503,7 @@ async function syncPush(blob, sha) {
   const body = { message: "practice from " + blob.device + " · " + blob.updated.slice(0, 16).replace("T", " "),
                  content: b64encodeUtf8(JSON.stringify(blob)) };
   if (sha) body.sha = sha;
-  const resp = await fetch(ghURL(SYNC_FILE), {
+  const resp = await fetchWithTimeout(ghURL(SYNC_FILE), {
     method: "PUT", headers: ghHeaders(), body: JSON.stringify(body) });
   if (resp.status === 409 || resp.status === 422) return null;     // moved under us — caller retries
   if (!resp.ok) throw new Error("GitHub returned " + resp.status + " saving");
@@ -10046,13 +10082,17 @@ const GEMINI_THINKING = { thinkingConfig: { thinkingLevel: "minimal" } };
    Returns the response untouched for every non-5xx status, so the 429 and 400
    handling below is completely unaffected. */
 const GEMINI_MAX_ATTEMPTS = 3;
-async function geminiFetchWithRetry(url, body) {
+/* `timeoutMs` is threaded from the caller rather than read from a shared default,
+   because the live conversation turn wants a much shorter leash than everything else:
+   there, a slow answer is worse than no answer — the scripted line is sitting right
+   there and the "…" is on screen while it waits. */
+async function geminiFetchWithRetry(url, body, timeoutMs) {
   let resp = null;
   for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));   // 700ms, then 1400ms
-    resp = await fetch(url, {
+    resp = await fetchWithTimeout(url, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(body) });
+      body: JSON.stringify(body) }, timeoutMs);
     if (resp.ok || resp.status < 500) return resp;
   }
   return resp;
@@ -10089,7 +10129,7 @@ async function geminiRequest(parts, models, opts) {
            to do — burns every model and both keys, then reports the daily quota
            as gone when it is barely touched. See rateLimitWaitMs(). */
         for (;;) {
-          resp = await geminiFetchWithRetry(geminiURLFor(model, key), body);
+          resp = await geminiFetchWithRetry(geminiURLFor(model, key), body, opts.timeoutMs);
           if (resp.ok) break;
           text = await resp.text();
           if (resp.status !== 429) break;
@@ -11464,7 +11504,7 @@ async function ttsFetchWithRetry(model, key, body) {
       await new Promise(r => setTimeout(r, 700 * attempt));   // 700ms, then 1400ms
       await audioRateLimitWait(key);
     }
-    resp = await fetch(ttsURLFor(model, key), {
+    resp = await fetchWithTimeout(ttsURLFor(model, key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(body) });
     if (resp.ok || resp.status < 500) return resp;   // success, or not a retryable failure — stop here
@@ -20994,17 +21034,45 @@ function assertEq(actual, expected, msg) {
 function assertTrue(cond, msg) { if (!cond) throw new Error(msg || "expected true"); }
 function assertNull(v, msg) { if (v !== null) throw new Error((msg || "expected null") + ", got " + JSON.stringify(v)); }
 
+/* A test may now return a PROMISE, and this has to wait for it.
+
+   It did not, and that was a trap rather than a limitation: `t.fn()` was called, its
+   return value discarded, and `out.pass++` ran immediately. So an async test would have
+   passed without asserting anything at all, and a failing one would have surfaced as an
+   unhandled rejection — which in this app raises the alarm bar, blaming the page for a
+   broken test. Nothing had hit it because every test until now was synchronous; the
+   first timeout test would have been a test that could not fail.
+
+   Sync tests are unchanged and still settle synchronously; only the title and
+   window.__selftest now wait for the stragglers. */
 function runSelfTests() {
   const out = { pass: 0, fail: 0, failures: [] };
+  const pass = (name) => { out.pass++; console.log("PASS " + name); };
+  const fail = (name, e) => {
+    out.fail++;
+    out.failures.push({ name: name, error: String((e && e.message) || e) });
+    console.error("FAIL " + name + " — " + ((e && e.message) || e));
+  };
+  const pending = [];
   SELFTESTS.forEach(t => {
-    try { t.fn(); out.pass++; console.log("PASS " + t.name); }
-    catch (e) { out.fail++; out.failures.push({ name: t.name, error: String(e.message || e) });
-                console.error("FAIL " + t.name + " — " + (e.message || e)); }
+    try {
+      const r = t.fn();
+      if (r && typeof r.then === "function") {
+        pending.push(r.then(() => pass(t.name), e => fail(t.name, e)));
+      } else {
+        pass(t.name);
+      }
+    } catch (e) { fail(t.name, e); }
   });
-  window.__selftest = out;
-  console.log("SELFTEST " + out.pass + " passed, " + out.fail + " failed");
-  document.title = "selftest " + out.pass + "/" + (out.pass + out.fail);
-  return out;
+  const finish = () => {
+    window.__selftest = out;
+    console.log("SELFTEST " + out.pass + " passed, " + out.fail + " failed");
+    document.title = "selftest " + out.pass + "/" + (out.pass + out.fail);
+    return out;
+  };
+  /* Resolved, never rejected — every rejection is already accounted for above, and a
+     throw here would be the suite reporting its own failure as a page error. */
+  return pending.length ? Promise.all(pending).then(finish) : finish();
 }
 
 /* ---- test helpers shared across suites ---- */
@@ -22108,6 +22176,48 @@ T("srsApply: a miss he was long overdue for is not evidence the word is hard", (
   assertTrue(stale["מ"].prod.diff < ontime["מ"].prod.diff,
              "forgetting after three months away says less than forgetting on the day");
   assertTrue(stale["מ"].prod.diff > 5, "but it is still a miss and must still cost something");
+});
+
+/* ---- a request that cannot hang ----
+   Driven against a stub rather than the network: the suite has no business making a real
+   request, and what is being tested is the timeout wiring, not fetch itself. window.fetch
+   is restored in a finally — see the suite's note on leaving no synthetic state behind. */
+function withStubFetch(impl, fn) {
+  const real = window.fetch;
+  window.fetch = impl;
+  try { return fn(); } finally { window.fetch = real; }
+}
+T("fetchWithTimeout: a response that arrives in time passes straight through", () => {
+  let sawSignal = false;
+  return withStubFetch((url, opts) => {
+    sawSignal = !!(opts && opts.signal);
+    return Promise.resolve({ ok: true, status: 200, url: url });
+  }, () => fetchWithTimeout("http://x/", {}, 50).then(r => {
+    assertEq(r.status, 200);
+    assertTrue(sawSignal, "the abort signal must actually reach fetch, or nothing can cancel it");
+  }));
+});
+T("fetchWithTimeout: a hang rejects, and says something a person can read", () => {
+  /* The whole point. A bare AbortError reaches the user as a word meaning nothing;
+     geminiRequest puts e.message straight on screen. */
+  return withStubFetch((url, opts) => new Promise((res, rej) => {
+    opts.signal.addEventListener("abort", () => {
+      const e = new Error("aborted"); e.name = "AbortError"; rej(e);
+    });
+  }), () => fetchWithTimeout("http://x/", {}, 20).then(
+    () => { throw new Error("a request that never returns must not resolve"); },
+    (err) => {
+      assertTrue(err.name !== "AbortError", "the bare AbortError must not escape");
+      assertTrue(/longer than/.test(err.message), "got: " + err.message);
+    }));
+});
+T("fetchWithTimeout: a real network failure keeps its own message", () => {
+  /* Only the abort is reworded. A genuine DNS or offline failure already says something
+     useful and must not be relabelled as a timeout it never was. */
+  return withStubFetch(() => Promise.reject(new Error("Failed to fetch")),
+    () => fetchWithTimeout("http://x/", {}, 50).then(
+      () => { throw new Error("should have rejected"); },
+      (err) => assertEq(err.message, "Failed to fetch")));
 });
 
 /* ---- a turn read as a beat ----

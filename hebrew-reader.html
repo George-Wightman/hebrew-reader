@@ -5044,6 +5044,11 @@ const STOPLIST = new Set([
   "אותי","אותך","אותו","אותה","אותנו","אתכם","אותם",
   "לי","לך","לו","לה","לנו","לכם","להם",
   "של","גם","רק","או","אם","כי","אז","כל","עם","על","עד","לא","כן",
+  /* George: "there are filler words ... like grammer, they should be treated
+     differently from more complex and useful words like nouns and verbs." גם and אז
+     were already here, so the intent always covered connectives — אבל and מאוד were
+     simply missed, and were being drilled as content words and gating nodes. */
+  "אבל","מאוד",
   "מה","מי","זה","יש","אין","הרבה","עוד","כבר","פה","כאן","שם"
 ]);
 
@@ -12738,15 +12743,33 @@ function bankContentWords(it, lib) {
 
    Called with three arguments everywhere that isn't deliberately relaxing the rule,
    and behaves then exactly as it always has. */
-function bankServable(it, lib, srs, carry) {
+/* `opts` is the NODE relaxation, and it is passed in rather than shared so daily
+   practice cannot drift into it. Inside a node the words being taught are all
+   not-ready by definition, so the daily rule — one not-ready word, every other word
+   STRONG — means a node sentence can only ever be built from vocabulary learned
+   somewhere else. Measured: a sentence teaching a weak word with merely-progressing
+   support was rejected while a pure consolidation sentence sailed through, which is
+   why a node session filled up with words George already held.
+
+   Bounded, because the strict rule exists for a real reason: at most two not-ready
+   words, and never two he has NEVER MET. Two words he has met and keeps missing is a
+   hard card; two words he has never seen is the impossible one this gate was built to
+   stop. */
+function bankServable(it, lib, srs, carry, opts) {
   const content = bankContentWords(it, lib);
   if (!content.length) return false;          // nothing but filler: not a drill
   const unready = content.filter(u => !wordReady(u, srs));
   if (!unready.length) return true;
-  if (!carry || unready.length > 1) return false;
-  const rescue = unready[0];
-  if (!carry.has(rescue)) return false;
-  return content.every(u => u === rescue || srsStrengthOf(srs, u, "prod") === "strong");
+  if (!carry) return false;
+  const maxCarried = (opts && opts.maxCarried) || 1;
+  if (unready.length > maxCarried) return false;
+  if (!unready.every(u => carry.has(u))) return false;
+  /* Never two never-met words in one sentence, whatever the limit allows. */
+  if (unready.filter(u => srsStrengthOf(srs, u, "prod") === "new").length > 1) return false;
+  const supportOk = (opts && opts.support === "ready")
+    ? (u => wordReady(u, srs))
+    : (u => srsStrengthOf(srs, u, "prod") === "strong");
+  return content.every(u => unready.indexOf(u) !== -1 || supportOk(u));
 }
 /* Which word an item is carrying for this session, or null if it is fully within
    reach. The card uses this to say so out loud — being handed a sentence with a word
@@ -12754,7 +12777,11 @@ function bankServable(it, lib, srs, carry) {
 function bankCarried(it, lib, srs, carry) {
   if (!carry) return null;
   const unready = bankContentWords(it, lib).filter(u => !wordReady(u, srs));
-  return (unready.length === 1 && carry.has(unready[0])) ? unready[0] : null;
+  /* One or two now — a node sentence may carry a pair. The card names the first; the
+     label says a word here is new to him, and naming one is enough for that to read
+     true. */
+  if (!unready.length || unready.length > 2) return null;
+  return unready.every(u => carry.has(u)) ? unready[0] : null;
 }
 /* A sentence is as hard as its hardest word, then as hard as it is long. Lower is
    easier, so the first sentence he ever sees is the shortest one built from the
@@ -15870,7 +15897,20 @@ const CAMP_SESSION_CARDS = 10;
    about. */
 function campWeakWords(node, srs) {
   const s = srs || srsAll();
-  const rank = { "new": 0, weak: 1, progressing: 2, strong: 3 };
+  /* WEAK BEFORE NEW, and the order is the whole feature.
+
+     This used to rank new(0) ahead of weak(1), so on a node holding three unmet words
+     and two he keeps failing, both solo cards AND every AI rescue commission went to
+     the unmet ones and the failing ones got nothing at all. George: "its in the node
+     that I want to be drilling those specific weak words."
+
+     The two bands need opposite treatment. A new word clears in a single meeting —
+     srsApply's first-meeting branch parks it at progressing, which is already
+     wordReady. A weak word needs about three clean answers to get difficulty under
+     6.5 and the miss ratio under 0.4. So the node was spending itself on the words
+     that were never the problem, while the ones actually blocking its gold sat
+     untouched. */
+  const rank = { weak: 0, "new": 1, progressing: 2, strong: 3 };
   return (node.words || [])
     .filter(k => !STOPLIST.has(k))
     .filter(k => !wordReady(k, s))
@@ -15900,7 +15940,7 @@ function campBuild(node, size) {
   const bank = bankPrune(bankAll(), lib);
   const ranked = bank
     .filter(it => voice || it.type !== "listen")
-    .filter(it => bankServable(it, lib, srs, carry))
+    .filter(it => bankServable(it, lib, srs, carry, CAMP_SERVE))
     .map(it => ({ it: it,
                   hits: (it.uses || []).filter(u => isNodeWord[u]).length,
                   carry: bankCarried(it, lib, srs, carry) }))
@@ -15988,6 +16028,11 @@ function campBuild(node, size) {
   return cards;
 }
 /* One clean look at each stuck word before the sentences carry it. */
+/* Two not-ready words per sentence, and support may be merely `progressing`. Both
+   halves are the node relaxation — see bankServable. George chose the two-word half
+   explicitly: "allow two node words at once". */
+const CAMP_MAX_CARRIED = 2;
+const CAMP_SERVE = { maxCarried: CAMP_MAX_CARRIED, support: "ready" };
 const CAMP_SOLO_CARDS = 2;
 /* About half the session. The rest is consolidation, so a node still feels like
    practice rather than an exam on the two words he cannot say. */
@@ -16000,7 +16045,8 @@ function campHasRescue(node, srs, lib) {
   const s = srs || srsAll(), l = lib || libAll();
   const carry = new Set(campWeakWords(node, s));
   if (!carry.size) return true;                 // nothing stuck: nothing to rescue
-  return bankPrune(bankAll(), l).some(it => bankCarried(it, l, s, carry));
+  return bankPrune(bankAll(), l).some(it => bankCarried(it, l, s, carry) &&
+                                           bankServable(it, l, s, carry, CAMP_SERVE));
 }
 
 /* Commissions sentences for whatever this node is stuck on. Fired when the node sheet
@@ -16018,8 +16064,18 @@ function campWarm(node, force) {
   const weak = campWeakWords(node, srs).filter(k => lib[k]);
   if (!weak.length) return Promise.resolve(0);
   if (!force && campWarmed[node.id]) return campWarmed[node.id];
+  /* ALL of the node's stuck words, not the first three. RESCUE_MAX is the DAILY
+     session's budget, where it is choosing three out of a whole library; a node holds
+     six or seven words and the ones it does not commission for are exactly the ones
+     blocking its gold. George: "remember we have 500 API calls so burning some ... is
+     worth it." A node batch may also carry two not-ready words per sentence, because
+     inside a node every word being taught is not-ready by definition — see
+     bankServable's node relaxation, which this has to match or the generator writes
+     material the session then refuses. */
   const run = Promise.resolve(sentenceCommission({
-    lib: lib, srs: srs, rescue: weak.slice(0, RESCUE_MAX),
+    lib: lib, srs: srs, rescue: weak,
+    maxCarried: CAMP_MAX_CARRIED,
+    scaffold: campScaffold(lib, srs),
     setting: node.situation || node.name
   })).catch(() => 0);
   campWarmed[node.id] = run;
@@ -16943,6 +16999,22 @@ function rescueWords(lib, srs, limit, only) {
     .filter(k => srsStrengthOf(srs, k, "prod") === "weak")
     .sort((a, b) => missRate(b) - missRate(a))
     .slice(0, limit === undefined ? RESCUE_MAX : limit);
+}
+/* Node scaffolding, wider than the daily kind: `progressing` counts, not only `strong`.
+   Inside a node nothing is strong yet, so demanding strong support means the generator
+   can only build from vocabulary learned somewhere else — the same fault bankServable's
+   node relaxation fixes at serve time, and the two have to agree or the pipeline writes
+   material the session then refuses. Solidest first, so a truncated list is the best
+   end of it. */
+function campScaffold(lib, srs) {
+  const rank = { strong: 0, progressing: 1 };
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  return Object.keys(lib)
+    .filter(k => wordReady(k, srs))
+    .sort((a, b) => ((rank[srsStrengthOf(srs, a, "prod")] || 0) -
+                     (rank[srsStrengthOf(srs, b, "prod")] || 0)) ||
+                    (stabOf(b) - stabOf(a)))
+    .slice(0, SCAFFOLD_MAX);
 }
 /* The scaffolding. STRONG only — see bankServable's carry rule for why "ready" is not
    good enough when a sentence is already carrying one unknown. Strongest first so a
@@ -21792,6 +21864,71 @@ T("learnSpeedLanded: no stricter than the card he just passed it on", () => {
              "walk home must not fail a phrase the drill would have accepted");
 });
 
+/* ---- the node drills what is actually stuck ---- */
+T("campWeakWords: a word he keeps failing outranks one he has never met", () => {
+  /* The whole of the node-targeting fault, in one assertion. New sorted first, so the
+     two solo cards and every AI rescue went to unmet words while the failing ones —
+     the ones actually blocking the node's gold — got nothing. */
+  const mk = b => b === "weak" ? { stab: 3, diff: 7, n: 6, miss: 4 } : { stab: 0, diff: 5, n: 0, miss: 0 };
+  const s = { "חדש": { prod: mk("new"), recv: mk("new") },
+              "קשה": { prod: mk("weak"), recv: mk("new") } };
+  const order = campWeakWords({ id: "n", words: ["חדש", "קשה"] }, s);
+  assertEq(order[0], "קשה", "the word he is failing is the one the node has to fix");
+});
+T("campWeakWords: a ready word is not stuck and is left out", () => {
+  const s = { "טוב": { prod: { stab: 30, diff: 2, n: 5, miss: 0 }, recv: { n: 0 } } };
+  assertEq(campWeakWords({ id: "n", words: ["טוב"] }, s).length, 0);
+});
+T("STOPLIST: the connectives are grammar, not vocabulary to be gated on", () => {
+  /* אבל and מאוד were being drilled as content words and could block a node's gold,
+     while גם and אז beside them were correctly exempt. */
+  ["אבל", "מאוד", "גם", "אז"].forEach(w =>
+    assertTrue(STOPLIST.has(w), w + " is grammar and must not gate a node"));
+});
+
+/* ---- a node may teach with the words it is teaching ---- */
+function serveStores(bands) {
+  const mk = b => b === "strong" ? { stab: 30, diff: 2, n: 5, miss: 0 }
+                : b === "progressing" ? { stab: 8, diff: 4, n: 3, miss: 0 }
+                : b === "weak" ? { stab: 3, diff: 7, n: 6, miss: 4 }
+                : { stab: 0, diff: 5, n: 0, miss: 0 };
+  const lib = {}, srs = {};
+  Object.keys(bands).forEach(k => { lib[k] = { en: k, tr: k }; srs[k] = { prod: mk(bands[k]), recv: mk("new") }; });
+  return { lib: lib, srs: srs, it: { he: Object.keys(bands).join(" "), uses: Object.keys(bands) } };
+}
+T("bankServable: daily practice still demands STRONG support for a carried word", () => {
+  const c = serveStores({ "קשה": "weak", "בינוני": "progressing" });
+  assertTrue(!bankServable(c.it, c.lib, c.srs, new Set(["קשה"])),
+             "unchanged: the daily rule must not drift");
+});
+T("bankServable: a node may teach a weak word on progressing support", () => {
+  const c = serveStores({ "קשה": "weak", "בינוני": "progressing" });
+  assertTrue(bankServable(c.it, c.lib, c.srs, new Set(["קשה"]), CAMP_SERVE),
+             "inside a node nothing is strong yet — this is the point of the node");
+});
+T("bankServable: a node may carry two words he has met", () => {
+  const c = serveStores({ "קשה": "weak", "קשה2": "weak", "בינוני": "progressing" });
+  assertTrue(bankServable(c.it, c.lib, c.srs, new Set(["קשה", "קשה2"]), CAMP_SERVE));
+});
+T("bankServable: but never two he has NEVER met", () => {
+  /* The bound on George's "allow two node words at once". Two words he keeps missing
+     is a hard card; two he has never seen is the impossible one. */
+  const c = serveStores({ "חדש1": "new", "חדש2": "new", "בינוני": "progressing" });
+  assertTrue(!bankServable(c.it, c.lib, c.srs, new Set(["חדש1", "חדש2"]), CAMP_SERVE));
+});
+T("bankServable: three not-ready words is too many even for a node", () => {
+  const c = serveStores({ "א": "weak", "ב": "weak", "ג": "weak", "ד": "progressing" });
+  assertTrue(!bankServable(c.it, c.lib, c.srs, new Set(["א", "ב", "ג"]), CAMP_SERVE));
+});
+T("campScaffold: progressing counts, and the solidest come first", () => {
+  const c = serveStores({ "חזק": "strong", "בינוני": "progressing", "קשה": "weak", "חדש": "new" });
+  const out = campScaffold(c.lib, c.srs);
+  assertEq(out[0], "חזק", "solidest first, so a truncated list is the best end of it");
+  assertTrue(out.indexOf("בינוני") !== -1, "progressing is usable support inside a node");
+  assertTrue(out.indexOf("קשה") === -1 && out.indexOf("חדש") === -1,
+             "but nothing he cannot yet say");
+});
+
 /* ---- chunks he has actually heard ---- */
 T("chunkNormalise: a sentence is not a chunk, however common its words are", () => {
   assertNull(chunkNormalise({ hebrew: "אני רוצה ללכת הביתה עכשיו בבקשה", english: "..." }),
@@ -24114,9 +24251,15 @@ T("campWeakWords: only the words he cannot say, worst first", () => {
   const st = carryStores();
   st.srs["לומד"] = { prod: { n: 0 } };                                  // never drilled: new
   const node = { words: ["עובד", "בית", "היום", "לומד"] };
-  /* new sorts ahead of weak, and the two strong words are not in the list at all —
-     a node session is about what is missing, not about what is already held. */
-  assertEq(campWeakWords(node, st.srs), ["לומד", "היום"]);
+  /* WEAK sorts ahead of new, and the two strong words are not in the list at all — a
+     node session is about what is missing, not about what is already held.
+
+     This assertion used to read the other way round, with a comment stating "new sorts
+     ahead of weak" as though it were the design. It was the bug: both solo cards and
+     every rescue commission went to words he had never met, while the words he keeps
+     failing — the ones actually holding the node back from gold — got nothing. A new
+     word clears in one meeting; a weak one needs three clean answers. */
+  assertEq(campWeakWords(node, st.srs), ["היום", "לומד"]);
 });
 T("campWeakWords: a node he has finished has nothing to rescue", () => {
   const st = carryStores();

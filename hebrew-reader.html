@@ -16912,7 +16912,12 @@ const RESCUE_MIN_EACH = 2;
 /* Briefs asked of the planner. Deliberately more than survive: the evaluator is told
    that returning fewer is a success, and a plan of ten that lands seven is the shape
    this is tuned for. */
-const PLAN_ITEMS = 10;
+/* Was 10. Overgeneration is the right trade at one learner: a rejected batch costs
+   three lite calls out of a daily 500, and a bad card costs a session. Measured on a
+   real batch, thirty candidates yielded fourteen the reviewer was happy to keep, where
+   the tighter runs yielded one or two. Both filters get more to work with, and the
+   near-duplicate guards stop the extra volume becoming repetition. */
+const PLAN_ITEMS = 24;
 /* Scaffolding offered to the builder. Enough to write freely, few enough that the
    list is all words he genuinely holds. */
 const SCAFFOLD_MAX = 40;
@@ -16978,8 +16983,15 @@ async function sentencePlan(spec) {
         "keeps getting them wrong, and drilling them alone is not working, so each one " +
         "needs to appear inside real sentences where the context carries it:\n" +
         rescue.map(k => wordLine(k, lib)).join("\n") + "\n" +
-        "Spread the briefs roughly evenly across those words. Every brief must name " +
-        "exactly one of them as its \"for\".\n\n"
+        /* Was "every brief must name one". Measured: forcing a stuck word into every
+           sentence is what produced "grandpa eats milk in opposites" and "beginning
+           was red" — 22 items past the vocabulary filter, 92% killed by the reviewer.
+           The same word used only where it fitted gave "everything is okay at the
+           beginning". A word that cannot carry a sentence should not be made to. */
+        "Spread the briefs roughly evenly across those words, but only about a THIRD " +
+        "of the batch should name one at all. The rest are ordinary good sentences " +
+        "with no \"for\". A natural sentence without the stuck word teaches more than " +
+        "an odd one built around it.\n\n"
       : "") +
     (spec.setting
       ? "THE SETTING: he is working through " + spec.setting + ". Prefer that setting " +
@@ -16991,7 +17003,8 @@ async function sentencePlan(spec) {
     "Write " + (spec.count || PLAN_ITEMS) + " briefs. Return JSON only, no markdown:\n" +
     '{"briefs":[{"for":"","fn":"","lvl":2,"kind":"sentence","en":""}]}\n\n' +
     "- for = the Hebrew word from the stuck list this item is for, copied exactly. " +
-    (rescue.length ? "Required.\n" : "Leave it \"\" — there is no stuck list this time.\n") +
+    (rescue.length ? "About a third of the briefs; leave it \"\" on the rest.\n"
+                   : "Leave it \"\" — there is no stuck list this time.\n") +
     "- fn = which function above, copied exactly.\n" +
     "- lvl = 1-5 by the scale.\n" +
     "- kind = \"sentence\" (something HE says), \"listen\" (something grandad says to " +
@@ -17031,18 +17044,31 @@ async function sentenceWrite(spec, briefs) {
     "You are writing spoken-Hebrew practice for an English speaker learning " +
     "conversational Hebrew. He replies to WhatsApp voice notes from his partner's " +
     "grandad, so keep everything warm, everyday and spoken — not textbook.\n\n" +
-    "THE DIFFICULTY SCALE — his answers are graded on this same scale, so apply it " +
-    "exactly:\n" + LEVEL_RUBRIC + "\n\n" +
+    /* LEVEL_RUBRIC used to be pasted here too. It is in the REVIEW prompt as well, and
+       the reviewer's grade is the one that gets stored — so ten lines of rubric were
+       being spent asking the writer for a level that is then overwritten. The briefs
+       still carry their target level, which is the part that shapes the writing. */
     "WRITE ONE ITEM FOR EACH BRIEF BELOW. Same index, same order:\n" + listing + "\n\n" +
     (rescue.length
       ? "THE WORDS BEING RESCUED. He has met these and keeps getting them wrong. A " +
-        "brief marked MUST USE has to contain its word, used naturally and doing real " +
-        "work in the sentence — not tacked on the end:\n" +
+        "brief marked MUST USE should contain its word, doing real work in the " +
+        "sentence — not tacked on the end. If that word cannot go in a sentence a real " +
+        "person would say, write the good sentence instead and return \"for\": \"\":\n" +
         rescue.map(k => wordLine(k, lib)).join("\n") + "\n\n"
       : "") +
     "EVERY OTHER WORD MUST COME FROM THIS LIST — words he holds solidly — plus basic " +
     "grammar words (אני, אתה, זה, של, את, לא, כן, יש, ה):\n" +
     scaffold.map(k => k + " (" + ((lib[k] || {}).tr || "") + ")").join(", ") + "\n" +
+    /* The single most valuable line in this prompt. Without it the model writes
+       base-form-only Hebrew, because that is what "use these words" sounds like — and
+       base-form-only Hebrew is UNGRAMMATICAL the moment a feminine noun meets an
+       adjective. It produced התחלה גדול and התחלה אדום, which the reviewer then
+       correctly binned. The app resolves any verified form back to its lemma (see
+       libKeyFor), so this costs the gate nothing. */
+    "INFLECT THEM FREELY. Agree for gender, number and tense as real Hebrew requires — " +
+    "קטן may appear as קטנה, קטנים or קטנות, and a verb may agree with its subject. " +
+    "That is not a new word and it will not be rejected. Writing קטן where קטנה " +
+    "belongs is an ERROR, not obedience.\n" +
     "This is not a style note, it is a hard gate: an item using a word outside that " +
     "list and outside the rescue list will be thrown away by the app before he ever " +
     "sees it. One unknown word per sentence, and it must be the rescue word.\n\n" +
@@ -17095,10 +17121,16 @@ async function sentenceWrite(spec, briefs) {
    Hebrew has no content words to fail on and sails through bankServable looking
    perfectly reachable. Rare enough to ignore while generation was occasional; not
    something to leave standing underneath a pipeline built to run every session. */
-function commissionAcceptable(it, lib, scaffoldSet, rescueSet) {
+function commissionAcceptable(it, lib, scaffoldSet, rescueSet, maxCarried) {
   const he = String((it && it.he) || "");
   if (!he) return false;
-  if (it.for && he.indexOf(it.for) === -1) return false;   // the brief was not met
+  /* The brief named a word and the sentence does not contain it. Still a reject — but
+     an item that DECLINED its target returns `for: ""` and is judged on its own merits,
+     which is what lets the writer skip a word rather than force it somewhere no real
+     person would put it. Matched through libKeyFor so an inflected target counts:
+     a brief for קטן is met by קטנה. */
+  if (it.for && he.indexOf(it.for) === -1 &&
+      !he.split(/[^֐-׿]+/).filter(Boolean).some(t => libKeyFor(t, lib) === it.for)) return false;
   const toks = he.split(/[^֐-׿]+/).filter(Boolean);
   if (!toks.length) return false;
   let carried = 0;
@@ -17110,7 +17142,11 @@ function commissionAcceptable(it, lib, scaffoldSet, rescueSet) {
     if (rescueSet.has(k)) { carried++; continue; }
     return false;                                          // outside the allowed list
   }
-  return carried <= 1;                                     // one new thing, at most
+  /* One new thing by default. A node session passes 2, because inside a node the
+     words being taught are the point and every one of them is not-ready by
+     definition — see bankServable's node relaxation. The two limits are passed in
+     rather than shared, so the daily batch cannot drift into the looser rule. */
+  return carried <= (maxCarried || 1);
 }
 
 /* ---- the whole pipeline ------------------------------------------------------ */
@@ -17137,7 +17173,8 @@ async function sentenceCommission(spec) {
   if (!drafted.length) return 0;
   const scaffoldSet = new Set(spec.scaffold);
   const rescueSet = new Set(spec.rescue);
-  const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet));
+  const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet,
+                                                          spec.maxCarried));
   if (!clean.length) return 0;
   const kept = await learnReviewItems({ items: clean });
   return learnIngest(kept);
@@ -24127,6 +24164,36 @@ T("commissionAcceptable: two rescue words in one item is one too many", () => {
   c.rescue = new Set(["היום", "לומד"]);
   assertTrue(!commissionAcceptable({ he: "לומד היום", for: "היום" },
                                    c.lib, c.scaffold, c.rescue));
+});
+T("commissionAcceptable: a node batch may carry two, a daily batch still may not", () => {
+  /* The limit is passed in rather than shared, so the two callers cannot drift into
+     one rule — inside a node the words being taught are all not-ready by definition. */
+  const c = commissionStores();
+  c.rescue = new Set(["היום", "לומד"]);
+  const it = { he: "לומד היום", for: "היום" };
+  assertTrue(!commissionAcceptable(it, c.lib, c.scaffold, c.rescue), "daily: still one");
+  assertTrue(commissionAcceptable(it, c.lib, c.scaffold, c.rescue, 2), "node: two allowed");
+});
+T("commissionAcceptable: an item that declined its target is judged on its own merits", () => {
+  /* Forcing a stuck word into every sentence is what produced "beginning was red".
+     A writer that skips the word returns `for: ""`, and that item must not then be
+     rejected for lacking a word it never claimed. */
+  const c = commissionStores();
+  assertTrue(commissionAcceptable({ he: "אני עובד", for: "" }, c.lib, c.scaffold, c.rescue),
+             "no target claimed, nothing to fail against");
+});
+T("commissionAcceptable: an INFLECTED target still meets its brief", () => {
+  /* The brief names a lemma; real Hebrew agrees. Without this the writer is punished
+     for writing correctly — the exact fault libKeyFor was just taught to avoid. */
+  const c = commissionStores();
+  c.lib = Object.assign({}, c.lib, { "קטן": {} });
+  c.scaffold = new Set(["עובד", "בית", "קטן"]);
+  c.rescue = new Set(["קטן"]);
+  withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
+    assertTrue(commissionAcceptable({ he: "בית קטנה", for: "קטן" },
+                                    c.lib, c.scaffold, c.rescue),
+               "קטנה is קטן, and the brief is met");
+  });
 });
 
 /* ====================  GUARDS THAT MUST NOT TIGHTEN FOREVER  ==================== */

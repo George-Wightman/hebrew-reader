@@ -2489,6 +2489,12 @@
         <button class="btn secondary" id="newSentencesBtn">Run</button>
       </div>
       <div class="setrow setrow-danger">
+        <div class="setrow-text"><b>Bin the conversations <span class="setwarn">clears</span></b>
+          <p>Deletes every stored conversation, including the ones cached against nodes on the map. Fresh ones get written the next time you open a conversation.</p>
+          <details><summary>Why you might</summary><p>A conversation is written once and then kept — a node's is cached against that node and never rewritten. So conversations written before an improvement to how they work keep behaving the old way indefinitely. This is how you make them get rewritten. Your library, word strengths, node progress and gold are all untouched.</p></details></div>
+        <button class="btn secondary" id="newConvosBtn">Run</button>
+      </div>
+      <div class="setrow setrow-danger">
         <div class="setrow-text"><b>Reset drill schedule <span class="setwarn">clears</span></b>
           <p>Every word becomes due for review again, as if freshly added.</p>
           <details><summary>What survives</summary><p>This is the one that resets progress, not your words. Nothing is deleted — your library, marks and banked sentences are untouched.</p></details></div>
@@ -13861,15 +13867,29 @@ function convoScenes() {
    should convey. It was already the right field under the wrong name. */
 function convoBeat(t) {
   if (!t) return null;
+  /* `intent` is what THEY are doing this turn. An old turn never stated it — but it
+     stated their line in English, and "they say: how are you" is a perfectly good thing
+     to steer the next line towards. Deriving it is what makes the live turn work on
+     conversations written before any of this existed. */
+  const intent = String(t.intent || "").trim() ||
+                 (t.qen ? "they say: " + String(t.qen).trim() : "");
+  const want = String(t.want || t.askEn || "").trim();
   return {
-    intent: String(t.intent || "").trim(),
-    want: String(t.want || t.askEn || "").trim(),
+    intent: intent,
+    want: want,
     must: Array.isArray(t.must) ? t.must.filter(Boolean) : [],
     lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(t.lvl)) || LEVEL_DEFAULT)),
-    /* Whether this beat can be realised live at all. Without an intent there is nothing
-       to tell the writer to aim at, so the scripted line is not a fallback — it is the
-       only honest answer. */
-    live: !!String(t.intent || "").trim()
+    /* WHETHER THIS BEAT CAN BE REALISED LIVE, and the first version of this was wrong in
+       a way that switched the whole feature off. It asked for `intent` specifically —
+       a field only the new planning prompt writes — so every conversation already in
+       hvr_convo and every node conversation cached in hvr_pathcontent (which is written
+       ONCE per node and never regenerated) was permanently script-only. George, on the
+       shipped build: "its definitly not calling hte API after each time I call, its
+       falling back."
+       What the judge actually needs is to know what he was meant to convey, and an old
+       turn carries that in askEn. So the test is whether there is anything to aim at,
+       not whether a particular field name is present. */
+    live: !!(intent || want)
   };
 }
 /* How many beats a conversation covers, for the gold gate — see the spec's note on why
@@ -14054,24 +14074,55 @@ function convoScriptedCard(convo, idx, ti) {
            beat: idx, live: false, item: t, words: t.uses || [] };
 }
 
-/* Which beat to fall back to when there is no live line: the first one not yet covered.
-   Not simply "the next index" — a conversation that lingered two turns on beat 2 should
-   resume at 3, and one where the model skipped ahead should not re-ask what is done. */
-function convoNextScriptedIdx(total, beatsHit) {
-  for (let i = 0; i < total; i++) { if (!beatsHit[i]) return i; }
-  return -1;
+/* THE SCRIPT POINTER ONLY EVER MOVES FORWARD.
+
+   This was `the first beat not yet covered`, and it was a trap. A beat is only marked
+   covered on a CLEAN answer, so answering "Nearly" left the pointer where it was and the
+   fallback served the identical question again — and again, until the twelve-turn cap.
+   Measured on the shipped build: grading every turn "Nearly" asked Q0 twelve times in a
+   row. George: "if I dont say exactly what its expecting it not letting me through."
+
+   Approaching an uncovered beat again is the LIVE path's job, where the model rewords it
+   into something that moves — someone asking the same question a different way. A
+   scripted re-ask of the byte-identical line is not that; it is a wall. So the script
+   advances regardless of the grade, exactly as it did before any of this, and a beat he
+   fumbled simply goes uncovered and costs him the gold gate rather than the exit. */
+function convoScriptNext(s) {
+  /* Beat 0 was the opening card, so the script resumes at 1. */
+  if (typeof s.convoNext !== "number") s.convoNext = 1;
+  return s.convoNext;
+}
+
+/* WHAT COMES NEXT: a live line, the next scripted beat, or the end.
+
+   Pulled out as its own function because this is the decision that shipped broken, and
+   convoAdvance cannot be unit-tested — it runs the grade, which writes the schedule, the
+   stats and the level to real storage. The loop that asked George the same question
+   twelve times lived in three lines buried inside that. Here it can be driven
+   exhaustively against nothing at all. */
+function convoNextStep(s, beatsTotal, live, turnsUsed) {
+  const hit = Object.keys((s && s.beatsHit) || {}).length;
+  if (!convoShouldContinue(hit, beatsTotal, turnsUsed, CONVO_TURN_CAP)) return { kind: "end" };
+  if (live && live.next) return { kind: "live", beat: live.next.beat };
+  const next = convoScriptNext(s);
+  /* Note what is NOT consulted: whether this beat was covered. The script advances on a
+     miss exactly as it did before beats existed. */
+  if (next < beatsTotal) return { kind: "script", beat: next };
+  return { kind: "end" };
 }
 
 /* Everything that happens between his answer being scored and the next line appearing.
    Both the live path and the fallback end here, which is what keeps them honest: the
    only difference between them is where the next card came from. */
-function convoAdvance(s, c, live) {
+function convoAdvance(s, c, live, gradeOverride) {
   const convo = c.convo || {};
   const beats = convo.turns || [];
   const beatIdx = c.beat || 0;
-  /* The judge's grade when there is one, the local score when there is not. */
-  const grade = (live && live.grade !== null && live.grade !== undefined)
-    ? live.grade : learnSuggested;
+  /* A pressed grade button beats everything: it is George saying so directly. Then the
+     judge, then the local score. */
+  const grade = (gradeOverride !== undefined && gradeOverride !== null) ? gradeOverride
+    : (live && live.grade !== null && live.grade !== undefined) ? live.grade
+    : learnSuggested;
   s.beatsHit = s.beatsHit || {};
   /* Without a judge, a clean local score is the only evidence the beat landed. */
   if (live ? live.beatHit : grade === 2) s.beatsHit[beatIdx] = true;
@@ -14088,16 +14139,18 @@ function convoAdvance(s, c, live) {
     } catch (e) { /* a level write must never cost him the turn */ }
   }
 
-  const hitCount = Object.keys(s.beatsHit).length;
-  if (convoShouldContinue(hitCount, beats.length, s.i + 1, CONVO_TURN_CAP)) {
-    const ti = s.i + 1;
-    if (live && live.next) {
-      s.cards.push(convoLiveCard(convo, live.next, ti));
-    } else {
-      const idx = convoNextScriptedIdx(beats.length, s.beatsHit);
-      const card = idx === -1 ? null : convoScriptedCard(convo, idx, ti);
-      if (card) s.cards.push(card);
-    }
+  const ti = s.i + 1;
+  const step = convoNextStep(s, beats.length, live, ti);
+  if (step.kind === "live") {
+    s.cards.push(convoLiveCard(convo, live.next, ti));
+    /* Keep the script pointer level with where the live exchange has actually reached,
+       so a fallback later resumes from there rather than re-asking what the live turns
+       already covered. Never backwards: the model lingering on a beat must not rewind
+       the script. */
+    s.convoNext = Math.max(convoScriptNext(s), step.beat + 1);
+  } else if (step.kind === "script") {
+    s.cards.push(convoScriptedCard(convo, step.beat, ti));
+    s.convoNext = step.beat + 1;
   }
   /* No card appended means the exchange is over: learnAdvance's own `s.i >=
      s.cards.length` termination then fires exactly as it always has, with no
@@ -20243,7 +20296,16 @@ function learnReveal() {
       gradePaints.push(paint); paint();
       b.type = "button";
       b.textContent = g[0];
-      b.onclick = () => learnGrade(g[1]);
+      /* A CONVERSATION HAS TO GO THROUGH convoAdvance, whatever grade it is. Only
+         convoAdvance appends the next line, so a conversation graded by hand here — the
+         mic was unsure, or he worked down the hint ladder without speaking — called
+         learnGrade directly, appended nothing, and learnAdvance's `s.i >=
+         s.cards.length` ended the WHOLE conversation on that turn. Measured on the
+         shipped build: one grade press on turn 1 of a six-beat conversation finished it. */
+      b.onclick = () => {
+        if (c.kind === "conversation") convoAdvance(s, c, null, g[1]);
+        else learnGrade(g[1]);
+      };
       act.append(b);
     });
     /* So a late second opinion can move the recommendation without rebuilding the
@@ -21005,6 +21067,32 @@ document.getElementById("newSentencesBtn").onclick = settingsAction(() => {
   rebuildTrIndex();
   if (lsGet(VIEW_KEY) === "learn" && !learnSession) learnRenderStart();
   document.getElementById("settingsModal").style.display = "none";
+});
+
+/* A conversation is written once and kept — a node's is cached in hvr_pathcontent
+   against that node and never regenerated. So an improvement to how conversations WORK
+   does not reach the ones already written, which is exactly how the live-turn rework
+   landed looking like it had done nothing. This is the way to make them be rewritten.
+   Only the conversations: the node's own progress, its words and its gold all live
+   elsewhere in the same record and are left alone. */
+document.getElementById("newConvosBtn").onclick = settingsAction(() => {
+  const stored = convoAll().length;
+  const content = pathContentAll();
+  const cached = Object.keys(content).filter(id => content[id] && content[id].convo).length;
+  if (!stored && !cached) {
+    alert("There are no stored conversations right now — a fresh one gets written the next time you open one.");
+    return;
+  }
+  if (!confirm("Throw away " + stored + " stored conversation" + (stored === 1 ? "" : "s") +
+               " and " + cached + " cached against nodes on the map?\n\n" +
+               "Your library, word strengths, node progress and gold all stay exactly as " +
+               "they are. Fresh conversations get written the next time you open one.")) return;
+  localStorage.removeItem(CONVO_KEY);
+  Object.keys(content).forEach(id => { if (content[id]) delete content[id].convo; });
+  pathContentSave(content);
+  if (lsGet(VIEW_KEY) === "learn" && !learnSession) learnRenderStart();
+  document.getElementById("settingsModal").style.display = "none";
+  setLibStatus("Conversations cleared — the next one will be written fresh.");
 });
 
 /* The gentler alternative to binning everything: judge what's already banked
@@ -22480,13 +22568,17 @@ T("fetchWithTimeout: a real network failure keeps its own message", () => {
    storage can be read as a beat sheet and still behave exactly as it does today. If that
    is wrong, the rework needs a migration of a store that syncs between devices. These
    are the tests that would catch it being wrong. */
-T("convoBeat: a turn written before beats existed is readable, and is not live", () => {
-  /* Exactly the shape learnMakeConversation produced yesterday — no intent anywhere. */
+T("convoBeat: a turn written before beats existed round-trips", () => {
+  /* Exactly the shape learnMakeConversation produced before beats.
+
+     This test used to also assert `live === false` here, with a comment calling it the
+     design. It was the bug written down: that is the exact condition that made the live
+     turn unreachable for every conversation George already had. Whether an old turn can
+     go live is asserted properly above, in the three-holes block. */
   const old = { qhe: "מה נשמע?", qtr: "ma nishma", qen: "how are you",
                 askEn: "say how you are", he: "אני בסדר", tr: "ani beseder",
                 en: "I'm fine", alts: [], rhe: "", uses: ["בסדר"] };
   const b = convoBeat(old);
-  assertEq(b.live, false, "no intent means nothing to realise it against");
   assertEq(b.want, "say how you are", "askEn was always the beat's `want` under another name");
   assertEq(b.must, []);
   assertEq(b.lvl, LEVEL_DEFAULT, "an ungraded turn reads as the modal band, like bankLevel");
@@ -22588,14 +22680,66 @@ T("convoShouldContinue: the turn cap is a hard stop whatever the beats say", () 
   assertEq(convoShouldContinue(0, 6, 11, 12), true, "one turn left is still a turn");
 });
 
-T("convoNextScriptedIdx: falls back to the first beat NOT yet covered", () => {
-  /* Not simply "the next index" — an exchange that lingered on beat 1 must resume at the
-     first thing still outstanding, and must not re-ask what the model already covered. */
-  assertEq(convoNextScriptedIdx(4, {}), 0);
-  assertEq(convoNextScriptedIdx(4, { 0: true }), 1);
-  assertEq(convoNextScriptedIdx(4, { 0: true, 1: true, 2: true }), 3);
-  assertEq(convoNextScriptedIdx(4, { 1: true }), 0, "skipping ahead leaves 0 outstanding");
-  assertEq(convoNextScriptedIdx(4, { 0: true, 1: true, 2: true, 3: true }), -1, "nothing left");
+/* ---- the three holes that shipped ----
+   All three had one root cause: appending a card became the only way forward, and two
+   paths did not append. Each test below fails against the build that went live. */
+T("convoBeat: a conversation written before beats existed CAN still go live", () => {
+  /* The hole that switched the whole feature off. Every conversation in hvr_convo, and
+     every node conversation in hvr_pathcontent (written once per node, never
+     regenerated), predates `intent` — so gating on that field alone meant the live turn
+     could never fire for anyone who had used the app before today. */
+  const old = { qhe: "מה נשמע?", qen: "how are you", askEn: "say how you are",
+                he: "אני בסדר", tr: "ani beseder" };
+  const b = convoBeat(old);
+  assertEq(b.live, true, "askEn says what he should convey — that is enough to judge");
+  assertEq(b.want, "say how you are");
+  assertEq(b.intent, "they say: how are you", "their line stands in for the steer");
+});
+T("convoBeat: with nothing to aim at at all, it stays script-only", () => {
+  assertEq(convoBeat({ qhe: "מה?" }).live, false, "no want, no english, nothing to judge");
+  assertEq(convoBeat({ qhe: "מה?", askEn: "reply" }).live, true);
+  assertEq(convoBeat({ qhe: "מה?", qen: "what" }).live, true);
+});
+T("convoScriptNext: the script pointer starts after the opening card", () => {
+  const s = {};
+  assertEq(convoScriptNext(s), 1, "beat 0 was already served as the opening line");
+  s.convoNext = 4;
+  assertEq(convoScriptNext(s), 4, "and is remembered once set");
+});
+T("convoNextStep: a fumbled beat still moves the script on", () => {
+  /* THE BUG THAT BROKE IT. Nothing covered, every turn imperfect — the shipped build
+     re-served beat 0 twelve times because the fallback looked for the first UNCOVERED
+     beat. It must walk 1,2,3,4,5 and then stop, exactly as the app did before beats. */
+  const s = { beatsHit: {} };
+  const asked = [];
+  for (let turn = 1; turn <= 12; turn++) {
+    const step = convoNextStep(s, 6, null, turn);
+    if (step.kind === "end") break;
+    asked.push(step.beat);
+    s.convoNext = step.beat + 1;
+  }
+  assertEq(asked, [1, 2, 3, 4, 5], "five more questions, all different, then done");
+});
+T("convoNextStep: covering everything ends it even with turns to spare", () => {
+  const s = { beatsHit: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 }, convoNext: 3 };
+  assertEq(convoNextStep(s, 6, null, 7).kind, "end");
+});
+T("convoNextStep: the turn cap ends it even with beats outstanding", () => {
+  const s = { beatsHit: {}, convoNext: 1 };
+  assertEq(convoNextStep(s, 6, null, CONVO_TURN_CAP).kind, "end");
+  assertEq(convoNextStep(s, 6, null, CONVO_TURN_CAP - 1).kind, "script");
+});
+T("convoNextStep: a live line outranks the script, and may linger on a beat", () => {
+  const s = { beatsHit: {}, convoNext: 3 };
+  const step = convoNextStep(s, 6, { next: { beat: 2 } }, 4);
+  assertEq(step.kind, "live");
+  assertEq(step.beat, 2, "the model may stay on a beat; the script pointer is not rewound");
+});
+T("convoNextStep: the script resumes after the live turns, not before them", () => {
+  /* A fallback partway through a live conversation must not re-ask what the live lines
+     already covered. */
+  const s = { beatsHit: { 0: 1, 1: 1, 2: 1 }, convoNext: 4 };
+  assertEq(convoNextStep(s, 6, null, 5), { kind: "script", beat: 4 });
 });
 
 T("convoScriptedCard: an opening card carries its beat, and is not live", () => {

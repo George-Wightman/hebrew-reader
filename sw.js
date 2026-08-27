@@ -71,6 +71,25 @@ async function announceUpdate() {
   clients.forEach((c) => c.postMessage({ type: "shell-updated" }));
 }
 
+/* Has the shell actually changed?
+
+   This used to be answered by downloading the whole file and comparing it to the cached
+   copy as two strings. On a 1.3MB single-file app opened from a phone's home screen that
+   is 1.3MB of traffic and ~2.6MB of string allocation on EVERY launch, to answer a
+   question the response headers usually answer for free.
+
+   So: ask conditionally. The cached copy's Last-Modified goes back as If-Modified-Since,
+   and an unchanged shell comes back as a 304 with no body at all. GitHub Pages and
+   python -m http.server both honour it. The text comparison is kept as the fallback for
+   a server that sends no Last-Modified, because "I cannot tell" must not become "it
+   changed" — that is what made the app announce a new version on every single load once
+   before. */
+function lastModifiedOf(resp) {
+  const v = resp && resp.headers && resp.headers.get("last-modified");
+  const t = v ? Date.parse(v) : NaN;
+  return isNaN(t) ? null : t;
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
@@ -94,7 +113,20 @@ self.addEventListener("fetch", (event) => {
        untouched and the comparison is real. */
     const previous = cached ? cached.clone() : null;
 
-    const network = fetch(req).then(async (resp) => {
+    /* The revalidation request. Conditional when we have a Last-Modified to quote and
+       nothing is waiting on the body — which is the launch case, where `cached` wins the
+       race below and this response is only ever used to decide "has it changed". With
+       nothing cached we need the bytes themselves, so the plain request goes out. */
+    const cachedLM = lastModifiedOf(cached);
+    const revalidate = (cached && cachedLM !== null)
+      ? fetch(req.url, { cache: "no-store",
+                         headers: { "If-Modified-Since": cached.headers.get("last-modified") } })
+      : fetch(req);
+
+    const network = revalidate.then(async (resp) => {
+      /* 304: the server has just told us the cached copy is current. No body, nothing
+         to store, nothing to announce — and no megabyte spent finding that out. */
+      if (resp && resp.status === 304) return null;
       /* Opaque and error responses must never overwrite a good cached copy —
          that is how an offline app caches a captive-portal login page and
          becomes permanently broken. */
@@ -102,13 +134,20 @@ self.addEventListener("fetch", (event) => {
         const forCache = resp.clone();
         const forCompare = resp.clone();
         /* Compare before storing, so "updated" means the bytes actually changed
-           rather than merely that a request succeeded. */
+           rather than merely that a request succeeded. Headers first: when both sides
+           carry a Last-Modified the answer is a number comparison, and the bodies are
+           never read. */
         let changed = true;
         if (previous) {
-          try {
-            const [a, b] = await Promise.all([previous.text(), forCompare.text()]);
-            changed = a !== b;
-          } catch (e) { changed = true; }
+          const freshLM = lastModifiedOf(resp);
+          if (cachedLM !== null && freshLM !== null) {
+            changed = freshLM > cachedLM;
+          } else {
+            try {
+              const [a, b] = await Promise.all([previous.text(), forCompare.text()]);
+              changed = a !== b;
+            } catch (e) { changed = true; }
+          }
         }
         await cache.put(key, forCache);
         if (previous && changed) announceUpdate();

@@ -2271,10 +2271,9 @@
   <input type="text" id="edTr">
   <label>English</label>
   <input type="text" id="edEn">
-  <div id="edCatRow" style="display:none">
-    <label>Category</label>
-    <select id="edCat"></select>
-  </div>
+  <!-- This popup edits a READING CARD, never a library row: category lives in the word
+       panel, which is where every per-word action moved. The category row that used to
+       sit here had no way of being shown. -->
   <div class="row">
     <button class="btn" id="edSave">Save</button>
     <button class="btn secondary" id="edCancel">Cancel</button>
@@ -2868,7 +2867,22 @@ function mergeSrsSide(x, y) {
   if (!y) return x;
   if ((x.last || "") !== (y.last || "")) return (x.last || "") > (y.last || "") ? x : y;
   /* Same day on both: the one with more answers behind it is the fuller record. */
-  return maxNum(x.n, y.n) === (x.n || 0) ? x : y;
+  if ((x.n || 0) !== (y.n || 0)) return (x.n || 0) > (y.n || 0) ? x : y;
+  /* SAME DAY, SAME COUNT, DIFFERENT RECORD. Rare but real — both devices answered the
+     word the same number of times today, and graded it differently. The old code ended
+     `maxNum(x.n, y.n) === (x.n || 0) ? x : y`, which on a tie returns whichever record
+     happened to be passed FIRST — and "first" is "mine", so each device kept its own and
+     the merge stopped being commutative. Which device synced first would then decide the
+     schedule, silently.
+
+     Broken with two ordered, symmetric tests instead. Sooner `due` wins, because more
+     review is the safe direction to be wrong in; then the harder `diff`, for the same
+     reason. Past that the two records say the same thing about when the word comes back
+     and how hard it is, so either answer is the same answer. */
+  const dueX = x.due || "9999-99-99", dueY = y.due || "9999-99-99";
+  if (dueX !== dueY) return dueX < dueY ? x : y;
+  if ((x.diff || 0) !== (y.diff || 0)) return (x.diff || 0) > (y.diff || 0) ? x : y;
+  return x;
 }
 function mergeSrs(a, b) {
   const out = {};
@@ -3186,7 +3200,13 @@ const DICT = {
   "גם":["gam","also"], "רק":["rak","only"], "אבל":["aval","but"], "או":["o","or"],
   "אם":["im","if"], "כי":["ki","because"], "אז":["az","so / then"], "עכשיו":["achshav","now"],
   "כבר":["kvar","already"], "עוד":["od","more / another / still"], "עדיין":["adayin","still / yet"],
-  "פה":["po","here"], "כאן":["kan","here"], "שם":["sham","there"],
+  /* Two senses, one spelling, and they used to be two literal keys in this object —
+     so the later one silently won and שם glossed as "shem, name" everywhere, including
+     on a reading card where it plainly meant "there". Worse, "sham" then existed
+     nowhere in TR_INDEX, so the sentence pad could not find one of the commonest words
+     in the language. Both senses in one entry: buildTrIndex splits the translit on "/"
+     (52 other entries already rely on that), so both spellings resolve. */
+  "פה":["po","here"], "כאן":["kan","here"], "שם":["sham/shem","there / name"],
   "מאוד":["me'od","very"], "קצת":["ktzat","a little"], "הרבה":["harbe","a lot"],
   "כל":["kol","every / all"], "כולם":["kulam","everyone"], "הכל":["hakol","everything"],
   "משהו":["mashehu","something"], "מישהו":["mishehu","someone"], "מישהי":["mishehi","someone (f)"],
@@ -3324,10 +3344,12 @@ const DICT = {
   "תמונה":["tmuna","picture"], "תמונות":["tmunot","pictures"], "סרטון":["sirton","video clip"],
   "מוזיקה":["muzika","music"], "ספר":["sefer","book"], "עברית":["ivrit","Hebrew"],
   "אנגלית":["anglit","English"], "שפה":["safa","language"], "מילה":["mila","word"], "מילים":["milim","words"],
-  "שם":["shem","name / there"], "מסיבה":["mesiba","party"], "טיול":["tiyul","trip"],
+  "מסיבה":["mesiba","party"], "טיול":["tiyul","trip"],
   "חופשה":["chufsha","vacation"], "חופש":["chofesh","freedom / break"], "ים":["yam","sea"],
-  "שמש":["shemesh","sun"], "גשם":["geshem","rain"], "אוכל":["ochel","food / eat(s)"],
-  "בריאות":["bri'ut","health"], "שאלה":["she'ela","question"], "תשובה":["tshuva","answer"],
+  /* אוכל and בריאות are both already defined above — repeating them here was a silent
+     overwrite, not a second entry. */
+  "שמש":["shemesh","sun"], "גשם":["geshem","rain"],
+  "שאלה":["she'ela","question"], "תשובה":["tshuva","answer"],
   "רעיון":["ra'ayon","idea"], "תוכנית":["tochnit","plan / program"], "בעיה":["be'aya","problem"],
   "מבחן":["mivchan","exam"], "שיעור":["shi'ur","lesson"], "פגישה":["pgisha","meeting"],
   "ארוחה":["arucha","meal"], "מתנה":["matana","gift"], "חדשות":["chadashot","news"],
@@ -3365,7 +3387,9 @@ const DICT = {
   "מספיק":["maspik","enough"], "בכיף":["bekeif","gladly"], "בהצלחה":["behatzlacha","good luck"],
   "מהמם":["mehamem","stunning"], "חמוד":["chamud","cute"], "חמודה":["chamuda","cute (f)"],
   "מותק":["motek","sweetie"], "נשמה":["neshama","dear (lit. soul)"], "כפרה":["kapara","dear (term of endearment)"],
-  "אין":["ein","there isn't"], "אש":["esh","fire / awesome"],
+  /* אין is defined above with the fuller gloss ("there isn't / don't have"); the copy
+     that used to sit here overwrote it with the shorter one. */
+  "אש":["esh","fire / awesome"],
   "@12|Numbers":0,
   // numbers
   "אחד":["echad","one (m)"], "אחת":["achat","one (f)"], "שניים":["shnayim","two (m)"],
@@ -3616,7 +3640,7 @@ const PHRASES = {
   "חצי גמר":["chetzi gmar","semi-final"],
   "אין לי מושג":["ein li musag","I have no idea"],
   "יום הולדת שמח":["yom huledet same'ach","happy birthday"],
-  "אם ירצה השם":["im yirtze hashem","God willing"],
+  /* already listed above, beside בעזרת השם */
   "מוסרת דרישת שלום":["moseret drishat shalom","(she) sends regards"],
   "מוסר דרישת שלום":["moser drishat shalom","(he) sends regards"],
 
@@ -3686,7 +3710,9 @@ const CAT_FIX = {
   "שמש":"Weather", "גשם":"Weather",
   "מים":"Food & drink", "קפה":"Food & drink", "תה":"Food & drink",
   "לחם":"Food & drink", "ארוחה":"Food & drink",
-  "רופא":"Feelings & health", "בינתיים":"Time & dates",
+  /* רופא is corrected further down, to Work & study — this line was the earlier of two
+     literal keys and had no effect at all. */
+  "בינתיים":"Time & dates",
   // people filed with the countries they were listed beside
   "ג'ורג'":"People & family", "ג'ורג":"People & family", "מאיה":"People & family",
   "מפתח":"Everyday things",
@@ -5262,7 +5288,11 @@ function render(result) {
         card.addEventListener("click", (ev) => openEditor(ev, bi, ci));
         // ⊕ add-to-library (mainly for grammar words the harvester skips)
         const plus = document.createElement("button");
-        const already = !!libAll()[c.base || c.hebrew];
+        /* `lib`, not a fresh libAll(). This was one full JSON.parse of the whole
+           library PER WORD of the message — a 60-word voice note re-parsed ~150KB
+           sixty times before it drew anything. The map read at the top of render() is
+           the same data, and nothing between here and there writes to it. */
+        const already = !!lib[c.base || c.hebrew];
         plus.className = "plus" + (already ? " in" : "");
         plus.textContent = already ? "✓" : "+";
         plus.title = already ? "Already in library" : "Add to library";
@@ -5289,18 +5319,20 @@ function render(result) {
 }
 
 /* =====================  WORD EDITOR  =====================
-   One shared popup serves two callers: reading-card corrections (`editing`,
-   {bi,ci} into currentResult) and library-tile edits (`editingLibKey`, a
-   Hebrew key). Exactly one of the two is non-null at a time; the category
-   row only shows for the library case. */
+   ONE caller, not two. This popup used to serve reading-card corrections (`editing`,
+   {bi,ci} into currentResult) AND library-tile edits (`editingLibKey`, a Hebrew key),
+   and the second half has been unreachable since the word panel took over every
+   per-word action in the Library: openLibEditor had no call sites, so editingLibKey was
+   permanently null, the branch in edSave could not run, #edCatRow could not show, and
+   the category <select> it filled was populated on every page load for nobody.
+
+   Deleting the dead half rather than leaving it wired is the point — a second editor
+   that looks live is how two code paths for one job drift apart, which this file has
+   paid for before with the opposites row. What remains edits a TRANSLATOR card, which
+   is a genuinely different thing: it writes store.userDict for a word that may not be
+   in the library at all. */
 const editor = document.getElementById("editor");
 let editing = null;
-let editingLibKey = null;
-
-(function populateEdCat() {
-  const sel = document.getElementById("edCat");
-  CATS.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; sel.appendChild(o); });
-})();
 
 function positionEditor(ev) {
   editor.style.display = "block";
@@ -5310,12 +5342,11 @@ function positionEditor(ev) {
 }
 
 function openEditor(ev, bi, ci) {
-  editing = { bi, ci }; editingLibKey = null;
+  editing = { bi, ci };
   const c = currentResult.blocks[bi][ci];
   document.getElementById("edHe").textContent = c.hebrew;
   document.getElementById("edTr").value = (c.translit || "").replace(/ \?$/, "");
   document.getElementById("edEn").value = c.english === "not sure" ? "" : (c.english || "");
-  document.getElementById("edCatRow").style.display = "none";
   const tierNote = document.getElementById("edTierNote");
   const lib = libAll();
   const tier = cardTier(c, lib, srsAll());
@@ -5330,27 +5361,12 @@ function openEditor(ev, bi, ci) {
   document.getElementById("edEn").focus();
 }
 
-function openLibEditor(ev, key) {
-  editing = null; editingLibKey = key;
-  const e = libAll()[key];
-  document.getElementById("edHe").textContent = key;
-  document.getElementById("edTr").value = e.tr || "";
-  document.getElementById("edEn").value = e.en || "";
-  const catSel = document.getElementById("edCat");
-  catSel.value = CATS.indexOf(e.cat) !== -1 ? e.cat : "Uncategorised";
-  document.getElementById("edCatRow").style.display = "block";
-  document.getElementById("edTierNote").style.display = "none";
-  positionEditor(ev);
-  document.getElementById("edEn").focus();
-}
-
-function closeEditor() { editor.style.display = "none"; editing = null; editingLibKey = null; }
+function closeEditor() { editor.style.display = "none"; editing = null; }
 document.getElementById("edCancel").onclick = closeEditor;
 
-/* One save path for a library row, shared by the old popover and the word panel.
-   The popover still serves TRANSLATOR cards, which are a different thing — they
-   edit store.userDict for a word that may not be in the library at all — so the
-   two stay separate functions rather than one with a mode flag. */
+/* The one save path for a library row. It has one caller — the word panel — now that
+   the popover's library branch is gone; kept as its own function because it is a
+   different operation from the translator save below, not a mode of it. */
 function libraryEditSave(key, tr, en, cat) {
   const l = libAll();
   if (!l[key]) return false;
@@ -5373,15 +5389,6 @@ function libraryEditSave(key, tr, en, cat) {
 document.getElementById("edSave").onclick = () => {
   const tr = document.getElementById("edTr").value.trim();
   const en = document.getElementById("edEn").value.trim();
-  if (editingLibKey) {
-    const edited = editingLibKey;
-    const ok = libraryEditSave(edited, tr, en, document.getElementById("edCat").value);
-    closeEditor();
-    /* This edit happens on the Library page; setStatus writes to the Translator's
-       status bar, where it would never be seen. */
-    if (ok) setLibStatus("Updated “" + edited + "”.");
-    return;
-  }
   if (!editing) return;
   const c = currentResult.blocks[editing.bi][editing.ci];
   c.translit = tr; c.english = en; c.known = true;
@@ -5393,8 +5400,10 @@ document.getElementById("edSave").onclick = () => {
   setStatus("Saved — the app will remember “" + c.hebrew + "”.");
 };
 document.addEventListener("click", (e) => {
+  /* .libtile went with the library branch — that class has not existed in this file
+     for a long time, so the check was matching nothing. */
   if (editor.style.display === "block" && !editor.contains(e.target) &&
-      !e.target.closest(".card") && !e.target.closest(".libtile")) {
+      !e.target.closest(".card")) {
     closeEditor();
   }
 });
@@ -6331,8 +6340,13 @@ function migrationHintCheck() {
   if (!bar) return;
   if (location.protocol.indexOf("http") !== 0) return;   // file:// is the old home
   if (lsGet("hvr_migrated") === "1") return;
+  /* `statsAll()` IS the day map — {"2026-08-27": {...}} — it has never had a `.days`
+     field, so the old `st.days` read undefined and this half of the guard was dead: only
+     the schedule below was ever consulted. Harmless in practice, because anyone with
+     practice history also has a schedule, but a guard that cannot fire is a guard that
+     is one refactor away from being wrong about somebody. */
   const st = statsAll();
-  const practised = Object.keys((st && st.days) || {}).length;
+  const practised = Object.keys(st || {}).length;
   const drilled = Object.keys(srsAll()).length;
   if (practised || drilled) { lsSet("hvr_migrated", "1"); return; }
   bar.style.display = "flex";
@@ -6488,8 +6502,17 @@ async function syncRun(reason, opts) {
             keys: mergeKeyMap(mine.keys, remote.blob.keys, mine.updated, remote.blob.updated) }
         : mine;
       sha = await syncPush(merged, remote.sha);
-      if (sha !== null || !remote.sha) break;     // pushed, or nothing to collide with
+      if (sha !== null) break;                    // pushed
     }
+    /* THE GUARANTEE THE COMMENT BELOW MAKES, ACTUALLY ENFORCED. The loop used to also
+       break on `!remote.sha` — "nothing to collide with" — which is true of the pull but
+       says nothing about the push: a 409 there means another device created the file
+       between our read and our write, which is exactly a collision. Either way, falling
+       out of the loop with sha === null meant the merge was still written to local
+       storage, `last` was still stamped, and the nav still said "synced just now" for a
+       sync that never reached GitHub. Nothing was lost, but the one indicator he has for
+       "is the phone up to date" was lying, which is worse than a visible failure. */
+    if (sha === null) throw new Error("couldn't save to GitHub — it kept changing under us");
     /* Applied only after a successful push, so a failed sync never half-rewrites
        local data with a merge that was never agreed. */
     let changed = 0;
@@ -6753,7 +6776,23 @@ document.getElementById("openStrengthBtn").onclick = settingsAction(() => {
   settingsModal.style.display = "none";
   openStrength();
 });
-document.getElementById("strengthSearch").addEventListener("input", renderStrengthList);
+/* ---- typing is not a reason to redraw ----
+   Three controls were wired straight to a full re-render on every `input` event, and
+   each of those renders is expensive in a way that grows with the library: the strength
+   panel rebuilds a row and eight buttons per word (~7,000 nodes at 900 words), and
+   renderLibrary rebuilds the whole grid AND kicks off an IndexedDB scan. On a phone
+   that is a keystroke's worth of work per keystroke, and the input lags behind the
+   finger. Nothing is lost by waiting for the typing to pause — the result of the
+   intermediate renders was never looked at. */
+function debounced(fn, ms) {
+  let t = null;
+  return function () {
+    const args = arguments, self = this;
+    clearTimeout(t);
+    t = setTimeout(() => { t = null; fn.apply(self, args); }, ms);
+  };
+}
+document.getElementById("strengthSearch").addEventListener("input", debounced(renderStrengthList, 120));
 document.getElementById("strengthClose").onclick = () => {
   document.getElementById("strengthModal").style.display = "none";
   renderLibrary();   // dot changes can move a word's srs-driven state elsewhere in the grid
@@ -7254,7 +7293,6 @@ function pendingSave(v) {
   }
   lsSet(PENDING_KEY, JSON.stringify(v));
 }
-function pendingCount() { return Object.keys(pendingAll()).length; }
 
 /* Approving must refresh the reverse index, or the word you just accepted stays
    unfindable in the sentence pad until a page reload — which breaks the last step
@@ -7523,10 +7561,7 @@ function renderLibrary() {
      return below, meaning a session that boots straight into map view (the mode
      persists across reloads) would size its very first render off leftover or
      unset CSS custom properties. */
-  const rowPx = gridRowPx();
-  document.documentElement.style.setProperty("--grow", rowPx + "px");
-  document.documentElement.style.setProperty("--gfont", zoomLevel() + "px");
-  document.documentElement.style.setProperty("--ghe", Math.round(zoomLevel() * heScale()) + "px");
+  const rowPx = applyGridScale();
 
   /* The map is the other face of this same render — every mutation path already
      calls renderLibrary, so routing here keeps the map fresh with zero extra
@@ -7698,6 +7733,18 @@ function renderLibrary() {
 function heScale() {
   const m = lsGet(HE_KEY) || "tiny";
   return m === "full" ? 1.15 : 0.8;
+}
+
+/* The three custom properties every row sizes itself off, and the row height in px for
+   the absolute-positioning arithmetic. Split out of renderLibrary so the zoom slider can
+   apply the SIZE on every step of a drag — which costs three style writes — while the
+   grid REBUILD, which is the expensive half, waits for the drag to settle. */
+function applyGridScale() {
+  const rowPx = gridRowPx();
+  document.documentElement.style.setProperty("--grow", rowPx + "px");
+  document.documentElement.style.setProperty("--gfont", zoomLevel() + "px");
+  document.documentElement.style.setProperty("--ghe", Math.round(zoomLevel() * heScale()) + "px");
+  return rowPx;
 }
 
 function buildBlock(name, items, lib, pending, pos, rowPx, focus, srs, collapsed, lens) {
@@ -8401,21 +8448,12 @@ function buildOppSideEl(key, e, focus, srs, lens) {
   return side;
 }
 
-/* `focus` is passed in, never read from localStorage here: this runs once per row
-   and re-parsing the whole store per row cost ~2n JSON.parse calls per render
-   (2062 of them at 1000 words). `extraCls` is how opposites sides opt into their
-   own hover rule — hardcoding it here is what made the star invisible on every
-   normal row, since .sidestar is display:none outside an opposites row. */
-function focusStar(key, focus, extraCls) {
-  const marked = !!focus[key];
-  const star = document.createElement("button");
-  star.className = "star" + (extraCls ? " " + extraCls : "") + (marked ? " on" : "");
-  star.textContent = marked ? "★" : "☆";
-  star.title = marked ? "Working on “" + key + "” — click to unmark"
-                      : "Mark “" + key + "” as one you're working on";
-  star.addEventListener("click", (ev) => { ev.stopPropagation(); focusToggle(key); });
-  return star;
-}
+/* focusStar() built the ★ that used to sit in the row's hover strip. It moved into the
+   word panel when the row went down to three 24px targets (see rowActions), and nothing
+   has called this since — the panel builds its own via paintWpStar. `focus` is still
+   threaded through rowActions to both row builders, which is deliberate and noted there.
+   Removed rather than kept "in case": a second star builder is exactly how the star
+   went missing from the opposites half of the library once already. */
 
 /* Rendered synchronously in a neutral "fallback" state — checking IndexedDB per
    row (up to ~150 of them) during the render itself would mean either an async
@@ -8599,20 +8637,27 @@ function libJumpToMatch(dir) {
   void row.offsetWidth;   // restart the animation even when re-visiting the same row
   row.classList.add("gpulse");
 }
+/* The cursors reset on the keystroke itself — Enter must never jump to a match from the
+   previous query — but the grid rebuild waits for a pause. See debounced(). */
+const libSearchRender = debounced(renderLibrary, 120);
 document.getElementById("libSearch").addEventListener("input", () => {
   libMatchIdx = -1;
   mapMatchIdx = -1;
-  renderLibrary();
+  libSearchRender();
 });
 document.getElementById("libSearch").addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter") return;
   ev.preventDefault();
+  /* Both jumps below walk the DOM, so the debounced rebuild has to have happened first
+     — pressing Enter within the pause would otherwise cycle the PREVIOUS query's
+     matches. Rendering here is what makes deferring the keystroke renders safe. */
+  renderLibrary();
   const dir = ev.shiftKey ? -1 : 1;
   /* same key, same meaning, different geometry: scroll-and-pulse on the grid,
      fly-and-pulse on the map */
   if (libViewMode() === "map") mapFlyToMatch(dir); else libJumpToMatch(dir);
 });
-document.getElementById("archSearch").addEventListener("input", renderArchive);
+document.getElementById("archSearch").addEventListener("input", debounced(renderArchive, 120));
 
 document.getElementById("focusChip").addEventListener("click", () => {
   focusFilter = !focusFilter;
@@ -8646,9 +8691,15 @@ function busy(on) {
   busyDepth = Math.max(0, busyDepth + (on ? 1 : -1));
   document.getElementById("busyRing").classList.toggle("on", busyDepth > 0);
 }
+/* Dragging the slider fired a full grid rebuild — and an IndexedDB scan — on every
+   step of the drag. The type SIZE is three CSS custom properties, so it can track the
+   finger for nothing; only the block LAYOUT (absolute positions computed from the row
+   height) needs the rebuild, and that can wait for the drag to settle. */
+const zoomRebuild = debounced(renderLibrary, 90);
 document.getElementById("zoomRange").addEventListener("input", (ev) => {
   lsSet(ZOOM_KEY, ev.target.value);
-  renderLibrary();
+  applyGridScale();
+  zoomRebuild();
 });
 document.getElementById("heMode").addEventListener("change", (ev) => {
   lsSet(HE_KEY, ev.target.value);
@@ -12447,7 +12498,12 @@ function statsRange(days) {
   return out;
 }
 function statsTotals(days) {
-  const rows = days ? statsRange(days) : Object.keys(statsAll()).map(k => statsDay(statsAll(), k));
+  /* `st` read once. The all-time branch used to call statsAll() inside the map, so it
+     re-parsed the whole store once per day it had ever recorded — up to 400 parses to
+     draw one tile, and a fresh object each time, so statsDay's backfill was thrown away
+     as fast as it was written. */
+  const st = days ? null : statsAll();
+  const rows = days ? statsRange(days) : Object.keys(st).map(k => statsDay(st, k));
   const t = statsBlank(); t.days = 0;
   rows.forEach(r => {
     Object.keys(statsBlank()).forEach(k => { t[k] += (r[k] || 0); });
@@ -12985,12 +13041,17 @@ const SESSION_CARDS = 15;
    whatever those four happened to be WAS the impression, with no volume to average
    it out. A Quick session was worse still: the arithmetic gave it exactly one.
 
-   Now 1 shadow, 2 word, 8 bank, 2 chunk, 1 note, 1 reply. Sentences double. So does
-   the evidence `levelRecord` runs on — it only counts sentence/listen/reply cards, so
-   the measured level was being decided by about five samples a session, of which
-   roughly one and a half sat above his current band. Nothing else had to change to
-   fix that; there just had to be more sentences. */
-const SESSION_BANK_MAX = 8;
+   Now 1 shadow, 2 word, 2 chunk, 1 note — and the bank takes everything left, which on
+   a fifteen-card session is nine. Sentences double. So does the evidence `levelRecord`
+   runs on — it only counts sentence/listen/reply cards, so the measured level was being
+   decided by about five samples a session, of which roughly one and a half sat above his
+   current band. Nothing else had to change to fix that; there just had to be more
+   sentences.
+
+   There is deliberately no SESSION_BANK_MAX. There used to be one, set to 8, and it was
+   never read by anything — learnBuild derives the bank's room by subtraction, so a
+   constant claiming to cap it was a number that looked authoritative and decided
+   nothing. SESSION_BANK_MIN below is real: it is the floor, not a ceiling. */
 /* Never-drilled words get their own reserved slots at the front of the session —
    see the soft launch in learnBuild. SESSION_BANK_MIN is the floor that guarantees
    the context survives a session heavy with new words.
@@ -13745,14 +13806,10 @@ function convoScenes() {
   catch (e) {}
   return CORE_SCENES.concat(extra.filter(s => s && s.id && s.en));
 }
-function convoAddScene(s) {
-  if (!s || !s.id || !s.en) return;
-  let extra = [];
-  try { const a = JSON.parse(lsGet(CONVO_SCENES_KEY)); if (Array.isArray(a)) extra = a; } catch (e) {}
-  if (convoScenes().some(x => x.id === s.id)) return;
-  extra.push({ id: s.id, en: s.en, hint: s.hint || "" });
-  lsSet(CONVO_SCENES_KEY, JSON.stringify(extra.slice(-12)));
-}
+/* convoAddScene() sat here, the writer for the store convoScenes() reads. Nothing ever
+   called it — the extra-scenes half of CONVO_SCENES_KEY has never been written by
+   anything — so the reader above is really just CORE_SCENES with a hook left in for
+   whatever was going to fill it. The hook stays; the unused writer does not. */
 /* Same gate as sentences: every content word across every turn has to be one he has
    actually trained, or the conversation is a wall rather than a drill. */
 function convoServable(c, lib, srs) {
@@ -14749,7 +14806,7 @@ function campRouteOk(pts, spots, bandY) {
 /* No node may be further than this from the road. Beyond it the spur stops reading as
    a side track up to somewhere and starts reading as a line drawn between two things,
    which is exactly what the trail replaced. */
-const CAMP_REACH_MAX = 300, CAMP_REACH_GOOD = 205;
+const CAMP_REACH_GOOD = 205;
 function campRouteFor(spots, seed, entryX, bandY) {
   let best = null, bestScore = Infinity;
   for (let t = 0; t < 44; t++) {
@@ -16480,8 +16537,6 @@ function pathFocusCurrent() {
   view.scrollTop = Math.max(0, Math.min(padY + top, view.scrollHeight - view.clientHeight));
 }
 
-const PATH_GRAMMAR_LABEL = { past: "past tense", future: "future tense",
-                             joining: "joining clauses" };
 function pathCloseSheet() {
   const sheet = document.getElementById("pathSheet");
   if (sheet) sheet.classList.remove("open");
@@ -16741,6 +16796,21 @@ function learnChunkTargets(limit) {
   return scored.slice(0, limit).map(x => x.p);
 }
 
+/* How many sentence slots are left once every other slice has taken what it needs.
+   Pulled out of learnBuild as a pure function, because the arithmetic is where the bug
+   was and there was no way to look at it: `placed` counted the soft-launched word cards
+   twice (they are already inside `placed`, having been pushed straight after the shadow
+   picks), so the bank was handed two fewer slots than the composition above describes
+   and the fill loop quietly turned those two into isolated word cards.
+
+   `placed` is cards.length at the point of the call — shadow picks plus soft launches,
+   nothing else. Chunks and notes are chosen but not yet pushed, so they are counted
+   separately. */
+function learnBankRoom(size, placed, chunks, notes, reply, shape) {
+  const floor = shape === "quick" ? 1 : SESSION_BANK_MIN;
+  return Math.max(floor, size - reply - placed - chunks - notes);
+}
+
 function learnBuild(opts) {
   const lib = libAll();
   const only = (opts && opts.only) || null;
@@ -16896,16 +16966,24 @@ function learnBuild(opts) {
      Sentences are the residual now: every other slice takes what it needs, the bank
      gets the rest, and the session comes out at exactly `size` by construction rather
      than by a shuffle and a truncation. That is what actually delivers the doubling
-     the constants above describe — raising SESSION_BANK_MAX alone would have been
-     eaten by the fill loop padding the session back out with isolated word cards. */
+     the constants above describe — a bank ceiling on its own would have been eaten by
+     the fill loop padding the session back out with isolated word cards. */
   const chunkPicks = learnChunkTargets(shape === "quick" ? 1 : CHUNK_CARDS);
   const notePicks = noteTargets(shape === "quick" ? 0 : NOTES_PER_SESSION, only);
 
   /* Paid for out of the bank's allocation rather than out of chunks or notes, and
-     floored so a session heavy with new words still practises them in context. */
-  const reserved = cards.length + launching.length + chunkPicks.length + notePicks.length;
-  const bankRoom = Math.max(shape === "quick" ? 1 : SESSION_BANK_MIN,
-                            size - (replyPick ? 1 : 0) - reserved);
+     floored so a session heavy with new words still practises them in context.
+
+     `cards` ALREADY HOLDS the soft-launched word cards — they were pushed above, right
+     after the shadow picks. Adding `launching.length` a second time here charged them
+     twice, so bankRoom came out two short of what the constants above describe: seven
+     sentences in a full session instead of nine. The fill loop at the foot of this
+     function then padded the session back to fifteen with isolated word cards, which is
+     precisely the failure the "sentences are the residual now" note claims to have
+     fixed. Measured on the balanced shape: 1 shadow + 2 new + 2 chunk + 1 note left
+     nine slots, and the bank was being handed seven of them. */
+  const bankRoom = learnBankRoom(size, cards.length, chunkPicks.length,
+                                 notePicks.length, replyPick ? 1 : 0, shape);
   const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1);
   /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
      list. Mostly his own level, with a deliberate reach above it — "it should be
@@ -18144,12 +18222,24 @@ function learnVoiceBanner() {
 const SESSION_KEY = "hvr_session";
 const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;   // half a day
 
+/* `fluent` and `moved` were missing from this list, and both cost something real.
+
+   `fluent` is what the walk home runs on. learnAdvance does `s.fluent.some(...)` on
+   every clean card, so on a resumed session that was a TypeError — swallowed by the
+   try/catch around it, so nothing said so — and learnSpeedStart then found an empty
+   list and skipped the fluency pass entirely. A session interrupted by a phone call
+   silently lost the whole last stage of itself.
+
+   `moved` is what the end screen's "What moved" is drawn from, so without it a resumed
+   session reported only the words answered after the resume and called the rest
+   nothing. */
 function sessionStash() {
   const s = learnSession;
   if (!s || s.i >= s.cards.length) { sessionClear(); return; }
   lsSet(SESSION_KEY, JSON.stringify({
     ts: Date.now(), i: s.i, got: s.got, cards: s.cards,
-    strengthened: s.strengthened, back: s.back, path: s.path || null
+    strengthened: s.strengthened, back: s.back, path: s.path || null,
+    fluent: s.fluent || [], moved: s.moved || {}
   }));
 }
 function sessionClear() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
@@ -18170,8 +18260,13 @@ function sessionValidate(d, now) {
      word has since been deleted from the library, would throw on render — and a crash
      on resume is a far worse failure than not offering to resume. */
   if (!d.cards.every(c => c && c.kind && LEARN_KINDS[c.kind])) return null;
+  /* `fluent` and `moved` default rather than being dropped, so a session stashed by an
+     older build still resumes into a shape learnAdvance can work with — an absent
+     `fluent` is what made every clean card after a resume throw. */
   return { cards: d.cards, i: d.i, got: d.got || 0,
            strengthened: d.strengthened || {}, back: d.back || {},
+           fluent: Array.isArray(d.fluent) ? d.fluent : [],
+           moved: (d.moved && typeof d.moved === "object") ? d.moved : {},
            path: d.path || undefined, ts: d.ts };
 }
 function sessionRestore() {
@@ -18851,7 +18946,10 @@ function learnRenderCard() {
   const act = document.createElement("div"); act.className = "lactions";
   if (micOK) {
     const mic = document.createElement("button");
-    mic.className = "lmic"; mic.type = "button"; mic.textContent = "Say it";
+    /* "🎤 Say it", not "Say it": learnSpeakAttempt's finally block resets it to the
+       emoji form, so the button silently grew a microphone after the first attempt of
+       every session — and the hint in the stats pane names it as "🎤 Say it" too. */
+    mic.className = "lmic"; mic.type = "button"; mic.textContent = "🎤 Say it";
     mic.onclick = () => learnSpeakAttempt(mic, c);
     act.append(mic);
   } else {
@@ -21054,6 +21152,52 @@ T("freeVerify: empty and malformed input is safe", () => {
   assertEq(freeVerify({ ms: { tr: "x" } }), []);
 });
 
+/* ---- the session's shape is arithmetic, so it can be checked ---- */
+T("learnBankRoom: a full session leaves nine slots for sentences", () => {
+  /* 1 shadow + 2 soft launches are already in `placed`; 2 chunks and 1 note are not. */
+  assertEq(learnBankRoom(SESSION_CARDS, 3, CHUNK_CARDS, NOTES_PER_SESSION, 0, "balanced"), 9);
+});
+T("learnBankRoom: the soft launches are charged once, not twice", () => {
+  /* The bug: `placed + launching` double-counted the two word cards inside `placed`,
+     which is exactly this call with 2 added back on — seven, not nine. */
+  const right = learnBankRoom(SESSION_CARDS, 3, 2, 1, 0, "balanced");
+  const doubled = learnBankRoom(SESSION_CARDS, 3 + NEW_WORD_CARDS, 2, 1, 0, "balanced");
+  assertEq(right - doubled, NEW_WORD_CARDS, "two sentences were becoming word cards");
+});
+T("learnBankRoom: never drops below the floor, however full the session is", () => {
+  assertEq(learnBankRoom(SESSION_CARDS, 12, 4, 2, 1, "balanced"), SESSION_BANK_MIN);
+  assertEq(learnBankRoom(5, 4, 1, 0, 0, "quick"), 1);
+});
+T("learnBankRoom: a reply, when there is one, comes out of the session not the bank", () => {
+  assertEq(learnBankRoom(SESSION_CARDS, 3, 2, 1, 1, "balanced"), 8);
+});
+
+/* ---- the dictionary has no duplicate keys ----
+   A repeated literal key in an object literal is not a second entry: the later value
+   silently overwrites the first, and nothing at runtime can see that it happened. Four
+   pairs had crept in, and one of them cost a real word — שם was defined as the adverb
+   ("sham, there") and again 140 lines later as the noun ("shem, name"), so the adverb
+   sense had been unreachable for the whole life of the file.
+   This is the shape of that bug pinned in place. It cannot detect a NEW duplicate on
+   its own — only re-running the tooling in CLAUDE.md can — but it does guarantee that
+   the words it already cost stay fixed. */
+T("DICT: שם carries both senses, so both spellings can be typed", () => {
+  assertEq(DICT["שם"], ["sham/shem", "there / name"]);
+  /* TR_INDEX, not a fresh buildTrIndex(): the suite must not read the real library,
+     and this global was built during the init block that ran before it. */
+  assertTrue((TR_INDEX[trNorm("sham")] || []).indexOf("שם") !== -1, "\"sham\" must resolve to שם");
+  assertTrue((TR_INDEX[trNorm("shem")] || []).indexOf("שם") !== -1, "\"shem\" must resolve to שם");
+});
+T("DICT: the words that were being overwritten keep the fuller gloss", () => {
+  assertEq(DICT["אין"], ["ein", "there isn't / don't have"]);
+  assertEq(DICT["אוכל"], ["ochel", "eat(s) / food"]);
+  assertEq(DICT["בריאות"], ["bri'ut", "health"]);
+  assertEq(PHRASES["אם ירצה השם"], ["im yirtze hashem", "God willing"]);
+});
+T("CAT_FIX: רופא is a profession, not a health word", () => {
+  assertEq(CAT["רופא"], "Work & study");
+});
+
 /* ---- Task 7: telling a per-minute 429 from a per-day one ---- */
 T("rateLimitWaitMs: a short retry hint is a per-minute limit — wait it out", () => {
   assertEq(rateLimitWaitMs("please retry in 12.5s", 0), 13500);
@@ -22552,6 +22696,23 @@ T("mergeSrs: same day, the fuller record wins", () => {
   const b = { "א": { prod: SRSREC({ last: "2026-08-20", n: 7 }), recv: srsBlank() } };
   assertEq(mergeSrs(a, b)["א"].prod.n, 7);
 });
+/* The tie the old code could not break. Both devices answered the word twice on the
+   20th and graded it differently, so `last` and `n` both agree and there is nothing
+   left to sort on — and it used to fall back to "whichever was passed first", which is
+   "mine" on both devices. Each kept its own record, and which device happened to sync
+   first silently decided the schedule. */
+T("mergeSrs: same day, same count, still commutative", () => {
+  const mine   = { "א": { prod: SRSREC({ last: "2026-08-20", n: 2, due: "2026-08-30", diff: 3 }), recv: srsBlank() } };
+  const theirs = { "א": { prod: SRSREC({ last: "2026-08-20", n: 2, due: "2026-08-24", diff: 6 }), recv: srsBlank() } };
+  assertEq(mergeSrs(mine, theirs), mergeSrs(theirs, mine), "order must not decide it");
+  assertEq(mergeSrs(mine, theirs)["א"].prod.due, "2026-08-24", "the sooner review wins");
+});
+T("mergeSrs: an identical due date falls through to the harder word", () => {
+  const mine   = { "א": { prod: SRSREC({ last: "2026-08-20", n: 2, diff: 3 }), recv: srsBlank() } };
+  const theirs = { "א": { prod: SRSREC({ last: "2026-08-20", n: 2, diff: 7 }), recv: srsBlank() } };
+  assertEq(mergeSrs(mine, theirs), mergeSrs(theirs, mine));
+  assertEq(mergeSrs(mine, theirs)["א"].prod.diff, 7);
+});
 T("mergeSrs: a word on only one device still survives", () => {
   const a = { "א": { prod: SRSREC(), recv: srsBlank() } };
   const b = { "ב": { prod: SRSREC(), recv: srsBlank() } };
@@ -22797,6 +22958,23 @@ T("sessionValidate: fills in missing bookkeeping rather than refusing", () => {
   assertEq(r.got, 0);
   assertEq(r.strengthened, {});
   assertEq(r.back, {});
+});
+/* learnAdvance reads s.fluent on EVERY clean card, so a resumed session without it
+   threw a TypeError there — caught by the surrounding try/catch, so nothing said so —
+   and the walk home then found nothing to run on and was skipped entirely. A blank
+   array is the only shape that survives that path. */
+T("sessionValidate: a resumed session always has a fluent list to push onto", () => {
+  const r = sessionValidate({ ts: NOW, i: 0, cards: SCARDS }, NOW);
+  assertEq(r.fluent, [], "missing entirely");
+  assertEq(sessionValidate(SESS({ fluent: "nonsense" }), NOW).fluent, [], "wrong type");
+  assertEq(sessionValidate(SESS({ fluent: [{ he: "שלום", tr: "shalom" }] }), NOW).fluent,
+           [{ he: "שלום", tr: "shalom" }], "a real one survives the round trip");
+});
+T("sessionValidate: what the session had already moved comes back with it", () => {
+  assertEq(sessionValidate({ ts: NOW, i: 0, cards: SCARDS }, NOW).moved, {});
+  assertEq(sessionValidate(SESS({ moved: { "א": { prod: 0.5, recv: 0 } } }), NOW).moved,
+           { "א": { prod: 0.5, recv: 0 } });
+  assertEq(sessionValidate(SESS({ moved: 7 }), NOW).moved, {}, "a scalar is not a record");
 });
 
 /* ---- kept voice notes ---- */
@@ -23295,13 +23473,11 @@ T("bankCooldownSplit: junk inputs are empty pools, not a crash", () => {
 /* ====================  THE MAP IS THE FRONT DOOR  ====================
    The Learn screen opens onto the campaign, scrolled to where you are, so these two
    decide what you actually see when the app opens. */
-function withPathScores(scores, fn) {
-  const before = lsGet(PATH_SCORES_KEY);
-  try { lsSet(PATH_SCORES_KEY, JSON.stringify(scores)); fn(); }
-  finally { if (before === null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, before); }
-}
-const PASS7 = { 1: { pct: 100 }, 2: { pct: 100 }, 3: { pct: 90 }, 4: { pct: 90 },
-                5: { pct: 90 }, 6: { pct: 90 }, 7: { pct: 90 } };
+/* withPathScores() and PASS7 lived here — a fixture that wrote to the REAL
+   hvr_pathscores and restored it afterwards, plus the scores it wrote. Nothing had
+   called either since the path tests were rewritten against the campaign below, and a
+   helper that touches a real store is exactly the thing this suite's own header forbids;
+   leaving it lying about was an invitation to reach for it. */
 
 /* ====================  THE CAMPAIGN  ====================
    These replace four tests written against PATH_SECTIONS, which no longer decides

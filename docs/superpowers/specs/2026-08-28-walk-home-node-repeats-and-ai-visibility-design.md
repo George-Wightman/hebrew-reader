@@ -29,6 +29,18 @@ And three more, in the same message:
 > For htat matter It owould be good ot have an indicator whenever the API is being
 > called, telling me what is being called and what for.
 
+On seeing the first draft of Phase 3, he replaced the pill with something better and
+said what it is actually for:
+
+> Im happy with a little like star (like hte gemini star/ any ai star these days) next
+> to hte settings icon. That I can click on an it shows the last call and when it was
+> (plus any other cool info that we get back/ send to the call, maybe thats behind a
+> "more details" button). When there are calls out hte icon is blue like pulsing a
+> little, when its innacctive its just gray like the settings colour. I want to know
+> what and when the API was called if it failed and basically be able to see what is
+> oging wrong when its going wrong so I can better feedback to you so we can better
+> imrpove things in hte future.
+
 Four items, reported together, specced together. Phases 2, 3 and 4 turn out to be one
 symptom seen from three sides — that is the finding below, and it is why they ship in
 one batch rather than separately. Each phase still stands alone and can be reverted
@@ -143,35 +155,68 @@ than with last session's sentences.
 **Test:** `campBuild` is driven with a stub bank where every item is recent, asserting
 the card count falls rather than the repeats rising.
 
-## Phase 3 — An AI status light beside Settings
+## Phase 3 — A star beside the gear, and a log behind it
 
-`navSync` is the precedent: a small pill in the top nav, one line of text, no chrome.
-The AI indicator takes the same shape and sits next to it.
+### 3a. The star
 
-Three states.
+A small four-point star sits immediately left of `⚙ Settings` in the top nav — an inline
+SVG, not an emoji, so it matches the gear's flat sans register rather than sitting on it
+as a sticker.
 
-- **Quiet.** Nothing in flight, nothing wrong. Present but unemphatic, like `navSync`.
-- **Working.** The label of the call currently in flight (Phase 4).
-- **Trouble.** An amber dot and short text after a failed call.
+Three states, and the colour is the whole language:
 
-**Trouble is sticky.** It persists until the next successful call, rather than clearing
-on a timer. The failure that matters is the one that happened during a session he was
-looking away from — a message that has already gone by the time he looks is the same as
-no message, which is the state the app is in today. Tapping the pill opens the AI section
-of Settings, where `aiQSummary` already reports the day's quota.
+- **Idle.** `var(--muted)` — exactly `.navgear`'s colour, so at rest it reads as another
+  piece of nav furniture rather than as a status light demanding to be read.
+- **Working.** `var(--accent)`, pulsing gently. Teal rather than a new blue, because
+  `.navsync.syncing` already pulses `var(--accent)` for a network call in flight, and a
+  second colour for the same idea would be a second language for one state. Reduced-motion
+  drops the animation and keeps the colour, as `syncpulse` already does.
+- **Trouble.** `var(--bad)`, steady, not pulsing. A pulse means *happening*; a fault is a
+  standing condition.
+
+**Trouble is sticky.** It persists until the next successful call rather than clearing on
+a timer. The failure that matters is the one that happened while he was mid-session and
+looking at a card — a message that has already gone by the time he looks is the same as no
+message, which is the state the app is in today.
+
+### 3b. The log behind it
+
+Tapping the star opens an **AI activity** panel — a plain `.modal-backdrop` / `.modal`,
+the same idiom as Settings and Word strength.
+
+At the top, the last call in full: what it was for, how long ago, which model, how long it
+took, and what came back. Beneath it, the calls before it, one line each. At the bottom,
+`aiQSummary` — the day's quota, which already exists and has never had a home outside
+Settings.
+
+A **More details** toggle on each entry reveals what was actually sent and what actually
+came back. That is the entire point of the feature, in his words: *"be able to see what is
+oging wrong when its going wrong so I can better feedback to you"*. A failed call whose
+error text he can read to me is worth more than any status colour.
+
+`AI_LOG_KEY = "hvr_ailog"`, a ring of the last `AI_LOG_MAX = 20` calls. Each entry holds
+timestamp, label, model, outcome, duration, HTTP status, error text, and previews of the
+prompt and the reply.
+
+**The previews are capped and text-only.** `AI_LOG_PREVIEW = 1200` characters a side, and
+non-text parts (a voice note's base64 `inlineData`) are recorded as `[audio]` rather than
+stored. A transcription prompt carries a megabyte of audio; logging it would blow the
+localStorage budget on the first voice note and take the library down with it.
 
 `campWarm`'s `.catch(() => 0)` keeps swallowing the error for control flow — nothing
-should block on a failed commission — but reports it to the indicator on the way past.
+should block on a failed commission — but it is recorded on the way past.
 
-**Test:** the state machine is a pure `aiStatusNext(state, event)` so the suite can
-assert that a failure survives an intervening quiet period and clears only on success.
+**Test:** the ring buffer and the state machine are both pure — `aiLogPush(log, entry)`
+asserts the cap holds and the newest is first; `aiStatusOf(log, inflight)` asserts that a
+failure survives an intervening quiet period and clears only on the next success.
 
 ## Phase 4 — Every call says what it is for
 
 `geminiRequest` is already the single funnel — *"the one place every Gemini call goes
-through"* — so this is one function. It gains `opts.label`, shown by the Phase 3 pill for
-the duration of the call. Reference-counted like `busy()`, for the same reason: two
-overlapping calls must not have the first to finish blank the label of the second.
+through"* — so this is one function. It gains `opts.label`, which the star shows while the
+call is in flight and the log keeps afterwards. Reference-counted like `busy()`, for the
+same reason: two overlapping calls must not have the first to finish blank the label of
+the second.
 
 Callers pass what the work is for, in George's terms rather than the code's: "Writing
 practice sentences", "Writing the conversation for The Market", "Checking your answer",
@@ -180,8 +225,8 @@ call site is obliged to change before it has something useful to say.
 
 **`busyRing` is untouched.** It stays wrapped around interactive callers only. A
 background commission pulsing the whole window edge mid-session would be worse than the
-silence it replaces; the pill is the right register for work he did not ask for and is
-not waiting on.
+silence it replaces; the star is the right register for work he did not ask for and is not
+waiting on.
 
 ---
 
@@ -211,5 +256,25 @@ distinguishes `spent` from `ok`, and the Phase 3 pill could say "no AI until tom
 rather than "AI unreachable". Worth doing, and not until the indicator exists and has
 been looked at.
 
-**Per-call history.** An indicator showing what is happening now is the ask. A log of
-what happened today is a different feature and would want a place to live.
+**In-app bug reporting.** George, in the same message:
+
+> Maybe thats outside of hte scope for right now the... I find myself mid session beign
+> like "this thing could use fixing/ changing" if htere was a way in app to like save a
+> SS with a comment that was stored that you could see later that would be a game
+> changer.
+
+Deferred at his own suggestion — *"Maybe you want to wait ot deelop htis bug reporting
+feature till after this section"* — and it is the right call, because Phase 3 builds the
+half of it that is hard. A capture store, a list behind a nav control, and previews behind
+a details toggle are exactly the shape a report log needs; once the AI log exists, the
+reporter is that pattern pointed at a different kind of entry. Doing them together would
+mean designing the store around two consumers before either has been used.
+
+Worth naming the real question that phase has to answer, so it is not rediscovered: a
+screenshot of the running app is `html2canvas`-shaped work in a codebase with no build
+step and no dependencies, and the alternative — capturing app *state* rather than pixels
+(which screen, which card, which session, the last few AI calls) — may be more useful to
+me than an image, and is free.
+
+**Per-call history beyond twenty.** The ring holds the last twenty calls, which covers a
+session and a bit. A full day's log would want a place to live and a way to clear it.

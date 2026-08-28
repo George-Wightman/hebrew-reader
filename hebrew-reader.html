@@ -265,6 +265,15 @@
   .navstar.on { color: var(--accent); animation: syncpulse 1.1s ease-in-out infinite; }
   .navstar.bad { color: var(--bad); }
   @media (prefers-reduced-motion: reduce) { .navstar.on { animation: none; } }
+  /* Teal here does not mean "working" — it means SOMETHING IS WAITING TO REACH HIM, and
+     the action is finishing the session or hitting sync. That is exactly --accent's job
+     in this palette ("you can act on this"). Steady, never pulsing: the pulse belongs to
+     the star and means a call is happening right now. Shown only when sync is actually
+     configured, or every flag is permanently unsent and the light becomes wallpaper. */
+  .navflag.waiting { color: var(--accent); }
+  /* .modal textarea is the paste box: monospace and 140px tall, which is right for a
+     wall of pasted text and wrong for one sentence typed with a thumb mid-session. */
+  #flagText { min-height: 68px; font-family: inherit; font-size: .9rem; line-height: 1.5; }
 
   /* ---- the AI log ----
      Deliberately plain. This is the app's diagnostic surface, not part of the world —
@@ -1927,6 +1936,13 @@
   <span class="navsync" id="navSync" title="Your data lives in this browser only. Turn on sync in Settings."><i></i><span>on this device</span></span>
   <!-- The AI star. Its whole job is to make an invisible failure visible: a dead key and
        a node with nothing left to write produced identical symptoms before this existed. -->
+  <!-- Things to change. Its own control rather than a gesture on the star, because the
+       whole point is catching a thought that arrives mid-card, and a control you have to
+       remember exists is one that never gets used. -->
+  <button class="navstar navflag" id="flagBtn" type="button" title="Note something to change"
+          aria-label="Note something to change">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 2.2a1 1 0 0 1 1 1v.7c2.4-1.2 4.6.6 6.9.6 1.3 0 2.6-.4 3.9-1.1a.7.7 0 0 1 1.1.6v8.2a.7.7 0 0 1-.4.6c-1.5.8-3 1.3-4.6 1.3-2.3 0-4.5-1.8-6.9-.7v7.3a1 1 0 0 1-2 0V3.2a1 1 0 0 1 1-1z"/></svg>
+  </button>
   <button class="navstar" id="aiStar" type="button" title="AI activity" aria-label="AI activity">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8c.62 5.2 4.98 9.56 10.2 10.2-5.22.62-9.58 4.98-10.2 10.2-.62-5.22-4.98-9.58-10.2-10.2 5.22-.64 9.58-5 10.2-10.2z"/></svg>
   </button>
@@ -2630,6 +2646,24 @@
 </div>
 
 <!-- paste result modal -->
+<!-- Things to change. The context line above the box is the feature working: he can see
+     the flag already knows which card he is on, so the sentence he types can be about what
+     he actually thinks rather than about where he is. -->
+<div class="modal-backdrop" id="flagModal" style="display:none">
+  <div class="modal">
+    <h2>Things to change</h2>
+    <p class="note" id="flagWhere"></p>
+    <textarea id="flagText" rows="3" placeholder="What would you change about this?"></textarea>
+    <div class="btnrow" style="justify-content:space-between">
+      <span class="note" id="flagSaved"></span>
+      <span><button class="btn" id="flagAddBtn">Save it</button>
+            <button class="btn secondary" id="flagClose">Close</button></span>
+    </div>
+    <div class="ailog" id="flagList"></div>
+    <p class="note" id="flagSyncNote"></p>
+  </div>
+</div>
+
 <!-- What the AI has been asked, and what came back. George: "I want to know what and when
      the API was called if it failed and basically be able to see what is oging wrong when
      its going wrong so I can better feedback to you". The details toggle is the feature;
@@ -3114,6 +3148,25 @@ function mergeObjUnion(a, b, mineIsNewer) {
     : Object.assign({}, a || {}, b || {});
 }
 
+/* Union by id, newest kept. Deliberately NOT mergeById: that carries the bank's `seen`
+   and `lvl` semantics, which mean nothing for a flag, and it resolves field-level
+   conflicts a flag cannot have — one is written once and never edited, so the only
+   question is whether BOTH devices' flags survive. They must: without a rule here the
+   generic array handling is `mineIsNewer ? mine : theirs`, and a thought he had on the
+   phone would be destroyed by the next sync from the laptop.
+
+   Ids lead with Date.now(), so sorting by id is sorting by time and the cap keeps the
+   newest. That also satisfies mergeById's standing warning: the output order must not
+   depend on which side was called `a`, or every sync writes a different file forever. */
+function mergeFlags(a, b, cap) {
+  const byId = {};
+  [a, b].forEach(list => (Array.isArray(list) ? list : []).forEach(f => {
+    if (f && f.id && !byId[f.id]) byId[f.id] = f;
+  }));
+  const out = Object.keys(byId).sort().map(k => byId[k]);
+  return cap ? out.slice(-cap) : out;
+}
+
 /* Which rule each store gets. Anything absent falls through to the generic handling
    in mergeKeyMap: objects union, arrays and scalars take the newer blob's value. */
 const MERGE_RULES = {
@@ -3127,7 +3180,8 @@ const MERGE_RULES = {
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
   "hvr_struggle":   (a, b) => mergeMaxNums(a, b),
-  "hvr_recency":    (a, b) => mergeMaxNums(a, b)
+  "hvr_recency":    (a, b) => mergeMaxNums(a, b),
+  "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX)
 };
 
 /* Merges one key's PARSED values. Returns the merged value, never a string. */
@@ -6078,6 +6132,21 @@ function openSettings() {
   settingsModal.style.display = "flex";
 }
 document.getElementById("settingsBtn").onclick = openSettings;
+document.getElementById("flagBtn").onclick = () => flagModalOpen(true);
+document.getElementById("flagClose").onclick = () => flagModalOpen(false);
+wireModalBackdropClose(document.getElementById("flagModal"), () => flagModalOpen(false));
+document.getElementById("flagAddBtn").onclick = () => {
+  const box = document.getElementById("flagText");
+  const text = box.value.trim();
+  if (!text) { box.focus(); return; }
+  flagAdd(text, flagPending || flagContext());
+  box.value = "";
+  /* Stays open. He is often three thoughts deep by the time he opens this, and closing
+     the panel after each one would cost him the other two. */
+  document.getElementById("flagSaved").textContent = "Saved.";
+  flagRender();
+  flagPaint();
+};
 document.getElementById("aiStar").onclick = () => aiModalOpen(true);
 document.getElementById("aiClose").onclick = () => aiModalOpen(false);
 document.getElementById("aiModal").onclick = ev => {
@@ -6494,6 +6563,12 @@ function SYNC_LOCAL_SET() {
     SESSION_KEY, BLOCK_KEY, ZOOM_KEY, HE_KEY, LIBVIEW_KEY, MAPPOS_KEY, MAPVIEW_KEY,
     COLLAPSE_KEY, VIEW_KEY, PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY, PAD_KEY,
     AUDIO_CONSENT_KEY, "hvr_migrated", "hvr_voicebanner",
+    /* A LIVE DIAGNOSTIC FOR THE DEVICE IN YOUR HAND. It shipped syncing, because it is
+       hvr_-prefixed and syncKeys is a prefix scan — and under the default array rule the
+       laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
+       local: what actually needs to reach me is already snapshotted into whichever flag
+       was raised about it. */
+    AI_LOG_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY
   ]));
@@ -6635,6 +6710,9 @@ async function syncRun(reason, opts) {
     syncLastRun = Date.now();
     syncSetStatus("");
     if (changed) syncAfterApply();
+    /* The flag's teal is a claim about whether GitHub has them. This is the moment that
+       claim stops being true, so it is the moment to stop making it. */
+    try { flagPaint(); } catch (e) {}
     return true;
   } catch (e) {
     syncSetStatus(e.message || "sync failed", true);
@@ -10256,6 +10334,193 @@ function aiLogRender() {
    session is still red this morning — the store is what remembers, not the session. Down
    here rather than beside the click handlers because aiInflight above is a let. */
 setTimeout(aiStarPaint, 0);
+setTimeout(flagPaint, 0);
+/* =====================  THINGS TO CHANGE  =====================
+   George: "i need a way to highlight what i want to change its not alwawys a bug its
+   more id new features to change, so when i come to chat youll know thevnd what im
+   talking about."
+
+   The last clause is the whole requirement. A sentence typed on a phone on a Tuesday has
+   to still mean something in a chat on a Thursday, which means the flag carries the
+   MOMENT and not just the words — the card that was on screen, the node, what the
+   scheduler thought of those words, and the AI calls that had just run.
+
+   It reaches me for free. syncKeys() is a prefix scan over hvr_, so this store is picked
+   up with no plumbing, and mergeFlags above stops one device's flags overwriting the
+   other's. Nothing to copy, nothing to paste, nothing to remember at a laptop. */
+const FLAG_KEY = "hvr_flags";
+const FLAG_MAX = 40;
+/* Trimmed harder than the log's 1200, and three calls rather than twenty: a flag is a
+   permanent record that rides every sync, where the log is a transient local one. */
+const FLAG_AI_PREVIEW = 400, FLAG_AI_CALLS = 3;
+
+function flagAll() {
+  try { const v = JSON.parse(lsGet(FLAG_KEY)); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+function flagSave(v) { try { lsSet(FLAG_KEY, JSON.stringify(v)); } catch (e) {} }
+/* Date.now() first so id order IS time order — mergeFlags relies on it to keep the
+   newest, and the random tail is what stops two devices colliding within a millisecond. */
+function flagNewId() { return String(Date.now()) + "-" + Math.random().toString(36).slice(2, 7); }
+/* Oldest first, matching mergeFlags' output so the store and the merge agree on order.
+   The panel reverses for display. */
+function flagAdd(text, ctx) {
+  const f = { id: flagNewId(), ts: Date.now(),
+              text: String(text || "").trim().slice(0, 2000), ctx: ctx || {} };
+  flagSave(flagAll().concat([f]).slice(-FLAG_MAX));
+  return f;
+}
+function flagDrop(id) { flagSave(flagAll().filter(f => f && f.id !== id)); }
+
+/* HAVE THEY REACHED ME YET. Pure, because this is the one claim the feature makes and
+   the sync code already carries a scar about an indicator that lied: syncMeta().last is
+   stamped only after a successful push, so comparing the newest flag against it is an
+   honest answer rather than an optimistic one. */
+function flagsWaiting(flags, lastSyncISO) {
+  const newest = (flags || []).reduce((m, f) => Math.max(m, (f && f.ts) || 0), 0);
+  if (!newest) return false;
+  const last = Date.parse(lastSyncISO || "");
+  return !last || newest > last;
+}
+
+/* WHAT THE APP KNEW AT THAT INSTANT. Every branch is defensive and the whole thing is
+   wrapped: a flag that throws while describing the screen is a flag he loses, and losing
+   the thought is the only failure this feature actually has. */
+function flagContext() {
+  const c = { at: new Date().toISOString() };
+  try { c.view = lsGet(VIEW_KEY) || ""; } catch (e) {}
+  try { c.screen = learnScreenShowing() || ""; } catch (e) {}
+  try {
+    const s = learnSession;
+    if (s && s.cards && s.cards[s.i]) {
+      const card = s.cards[s.i];
+      c.card = { kind: card.kind, n: s.i + 1, of: s.cards.length,
+                 he: learnExpectedHe(card) || "",
+                 tr: (card.item && card.item.tr) || "",
+                 en: (card.item && card.item.en) || "" };
+      if (card.kind === "conversation" && card.convo) {
+        c.card.beats = convoBeatCount(card.convo);
+        c.card.covered = Object.keys(s.beatsHit || {}).length;
+      }
+      /* What the scheduler thinks, which is exactly what a screenshot cannot carry. */
+      const srs = srsAll();
+      c.words = (card.words || []).slice(0, 8).map(w =>
+        w + " (" + srsStrengthOf(srs, w, "prod") + "/" + srsStrengthOf(srs, w, "recv") + ")");
+    }
+    if (s) c.session = { at: s.i + 1, of: (s.cards || []).length, got: s.got };
+    if (s && s.path) c.lesson = s.path.id + " · lesson " + s.path.lesson;
+  } catch (e) {}
+  try {
+    const id = (learnSession && learnSession.path && learnSession.path.id) || campSheetId;
+    const node = id ? campNode(id) : null;
+    if (node) {
+      const ch = campChapterOf(node.id);
+      c.node = node.name + (ch ? " · " + ch.theme : "");
+      c.nodeWords = (node.words || []).join(", ");
+    }
+  } catch (e) {}
+  try {
+    c.ai = aiLogAll().slice(0, FLAG_AI_CALLS).map(e => ({
+      label: e.label, ok: e.ok, model: e.model, ms: e.ms, err: e.err,
+      req: String(e.req || "").slice(0, FLAG_AI_PREVIEW),
+      res: String(e.res || "").slice(0, FLAG_AI_PREVIEW)
+    }));
+  } catch (e) {}
+  try { c.screenSize = window.innerWidth + "×" + window.innerHeight; } catch (e) {}
+  return c;
+}
+
+/* One line, for the box he is about to type into — so he can SEE the flag already knows
+   where he is and does not waste his sentence describing it. */
+function flagContextLine(c) {
+  const bits = [];
+  if (c.node) bits.push(c.node);
+  if (c.card) bits.push(c.card.kind + " " + c.card.n + "/" + c.card.of +
+                        (c.card.he ? " · " + c.card.he : ""));
+  else if (c.screen) bits.push(c.screen);
+  else if (c.view) bits.push(c.view);
+  return bits.length ? bits.join(" · ") : "nothing on screen worth noting";
+}
+
+function flagPaint() {
+  const el = document.getElementById("flagBtn");
+  if (!el) return;
+  let waiting = false;
+  try { waiting = syncConfigured() && flagsWaiting(flagAll(), syncMeta().last); } catch (e) {}
+  el.classList.toggle("waiting", waiting);
+  el.title = waiting ? "Written, but not synced yet — tap to see"
+                     : "Note something to change";
+}
+
+function flagRender() {
+  const list = document.getElementById("flagList");
+  if (!list) return;
+  const flags = flagAll();
+  list.innerHTML = "";
+  /* Newest first for reading; the store is oldest-first so it agrees with the merge. */
+  flags.slice().reverse().forEach(f => {
+    const row = document.createElement("div");
+    row.className = "ailogrow";
+    const head = document.createElement("div");
+    const lab = document.createElement("span");
+    lab.className = "ailoglab";
+    lab.textContent = f.text || "(no words)";
+    const when = document.createElement("span");
+    when.className = "ailogwhen";
+    when.textContent = syncAgo(f.ts) + " · " + flagContextLine(f.ctx || {});
+    head.append(lab, when);
+    row.append(head);
+
+    const more = document.createElement("div");
+    more.className = "ailogmore";
+    more.style.display = "none";
+    const pre = document.createElement("pre");
+    pre.textContent = JSON.stringify(f.ctx || {}, null, 1);
+    more.append(pre);
+    const btn = document.createElement("button");
+    btn.className = "linkbtn";
+    btn.textContent = "More details";
+    btn.onclick = () => {
+      const open = more.style.display === "none";
+      more.style.display = open ? "block" : "none";
+      btn.textContent = open ? "Fewer details" : "More details";
+    };
+    const del = document.createElement("button");
+    del.className = "linkbtn";
+    del.style.marginLeft = "12px";
+    del.textContent = "Delete";
+    del.onclick = () => { flagDrop(f.id); flagRender(); flagPaint(); };
+    row.append(btn, del, more);
+    list.append(row);
+  });
+
+  /* THE WHOLE PROMISE OF THE FEATURE, STATED. If these have not reached GitHub then I
+     cannot read them, and he is entitled to know that rather than assume it. */
+  const note = document.getElementById("flagSyncNote");
+  if (!flags.length) note.textContent = "";
+  else if (!syncConfigured())
+    note.textContent = "Sync isn't set up, so these are only on this device — turn it on in Settings.";
+  else if (flagsWaiting(flags, syncMeta().last))
+    note.textContent = "Not synced yet. They go up at the end of your next session.";
+  else note.textContent = "Synced — " + flags.length + " noted.";
+}
+
+function flagModalOpen(on) {
+  document.getElementById("flagModal").style.display = on ? "flex" : "none";
+  if (!on) return;
+  /* Captured on OPEN, not on save: he may spend a minute typing, and by then a card can
+     have moved on underneath him. The moment being described is the one he reached for
+     the flag in. */
+  flagPending = flagContext();
+  document.getElementById("flagWhere").textContent = "About: " + flagContextLine(flagPending);
+  document.getElementById("flagSaved").textContent = "";
+  const box = document.getElementById("flagText");
+  box.value = "";
+  flagRender();
+  try { box.focus(); } catch (e) {}
+}
+let flagPending = null;
+
 function aiModalOpen(on) {
   document.getElementById("aiModal").style.display = on ? "flex" : "none";
   if (on) aiLogRender();
@@ -16578,12 +16843,17 @@ function campWordRow(k, lib, srs) {
          '<u>' + campEscape(e.en || (DICT[k] ? DICT[k][1] : "")) + '</u></span>';
 }
 
+/* Which node sheet is open. Nothing needed this before — the sheet rebuilt itself from
+   its own id on every open — but a flag raised while reading a node has to be able to say
+   WHICH node, and reconstructing that from the DOM would be reading the view for state. */
+let campSheetId = "";
 function campOpenNode(id) {
   const c = campAll(), srs = srsAll(), lib = libAll();
   const n = campNode(id, c);
   const sheet = document.getElementById("pathSheet");
   const panel = document.getElementById("pathSheetInner");
   if (!n || !sheet || !panel) return;
+  campSheetId = id;
   campEnsureWords(n);
   const state = campNodeState(id, c, srs);
   const p = campNodeProgress(n, srs);
@@ -17263,6 +17533,7 @@ function pathFocusCurrent() {
 }
 
 function pathCloseSheet() {
+  campSheetId = "";
   const sheet = document.getElementById("pathSheet");
   if (sheet) sheet.classList.remove("open");
   const backdrop = document.getElementById("pathSheetBackdrop");
@@ -24353,6 +24624,61 @@ T("aiPoolFor: only the lite alias is the big pool", () => {
   assertEq(aiPoolFor(""), "strong");
   assertEq(aiPoolFor(null), "strong");
 });
+/* ---- things to change ---- */
+T("mergeFlags: a thought he had on the phone survives a sync from the laptop", () => {
+  /* Without a MERGE_RULES entry the generic array handling is `mineIsNewer ? mine :
+     theirs`, so one device's flags simply destroy the other's. That is the entire
+     reason this rule exists. */
+  const phone = [{ id: "1700000000001-aaaaa", text: "the walk home is too long" }];
+  const laptop = [{ id: "1700000000002-bbbbb", text: "map labels overlap at chapter 3" }];
+  const out = mergeFlags(phone, laptop, 40);
+  assertEq(out.length, 2, "both, or the feature does not work across two devices");
+  assertEq(out.map(f => f.id), ["1700000000001-aaaaa", "1700000000002-bbbbb"]);
+});
+T("mergeFlags: the same flag arriving from both sides is still one flag", () => {
+  const f = { id: "1700000000001-aaaaa", text: "same" };
+  assertEq(mergeFlags([f], [f], 40).length, 1);
+});
+T("mergeFlags: order does not depend on which side is called `a`", () => {
+  /* mergeById's standing warning, and it applies here for the same reason: an output
+     order that flips between devices writes a different file on every sync, forever. */
+  const a = [{ id: "1700000000003-ccccc" }], b = [{ id: "1700000000001-aaaaa" }];
+  assertEq(mergeFlags(a, b, 40).map(f => f.id), mergeFlags(b, a, 40).map(f => f.id));
+});
+T("mergeFlags: the cap keeps the NEWEST, because id order is time order", () => {
+  const mk = n => ({ id: "17000000000" + String(n).padStart(2, "0") + "-x" });
+  const out = mergeFlags([mk(1), mk(2), mk(3)], [mk(4), mk(5)], 2);
+  assertEq(out.map(f => f.id), [mk(4).id, mk(5).id], "the two most recent thoughts");
+});
+T("mergeFlags: something with no id cannot be merged and is dropped, not thrown on", () => {
+  assertEq(mergeFlags([{ text: "no id" }, null], [{ id: "1-a" }], 40).map(f => f.id), ["1-a"]);
+  assertEq(mergeFlags(null, undefined, 40), []);
+});
+T("flagsWaiting: honest about whether they have actually reached GitHub", () => {
+  /* syncMeta().last is stamped only after a successful push — see syncRun, which carries
+     a scar about an indicator that said "synced just now" for a sync that never landed. */
+  const flags = [{ ts: Date.parse("2026-08-28T10:00:00Z") }];
+  assertTrue(flagsWaiting(flags, "2026-08-28T09:00:00Z"), "written after the last push");
+  assertTrue(!flagsWaiting(flags, "2026-08-28T11:00:00Z"), "the push carried it up");
+  assertTrue(flagsWaiting(flags, ""), "never synced at all is definitely waiting");
+  assertTrue(!flagsWaiting([], ""), "and nothing written is nothing waiting");
+});
+T("flagContextLine: says where he was, in the order he would say it", () => {
+  assertEq(flagContextLine({ node: "How you are · Getting by",
+                             card: { kind: "sentence", n: 3, of: 10, he: "הבית גדול" } }),
+           "How you are · Getting by · sentence 3/10 · הבית גדול");
+  assertEq(flagContextLine({ screen: "lMap" }), "lMap");
+  assertEq(flagContextLine({}), "nothing on screen worth noting");
+});
+T("the AI log is device-local and the flags are not", () => {
+  /* The log shipped syncing this morning purely because syncKeys is a prefix scan. Two
+     devices under the default array rule means the laptop's log overwrites the phone's. */
+  assertTrue(SYNC_LOCAL_SET().has(AI_LOG_KEY), "a live diagnostic belongs to its device");
+  assertTrue(!SYNC_LOCAL_SET().has(FLAG_KEY), "but a flag has to travel");
+  assertTrue(!SYNC_NEVER_SET().has(FLAG_KEY));
+  assertTrue(!!MERGE_RULES[FLAG_KEY], "and it must not fall through to the array default");
+});
+
 /* ---- what the AI has been doing ---- */
 T("aiLogPush: newest first, and the ring never grows past its cap", () => {
   let log = [];

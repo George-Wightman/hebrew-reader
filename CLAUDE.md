@@ -61,17 +61,24 @@ store when the thing under test is the store itself.
 
 Practice audio comes from the **device's own TTS voice** (`speakHe` → `HE_VOICE`),
 not from Gemini. `playHe` looks for a cached neural clip first and calls
-`audioEnsure` to make one, but that path has been broken since 2026-08-07 and
-was re-verified broken on 2026-08-21: every model in `GEMINI_TTS_MODELS` returns
-`HTTP 400 "Developer instruction is not enabled for this model"`, Google
-rejecting the `systemInstruction` field. So it always falls through.
+`audioEnsure` to make one, and that path failed from 2026-08-07 to 2026-08-29:
+every model in `GEMINI_TTS_MODELS` returned `HTTP 400 "Developer instruction is
+not enabled for this model"`, Google rejecting the `systemInstruction` field.
+`ttsBody` no longer sends that field — the read-verbatim instruction is in the
+prompt text instead — but **whether that fixed it is unverified**. George checks
+with Settings → "Generate a test clip"; ask him rather than assuming either way.
 
-Two things follow, and both have already misled one session:
+Two things follow, and note that the first of these was WRONG here for three
+weeks and misled a session on 2026-08-29:
 
-- **Audio costs no API quota**, and no amount of newly generated bank material
-  leaves anything "waiting to be synthesised". If audio is silent, the cause is
-  the device — no Hebrew voice installed, muted, or routed to Bluetooth — not
-  the key and not the quota.
+- **Audio does cost quota, and it is a separate pool.** `geminiTTS` is a sibling
+  of `geminiRequest`, not a caller — it has its own fetch, its own retry, and its
+  own per-model allowance (`gemini-3.1-flash-tts-preview` is **10/day**, far
+  tighter than the text pools). It was silently spending it: `audioQuotaDead`
+  only tripped on `/quota exhausted/`, so the permanent 400 was retried on every
+  card, every session, until it went over. `audioFatal` now trips on any 4xx.
+  If audio is silent, check the AI star's log first — TTS appears there now — and
+  only then blame the device (no Hebrew voice installed, muted, Bluetooth).
 - George practises on a Pixel, so `speechRateFor` takes the
   `SPEECH_RATE_NATURAL` branch (0.90 / 0.65). The slower Windows figures only
   apply to the flat SAPI voice.
@@ -82,6 +89,19 @@ Gemini quota is `AI_POOL_CAPS = { strong: 20, fast: 500 }` per key per day.
 Real usage runs at a small fraction of that. Default to using it generously —
 an extra call, a second opinion, a validation pass — rather than economizing
 against a budget that isn't actually tight.
+
+**Per-minute is the limit that actually bites, not per-day.** `gemini-flash` is
+**5 requests/minute** on the free tier. On 2026-08-29 a node commissioned twice
+over put six requests through it in seconds while the day sat at 12 of 20. So
+bursts matter and volume does not: anything that can fire twice for one node must
+share one in-flight promise (`campWarmDecide`, `campConvoMaking`) rather than
+racing.
+
+And background generation is not an interactive call. `FETCH_TIMEOUT_MS` is 20s,
+which `sentenceWrite` cannot meet; it and the other heavy writers take
+`GEN_TIMEOUT_MS` (45s). A timeout used to escape `geminiSend`'s model loop
+entirely and was reported as "daily free limit reached" — it now falls through to
+`gemini-flash-lite` like any other failure, and says what it was.
 
 ## Style
 

@@ -12047,6 +12047,30 @@ async function ttsFetchWithRetry(model, key, body) {
   return resp;   // still failing after every retry — a real failure, not a blip
 }
 
+/* NO systemInstruction, and that is the whole change. Google's own 400 names that field
+   — "Developer instruction is not enabled for this model" — and the note above concluded
+   the fix was to move the read-verbatim instruction into `contents`. Half of it was
+   already there: the prompt has said "Read this aloud, verbatim:" the whole time, so the
+   system block was belt and braces over an instruction that was being given anyway. Now
+   the whole of it is in the prompt.
+
+   The risk this reopens is the original "replied instead of vocalised" bug, worst on
+   short greeting-like words where "shalom" invites an answer. If that comes back, make
+   the prompt wording firmer — do not restore the field Google is refusing.
+
+   Built by its own function so the suite can read the request rather than the source
+   text: an earlier version of that test searched String(geminiTTS) and matched this very
+   comment. */
+function ttsBody(text) {
+  return {
+    contents: [{ parts: [{ text: GEMINI_TTS_SYSTEM +
+      "\n\nRead this aloud, verbatim, and say nothing else: " + text }] }],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } }
+    }
+  };
+}
 async function geminiTTS(text) {
   const keys = geminiKeys();
   if (!keys.length) throw new Error("no key configured");
@@ -12055,16 +12079,24 @@ async function geminiTTS(text) {
     const key = keys[ki];
     for (const model of GEMINI_TTS_MODELS) {
       await audioRateLimitWait(key);
-      const body = {
-        systemInstruction: { parts: [{ text: GEMINI_TTS_SYSTEM }] },
-        contents: [{ parts: [{ text: "Read this aloud, verbatim: " + text }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } }
-        }
-      };
-      const resp = await ttsFetchWithRetry(model, key, body);
+      const body = ttsBody(text);
+      /* Logged like every other call. This path is a sibling of geminiRequest rather than a
+         caller of it, so it was the one hole in "the star shows every call" — George could
+         see 12 TTS requests on his Google dashboard and nothing at all in the app. */
+      const tok = { label: "Making audio for a card", at: Date.now() };
+      aiInflight.push(tok);
+      aiStarPaint();
+      const ttsAt = Date.now();
+      let resp = null;
+      try { resp = await ttsFetchWithRetry(model, key, body); }
+      finally {
+        const ix = aiInflight.indexOf(tok);
+        if (ix !== -1) aiInflight.splice(ix, 1);
+        aiStarPaint();
+      }
       if (resp.ok) {
+        aiLogNote({ ts: Date.now(), label: tok.label, ok: true, ms: Date.now() - ttsAt,
+                    model: model, req: text, res: "[audio]" });
         const json = await resp.json();
         const part = ((((json.candidates || [])[0] || {}).content || {}).parts || [])[0];
         const data = part && part.inlineData && part.inlineData.data;
@@ -12078,6 +12110,9 @@ async function geminiTTS(text) {
          made, which a real per-day quota shouldn't do. Keeping Google's own text
          is what lets that distinction actually be checked instead of guessed. */
       const errText = await resp.text();
+      aiLogNote({ ts: Date.now(), label: tok.label, ok: false, ms: Date.now() - ttsAt,
+                  model: model, err: "HTTP " + resp.status + ": " + errText.slice(0, 300),
+                  req: text, res: "" });
       /* 300 chars cut the useful part off mid-sentence last time — the
          "Quota exceeded for metric: ..." detail that actually names which limit
          was hit lives right where the old truncation ended. */
@@ -12091,6 +12126,12 @@ async function geminiTTS(text) {
 
 /* The one place quota actually gets spent — both the lazy per-card hook and the
    farm loop below call through here, so there is exactly one code path to trust. */
+/* WILL ASKING AGAIN PRODUCE A DIFFERENT ANSWER? Pure, so the suite can hold the
+   distinction that cost a day's TTS pool: a 4xx will say exactly the same thing next
+   time, and a dropped connection will not. */
+function audioFatal(msg) {
+  return /quota exhausted/.test(msg || "") || /^HTTP 4\d\d/.test(msg || "");
+}
 let audioInFlight = {};
 let audioQuotaDead = false;   // session-scoped circuit breaker: trips on a 429 from both keys
 let audioLastError = null;    // Google's actual last response text, for the Settings status line
@@ -12110,7 +12151,15 @@ async function audioEnsure(cacheKey, text) {
     return true;
   } catch (e) {
     audioLastError = e.message;
-    if (/quota exhausted/.test(e.message)) audioQuotaDead = true;
+    /* THE BREAKER HAS TO TRIP ON A PERMANENT FAILURE, NOT ONLY ON A SPENT QUOTA. It read
+       /quota exhausted/ alone, which geminiTTS throws only after a 429 from every key —
+       so the HTTP 400 this account has returned since August matched nothing, nothing
+       remembered it, and EVERY card asked again. Twelve requests in a day against a
+       ten-a-day pool, for a feature that has never once returned audio, and invisible
+       because this path does not go through geminiRequest.
+       A 4xx will say the same thing next time. A dropped connection will not, and must
+       not disable audio for the rest of the session. */
+    if (audioFatal(e.message)) audioQuotaDead = true;
     return false;
   } finally {
     delete audioInFlight[cacheKey];
@@ -24685,6 +24734,36 @@ T("aiPoolFor: only the lite alias is the big pool", () => {
   assertEq(aiPoolFor(""), "strong");
   assertEq(aiPoolFor(null), "strong");
 });
+/* ---- audio stops asking a question already answered ---- */
+T("audioFatal: a permanent refusal trips the breaker, a blip does not", () => {
+  /* THE BUG, NAMED. audioQuotaDead was set on /quota exhausted/ alone, which geminiTTS
+     throws only after a 429 from EVERY key. The HTTP 400 this account has returned since
+     August matched nothing, so nothing remembered the failure and every card asked again
+     — 12 requests against a 10-a-day pool for a feature that has never returned audio. */
+  assertTrue(audioFatal('HTTP 400: Developer instruction is not enabled for this model'),
+             "the exact error that has been retried on every card since August");
+  assertTrue(audioFatal("audio quota exhausted — HTTP 429"), "and the one it did catch");
+  assertTrue(audioFatal("HTTP 403: permission denied"));
+  assertTrue(!audioFatal("Failed to fetch"),
+             "a dropped connection says nothing about the next card");
+  assertTrue(!audioFatal("the request took longer than 20s"));
+  assertTrue(!audioFatal("empty audio reply"), "odd, but not a reason to stop trying");
+  assertTrue(!audioFatal(""));
+});
+T("ttsBody no longer sends the field Google is refusing", () => {
+  /* Google's 400 names systemInstruction itself, and it has failed every time since
+     2026-08-07. Asserted against the REQUEST, not the source text — the first version of
+     this test read String(geminiTTS) and matched the comment explaining the fix. */
+  const b = ttsBody("שלום");
+  assertTrue(!("systemInstruction" in b), "the rejected field must not be in the body");
+  const sent = b.contents[0].parts[0].text;
+  assertTrue(sent.indexOf("verbatim") !== -1,
+             "but the instruction it carried still has to be given, or a greeting gets " +
+             "answered instead of read aloud");
+  assertTrue(sent.indexOf("שלום") !== -1, "and the word itself is in there");
+  assertEq(b.generationConfig.responseModalities, ["AUDIO"]);
+});
+
 /* ---- one node, one commission ---- */
 T("campWarmDecide: force must not start a second request beside a running one", () => {
   /* THE REGRESSION, IN ONE ASSERTION. campOpenNode warms on sheet open and

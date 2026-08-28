@@ -10123,6 +10123,18 @@ async function padCopy(text) {
    verified live 2026-08-05 that it answers while the main one is returning 429 —
    so falling back to it roughly doubles the usable allowance instead of just
    giving up. Always use -latest aliases; dated names get retired underneath you. */
+/* WRITING SIX SENTENCES IS NOT LOOKING UP A WORD. FETCH_TIMEOUT_MS is 20s and every
+   Gemini call took it, including the heaviest generation in the app — the full rubric, the
+   briefs, the scaffold list, six sentences each with alternates. Three of those died at
+   20.0s on the night this was found, and George got the reserve deck again because
+   sentenceCommission returns 0 on a failed write.
+
+   Background generation has no latency budget to protect. Nobody is watching it: it lands
+   for the NEXT session by design. That is the same argument the forms queue already makes
+   for waiting out a per-minute 429 — see waitOnRateLimit — and it applies here for the
+   same reason. Interactive calls keep the 20s; they are the ones somebody is sitting in
+   front of. */
+const GEN_TIMEOUT_MS = 45000;
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 /* Lite FIRST, for the pad's explanation only. From George's own AI Studio
    dashboard (2026-08-07): gemini-flash-latest resolves to Gemini 3.6 Flash at
@@ -10618,6 +10630,7 @@ async function geminiSend(parts, models, opts) {
   if (!keys.length) throw new Error("no key configured");
   let lastWaitHint = null;
   let sawRateHint = false;      // a SHORT retry hint => rate limit, not daily quota
+  let lastNetErr = null;        // a timeout or a dead socket, which is not a quota problem
   const started = Date.now();
   for (let ki = 0; ki < keys.length; ki++) {
     const key = keys[ki];
@@ -10633,8 +10646,18 @@ async function geminiSend(parts, models, opts) {
            through to the next model on a minute-limit — which is what this used
            to do — burns every model and both keys, then reports the daily quota
            as gone when it is barely touched. See rateLimitWaitMs(). */
+        let netErr = null;
         for (;;) {
-          resp = await geminiFetchWithRetry(geminiURLFor(model, key), body, opts.timeoutMs);
+          /* A TIMEOUT IS THIS MODEL FAILING, NOT THE CALL FAILING. Every other failure in
+             this loop falls through to the next model and then the next key — that
+             fallback list is the entire reason one slow or throttled pool cannot take a
+             feature down. But fetchWithTimeout THROWS, and an uncaught throw here escaped
+             all three loops at once. Three sentence commissions died on gemini-flash at
+             exactly 20.0s without ever asking gemini-flash-lite, which was sitting at 5 of
+             15 per minute and 13 of 500 for the day with nothing to do. */
+          try {
+            resp = await geminiFetchWithRetry(geminiURLFor(model, key), body, opts.timeoutMs);
+          } catch (e) { netErr = (e && e.message) || "the request failed"; resp = null; break; }
           if (resp.ok) break;
           text = await resp.text();
           if (resp.status !== 429) break;
@@ -10653,6 +10676,9 @@ async function geminiSend(parts, models, opts) {
           waits++;
           await new Promise(r => setTimeout(r, ms));
         }
+        /* The next MODEL, not the same one without its thinking config: a request that
+           ran out of time is not a request that was misconfigured. */
+        if (netErr) { lastNetErr = netErr; break; }
         if (resp.ok) {
           const json = await resp.json();
           const out = ((((json.candidates || [])[0] || {}).content || {}).parts || [])
@@ -10684,6 +10710,9 @@ async function geminiSend(parts, models, opts) {
      clears before you finish the sentence. */
   if (sawRateHint) throw new Error("too many requests just now — try again" +
                                    (lastWaitHint ? " " + lastWaitHint : " shortly"));
+  /* Said as what it was. Reporting a timeout as "daily free limit reached" sent George
+     to his quota dashboard for a problem that was never quota — 12 of 20 used. */
+  if (lastNetErr) throw new Error(lastNetErr);
   throw new Error(keys.length > 1
     ? "both keys' daily free limit is used up"
     : "daily free limit reached" + (lastWaitHint ? " — try again " + lastWaitHint : ""));
@@ -14853,7 +14882,8 @@ async function learnMakeConversation(sceneOverride, opts) {
      "Writing the conversation for The Market". A background call he did not ask for is
      worth naming precisely; a bare "Thinking…" is exactly what he already had. */
   const out = extractJSON(await geminiRequest([{ text: prompt }], null,
-    { label: "Writing the conversation" +
+    { timeoutMs: GEN_TIMEOUT_MS,
+      label: "Writing the conversation" +
              ((sceneOverride && sceneOverride.en) ? " for " + sceneOverride.en : "") }));
   const turns = (out && Array.isArray(out.turns)) ? out.turns : [];
   if (!turns.length) return null;
@@ -17214,6 +17244,27 @@ function campHasRescue(node, srs, lib) {
    again, but one dead quota must not mean a wasted attempt on every node open for the
    rest of the day. */
 const campWarmed = {};
+/* IN FLIGHT, as opposed to merely already attempted. The two were one map, and that is
+   what made the double-fire possible — see campWarmDecide. */
+const campWarming = {};
+/* WHICH OF THE THREE THINGS campWarm SHOULD DO. Pure, so the suite can hold the rule
+   that actually broke.
+
+   `force` has to mean "do not reuse a result you already have". It was reading as "start
+   another one right now", and the two are only the same thing when nothing is running.
+   campOpenNode warms on sheet open; campStartPractise then warms with force on the
+   Practise tap — so opening a node and practising it fired TWO complete commissions,
+   four calls, two of them on a pool with five requests a minute. George's own AI log
+   caught it: "Writing practice sentences for your home, the rooms in it, who lives
+   there" twice, one second apart, both dead at 20s.
+
+   The fix already exists in this file. campNodeConversation solved the identical shape in
+   August: "Concurrent callers SHARE one promise rather than each starting a request." */
+function campWarmDecide(inflight, done, force) {
+  if (inflight) return "share";
+  if (!force && done) return "reuse";
+  return "start";
+}
 /* WHAT THE NODE ASKS TO HAVE WRITTEN, and the fix for a node that quietly stopped
    producing anything.
 
@@ -17243,7 +17294,9 @@ function campWarm(node, force) {
   const srs = srsAll(), lib = libAll();
   const weak = campWarmWords(node, srs, lib);
   if (!weak.length) return Promise.resolve(0);
-  if (!force && campWarmed[node.id]) return campWarmed[node.id];
+  const act = campWarmDecide(campWarming[node.id], campWarmed[node.id], force);
+  if (act === "share") return campWarming[node.id];
+  if (act === "reuse") return campWarmed[node.id];
   /* ALL of the node's stuck words, not the first three. RESCUE_MAX is the DAILY
      session's budget, where it is choosing three out of a whole library; a node holds
      six or seven words and the ones it does not commission for are exactly the ones
@@ -17264,7 +17317,13 @@ function campWarm(node, force) {
     scaffold: campScaffold(lib, srs),
     setting: node.situation || node.name
   })).catch(() => 0);
+  campWarming[node.id] = run;
   campWarmed[node.id] = run;
+  /* Cleared both ways, though `.catch` above already means this never rejects — a node
+     stuck permanently "in flight" would refuse every later commission for the rest of
+     the page load, which is the same silence this whole fix is about. */
+  const done = () => { delete campWarming[node.id]; };
+  run.then(done, done);
   return run;
 }
 
@@ -18396,7 +18455,8 @@ async function sentenceWrite(spec, briefs) {
     "would not say yourself. Then read the survivors as a SET — if two of them are the " +
     "same idea in different clothes, rewrite one.";
   const out = extractJSON(await geminiRequest([{ text: prompt }], null,
-    { label: "Writing practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
+    { timeoutMs: GEN_TIMEOUT_MS,
+      label: "Writing practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const items = (out && Array.isArray(out.items)) ? out.items : [];
   return items.map(it => {
     const b = briefs[Number(it && it.i)] || null;
@@ -18714,7 +18774,8 @@ async function learnTopUp(quiet) {
   if (!quiet) busy(true);
   try {
     const drafted = extractJSON(await geminiRequest([{ text: prompt }], null,
-                                                    { label: "Writing more practice" }));
+                                                    { timeoutMs: GEN_TIMEOUT_MS,
+                                                      label: "Writing more practice" }));
     return made + learnIngest(await learnReviewItems(drafted));
   } finally { if (!quiet) busy(false); }
 }
@@ -24624,6 +24685,65 @@ T("aiPoolFor: only the lite alias is the big pool", () => {
   assertEq(aiPoolFor(""), "strong");
   assertEq(aiPoolFor(null), "strong");
 });
+/* ---- one node, one commission ---- */
+T("campWarmDecide: force must not start a second request beside a running one", () => {
+  /* THE REGRESSION, IN ONE ASSERTION. campOpenNode warms on sheet open and
+     campStartPractise warms with force on the Practise tap, so opening a node and
+     practising it fired two complete commissions — four calls, two of them on a pool
+     allowing five a minute. It was dormant only because campWarm used to return early
+     when nothing was stuck, which is every node after its first session. */
+  assertEq(campWarmDecide(true, true, true), "share",
+           "something is already writing for this node; join it");
+  assertEq(campWarmDecide(true, true, false), "share");
+  assertEq(campWarmDecide(false, true, true), "start",
+           "force still means: do not hand me the result you already have");
+  assertEq(campWarmDecide(false, true, false), "reuse", "one per node per page load");
+  assertEq(campWarmDecide(false, false, false), "start");
+});
+
+/* ---- a timeout is this model failing, not the call failing ---- */
+/* ONE test, not two, and the reason is a trap in the runner rather than a style
+   preference. runSelfTests starts every test synchronously and only awaits the promises
+   afterwards, so async tests run CONCURRENTLY — two of them stubbing the same global
+   means the second's stub is live while the first is still awaiting. Written as two
+   tests, this failed with the other one's error. Anything stubbing a shared binding has
+   to be a single sequential test. */
+T("geminiSend: a timeout is this model failing, not the call failing", async () => {
+  /* Three sentence commissions died on gemini-flash at exactly 20.0s without ever asking
+     gemini-flash-lite, which had 15 a minute and 500 a day going spare. fetchWithTimeout
+     THROWS, and an uncaught throw escaped the key loop, the model loop and the config
+     loop at once — the one failure mode the fallback list could not see. */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  try {
+    geminiKeys = () => ["k"];
+    const asked = [];
+    geminiFetchWithRetry = (url) => {
+      asked.push(url.indexOf("gemini-flash-lite") !== -1 ? "lite" : "flash");
+      if (url.indexOf("gemini-flash-lite") === -1)
+        return Promise.reject(new Error("the request took longer than 20s"));
+      return Promise.resolve({ ok: true, json: async () => ({
+        candidates: [{ content: { parts: [{ text: "written" }] } }] }) });
+    };
+    assertEq(await geminiSend([{ text: "x" }], null, {}), "written");
+    assertEq(asked[0], "flash", "flash is still tried first");
+    assertTrue(asked.indexOf("lite") !== -1, "and lite is reached rather than skipped");
+
+    /* And when nothing answers, it says what actually happened. "daily free limit
+       reached" sent George to his quota dashboard for a problem that was never quota —
+       12 of 20 used, and the calls never landed at all. */
+    geminiFetchWithRetry = () => Promise.reject(new Error("the request took longer than 20s"));
+    let msg = "";
+    try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
+    assertEq(msg, "the request took longer than 20s");
+  } finally { geminiFetchWithRetry = realFetch; geminiKeys = realKeys; }
+});
+T("GEN_TIMEOUT_MS: background writing gets longer than an interactive lookup", () => {
+  assertTrue(GEN_TIMEOUT_MS > FETCH_TIMEOUT_MS,
+             "nobody is watching a commission that lands for the NEXT session");
+  assertTrue(CONVO_LIVE_TIMEOUT_MS < FETCH_TIMEOUT_MS,
+             "and a live turn, which he IS sitting in front of, gets less");
+});
+
 /* ---- things to change ---- */
 T("mergeFlags: a thought he had on the phone survives a sync from the laptop", () => {
   /* Without a MERGE_RULES entry the generic array handling is `mineIsNewer ? mine :

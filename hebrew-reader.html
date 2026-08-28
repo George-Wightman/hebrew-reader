@@ -12076,6 +12076,11 @@ function srsGain(R, diff) {
   return Math.max(1, Math.min(SRS_GAIN_MAX, 1 + SRS_GAIN * (1 - R) * byDiff));
 }
 
+/* See the recent-accuracy comment inside srsApply, where these are used. Module-level
+   so a test can reference the exact same constant the scheduler runs on, rather than
+   a copy that could quietly drift from it. */
+const RECENT_DECAY = 0.85;
+
 function srsApply(srs, key, grade, side, todayOverride) {
   const r = srsSide(srs, key, side || "prod");
   const today = todayOverride || todayISO();
@@ -12136,6 +12141,25 @@ function srsApply(srs, key, grade, side, todayOverride) {
            : grade === 1 ? 0.1 : -0.6;
   r.diff = Math.min(10, Math.max(1, r.diff + dd + (5 - r.diff) * 0.05));
   r.n = (r.n || 0) + 1;
+  /* ---- a recent-accuracy ratio that cannot be diluted -----------------------
+     `miss` decays and is therefore BOUNDED; `n` only ever grows. So miss/n → 0 given
+     enough total reviews, whatever the true accuracy — see
+     docs/superpowers/specs/2026-08-28-strength-classification-design.md. `rn`/`rmiss`
+     are the same idea as `miss` — a decaying accumulator — but paired with a
+     denominator that decays too, so the ratio reflects roughly the last half-dozen
+     answers rather than the word's whole lifetime.
+
+     0.85 gives rn a ceiling around 6.67 (1 / (1 - 0.85)) — chosen by simulating the
+     separation it produces between true accuracies, not guessed.
+
+     The weight matches `miss`'s OWN weighting exactly: full weight for grade 0
+     whether or not it was forgiven. Forgiveness in this file has only ever softened
+     the SCHEDULE, never the evidence — see F4's comment on `miss` below — and rmiss
+     has to keep that contract or the two would quietly start measuring different
+     things. */
+  const recentWeight = grade === 0 ? 1 : grade === 1 ? 0.5 : 0;
+  r.rn = (r.rn || 0) * RECENT_DECAY + 1;
+  r.rmiss = (r.rmiss || 0) * RECENT_DECAY + recentWeight;
   /* Nearly is deliberately neutral — it neither earns progress toward forgiveness
      nor throws it away. Only a clean answer builds, only a miss spends. */
   if (grade === 2) r.streak = (r.streak || 0) + 1;
@@ -12379,12 +12403,44 @@ function srsDeflateCount(srs, cap) {
   return n;
 }
 
+/* THE RATIO "strong" IS GATED ON. NOT used by "weak" below — tried that first, and it
+   broke a deliberate, already-tested F4 behaviour: one clean answer is supposed to
+   forgive a single real miss, and early in a word's life rn/rmiss have too little
+   "memory" built up for that to hold (a lone miss dominates a 2-answer EMA far more
+   than it dominates miss/n at the same point). Weak wants to forgive fast; strong
+   wants to be earned slowly. One shared ratio cannot be tuned for both, so it now only
+   does the job it was actually built for.
+
+   miss decays and is bounded; n only ever grows — so miss/n → 0 given enough total
+   reviews, whatever the true accuracy, which is exactly why diff/stab alone were able
+   to satisfy "strong" for a word answered correctly as rarely as two times in three
+   (diff's own asymmetric update settles near its floor above ~65% correct — see the
+   spec). rn/rmiss (written in srsApply, beside miss/n) are the same decaying idea, paired
+   with a denominator that decays too, so late in a word's life — where strong's gate
+   actually matters — the ratio reflects roughly the last half-dozen answers rather than
+   the word's whole history.
+
+   No migration: a record with no rn yet falls back to the old miss/n. Since this only
+   gates STRONG, and a fresh record's fallback ratio (miss=0 or absent) reads 0, nothing
+   already strong is knocked back on deploy day — the gate only bites the moment a
+   genuinely mediocre word is checked. See
+   docs/superpowers/specs/2026-08-28-strength-classification-design.md. */
+function srsRecentRatio(rec) {
+  if (!rec) return 0;
+  if (rec.rn > 0) return (rec.rmiss || 0) / rec.rn;
+  return rec.n ? (rec.miss || 0) / rec.n : 0;
+}
 /* "Weak" means the app has EVIDENCE of struggle — high difficulty or a bad hit
    rate — not merely a short interval, or every new word would be born weak. */
+/* How reliable "strong" has to be recently to be believed. 0.15 sits between the
+   simulated separation at 80% true accuracy (median ratio 0.116) and 65-75% (0.19-0.24)
+   — see the spec. That word used to feed sentence generation, get retired off the grid,
+   and count toward a node's gold, all while being wrong close to half the time. */
+const RECENT_STRONG_MAX = 0.15;
 function srsStrength(rec) {
   if (!rec || !rec.n) return "new";
   if (rec.diff >= 6.5 || (rec.n >= 2 && (rec.miss || 0) / rec.n >= 0.4)) return "weak";
-  if (rec.stab >= 21 && rec.diff <= 5) return "strong";
+  if (rec.stab >= 21 && rec.diff <= 5 && srsRecentRatio(rec) <= RECENT_STRONG_MAX) return "strong";
   return "progressing";
 }
 function srsStrengthOf(srs, key, side) {
@@ -22458,6 +22514,70 @@ T("srsApply: a word drilled clean for a fortnight stops reading as weak", () => 
   for (let i = 0; i < 6; i++) { srsApply(s, "מילה", 2, "prod", day); day = addDays(day, 30); }
   assertEq(srsStrength(s["מילה"].prod), "strong", "six clean answers must clear it");
 });
+
+/* ---- 28 Aug: strong requires RECENT accuracy, not just a drifted-low diff ----
+   docs/superpowers/specs/2026-08-28-strength-classification-design.md. Simulated: diff
+   alone settles under 5 for a word answered correctly only ~65% of the time, because its
+   asymmetric update (-0.6 clean, +1.1 miss) has a breakeven well below the scheduler's
+   own ~90% retention target — so `stab>=21 && diff<=5` used to be enough on its own,
+   without the miss ratio ever being consulted. */
+T("srsRecentRatio: no rn yet — falls back to the exact old miss/n, not a guess", () => {
+  assertEq(srsRecentRatio({ miss: 3, n: 10 }), 0.3, "identical to the number replaced");
+  assertEq(srsRecentRatio({ miss: 0, n: 0 }), 0, "never divide by a word never met");
+  assertEq(srsRecentRatio(null), 0);
+});
+T("srsRecentRatio: once rn is real, it is used instead of the diluted lifetime one", () => {
+  /* The exact case that motivated this: a lifetime ratio that has decayed to near-
+     nothing, but a recent one that has NOT. */
+  assertEq(srsRecentRatio({ miss: 1, n: 200, rn: 5, rmiss: 3 }), 0.6,
+           "rn present means it wins, whatever the lifetime numbers say");
+  assertEq(srsRecentRatio({ n: 5, rn: 0, rmiss: 0 }),
+           srsRecentRatio({ n: 5, miss: 0 }), "rn of exactly 0 still falls back — no evidence yet");
+});
+T("srsApply: rn/rmiss track roughly the last half-dozen answers, not the whole history", () => {
+  const s = {};
+  srsApply(s, "w", 2, "prod", DAY1);            // first meeting
+  let day = DAY2;
+  for (let i = 0; i < 20; i++) {                // twenty clean answers, well spaced
+    srsApply(s, "w", 2, "prod", day);
+    day = addDays(day, Math.max(1, Math.round(s["w"].prod.stab)));
+  }
+  assertTrue(s["w"].prod.rn < 7, "twenty answers must not still be growing rn — got " + s["w"].prod.rn);
+  assertTrue(s["w"].prod.rn > 5, "but it should be near its ceiling, got " + s["w"].prod.rn);
+  assertEq(s["w"].prod.rmiss, 0, "every answer was clean");
+  srsApply(s, "w", 0, "prod", day);             // one miss after a long clean run
+  assertTrue(s["w"].prod.rmiss > 0.9, "a single recent miss must move the ratio a lot, got " + s["w"].prod.rmiss);
+});
+T("srsStrength: a word answered right two times in three is NOT strong, whatever diff says", () => {
+  /* Constructed directly against the gate rather than run through a long simulation —
+     the simulation is what justified RECENT_STRONG_MAX; this pins the boundary itself.
+     diff/stab satisfy the OLD test outright; only the new ratio stops it. */
+  const rec = { n: 12, diff: 4, stab: 30, rn: 6, rmiss: 2 };   // ratio = 0.333
+  assertTrue(rec.diff <= 5 && rec.stab >= 21, "the old test alone would call this strong");
+  assertEq(srsStrength(rec), "progressing", "the corrected test refuses it");
+});
+T("srsStrength: the boundary sits where the simulation put it", () => {
+  const base = { n: 12, diff: 3, stab: 30 };
+  assertEq(srsStrength(Object.assign({}, base, { rn: 10, rmiss: 1.4 })), "strong",   // 0.14
+           "just inside the line");
+  assertEq(srsStrength(Object.assign({}, base, { rn: 10, rmiss: 1.6 })), "progressing", // 0.16
+           "just outside it");
+});
+T("srsStrength: the two manual overrides still land on strong", () => {
+  /* srsMarkKnown and srsBandRecord("strong") both write miss:0 and no rn at all —
+     neither has been touched to know about this field. They must keep working: the
+     fallback ratio is miss/n = 0/n = 0, which clears the new gate for free. */
+  assertEq(srsStrength(srsBandRecord("strong")), "strong");
+  const srs = {};
+  srsMarkKnown(srs, "w");
+  assertEq(srsStrength(srs["w"].prod), "strong", "srsMarkKnown's prod side");
+  assertEq(srsStrength(srs["w"].recv), "strong", "and its recv side");
+});
+/* A short organic alternating sequence was tried here and dropped: over only 8 answers
+   `diff` itself already crosses 6.5 and "weak" fires from the UNCHANGED branch, proving
+   nothing about the new gate. The mechanism is what the two precise boundary tests above
+   pin directly; the long-run 8-year confirmation that motivated RECENT_STRONG_MAX lives
+   once, in the spec, rather than being re-run inside the fast suite on every load. */
 
 /* ---- retrievability ----
    The safety argument for adding R is that it changes NOTHING for a word answered on

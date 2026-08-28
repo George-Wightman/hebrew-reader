@@ -109,9 +109,20 @@ dependable recent recall, not merely a `diff` that has drifted low.
 
 **`srsStrength` becomes:**
 ```
-weak:   diff >= 6.5 || ratio >= 0.4        (0.4 unchanged — only what feeds it changes)
+weak:   diff >= 6.5 || miss/n >= 0.4       (COMPLETELY UNCHANGED — see below)
 strong: stab >= 21 && diff <= 5 && ratio <= 0.15
 ```
+
+**The ratio only gates `strong`, not `weak` — tried the reverse first, and it broke a
+real, already-tested behaviour.** F4's own test (see the suite) asserts that a single
+real miss, followed by one clean answer, moves a word out of `weak`. Under the old
+`miss/n` this holds: after intro / miss / clean, `miss/n = 0.3`. Under `rmiss/rn` at the
+same point it reads **0.459** — `rn` has only had two real answers to build "memory"
+from, so a lone miss dominates the recency-weighted ratio far more than it dominates the
+lifetime one at the same point. Weak is supposed to forgive fast; strong is supposed to
+be earned slowly. One shared ratio cannot be tuned for both jobs at once, so it now only
+does the one it was built for. `weak` is untouched — same formula, same behaviour, same
+tests, zero regression risk.
 
 **No migration.** Existing records have no `rn`/`rmiss`. Rather than a one-time rewrite
 of every stored word — the kind of pass this file's own history shows going wrong when

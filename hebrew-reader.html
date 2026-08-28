@@ -16576,12 +16576,14 @@ function campBuild(node, size) {
                     ((a.it.seen || 0) - (b.it.seen || 0)));
 
   /* Rotation, as everywhere else: anything served in the last few sessions goes to the
-     back without disturbing the order. On a pool this narrow it is a preference rather
-     than a filter — falling back to recent material beats running out. */
+     back without disturbing the order — and then campSessionPool takes only two of them.
+     This used to concat the lot, which made the cooldown a preference: on a pool this
+     narrow it fell straight back to last session's cards and George got the same ten in a
+     different order. */
   const seq = parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0;
   const split = bankCooldownSplit(ranked, recencyAll(), seq,
                                   BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
-  const pool = split.fresh.concat(split.recent);
+  const pool = campSessionPool(split);
 
   const cards = [];
   const used = new Set();
@@ -16655,6 +16657,20 @@ const CAMP_SOLO_CARDS = 2;
 /* About half the session. The rest is consolidation, so a node still feels like
    practice rather than an exam on the two words he cannot say. */
 const CAMP_CARRY_CARDS = 5;
+/* George, after two node sessions back to back: "htey were hte same content in a
+   different order ... I want at most 1 or 2 repeating." */
+const CAMP_MAX_REPEATS = 2;
+/* Everything the cooldown calls fresh, then at most two of the rest — and then the
+   session is SHORT rather than padded out with cards from last time. bankCooldownSplit
+   only ever expressed a preference for fresh material; this is what turns it into a
+   promise, and step 4 below fills the gap with the node's own words rather than with
+   sentences he has just seen. The builder already claimed to work this way: "if there is
+   not enough, the session is shorter and honest about it." */
+function campSessionPool(split, maxRepeats) {
+  const n = maxRepeats === undefined ? CAMP_MAX_REPEATS : maxRepeats;
+  return ((split && split.fresh) || [])
+    .concat(((split && split.recent) || []).slice(0, Math.max(0, n)));
+}
 
 /* Has this node got sentences written for the words it is stuck on? The session is
    worth running without them — the solo cards and the consolidation are real — but it
@@ -16676,10 +16692,34 @@ function campHasRescue(node, srs, lib) {
    again, but one dead quota must not mean a wasted attempt on every node open for the
    rest of the day. */
 const campWarmed = {};
+/* WHAT THE NODE ASKS TO HAVE WRITTEN, and the fix for a node that quietly stopped
+   producing anything.
+
+   This used to be `campWeakWords(...)` alone, with an early return when it came back
+   empty. campWeakWords filters to `!wordReady`, and srsApply's first-meeting branch parks
+   a new word at `progressing`, which IS ready — the comment inside campWeakWords says so
+   itself: "A new word clears in a single meeting." So one session through a fresh node
+   emptied the list, and every campWarm after it returned before commissioning anything.
+   campStartPractise was calling it correctly on every session; it just did nothing.
+   George: "the nodes arent generating new content for every session I launch. I did 2
+   back to back and htey were hte same content in a different order."
+
+   So a node with nothing stuck asks for more sentences about its own words instead.
+   "Write more using these" is the honest generalisation of "write rescue sentences for
+   these", and the distinction the old code drew — stuck words deserve material, ready
+   ones do not — was never right for a node, whose whole job is to keep working one small
+   vocabulary until it turns gold. */
+function campWarmWords(node, srs, lib) {
+  if (!node) return [];
+  const weak = campWeakWords(node, srs).filter(k => lib[k]);
+  if (weak.length) return weak;
+  return ((node && node.words) || [])
+    .filter(k => lib[k] && !STOPLIST.has(k) && srsGradable(k, lib));
+}
 function campWarm(node, force) {
   if (!node || !geminiKeys().length) return Promise.resolve(0);
   const srs = srsAll(), lib = libAll();
-  const weak = campWeakWords(node, srs).filter(k => lib[k]);
+  const weak = campWarmWords(node, srs, lib);
   if (!weak.length) return Promise.resolve(0);
   if (!force && campWarmed[node.id]) return campWarmed[node.id];
   /* ALL of the node's stuck words, not the first three. RESCUE_MAX is the DAILY
@@ -23041,6 +23081,48 @@ T("campWeakWords: a word he keeps failing outranks one he has never met", () => 
 T("campWeakWords: a ready word is not stuck and is left out", () => {
   const s = { "טוב": { prod: { stab: 30, diff: 2, n: 5, miss: 0 }, recv: { n: 0 } } };
   assertEq(campWeakWords({ id: "n", words: ["טוב"] }, s).length, 0);
+});
+T("campWarmWords: a node with nothing stuck still has something to write", () => {
+  /* THE BUG THAT STOPPED NODES PRODUCING ANYTHING. campWeakWords is `!wordReady`, and a
+     new word reaches `progressing` — which is ready — after ONE meeting. So one session
+     through a fresh node emptied the list, campWarm returned before commissioning, and
+     campBuild re-served the same narrow bank for the rest of time. */
+  const ready = { prod: { stab: 30, diff: 2, n: 5, miss: 0 }, recv: { stab: 30, diff: 2, n: 5, miss: 0 } };
+  const lib = { "בית": { tr: "bait" }, "גדול": { tr: "gadol" } };
+  const srs = { "בית": ready, "גדול": ready };
+  const node = { id: "n", words: ["בית", "גדול"] };
+  assertEq(campWeakWords(node, srs).length, 0, "nothing is stuck, which was the whole trap");
+  assertEq(campWarmWords(node, srs, lib).length, 2,
+           "it asks for more sentences about its own words instead of writing nothing");
+});
+T("campWarmWords: stuck words still win when there are any", () => {
+  const ready = { prod: { stab: 30, diff: 2, n: 5, miss: 0 }, recv: { stab: 30, diff: 2, n: 5, miss: 0 } };
+  const stuck = { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } };
+  const lib = { "בית": { tr: "bait" }, "קשה": { tr: "kashe" } };
+  const srs = { "בית": ready, "קשה": stuck };
+  assertEq(campWarmWords({ id: "n", words: ["בית", "קשה"] }, srs, lib),
+           ["קשה"], "the fallback is a fallback, not a widening");
+});
+T("campWarmWords: a word with no library entry cannot be written about", () => {
+  const ready = { prod: { stab: 30, diff: 2, n: 5, miss: 0 }, recv: { stab: 30, diff: 2, n: 5, miss: 0 } };
+  assertEq(campWarmWords({ id: "n", words: ["בית", "אבל"] },
+                         { "בית": ready, "אבל": ready },
+                         { "בית": { tr: "bait" }, "אבל": { tr: "aval" } }),
+           ["בית"], "and a stoplisted connective is grammar, not a subject");
+  assertEq(campWarmWords({ id: "n", words: ["בית"] }, {}, {}), []);
+  assertEq(campWarmWords(null, {}, {}), []);
+});
+T("campSessionPool: at most two of last session's cards, then the session runs short", () => {
+  const mk = n => Array.from({ length: n }, (_, i) => ({ it: { id: "i" + i } }));
+  /* George: "I want at most 1 or 2 repeating." bankCooldownSplit only ever sorted the
+     recent ones to the back; campBuild then concatenated the lot, so a node whose bank
+     had stopped growing served them all again. */
+  assertEq(campSessionPool({ fresh: [], recent: mk(8) }).length, CAMP_MAX_REPEATS,
+           "a session of two beats a session of eight he has just done");
+  assertEq(campSessionPool({ fresh: mk(6), recent: mk(8) }).length, 6 + CAMP_MAX_REPEATS);
+  assertEq(campSessionPool({ fresh: mk(3), recent: [] }).length, 3, "nothing recent, nothing capped");
+  assertEq(campSessionPool({ fresh: mk(2), recent: mk(5) }, 0).length, 2, "the cap is a parameter");
+  assertEq(campSessionPool({}).length, 0);
 });
 T("STOPLIST: the connectives are grammar, not vocabulary to be gated on", () => {
   /* אבל and מאוד were being drilled as content words and could block a node's gold,

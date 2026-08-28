@@ -2154,8 +2154,8 @@
   <div id="lSpeed" style="display:none">
     <div class="lspeed">
       <div class="lspeedlab">The walk home</div>
-      <div class="lspeedask">The same few again, three times over, each round a little
-        quicker. Nothing here is marked.</div>
+      <div class="lspeedask">One you got right, three times over, each round a little
+        quicker. Say it out loud and tap before the bar runs out. Nothing here is marked.</div>
       <div class="lspeedhe" id="lSpeedHe"></div>
       <div class="lspeedtr" id="lSpeedTr"></div>
       <!-- The deadline, and the only thing that states it. A bar draining does not
@@ -19035,15 +19035,9 @@ document.getElementById("lResumeBtn").onclick = () => {
 };
 document.getElementById("lStatsClose").onclick = () => learnStatsOpen(false);
 document.getElementById("lSpeedMic").onclick = function () { learnSpeedAttempt(this); };
-/* Skipping one is not failing it — there is nothing here to fail. */
-/* Stops the mic on the way past, or the pending listen resolves against a turn that
-   has already moved on. learnSpeedAttempt's `at` check catches that, but leaving a
-   recogniser running into the next phrase is its own bug. */
-document.getElementById("lSpeedSkip").onclick = () => {
-  const sp = learnSpeed;
-  if (sp && sp.busy) micStop();
-  learnSpeedNext();
-};
+/* Skipping one is not failing it — there is nothing here to fail. learnSpeedNext clears
+   the deadline on the way past, so a skip mid-run cannot fire into the round after it. */
+document.getElementById("lSpeedSkip").onclick = () => learnSpeedNext();
 
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they
@@ -20840,11 +20834,28 @@ let lastFinishedPath = null;
 
    Not a mode. The two session shapes deleted in August were deleted for being modes
    nobody picked, and a fluency strand you have to choose is one that never runs. */
-/* Three phrases, three times over. Nation's technique is 4/3/2 — the SAME material
-   against a shrinking clock — and the repetition is the mechanism, not a side effect.
-   What was here before cited him and then implemented a stopwatch over four different
-   phrases seen once each, which trains recall speed and calls it fluency. */
-const SPEED_PHRASES = 3, SPEED_PASSES = 3, SPEED_MIN = 2;
+/* ONE phrase, three times over. Nation's technique is 4/3/2 — the SAME material against
+   a shrinking clock — and the repetition is the mechanism, not a side effect. What was
+   here before cited him and then implemented a stopwatch over four different phrases
+   seen once each, which trains recall speed and calls it fluency.
+
+   This was three phrases, and George skipped the whole screen: "I dont mind having a
+   couple at hte end but 9 is too much and I jsut skip over since ive finidhed the lesson
+   already." Nine turns of material he answered ten minutes ago is a screen you skip, and
+   a skipped screen trains nothing at all. Three turns is the SMALLEST thing that is still
+   4/3/2 — which is why the turns had to come out of the phrases and not out of the
+   passes. Dropping to one pass would have restored the stopwatch this replaced. */
+const SPEED_PHRASES = 1, SPEED_PASSES = 3;
+/* And it has to be a real sentence. George: "can we make sure its a complex sentence not
+   just a simple 3 worder, something hard." learnSpeedStart used to slice off the FRONT of
+   the list — insertion order, which in a normal session is the single-word cards he
+   answered first. Below four words there is nothing to be fluent about.
+
+   This also quietly fixes the deadlines. The unwinnable case was always a short phrase
+   pinned to SPEED_FLOOR: 2.1s in the last round has to contain the utterance AND a thumb.
+   A five-word sentence gets 7.5 / 6.0 / 4.75, where the per-word budget is doing the
+   work and the floor never binds. */
+const SPEED_MIN_WORDS = 4;
 /* Seconds per word, tightening each round, and a floor underneath so a one-word phrase
    is still winnable with the mic's own start-up inside the window. Guesses, and
    deliberately so: they want tuning against a real walk home in a real street, not
@@ -20858,16 +20869,19 @@ function learnSpeedDeadline(he, pass) {
   const n = Math.max(1, heWords(he).length);
   return Math.round(Math.max(SPEED_FLOOR[p], n * SPEED_PER_WORD[p]) * 1000);
 }
-/* Landed = he said it, and said it in time. Graded with alignSpoken, the same softened
-   comparison the drill itself uses, so the walk home is never stricter about what
-   counts as the phrase than the card he just passed it on. Nothing is written to the
-   scheduler either way — this only decides which colour a mark takes. */
-function learnSpeedLanded(expected, said, ms, deadline) {
-  if (!said || ms > deadline) return false;
-  const exp = heWords(expected);
-  if (!exp.length) return false;
-  return alignSpoken(exp, heWords(said)).status
-    .every(s => s === "matched" || s === "near");
+/* THE HARDEST THING HE GOT CLEAN, not the first thing. Pure so the suite can drive it
+   without a session or a screen.
+
+   Returns null when nothing today reaches SPEED_MIN_WORDS, and the walk home then does
+   not run at all — skipping it beats drilling "כן" three times over. Ties go to the
+   earlier item: arbitrary, but stable, which is worth more here than a coin flip. */
+function learnSpeedPick(fluent) {
+  let best = null, bestN = 0;
+  (fluent || []).forEach(f => {
+    const n = heWords((f && f.he) || "").length;
+    if (n >= SPEED_MIN_WORDS && n > bestN) { best = f; bestN = n; }
+  });
+  return best;
 }
 
 let learnSpeed = null;
@@ -20887,15 +20901,17 @@ function learnSpeedFrom(c, lib) {
 }
 function learnSpeedStart() {
   const s = learnSession;
-  const items = (s && s.fluent) || [];
-  /* Timing with nothing listening is theatre, and one item is not a pass. */
-  if (!speechSupported() || items.length < SPEED_MIN) { learnFinish(); return; }
+  const pick = learnSpeedPick((s && s.fluent) || []);
+  /* Nothing today was a real sentence. No screen rather than a bad one. */
+  if (!pick) { learnFinish(); return; }
   /* The graded work is done, so there is nothing left worth resuming. Cleared here
      rather than in learnFinish so a reload during the walk home cannot restore a
      session sitting one past its last card. */
   sessionClear();
-  learnSpeed = { items: items.slice(0, SPEED_PHRASES), pass: 0, i: 0,
-                 marks: {}, busy: false };
+  /* Still a list, even at length one, so the pass/phrase arithmetic below stays the
+     arithmetic that was already right. SPEED_PHRASES is the only place the count lives. */
+  learnSpeed = { items: [pick].slice(0, SPEED_PHRASES), pass: 0, i: 0,
+                 marks: {}, busy: false, timer: null, at: "" };
   learnShow("lSpeed");
   learnSpeedRender();
 }
@@ -20914,16 +20930,18 @@ function learnSpeedRender() {
   bar.style.transform = "scaleX(1)";
   learnSpeedMarks();
 }
-/* One row per round, one mark per phrase — the whole run at a glance, and the only
-   scorekeeping there is. */
+/* One row per phrase, one mark per round — the whole run at a glance, and the only
+   scorekeeping there is. The axes are the other way round from the version that drew a
+   row per round: with a single phrase that grid was three rows of one dot, which reads
+   as a list of things still to do rather than as a tally of three goes at one thing. */
 function learnSpeedMarks() {
   const sp = learnSpeed, box = document.getElementById("lSpeedMarks");
   if (!sp || !box) return;
   box.innerHTML = "";
-  for (let p = 0; p < SPEED_PASSES; p++) {
+  for (let i = 0; i < sp.items.length; i++) {
     const row = document.createElement("div");
     row.className = "lspeedrow";
-    for (let i = 0; i < sp.items.length; i++) {
+    for (let p = 0; p < SPEED_PASSES; p++) {
       const m = document.createElement("i");
       const v = sp.marks[p + ":" + i];
       m.className = v === true ? "landed" : v === false ? "missed"
@@ -20954,57 +20972,61 @@ function learnSpeedBarStop(bar) {
 function learnSpeedNext() {
   const sp = learnSpeed;
   if (!sp) return;
+  /* A turn abandoned by the Skip button must not have its deadline fire into the next
+     one. learnSpeedJudge's own guard would catch it, but a timer left running across a
+     screen it no longer belongs to is its own bug. */
+  if (sp.timer) { clearTimeout(sp.timer); sp.timer = null; }
+  sp.busy = false;
   sp.i++;
   if (sp.i >= sp.items.length) { sp.i = 0; sp.pass++; }
   if (sp.pass >= SPEED_PASSES) { learnSpeed = null; learnFinish(); return; }
   learnSpeedRender();
 }
-async function learnSpeedAttempt(btn) {
+/* NO RECOGNISER ON THIS SCREEN, and that is the fix rather than a simplification.
+
+   Accuracy has already been proven: being in `fluent` at all required a clean answer on
+   a graded card minutes ago. Fluency development asks exactly one question — was
+   retrieval automatic enough to finish inside the window — and a thumb answers that
+   precisely. A stopwatch reading needs a microphone; a deadline does not.
+
+   It is also what finally kills the noisy street. George's original report was "its just
+   relying on the auto cut off for the mic if it's noisy it doesn't work"; the last
+   version answered that by letting him stop the mic himself, which left the recogniser
+   still able to hand back a half-heard phrase and fail him on the transcription rather
+   than on the speed. Now there is no mic to cut off and nothing to mis-hear. */
+function learnSpeedAttempt(btn) {
   const sp = learnSpeed;
   if (!sp) return;
-  /* A second tap ends the turn, like every other mic in the app — learnSpeakAttempt and
-     learnHearSpeakAttempt have always toggled, and this was the one surface that
-     disabled its button and waited for the recogniser to decide he had stopped. George:
-     "its just relying on the auto cut off for the mic if it's noisy it doesn't work."
-     Nothing waits on end-of-speech detection any more, so noise cannot strand a turn. */
-  if (sp.busy) { micStop(); return; }
-  const at = sp.pass + ":" + sp.i;
+  if (sp.busy) { learnSpeedJudge(true); return; }
   const it = sp.items[sp.i];
-  const deadline = learnSpeedDeadline(it.he, sp.pass);
-  const note = document.getElementById("lSpeedNote");
   const bar = document.getElementById("lSpeedBar");
   sp.busy = true;
-  btn.textContent = "Done";
-  note.textContent = "";
-  let res = null, started = 0;
-  try {
-    let ok = true;
-    if (micNeedsStreamHold()) ok = await micAcquire();
-    if (!ok) note.textContent = "Microphone blocked.";
-    else {
-      /* The bar starts with the LISTENING, not with the tap. Acquiring the stream on
-         file:// takes a moment, and billing that to him would make the last round
-         unwinnable for a reason that has nothing to do with how fast he speaks. */
-      started = Date.now();
-      learnSpeedBarRun(bar, deadline);
-      res = await micListen({});
-    }
-  } catch (e) { res = null; }
-  finally { sp.busy = false; btn.textContent = "Say it"; }
-  if (learnSpeed !== sp || sp.pass + ":" + sp.i !== at) return;   // skipped, or walked out
-  if (!started) return;                                          // never got as far as listening
-  const ms = Date.now() - started;
+  sp.at = sp.pass + ":" + sp.i;
+  btn.textContent = "Said it";
+  document.getElementById("lSpeedNote").textContent = "";
+  const deadline = learnSpeedDeadline(it.he, sp.pass);
+  learnSpeedBarRun(bar, deadline);
+  /* The bar running out judges the turn on its own. Without this a phone put in a
+     pocket mid-round leaves the walk home waiting for a tap that is never coming. */
+  sp.timer = setTimeout(() => learnSpeedJudge(false), deadline);
+}
+/* Both endings land here — his tap, or the deadline — so there is one place that decides
+   what a turn was worth and one place that moves on from it. */
+function learnSpeedJudge(landed) {
+  const sp = learnSpeed;
+  if (!sp || !sp.busy) return;
+  if (sp.timer) { clearTimeout(sp.timer); sp.timer = null; }
+  sp.busy = false;
+  const bar = document.getElementById("lSpeedBar");
+  const btn = document.getElementById("lSpeedMic");
+  if (btn) btn.textContent = "Say it";
   learnSpeedBarStop(bar);
-  const heard = !!(res && res.ok);
-  const landed = heard && learnSpeedLanded(it.he, res.text, ms, deadline);
-  sp.marks[at] = landed;
+  sp.marks[sp.at] = landed;
   bar.classList.add(landed ? "landed" : "missed");
-  /* Said plainly, because a bar that simply stops is ambiguous between "too slow" and
-     "never heard you", and those want different things from him next time. */
-  note.textContent = landed ? "Landed."
-    : !heard ? "Didn't catch that."
-    : ms > deadline ? "Just over."
-    : "Not quite that one.";
+  /* Two outcomes now, and only one of them needs saying. "Didn't catch that" and "Not
+     quite that one" went with the recogniser — neither was ever about how fast he
+     spoke, and both sent him away thinking about the wrong thing. */
+  document.getElementById("lSpeedNote").textContent = landed ? "Landed." : "Out of time.";
   learnSpeedMarks();
   setTimeout(() => learnSpeedNext(), 850);
 }
@@ -22971,18 +22993,38 @@ T("learnSpeedDeadline: an out-of-range round is clamped, not indexed off the end
   assertEq(learnSpeedDeadline("שלום", 9), learnSpeedDeadline("שלום", SPEED_PASSES - 1));
   assertEq(learnSpeedDeadline("שלום", -1), learnSpeedDeadline("שלום", 0));
 });
-T("learnSpeedLanded: said it, and said it in time", () => {
-  assertTrue(learnSpeedLanded("אני רוצה", "אני רוצה", 2000, 3000));
-  assertTrue(!learnSpeedLanded("אני רוצה", "אני רוצה", 3400, 3000),
-             "over the bar is not landed, however well he said it");
-  assertTrue(!learnSpeedLanded("אני רוצה", "", 500, 3000), "silence is not a fast answer");
-  assertTrue(!learnSpeedLanded("אני רוצה", "אני", 900, 3000),
-             "half the phrase inside the time is still half the phrase");
+T("learnSpeedPick: the hardest thing he got clean, not the first thing he got clean", () => {
+  /* The bug this replaces: items.slice(0, 3) took insertion order, which in a normal
+     session is the single-word cards answered first. George: "can we make sure its a
+     complex sentence not just a simple 3 worder, something hard." */
+  const fluent = [{ he: "שלום", tr: "shalom" },
+                  { he: "אני רוצה ללכת הביתה עכשיו", tr: "" },
+                  { he: "הבית גדול", tr: "" }];
+  assertEq(learnSpeedPick(fluent).he.split(" ").length, 5,
+           "the five-word sentence, not the word that happened to come first");
 });
-T("learnSpeedLanded: no stricter than the card he just passed it on", () => {
-  assertTrue(learnSpeedLanded("אני רוצה", "אני  רוצה!", 2000, 3000),
-             "normalisation and the softened alignment are shared with the drill — the " +
-             "walk home must not fail a phrase the drill would have accepted");
+T("learnSpeedPick: below four words there is nothing to be fluent about", () => {
+  assertNull(learnSpeedPick([{ he: "שלום" }, { he: "הבית גדול" }]),
+             "a one-word answer drilled three times is a screen worth skipping, and " +
+             "learnSpeedStart skips it");
+  assertNull(learnSpeedPick([]));
+  assertNull(learnSpeedPick(null));
+});
+T("learnSpeedPick: ties go to the earlier one, so the pick is stable", () => {
+  const a = { he: "א ב ג ד", tr: "first" };
+  const b = { he: "ה ו ז ח", tr: "second" };
+  assertEq(learnSpeedPick([a, b]).tr, "first");
+});
+T("learnSpeedPick: what it picks is always inside the deadline's comfortable range", () => {
+  /* SPEED_MIN_WORDS and learnSpeedFrom's eight-word ceiling are the two ends of one
+     range, and the floors stop binding inside it — which is what made the last round
+     winnable again without touching SPEED_PER_WORD. */
+  for (let n = SPEED_MIN_WORDS; n <= 8; n++) {
+    const he = new Array(n).fill("א").join(" ");
+    for (let p = 0; p < SPEED_PASSES; p++)
+      assertTrue(learnSpeedDeadline(he, p) > SPEED_FLOOR[p] * 1000,
+                 n + " words, round " + p + ": the per-word budget must be what decides");
+  }
 });
 
 /* ---- the node drills what is actually stuck ---- */

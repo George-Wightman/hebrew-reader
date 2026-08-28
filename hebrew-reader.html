@@ -5027,7 +5027,8 @@ async function formsAsk(prompt) {
      protect, and morphology is where reasoning pays. waitOnRateLimit likewise:
      this is the ONE caller that should sit out a per-minute 429. */
   return extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
-                                         { waitOnRateLimit: true }));
+                                         { waitOnRateLimit: true,
+                                           label: "Looking up word forms" }));
 }
 
 async function formsRunBatch() {
@@ -5754,7 +5755,7 @@ async function transcribeAudio(file) {
     const text = await geminiRequest([
       { text: audioPrompt() },
       { inline_data: { mime_type: mime, data: b64 } }
-    ]);
+    ], null, { label: "Reading your voice note" });
 
     let data = null;
     try { data = extractJSON(text); } catch (e) {}
@@ -5872,7 +5873,8 @@ document.getElementById("aiBtn").onclick = async () => {
   setStatus("Reading it…");
   busy(true);
   try {
-    setStatus(renderAIWords(extractJSON(await geminiRequest([{ text: prompt }]))));
+    setStatus(renderAIWords(extractJSON(await geminiRequest([{ text: prompt }], null,
+                                                            { label: "Reading that note" }))));
   } catch (e) {
     const limited = /daily free limit/.test(e.message);
     setStatus(limited
@@ -10896,7 +10898,8 @@ async function padAskExplain() {
   busy(true);
   try {
     /* Lite-first here only — see GEMINI_MODELS_FAST. */
-    padAfterAskExplain(extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST)));
+    padAfterAskExplain(extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                                       { label: "Explaining that sentence" })));
   } catch (e) {
     await padCopy(prompt);
     /* Google's free allowance is small enough that George will hit it, so say so
@@ -13546,7 +13549,8 @@ async function campSurvey() {
     "the single most important thing in this record — say so and name them.\n" +
     "Do not propose lessons. Do not flatter. This brief is read by whoever plans the " +
     "next chapter, and a vague brief produces a vague chapter.";
-  return String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST) || "").trim();
+  return String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                    { label: "Looking at where you are" }) || "").trim();
 }
 
 /* ---- 2. plan (Flash) -------------------------------------------------------- */
@@ -13586,7 +13590,8 @@ async function campPlan(brief) {
     "- Prefer words his grandad actually uses. Those are named in the record above and " +
     "they are worth more than any word from a textbook.\n" +
     "- Do not repeat a situation he has already finished.";
-  return extractJSON(await geminiRequest([{ text: prompt }]));
+  return extractJSON(await geminiRequest([{ text: prompt }], null,
+                                         { label: "Planning the next chapter" }));
 }
 
 /* ---- 3. critique (Lite) -----------------------------------------------------
@@ -13612,7 +13617,8 @@ async function campCritique(plan) {
     "no longer describes what is left. Keep at least " + CAMP_MIN_NODES + " if you " +
     "honestly can; below that the chapter is too thin to be a chapter.";
   try {
-    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                                { label: "Checking the new chapter" }));
     const keep = out && Array.isArray(out.keep) ? out.keep : null;
     if (!keep || keep.length < CAMP_MIN_NODES) return plan;
     const nodes = keep.map(i => plan.nodes[Number(i)]).filter(Boolean);
@@ -13887,7 +13893,8 @@ async function campSpawnFromNote(note) {
           "- situation: one clause describing when he would need this.\n" +
           "- icon: whichever ONE of the words above best stands for it.\n" +
           "Name what it is ABOUT, not that it came from a message — he can see that.";
-        const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+        const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                                    { label: "Making a place from that note" }));
         if (out && out.name) {
           name = String(out.name).slice(0, 40);
           situation = String(out.situation || situation).slice(0, 160);
@@ -14012,7 +14019,8 @@ async function reviewCloseBlock() {
         "word order\". If there is genuinely no pattern — three unrelated slips — say " +
         "exactly that in four words. Do not encourage, do not summarise the numbers, " +
         "and do not repeat the sentences back.";
-      rec.note = String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST) || "").trim().slice(0, 300);
+      rec.note = String(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                          { label: "Reading back what you missed" }) || "").trim().slice(0, 300);
     } catch (e) { /* a block with no note is still a block */ }
   }
   store.blocks.push(rec);
@@ -14053,7 +14061,8 @@ async function reviewWeekly() {
     "actually fix this. Words only, no nikud, no invented ones.\n" +
     "- drill: one short sentence telling him what to concentrate on while he practises them.";
   try {
-    const out = extractJSON(await geminiRequest([{ text: prompt }]));
+    const out = extractJSON(await geminiRequest([{ text: prompt }], null,
+                                                { label: "Looking back over your week" }));
     if (!out || !out.observation) return null;
     const targets = (Array.isArray(out.targets) ? out.targets : [])
       /* Validated against the library, never taken on trust — a target he does not have
@@ -14337,7 +14346,8 @@ async function convoLiveTurn(s, c) {
   let out = null;
   try {
     out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
-                                          { timeoutMs: CONVO_LIVE_TIMEOUT_MS }));
+                                          { timeoutMs: CONVO_LIVE_TIMEOUT_MS,
+                                            label: "Their next line" }));
   } catch (e) { return null; }
   if (out && Array.isArray(out.newWords) && out.newWords.length) {
     try { padIngest({ words: out.newWords }); } catch (e) {}
@@ -14574,7 +14584,12 @@ async function learnMakeConversation(sceneOverride, opts) {
     "Before answering, re-read every line — including every alt — and delete any you " +
     "would not defend to a native speaker.";
 
-  const out = extractJSON(await geminiRequest([{ text: prompt }]));
+  /* Named after the node when there is one, which is what George asked to see:
+     "Writing the conversation for The Market". A background call he did not ask for is
+     worth naming precisely; a bare "Thinking…" is exactly what he already had. */
+  const out = extractJSON(await geminiRequest([{ text: prompt }], null,
+    { label: "Writing the conversation" +
+             ((sceneOverride && sceneOverride.en) ? " for " + sceneOverride.en : "") }));
   const turns = (out && Array.isArray(out.turns)) ? out.turns : [];
   if (!turns.length) return null;
   if (out && Array.isArray(out.newWords) && out.newWords.length) {
@@ -17469,7 +17484,8 @@ async function chunkBackfill() {
   let out;
   try {
     out = extractJSON(await geminiRequest(
-      [{ text: chunkBackfillPrompt(notes) }], GEMINI_MODELS_FAST));
+      [{ text: chunkBackfillPrompt(notes) }], GEMINI_MODELS_FAST,
+      { label: "Finding phrases worth learning whole" }));
   } catch (e) { return 0; }
   if (!out || !Array.isArray(out.chunks)) return 0;
   lsSet(CHUNK_BACKFILL_KEY, "1");
@@ -18016,7 +18032,10 @@ async function sentencePlan(spec) {
     "THE TEST OF A GOOD PLAN: read your briefs back as a list. If two of them could be " +
     "satisfied by the same sentence, the plan has failed — rewrite them until every " +
     "one does something the others do not.";
-  const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+  /* The node's name rides along, so a background commission says which place it is for
+     rather than only that something is being written. */
+  const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+    { label: "Planning practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const briefs = (out && Array.isArray(out.briefs)) ? out.briefs : [];
   const okFor = new Set(rescue);
   return briefs.map(b => ({
@@ -18105,7 +18124,8 @@ async function sentenceWrite(spec, briefs) {
     "BEFORE YOU ANSWER: re-read each item aloud as a native speaker. Delete any you " +
     "would not say yourself. Then read the survivors as a SET — if two of them are the " +
     "same idea in different clothes, rewrite one.";
-  const out = extractJSON(await geminiRequest([{ text: prompt }]));
+  const out = extractJSON(await geminiRequest([{ text: prompt }], null,
+    { label: "Writing practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const items = (out && Array.isArray(out.items)) ? out.items : [];
   return items.map(it => {
     const b = briefs[Number(it && it.i)] || null;
@@ -18422,7 +18442,8 @@ async function learnTopUp(quiet) {
 
   if (!quiet) busy(true);
   try {
-    const drafted = extractJSON(await geminiRequest([{ text: prompt }]));
+    const drafted = extractJSON(await geminiRequest([{ text: prompt }], null,
+                                                    { label: "Writing more practice" }));
     return made + learnIngest(await learnReviewItems(drafted));
   } finally { if (!quiet) busy(false); }
 }
@@ -18472,7 +18493,8 @@ async function learnReviewItems(data) {
     "happy to defend it as natural Hebrew. If most fail, keep few — that is the " +
     "correct outcome, not a problem.";
   try {
-    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST));
+    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                                { label: "Checking the new sentences" }));
     const keep = (out && Array.isArray(out.keep)) ? out.keep : null;
     /* A reviewer that rejects everything is far more likely to be a malformed reply
        than twelve genuinely broken items — fall back rather than silently starve
@@ -19903,7 +19925,8 @@ async function learnAdjudicate(c, spoken, askedAt) {
   let said;
   try {
     const out = extractJSON(await geminiRequest(
-      [{ text: learnAdjudicatePrompt(spoken, want) }], GEMINI_MODELS_FAST));
+      [{ text: learnAdjudicatePrompt(spoken, want) }], GEMINI_MODELS_FAST,
+      { label: "Checking your answer" }));
     said = (out && Array.isArray(out.said)) ? out.said : null;
   } catch (e) { return; }              // a second opinion that never arrives is fine
   if (!said || !said.length) return;
@@ -20763,7 +20786,7 @@ async function learnExplainWord(btn, panel, tok, c) {
       "prefix, gender or number agreement, word order, or an idiom that doesn't translate " +
       "literally. Give the rule so it carries into his next sentence. If it is an ordinary word " +
       "with nothing special about its form, say instead what job it does in this sentence."
-    }], GEMINI_MODELS_FAST);
+    }], GEMINI_MODELS_FAST, { label: "Explaining that word" });
     const data = extractJSON(out) || {};
     learnSaveGloss(c.item, tok.he, {
       tr: String(data.tr || ""), en: String(data.en || ""), why: String(data.why || "")
@@ -20789,7 +20812,8 @@ async function learnWhy(btn, c) {
       "Explain briefly, to an English speaker learning to SPEAK conversational Hebrew, why this " +
       "is phrased the way it is:\n\n" + c.item.he + "\n" + c.item.tr + "\n\"" + (c.item.en || "") +
       "\"\n\nTwo or three sentences. Give the rule behind it so it carries into his next sentence. " +
-      "Plain text, no markdown, no preamble." }], GEMINI_MODELS_FAST);
+      "Plain text, no markdown, no preamble." }], GEMINI_MODELS_FAST,
+      { label: "Why it is phrased that way" });
     const box = document.createElement("div"); box.className = "lwhy"; box.textContent = out.trim();
     btn.replaceWith(box);
   } catch (e) {

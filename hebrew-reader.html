@@ -2674,7 +2674,10 @@
     <p class="note" id="aiNow"></p>
     <div class="ailog" id="aiLogList"></div>
     <p class="note" id="aiQuota"></p>
-    <div class="btnrow"><button class="btn secondary" id="aiClose">Close</button></div>
+    <div class="btnrow" style="justify-content:space-between">
+      <button class="linkbtn" id="aiLogClearBtn">Clear log</button>
+      <button class="btn secondary" id="aiClose">Close</button>
+    </div>
   </div>
 </div>
 
@@ -6149,6 +6152,7 @@ document.getElementById("flagAddBtn").onclick = () => {
 };
 document.getElementById("aiStar").onclick = () => aiModalOpen(true);
 document.getElementById("aiClose").onclick = () => aiModalOpen(false);
+document.getElementById("aiLogClearBtn").onclick = () => { aiLogClear(); aiLogRender(); };
 document.getElementById("aiModal").onclick = ev => {
   if (ev.target.id === "aiModal") aiModalOpen(false);      // click the backdrop to dismiss
 };
@@ -6568,7 +6572,7 @@ function SYNC_LOCAL_SET() {
        laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
        local: what actually needs to reach me is already snapshotted into whichever flag
        was raised about it. */
-    AI_LOG_KEY,
+    AI_LOG_KEY, AI_ACK_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY
   ]));
@@ -10265,20 +10269,28 @@ function aiLogParts(parts) {
    first to finish blank the label of the second — the same reason busy() counts. */
 let aiInflight = [];
 
-/* Grey, teal, red. Pure so the suite can pin the one rule that is easy to get wrong:
-   TROUBLE IS STICKY. It clears on the next SUCCESS, not on a timer and not on the next
-   call starting. The failure that matters is the one that happened while he was mid-card
-   and looking away; a message that has already gone by the time he looks is the same as
-   no message, which is where the app was before this. */
-function aiStatusOf(log, inflight) {
+/* Grey, teal, red. Pure so the suite can pin the two rules that are easy to get wrong:
+   TROUBLE IS STICKY, but only until it has actually been SEEN. It clears on the next
+   success, same as always — but George found the other side of "sticky": a failure that
+   never gets retried (the node sheet that caused it just never got reopened) stays red
+   for as long as he leaves it, with the exact same three calls sitting there hours later.
+   "Need way to clear API calls history... remove the red flag once viewed."
+
+   So a third thing can clear it: `ackTs`, the timestamp of whatever was on top the last
+   time he opened the panel. A failure newer than that is still unseen and still shows
+   red; a failure at or before it has been looked at and stops being urgent, even though
+   it stays in the list below. A NEW failure after that always overrides it — acknowledging
+   is not a snooze on failures in general, only on the one already read. */
+function aiStatusOf(log, inflight, ackTs) {
   if ((inflight || 0) > 0) return "on";
   const last = (log || [])[0];
-  return (last && !last.ok) ? "bad" : "";
+  if (!last || last.ok) return "";
+  return (last.ts || 0) > (ackTs || 0) ? "bad" : "";
 }
 function aiStarPaint() {
   const el = document.getElementById("aiStar");
   if (!el) return;
-  const state = aiStatusOf(aiLogAll(), aiInflight.length);
+  const state = aiStatusOf(aiLogAll(), aiInflight.length, aiAckTs());
   el.classList.toggle("on", state === "on");
   el.classList.toggle("bad", state === "bad");
   el.title = state === "on" ? aiInflight.map(t => t.label).join(" · ")
@@ -10286,6 +10298,16 @@ function aiStarPaint() {
            : "AI activity";
   if (document.getElementById("aiModal").style.display !== "none") aiLogRender();
 }
+
+/* When he last looked. A number, not an object — the only question aiStatusOf asks is
+   "is the newest thing older than this". Device-local like AI_LOG_KEY itself: an ack on
+   the phone says nothing about whether the laptop's log has been seen. */
+const AI_ACK_KEY = "hvr_ai_ack";
+function aiAckTs() { try { return Number(JSON.parse(lsGet(AI_ACK_KEY))) || 0; } catch (e) { return 0; } }
+function aiAckSave(ts) { try { lsSet(AI_ACK_KEY, JSON.stringify(ts)); } catch (e) {} }
+/* Empties the log outright, for when the list itself is what he wants gone rather than
+   just the red. Distinct from acknowledging: this also erases the entries below. */
+function aiLogClear() { aiLogSave([]); aiStarPaint(); }
 
 function aiLogRender() {
   const list = document.getElementById("aiLogList");
@@ -10535,7 +10557,14 @@ let flagPending = null;
 
 function aiModalOpen(on) {
   document.getElementById("aiModal").style.display = on ? "flex" : "none";
-  if (on) aiLogRender();
+  if (!on) return;
+  /* Opening the panel IS reading it. Acknowledge whatever is on top before rendering,
+     so the star has already gone grey by the time he sees the list — "remove the red
+     flag once viewed" is the literal behaviour, not a click he has to make separately. */
+  const top = aiLogAll()[0];
+  aiAckSave((top && top.ts) || Date.now());
+  aiLogRender();
+  aiStarPaint();
 }
 
 /* Measured 2026-08-06 on the real prompt: the default call spent 2021 tokens on
@@ -24887,19 +24916,33 @@ T("aiLogPush: newest first, and the ring never grows past its cap", () => {
   assertEq(log[log.length - 1].label, "call 6", "and the oldest fell off the end");
 });
 T("aiStatusOf: trouble is sticky, and only a success clears it", () => {
-  const bad = [{ ok: false, err: "no key configured" }];
-  const good = [{ ok: true }];
-  assertEq(aiStatusOf([], 0), "", "nothing asked, nothing to say");
-  assertEq(aiStatusOf(good, 0), "");
-  assertEq(aiStatusOf(bad, 0), "bad");
-  assertEq(aiStatusOf(bad, 0), "bad", "and it is still there when he looks up from the card");
-  assertEq(aiStatusOf(aiLogPush(bad, { ok: true }), 0), "",
+  const bad = [{ ok: false, err: "no key configured", ts: 100 }];
+  const good = [{ ok: true, ts: 100 }];
+  assertEq(aiStatusOf([], 0, 0), "", "nothing asked, nothing to say");
+  assertEq(aiStatusOf(good, 0, 0), "");
+  assertEq(aiStatusOf(bad, 0, 0), "bad");
+  assertEq(aiStatusOf(bad, 0, 0), "bad", "and it is still there when he looks up from the card");
+  assertEq(aiStatusOf(aiLogPush(bad, { ok: true, ts: 200 }), 0, 0), "",
            "the next call that works is what clears it — not a timer, not the next attempt");
 });
 T("aiStatusOf: a call in flight outranks the last one's outcome", () => {
-  assertEq(aiStatusOf([{ ok: false }], 1), "on",
+  assertEq(aiStatusOf([{ ok: false, ts: 100 }], 1, 0), "on",
            "something IS happening, which is the more useful thing to say while it is");
-  assertEq(aiStatusOf([], 2), "on");
+  assertEq(aiStatusOf([], 2, 0), "on");
+});
+T("aiStatusOf: seeing a failure clears it, without a new success", () => {
+  /* George, nine hours into the same three stale calls: "Need way to clear API calls
+     history, currently stuck red... remove the red flag once viewed." Sticky-until-
+     success assumed a retry would come along soon; it does not have to, and there was
+     no way to say "I've seen it" without one. */
+  const bad = [{ ok: false, ts: 500 }];
+  assertEq(aiStatusOf(bad, 0, 500), "", "acknowledged at or after the failure's own time");
+  assertEq(aiStatusOf(bad, 0, 499), "bad", "one tick earlier and it is still unseen");
+});
+T("aiStatusOf: acknowledging is not a snooze — a NEW failure overrides it", () => {
+  const bad = [{ ok: false, ts: 900 }];
+  assertEq(aiStatusOf(bad, 0, 500), "bad",
+           "a failure newer than the last thing he looked at is still news");
 });
 T("aiLogParts: audio is described, never stored", () => {
   /* A transcription prompt carries a megabyte of base64. Storing it would blow the

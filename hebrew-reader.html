@@ -18093,7 +18093,8 @@ async function sentencePlan(spec) {
   /* The node's name rides along, so a background commission says which place it is for
      rather than only that something is being written. */
   const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
-    { label: "Planning practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
+    { waitOnRateLimit: true,        // background: wait, never get demoted — see sentenceWriteOne
+      label: "Planning practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const briefs = (out && Array.isArray(out.briefs)) ? out.briefs : [];
   const okFor = new Set(rescue);
   return briefs.map(b => ({
@@ -18109,7 +18110,39 @@ async function sentencePlan(spec) {
 /* The only call that takes from the scarce pool, and only because this is the one
    place quality is actually decided. GEMINI_MODELS falls through to lite by itself
    once the strong pool is gone, so a heavy day degrades rather than stops. */
+/* ---- WRITE IN CHUNKS, NOT ONE DOCUMENT ----------------------------------------
+   PLAN_ITEMS was raised to 24 for the PLANNER, where a brief is one line and
+   overgeneration is the right trade. That was never re-examined for the WRITER, where
+   each item carries he/tr/en/for plus a gloss entry per word. Caught live on 2026-08-29:
+   ok:true, 46193ms against a 45s timeout, on gemini-flash-lite, returning {"items":[]}.
+
+   Size is only half of it. The write was ONE call, so an empty answer lost the plan too
+   — there was no partial credit anywhere in the path. Three independent calls mean an
+   empty chunk costs a third of a batch.
+
+   Sequential, never parallel: three concurrent writes would put three requests into
+   gemini-flash's 5-a-minute window at once and re-create the throttle that demoted this
+   call to flash-lite in the first place. */
+const WRITE_CHUNK = 8;
+function sentenceWriteChunks(briefs, size) {
+  const n = Math.max(1, size || WRITE_CHUNK);
+  const out = [];
+  for (let i = 0; i < (briefs || []).length; i += n) out.push(briefs.slice(i, i + n));
+  return out;
+}
 async function sentenceWrite(spec, briefs) {
+  const chunks = sentenceWriteChunks(briefs, WRITE_CHUNK);
+  if (chunks.length <= 1) return sentenceWriteOne(spec, briefs);
+  let all = [];
+  for (const chunk of chunks) {
+    /* One bad chunk must not lose the good ones — this whole split exists to make
+       failure partial, so a throw here would undo it. */
+    try { all = all.concat(await sentenceWriteOne(spec, chunk)); }
+    catch (e) { /* keep what the other chunks produced */ }
+  }
+  return all;
+}
+async function sentenceWriteOne(spec, briefs) {
   const lib = spec.lib;
   const scaffold = spec.scaffold || [];
   const rescue = spec.rescue || [];
@@ -18179,11 +18212,29 @@ async function sentenceWrite(spec, briefs) {
     "and that is exactly how it happens — resist stapling one to a noun.\n\n" +
     "RETURN FEWER IF A BRIEF CANNOT BE DONE WELL. Skipping a brief is a success; " +
     "padding it with something awkward is a failure.\n" +
+    /* THE FLOOR UNDER THAT INSTRUCTION, and it was missing. The line above is right and
+       measured — forcing a stuck word into every sentence produced "grandpa eats milk in
+       opposites". But with no floor, "return none at all" reads as the safest possible
+       compliance, and on 2026-08-29 that is exactly what came back: {"items":[]} against
+       24 briefs. Skipping is per-brief permission, not permission to skip the job. */
+    "RETURNING NOTHING IS NOT ONE OF THE OPTIONS. If most of these briefs are hard, " +
+    "write the ones you CAN do well and leave the rest out — an empty list is a failed " +
+    "batch, not a careful one.\n" +
     "BEFORE YOU ANSWER: re-read each item aloud as a native speaker. Delete any you " +
     "would not say yourself. Then read the survivors as a SET — if two of them are the " +
     "same idea in different clothes, rewrite one.";
+  /* WAIT OUT A PER-MINUTE 429 RATHER THAN BE DEMOTED BY IT. Nothing is sitting in front
+     of this — campWarm and learnTopUp(quiet) are both fire-and-forget — so it meets
+     waitOnRateLimit's own stated test exactly. It was never passed here because when that
+     option was written the forms queue was the only background queue, and its comment
+     still calls itself "the ONE caller that should sit out a per-minute 429".
+
+     The cost of not waiting, measured live on 2026-08-29: plan/write/review fire back to
+     back into gemini-flash's 5-a-minute limit, the throttle is read as "this model is
+     gone", and the heaviest call in the app runs on gemini-flash-lite instead. George saw
+     the symptom and named the cause: "should we pause before resending?" */
   const out = extractJSON(await geminiRequest([{ text: prompt }], null,
-    { timeoutMs: GEN_TIMEOUT_MS,
+    { timeoutMs: GEN_TIMEOUT_MS, waitOnRateLimit: true,
       label: "Writing practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const items = (out && Array.isArray(out.items)) ? out.items : [];
   return items.map(it => {
@@ -18590,7 +18641,8 @@ async function learnReviewItems(data) {
     "correct outcome, not a problem.";
   try {
     const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
-                                                { label: "Checking the new sentences" }));
+                                                { waitOnRateLimit: true,   // see sentenceWriteOne
+                                                  label: "Checking the new sentences" }));
     const keep = (out && Array.isArray(out.keep)) ? out.keep : null;
     /* A reviewer that rejects everything is far more likely to be a malformed reply
        than twelve genuinely broken items — fall back rather than silently starve
@@ -23745,6 +23797,31 @@ T("bankPrune: refreshes, so an item with empty uses is recovered not dropped", (
            "recomputing has to happen BEFORE the filter, or the filter throws it away");
   assertEq(bankPrune(bank, { "בית": {} }).length, 0,
            "but a sentence genuinely about nothing he has is still pruned");
+});
+
+/* ---- the writer was asked for 24 fully-glossed items in one call ----
+   Caught live: ok:true, 46.2s (GEN_TIMEOUT_MS is 45s), gemini-flash-lite, {"items":[]}.
+   One empty answer lost the whole commission because the write was a single call. */
+T("sentenceWriteChunks: splits without losing, duplicating or reordering a brief", () => {
+  const briefs = [];
+  for (let i = 0; i < 24; i++) briefs.push({ en: "brief " + i });
+  const chunks = sentenceWriteChunks(briefs, 8);
+  assertEq(chunks.length, 3, "24 written 8 at a time is three calls");
+  assertEq(chunks.map(c => c.length).join(","), "8,8,8");
+  /* Flattening has to give the original list back, in order: sentenceWrite maps each
+     result to a brief by `it.i`, so a chunk whose indices no longer line up against the
+     original list re-labels every item with the wrong brief. */
+  const flat = chunks.reduce((a, c) => a.concat(c), []);
+  assertEq(flat.length, 24);
+  assertTrue(flat.every((b, i) => b.en === "brief " + i), "order and identity preserved");
+});
+T("sentenceWriteChunks: an uneven tail is kept, not dropped", () => {
+  const briefs = [];
+  for (let i = 0; i < 10; i++) briefs.push({ en: String(i) });
+  assertEq(sentenceWriteChunks(briefs, 8).map(c => c.length).join(","), "8,2",
+           "the remainder is two real briefs and binning them is silent data loss");
+  assertEq(sentenceWriteChunks([], 8).length, 0, "nothing to write is no calls, not one empty one");
+  assertEq(sentenceWriteChunks([{ en: "a" }], 8).length, 1);
 });
 
 T("commissionDead: reports the stage, and still returns 0 for the caller's arithmetic", () => {

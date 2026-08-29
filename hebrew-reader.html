@@ -723,11 +723,6 @@
   }
   .grow-row .rowact button:hover { background: var(--accent-soft); }
   .grow-row .rowact button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* fallback (Windows voice, the honest default before the async coverage check
-     lands) is deliberately duller than hasai (a real cached AI recording) — the
-     colour itself tells you which one you'll hear before you click. */
-  .grow-row .rowact button.gaudio.fallback { color: var(--muted); opacity: .55; }
-  .grow-row .rowact button.gaudio.hasai { color: var(--accent); }
   /* a word you're working on: readable across the whole grid without shouting */
   .grow-row.gfocus { font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); padding-left: 5px; }
   /* each half of an opposites pair is its own word, so it marks independently */
@@ -736,7 +731,6 @@
      is a .gside, not a .grow-row, so it never gets .rowact's own hover rule. */
   .sideaudio { display: none; background: none; border: 0; cursor: pointer; padding: 0 2px; color: var(--muted); }
   .grow-row.opp:hover .sideaudio { display: inline; }
-  .sideaudio.hasai { display: inline; color: var(--accent); }
   .sidestar { display: none; background: none; border: 0; cursor: pointer; padding: 0 2px;
     font-size: var(--gfont); line-height: 1; color: var(--muted); }
   .grow-row.opp:hover .sidestar { display: inline; }
@@ -2580,25 +2574,12 @@
     </div>
 
     <div class="setgroup" data-group="Audio">
-      <h3 class="setgroup-title">Audio<span class="setgroup-sub">Hebrew voices, and what this key can reach.</span></h3>
+      <h3 class="setgroup-title">Audio<span class="setgroup-sub">The microphone this app listens through.</span></h3>
       <div class="setrow">
         <div class="setrow-text"><b>Test the microphone</b>
           <p id="micTestDesc">Listens for five seconds and reports exactly what happened — whether the browser can listen at all, whether it heard you, and what it thought you said.</p>
           <details><summary>What it checks</summary><p>Speech recognition is the one part of the app that behaves differently on a phone and a laptop, and when it fails it usually fails silently. This says which of the steps went wrong rather than leaving you guessing: whether the browser supports listening, whether the microphone is held by something else, whether Hebrew recognition is available on this device, and what came back.</p></details></div>
         <button class="btn secondary" id="micTestBtn">Test</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Check which Hebrew voices work</b>
-          <p id="ttsCheckDesc">Asks Google which speech models your key can actually reach. Uses one request and generates nothing.</p>
-          <details><summary>Why you'd check</summary><p>Real Hebrew audio has been failing since 7 Aug. This says whether the app is asking for a model that no longer exists, or the account itself is blocked — rather than guessing.</p></details></div>
-        <button class="btn secondary" id="ttsCheckBtn">Check</button>
-      </div>
-      <div class="setrow">
-        <div class="setrow-text"><b>Generate a test clip</b>
-          <p id="ttsGenTestDesc">Asks Google to actually speak one short test sentence and plays it back. This is the real thing — unlike Check above, it spends real TTS quota.</p>
-          <details><summary>Why this and not "Check" above</summary><p>Checking which models a key can reach only proves the model NAME is valid — it says nothing about whether generation itself succeeds. This is the one test that answers that: if a real voice plays back, real Hebrew audio is working on this key right now, and every Listen / Say-it-back card in Learn will start recording real audio for the words you meet from here on. If it fails, the message is Google's own error text, not a guess.</p></details>
-          <details><summary>What it costs</summary><p>One request against the confirmed real limit — about 3 a minute, 10 a day, per key. It doesn't touch your library or bank; the clip plays once and isn't kept.</p></details></div>
-        <button class="btn secondary" id="ttsGenTestBtn">Generate</button>
       </div>
     </div>
 
@@ -5216,8 +5197,10 @@ async function formsRunQueue(opts) {
   return { words: words, calls: calls };
 }
 
-/* Thin load/save wrapper around rekeyInStores, plus the one thing that cannot
-   live in a pure function: moving the IndexedDB audio blob. */
+/* Thin load/save wrapper around rekeyInStores. Used to also move the word's
+   IndexedDB audio clip, but that lookup was keyed bare ("from") against a
+   store keyed "word:"+from — it never actually matched, so no clip ever
+   moved. Moot now that synthesised word clips don't exist (2026-08-29). */
 async function rekeyWord(from, to) {
   const stores = {
     lib: libAll(), srs: srsAll(), focus: focusAll(), aliases: aliasAll(),
@@ -5230,12 +5213,6 @@ async function rekeyWord(from, to) {
   aliasSave(stores.aliases); knownSave(stores.known); archiveSave(stores.archive);
   struggleSave(stores.struggle);
 
-  const blob = await audioGet(from);
-  if (blob) {
-    const existing = await audioGet(to);
-    if (!existing) await audioPut(to, blob);
-    await audioDel(from);
-  }
   rebuildTrIndex();
   return true;
 }
@@ -6336,69 +6313,6 @@ document.getElementById("micTestBtn").onclick = async (ev) => {
       : ""), true);
   }
   btn.disabled = false; btn.textContent = "Test";
-};
-
-document.getElementById("ttsCheckBtn").onclick = async () => {
-  const el = document.getElementById("ttsCheckDesc");
-  const keys = geminiKeys();
-  if (!keys.length) { el.textContent = "Add a Gemini key above first."; return; }
-  el.textContent = "Asking Google which models this key can reach…";
-  try {
-    const resp = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/models?key=" +
-                             encodeURIComponent(keys[0]) + "&pageSize=200");
-    if (!resp.ok) { el.textContent = "Google refused the request — HTTP " + resp.status +
-                    ". That's a key or account problem, not a model-name one."; return; }
-    const json = await resp.json();
-    const all = (json.models || []).map(m => String(m.name || "").replace(/^models\//, ""));
-    const tts = all.filter(n => /tts/i.test(n));
-    const wanted = GEMINI_TTS_MODELS.filter(m => all.indexOf(m) !== -1);
-    el.textContent =
-      (tts.length
-        ? "Speech models your key can reach: " + tts.join(", ") + ". "
-        : "Your key cannot reach ANY speech model — this is an account limitation, not a "
-          + "stale model name, so real Hebrew audio isn't available on this key. ") +
-      (wanted.length
-        ? "The app asks for " + wanted.join(" and ") + ", which " +
-          (wanted.length === 1 ? "is" : "are") + " on that list, so the name is fine — any "
-          + "failure is coming from the account or the quota."
-        : "The app currently asks for " + GEMINI_TTS_MODELS.join(" and ") +
-          ", none of which are on that list — that is very likely the whole problem. " +
-          (tts.length ? "Tell Claude the names above and it can point the app at them." : ""));
-  } catch (e) {
-    el.textContent = "Couldn't reach Google — " + e.message;
-  }
-};
-
-/* The one Settings action that spends real money-equivalent quota rather than
-   just reading. Deliberately not run automatically or by anything else — same
-   reasoning as the Check button above: this is George's key and his quota, so
-   pressing it has to be his decision each time, not something the app does on
-   his behalf. A fixed sentence rather than a library word: long enough that the
-   model reads it as prose to vocalise rather than a greeting to reply to (see
-   the note on geminiTTS above — a bare "shalom" once got answered, not spoken),
-   and unrelated to any real word so a failure here can never be misread as
-   "this specific word is somehow broken". */
-const TTS_TEST_PHRASE = "זהו קטע בדיקה קצר, כדי לבדוק אם הקול האמיתי עובד.";
-document.getElementById("ttsGenTestBtn").onclick = async () => {
-  const el = document.getElementById("ttsGenTestDesc");
-  const btn = document.getElementById("ttsGenTestBtn");
-  if (!geminiKeys().length) { el.textContent = "Add a Gemini key above first."; return; }
-  btn.disabled = true; btn.textContent = "Generating…";
-  el.textContent = "Asking Google to speak one real sentence — this spends real TTS quota…";
-  el.style.color = "";
-  try {
-    const b64 = await geminiTTS(TTS_TEST_PHRASE);
-    const blob = pcmToWavBlob(b64, 24000, 1, 16);
-    playAudioBlob(blob, false);
-    el.textContent = "Real audio came back and is playing now — Hebrew TTS is working on "
-      + "this key. Every Listen and Say-it-back card from here on will start recording the "
-      + "real voice for words you meet.";
-  } catch (e) {
-    el.textContent = "No audio came back — " + e.message;
-    el.style.color = "var(--bad)";
-  } finally {
-    btn.disabled = false; btn.textContent = "Generate";
-  }
 };
 
 /* ---- sync controls ---- */
@@ -7933,7 +7847,6 @@ function renderLibrary() {
     });
   });
 
-  paintLibAudioButtons();   // async, fire-and-forget — rows render now, icons upgrade a beat later
 }
 
 function heScale() {
@@ -8661,61 +8574,22 @@ function buildOppSideEl(key, e, focus, srs, lens) {
    Removed rather than kept "in case": a second star builder is exactly how the star
    went missing from the opposites half of the library once already. */
 
-/* Rendered synchronously in a neutral "fallback" state — checking IndexedDB per
-   row (up to ~150 of them) during the render itself would mean either an async
-   render (rippling through every caller of renderLibrary) or a slow per-row
-   await. Instead every button carries data-key, and paintLibAudioButtons() below
-   does ONE batched scan afterwards and upgrades the ones that actually have real
-   audio cached — same shape as the async-enhancement pattern the AI features
-   already use, just for IndexedDB instead of a network call. */
 function libAudioButton(key, extraCls) {
   const btn = document.createElement("button");
-  btn.className = "gaudio fallback" + (extraCls ? " " + extraCls : "");
+  btn.className = "gaudio" + (extraCls ? " " + extraCls : "");
   btn.dataset.key = key;
   btn.textContent = "🔊";
-  btn.title = "Play — checking whether a real recording exists…";
-  btn.addEventListener("click", (ev) => { ev.stopPropagation(); playLibraryAudio(key, btn); });
+  btn.title = "Play";
+  btn.addEventListener("click", (ev) => { ev.stopPropagation(); playLibraryAudio(key); });
   return btn;
 }
-async function playLibraryAudio(key, btn) {
-  const blob = await audioGet("word:" + key);
-  if (blob) {
-    playAudioBlob(blob, false);
-    setLibStatus("“" + key + "” — playing the AI recording.");
-    if (btn) { btn.className = "gaudio hasai"; btn.title = "Play — real AI recording"; }
-    return;
-  }
+function playLibraryAudio(key) {
   if (hasHeVoice()) {
     speakHe(key, false);
-    setLibStatus("“" + key + "” — no AI recording yet, playing the Windows voice.");
+    setLibStatus("“" + key + "”");
   } else {
-    setLibStatus("“" + key + "” — no audio available yet (no AI recording, no Hebrew voice installed).");
+    setLibStatus("“" + key + "” — no Hebrew voice installed on this device.");
   }
-}
-/* One transaction over the whole store instead of one per row — a getAllKeys()
-   cursor is the batched equivalent of the O(n) localStorage-parse trap this app
-   has hit before with per-row store reads. */
-function audioCachedWordKeys() {
-  return audioDb().then(db => new Promise(resolve => {
-    try {
-      const req = db.transaction(AUDIO_STORE, "readonly").objectStore(AUDIO_STORE).getAllKeys();
-      req.onsuccess = () => resolve((req.result || []).filter(k => String(k).indexOf("word:") === 0)
-                                                        .map(k => String(k).slice(5)));
-      req.onerror = () => resolve([]);
-    } catch (e) { resolve([]); }
-  })).catch(() => []);
-}
-async function paintLibAudioButtons() {
-  const have = new Set(await audioCachedWordKeys());
-  document.querySelectorAll(".gaudio[data-key]").forEach(btn => {
-    const has = have.has(btn.dataset.key);
-    /* toggle, never overwrite className — an opposites-side button also carries
-       "sideaudio" for its own hover-reveal rule, and a wholesale reassignment
-       here would silently strip that on every repaint. */
-    btn.classList.toggle("hasai", has);
-    btn.classList.toggle("fallback", !has);
-    btn.title = has ? "Play — real AI recording" : "Play — Windows voice (no AI recording yet)";
-  });
 }
 
 function buildOppRow(keyA, keyB, lib, focus, srs, lens) {
@@ -9375,7 +9249,6 @@ function renderMapPlane(lib, focus, srs, rowPx) {
   });
   plane.style.height = Math.max(MAP_H, maxY + 80) + "px";
   applyMapTransform();   // also restores the far/near class from the real current scale
-  paintLibAudioButtons();
 }
 
 /* Same shape as a library row, same density — but it isn't in the library yet, so
@@ -9595,7 +9468,6 @@ function wireClusterDrag(el, head, name) {
     const c = centreOf(pts);
     const cx = c.x - rect.left, cy = c.y - rect.top;
     const v = mapViewLoad();
-    const wasFar = v.s < MAP_FAR;
 
     if (pts.length >= 2 && gesture.spread > 0) {
       /* Zoom about the midpoint: the point under the fingers stays under them. */
@@ -9610,7 +9482,6 @@ function wireClusterDrag(el, head, name) {
       v.y = gesture.vy + (cy - gesture.cy);
     }
     applyMapTransform();
-    if (wasFar !== (v.s < MAP_FAR)) paintLibAudioButtons();
   }, { passive: false });
 
   const endPointer = (ev) => {
@@ -9651,13 +9522,11 @@ function wireClusterDrag(el, head, name) {
       const rect = wrap.getBoundingClientRect();
       const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
       const v = mapViewLoad();
-      const wasFar = v.s < MAP_FAR;
       const s2 = v.s >= MAP_MAX_S - 0.01 ? MAP_MIN_S : Math.min(MAP_MAX_S, v.s * 1.8);
       v.x = mx - (mx - v.x) * (s2 / v.s);
       v.y = my - (my - v.y) * (s2 / v.s);
       v.s = s2;
       applyMapTransform();
-      if (wasFar !== (v.s < MAP_FAR)) paintLibAudioButtons();
       mapViewSave();
       return;
     }
@@ -9674,15 +9543,11 @@ function wireClusterDrag(el, head, name) {
     const v = mapViewLoad();
     const rect = wrap.getBoundingClientRect();
     const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-    const wasFar = v.s < MAP_FAR;
     const s2 = Math.min(MAP_MAX_S, Math.max(MAP_MIN_S, v.s * Math.exp(-ev.deltaY * 0.0012)));
     v.x = mx - (mx - v.x) * (s2 / v.s);
     v.y = my - (my - v.y) * (s2 / v.s);
     v.s = s2;
     applyMapTransform();
-    /* crossing the far threshold swaps bubbles for rows — audio buttons on rows
-       that just appeared still need their one batched IndexedDB check */
-    if (wasFar !== (v.s < MAP_FAR)) paintLibAudioButtons();
     mapViewSave();
   }, { passive: false });
 })();
@@ -10176,9 +10041,7 @@ function geminiURLFor(model, key) {
    arrived mid-sentence. Counted inside geminiRequest() rather than at each call site,
    because that is the one place every generateContent request goes through — a
    per-feature counter would drift the first time a call site was added and this was
-   forgotten. Speech generation is deliberately outside this: geminiTTS() has its own
-   loop against its own model pool, so folding it in would report one number for two
-   unrelated allowances.
+   forgotten.
 
    Two honest limits, both deliberate. It counts what THIS browser spent today, which
    is at most what Google counted: a request from the phone, or from before this
@@ -11962,9 +11825,7 @@ function audioPut(key, blob) {
     } catch (e) { resolve(false); }
   })).catch(() => false);
 }
-/* Needed by rekeyWord(): a cached recording is keyed by the Hebrew string, so
-   renaming a word without moving its blob silently orphans every clip George
-   has paid an API call for. */
+/* Used to prune old voice-note clips once VNOTES_MAX is exceeded. */
 function audioDel(key) {
   return audioDb().then(db => new Promise(resolve => {
     try {
@@ -11975,268 +11836,34 @@ function audioDel(key) {
     } catch (e) { resolve(false); }
   })).catch(() => false);
 }
-function audioClearAll() {
+/* PURGES SYNTHESISED CLIPS ONLY. Gemini TTS (word:/sentence: entries) is gone —
+   see the 2026-08-29 design doc — but this store also holds real recordings of
+   grandad's WhatsApp voice notes under note:<id>, and those must survive. An
+   allow-list of the two retired prefixes, not a deny-list of note:, so a future
+   key shape can never be caught by accident. Run once, gated like the existing
+   hvr_*_v1 migration flags. */
+function audioPurgeSynthetic(keys) {
+  return keys.filter(k => {
+    const s = String(k);
+    return s.indexOf("word:") === 0 || s.indexOf("sentence:") === 0;
+  });
+}
+function audioPurgeSyntheticRun() {
+  if (lsGet("hvr_ttspurge_v1")) return Promise.resolve(0);
   return audioDb().then(db => new Promise(resolve => {
     try {
-      const tx = db.transaction(AUDIO_STORE, "readwrite");
-      tx.objectStore(AUDIO_STORE).clear();
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-    } catch (e) { resolve(false); }
-  })).catch(() => false);
+      const store = db.transaction(AUDIO_STORE, "readwrite").objectStore(AUDIO_STORE);
+      const req = store.getAllKeys();
+      req.onsuccess = () => {
+        const dead = audioPurgeSynthetic(req.result || []);
+        dead.forEach(k => store.delete(k));
+        resolve(dead.length);
+      };
+      req.onerror = () => resolve(0);
+    } catch (e) { resolve(0); }
+  })).then(n => { lsSet("hvr_ttspurge_v1", "1"); return n; }).catch(() => 0);
 }
-
-/* Gemini returns raw 16-bit/24kHz mono PCM with no header — this is the one
-   mechanical transform needed to make it a playable file. Fully specified by the
-   RIFF/WAVE format, so unlike the request/response shape below this needs no live
-   verification, only correct arithmetic. */
-function pcmToWavBlob(base64pcm, sampleRate, channels, bitsPerSample) {
-  const raw = atob(base64pcm);
-  const len = raw.length;
-  const buf = new ArrayBuffer(44 + len);
-  const view = new DataView(buf);
-  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-  writeStr(0, "RIFF"); view.setUint32(4, 36 + len, true); writeStr(8, "WAVE");
-  writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * channels * bitsPerSample / 8, true);
-  view.setUint16(32, channels * bitsPerSample / 8, true); view.setUint16(34, bitsPerSample, true);
-  writeStr(36, "data"); view.setUint32(40, len, true);
-  const bytes = new Uint8Array(buf, 44);
-  for (let i = 0; i < len; i++) bytes[i] = raw.charCodeAt(i);
-  return new Blob([buf], { type: "audio/wav" });
-}
-
-/* Sibling to geminiRequest(): same key-then-model fallback shape, but a
-   different request body (asks for AUDIO output, not text) and a different
-   response shape (inlineData.data, base64 PCM, not .text). Built from Google's
-   published TTS docs, and the caller treats any throw here exactly like a quota
-   failure: falls back to the Windows voice, never breaks the page.
-
-   Confirmed live (George's error text, 2026-08-07): sending the bare word as the
-   whole prompt gets read as an open conversational turn, and the model tries to
-   REPLY to it rather than vocalise it — worst on exactly the short, greeting-like
-   words this hit first ("shalom" invites a response). responseModalities:["AUDIO"]
-   alone isn't enough of a constraint on its own; the model still needs to be told
-   in plain language that its only job is reading the transcript aloud, verbatim,
-   never answering or commenting on it. That instruction is carried below as
-   `systemInstruction` — which is exactly the field the next note found broken.
-
-   VERIFIED LIVE 2026-08-21, via Settings → Generate a test clip, and currently
-   BROKEN: every model in GEMINI_TTS_MODELS returns
-     HTTP 400: "Developer instruction is not enabled for this model"
-   That is Google naming `systemInstruction` itself as the rejected field — not the
-   model name (confirmed reachable the same day, see the note below), not quota, not
-   the account. Fixing this means moving the read-verbatim instruction above out of
-   `systemInstruction` and into the `contents` prompt text instead — untested, and
-   exactly the kind of change that could reintroduce the "replied instead of
-   vocalised" bug this comment opens with. Deliberately NOT attempted this session:
-   George is moving to phone-first use and asked to shelve this avenue rather than
-   chase it further. Start the next attempt from the error above, not from scratch. */
-/* A LIST, and never a single dated name again. This was
-   `["gemini-2.5-flash-preview-tts"]` — one dated PREVIEW model with no fallback — while
-   1500 lines below, the text path states the rule this violates: "Always use -latest
-   aliases; dated names get retired underneath you", learned when exactly that happened
-   to a text model.
-
-   The README concluded on 2026-08-07 that Google's TTS was broken for this account. No
-   other model name was tried before that conclusion, so "the account is broken" and
-   "the one name we ask for stopped existing" were never separated. Settings →
-   "Check which Hebrew voices work" now answers that with the real API rather than a
-   guess; ordered newest-first so a working model is found before a retired one. */
-/* Confirmed live from George's own key on 2026-08-20 via the Check button below:
-   all three of these are reachable. So the 2.5 names were never the problem — the
-   original single-name theory was wrong, and the persistent failures since 07 Aug are
-   coming from the account or the per-model quota, not from asking for something that
-   no longer exists.
-
-   3.1 leads anyway. It is newer, and Google's free tiers are pooled PER MODEL — the
-   text path already exploits exactly this, where flash-lite answers while flash is
-   returning 429. A model this app has never called has, by definition, an untouched
-   allowance. Ordered newest-first so the freshest pool is tried before the two that
-   have been failing. */
-const GEMINI_TTS_MODELS = [
-  "gemini-3.1-flash-tts-preview",
-  "gemini-2.5-flash-preview-tts",
-  "gemini-2.5-pro-preview-tts"
-];
-const GEMINI_TTS_VOICE = "Kore";
-const GEMINI_TTS_SYSTEM =
-  "You are a text-to-speech engine. Your only job is to read the user's text aloud, exactly as " +
-  "written, in a natural clear voice. Never reply to it, answer it, explain it, or treat it as a " +
-  "question or a message directed at you — even if it looks like a greeting or a question. Output " +
-  "audio only.";
-function ttsURLFor(model, key) {
-  return "https://generativelanguage.googleapis.com/v1beta/models/" + model +
-         ":generateContent?key=" + encodeURIComponent(key);
-}
-
-/* Confirmed from George's actual AI Studio dashboard, 2026-08-07: Gemini 2.5 Flash
-   TTS (and 3.1 Flash TTS, same numbers) allow **3 requests a minute, 10 a day** —
-   far tighter than text generation's 20/day, and small enough that the farm
-   loop's original back-to-back calls blew through the per-MINUTE cap before ever
-   approaching the daily one. That's what "exhausted on request #1" actually was.
-   Paced per key (each Google account is a separate project with its own
-   independent limit) rather than globally. Best-effort, not a hard mutex — a
-   rare off-by-one under concurrent callers just risks an occasional 429, which
-   the existing retry/circuit-breaker chain already absorbs; real atomicity here
-   would be solving a problem that doesn't exist at this scale. */
-const AUDIO_RPM_LIMIT = 3;
-const AUDIO_RPM_WINDOW_MS = 60000;
-let audioRequestTimes = {};   // apiKey -> [timestamps within the current window]
-async function audioRateLimitWait(key) {
-  const now = Date.now();
-  const times = (audioRequestTimes[key] || []).filter(t => now - t < AUDIO_RPM_WINDOW_MS);
-  if (times.length >= AUDIO_RPM_LIMIT) {
-    const waitMs = AUDIO_RPM_WINDOW_MS - (now - times[0]) + 250;   // small safety margin
-    await new Promise(r => setTimeout(r, Math.max(0, waitMs)));
-    return audioRateLimitWait(key);   // re-check after waiting
-  }
-  times.push(now);
-  audioRequestTimes[key] = times;
-}
-
-/* 5xx is Google's own server hiccupping, not a request we got wrong — retrying
-   is the honest response to that, the same way a 400 (which no amount of
-   retrying can ever fix) gets thrown immediately instead. Worth the extra code:
-   this specific preview model has now produced a bare 500 twice, independently,
-   including on the very first live call this app ever made — real instability,
-   not a one-off fluke. Each retry re-checks the rate limiter, since it's still a
-   genuine request against the real per-minute budget. */
-const TTS_MAX_ATTEMPTS = 3;
-async function ttsFetchWithRetry(model, key, body) {
-  let resp = null;
-  for (let attempt = 0; attempt < TTS_MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) {
-      await new Promise(r => setTimeout(r, 700 * attempt));   // 700ms, then 1400ms
-      await audioRateLimitWait(key);
-    }
-    resp = await fetchWithTimeout(ttsURLFor(model, key), {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(body) });
-    if (resp.ok || resp.status < 500) return resp;   // success, or not a retryable failure — stop here
-  }
-  return resp;   // still failing after every retry — a real failure, not a blip
-}
-
-/* NO systemInstruction, and that is the whole change. Google's own 400 names that field
-   — "Developer instruction is not enabled for this model" — and the note above concluded
-   the fix was to move the read-verbatim instruction into `contents`. Half of it was
-   already there: the prompt has said "Read this aloud, verbatim:" the whole time, so the
-   system block was belt and braces over an instruction that was being given anyway. Now
-   the whole of it is in the prompt.
-
-   The risk this reopens is the original "replied instead of vocalised" bug, worst on
-   short greeting-like words where "shalom" invites an answer. If that comes back, make
-   the prompt wording firmer — do not restore the field Google is refusing.
-
-   Built by its own function so the suite can read the request rather than the source
-   text: an earlier version of that test searched String(geminiTTS) and matched this very
-   comment. */
-function ttsBody(text) {
-  return {
-    contents: [{ parts: [{ text: GEMINI_TTS_SYSTEM +
-      "\n\nRead this aloud, verbatim, and say nothing else: " + text }] }],
-    generationConfig: {
-      responseModalities: ["AUDIO"],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } }
-    }
-  };
-}
-async function geminiTTS(text) {
-  const keys = geminiKeys();
-  if (!keys.length) throw new Error("no key configured");
-  let lastErr = null;
-  for (let ki = 0; ki < keys.length; ki++) {
-    const key = keys[ki];
-    for (const model of GEMINI_TTS_MODELS) {
-      await audioRateLimitWait(key);
-      const body = ttsBody(text);
-      /* Logged like every other call. This path is a sibling of geminiRequest rather than a
-         caller of it, so it was the one hole in "the star shows every call" — George could
-         see 12 TTS requests on his Google dashboard and nothing at all in the app. */
-      const tok = { label: "Making audio for a card", at: Date.now() };
-      aiInflight.push(tok);
-      aiStarPaint();
-      const ttsAt = Date.now();
-      let resp = null;
-      try { resp = await ttsFetchWithRetry(model, key, body); }
-      finally {
-        const ix = aiInflight.indexOf(tok);
-        if (ix !== -1) aiInflight.splice(ix, 1);
-        aiStarPaint();
-      }
-      if (resp.ok) {
-        aiLogNote({ ts: Date.now(), label: tok.label, ok: true, ms: Date.now() - ttsAt,
-                    model: model, req: text, res: "[audio]" });
-        const json = await resp.json();
-        const part = ((((json.candidates || [])[0] || {}).content || {}).parts || [])[0];
-        const data = part && part.inlineData && part.inlineData.data;
-        if (data) return data;
-        throw new Error("empty audio reply");
-      }
-      /* Captured on EVERY failure, not just discarded on 429 — a 429 that's
-         actually "this preview model isn't enabled for your project" looks
-         identical to a genuine rate limit from the status code alone, and the
-         first time this ran live it returned 429 on the very first request ever
-         made, which a real per-day quota shouldn't do. Keeping Google's own text
-         is what lets that distinction actually be checked instead of guessed. */
-      const errText = await resp.text();
-      aiLogNote({ ts: Date.now(), label: tok.label, ok: false, ms: Date.now() - ttsAt,
-                  model: model, err: "HTTP " + resp.status + ": " + errText.slice(0, 300),
-                  req: text, res: "" });
-      /* 300 chars cut the useful part off mid-sentence last time — the
-         "Quota exceeded for metric: ..." detail that actually names which limit
-         was hit lives right where the old truncation ended. */
-      lastErr = "HTTP " + resp.status + ": " + errText.slice(0, 700);
-      if (resp.status === 429) break;               // this key is spent — try the next one
-      throw new Error(lastErr);                       // anything else is not a quota problem
-    }
-  }
-  throw new Error("audio quota exhausted — " + (lastErr || "no detail"));
-}
-
-/* The one place quota actually gets spent — both the lazy per-card hook and the
-   farm loop below call through here, so there is exactly one code path to trust. */
-/* WILL ASKING AGAIN PRODUCE A DIFFERENT ANSWER? Pure, so the suite can hold the
-   distinction that cost a day's TTS pool: a 4xx will say exactly the same thing next
-   time, and a dropped connection will not. */
-function audioFatal(msg) {
-  return /quota exhausted/.test(msg || "") || /^HTTP 4\d\d/.test(msg || "");
-}
-let audioInFlight = {};
-let audioQuotaDead = false;   // session-scoped circuit breaker: trips on a 429 from both keys
-let audioLastError = null;    // Google's actual last response text, for the Settings status line
-async function audioEnsure(cacheKey, text) {
-  if (!cacheKey || !text || audioQuotaDead || audioInFlight[cacheKey] || !geminiKeys().length) return false;
-  /* Claimed BEFORE the first await, not after — a card's auto-play and its
-     background top-up can both reach for the same key in the same tick, and the
-     guard above is only safe if there is no gap between checking it and setting
-     it for another call to slip through. */
-  audioInFlight[cacheKey] = true;
-  try {
-    const existing = await audioGet(cacheKey);
-    if (existing) return true;
-    const b64 = await geminiTTS(text);
-    const blob = pcmToWavBlob(b64, 24000, 1, 16);
-    await audioPut(cacheKey, blob);
-    return true;
-  } catch (e) {
-    audioLastError = e.message;
-    /* THE BREAKER HAS TO TRIP ON A PERMANENT FAILURE, NOT ONLY ON A SPENT QUOTA. It read
-       /quota exhausted/ alone, which geminiTTS throws only after a 429 from every key —
-       so the HTTP 400 this account has returned since August matched nothing, nothing
-       remembered it, and EVERY card asked again. Twelve requests in a day against a
-       ten-a-day pool, for a feature that has never once returned audio, and invisible
-       because this path does not go through geminiRequest.
-       A 4xx will say the same thing next time. A dropped connection will not, and must
-       not disable audio for the rest of the session. */
-    if (audioFatal(e.message)) audioQuotaDead = true;
-    return false;
-  } finally {
-    delete audioInFlight[cacheKey];
-  }
-}
+audioPurgeSyntheticRun();   // fire-and-forget, gated to run once — see the function above
 
 /* Which slot a given card/moment maps to. Listen cards deliberately reuse the
    same ":a" slot for both their prompt and their reveal — both moments speak the
@@ -12273,74 +11900,21 @@ function playAudioBlob(blob, slow) {
     return true;
   } catch (e) { return false; }
 }
+/* cacheKey is unused now that Gemini TTS is gone (2026-08-29) — kept so the
+   seven call sites built around cardAudioKey() don't need to change. */
 async function playHe(cacheKey, text, slow) {
-  if (cacheKey) {
-    const blob = await audioGet(cacheKey);
-    if (blob) { playAudioBlob(blob, slow); return; }
-    audioEnsure(cacheKey, text);
-  }
   speakHe(text, slow);
 }
 
 /* A note has exactly one recording and no synthetic alternative — never fall through
-   to audioEnsure (which would spend quota synthesising a whole voice note) or to the
-   Windows voice (which would read the transcript, quietly replacing the real thing
-   with the imitation this whole feature exists to stop using). If the blob is gone,
-   say so. */
+   to the device voice, which would read the transcript, quietly replacing the real
+   thing with an imitation of it. If the blob is gone, say so. */
 async function playNote(cacheKey, slow) {
   const blob = cacheKey ? await audioGet(cacheKey) : null;
   if (blob) { playAudioBlob(blob, slow); return true; }
   const hint = document.getElementById("lHint");
   if (hint) hint.textContent = "That recording isn't on this device any more.";
   return false;
-}
-
-/* Every library word plus every bank item's audio needs, in one list — the same
-   list backs both the Settings coverage count and the farm loop, so they can
-   never disagree about what "done" means. */
-function audioJobList() {
-  const lib = libAll();
-  const bank = bankPrune(bankAll(), lib);
-  const jobs = [];
-  Object.keys(lib).forEach(k => jobs.push({ key: "word:" + k, text: k }));
-  bank.forEach(it => {
-    jobs.push({ key: "sentence:" + it.id + ":a", text: it.he });
-    if (it.type === "reply" && it.qhe) jobs.push({ key: "sentence:" + it.id + ":q", text: it.qhe });
-  });
-  return jobs;
-}
-async function audioCoverage() {
-  const jobs = audioJobList();
-  let have = 0;
-  for (const j of jobs) if (await audioGet(j.key)) have++;
-  return { have: have, total: jobs.length };
-}
-/* Deliberately sequential, not parallel — a burst of concurrent requests would
-   all fail together once the quota is spent, and the circuit breaker couldn't
-   stop a burst already in flight. One at a time lets it actually stop mid-run. */
-async function audioFarmRun(onProgress) {
-  const jobs = audioJobList();
-  let made = 0, skipped = 0, consecutiveFails = 0, stoppedEarly = false;
-  for (const job of jobs) {
-    if (audioQuotaDead) break;
-    if (await audioGet(job.key)) { skipped++; continue; }
-    const ok = await audioEnsure(job.key, job.text);
-    if (ok) {
-      made++; consecutiveFails = 0;
-      if (onProgress) onProgress(made, jobs.length);
-    } else if (!audioQuotaDead) {
-      /* A true quota exhaustion already stops the loop above. This catches the
-         OTHER case: every attempt failing for some non-quota reason (a bad model
-         name, a malformed request, a feature not enabled on this tier) — running
-         the same failing call against 90 more items would just burn time
-         reporting nothing useful. Three in a row is "something is structurally
-         wrong", not "this one word's text happened to be weird". */
-      consecutiveFails++;
-      if (consecutiveFails >= 3) { stoppedEarly = true; break; }
-    }
-  }
-  return { made: made, skipped: skipped, total: jobs.length,
-           quotaHit: audioQuotaDead, stoppedEarly: stoppedEarly, lastError: audioLastError };
 }
 
 if (window.speechSynthesis) {
@@ -21975,17 +21549,6 @@ document.getElementById("resetSrsBtn").onclick = settingsAction(() => {
   document.getElementById("settingsModal").style.display = "none";
 });
 
-/* "Build up audio library" removed from Settings, 2026-08-13 — George's decision
-   after a settings-menu audit flagged it as a live-looking control wired to a
-   dead endpoint. `audioFarmRun`/`geminiTTS` and everything they depend on are
-   left completely in place, dormant: the earlier design doc already treats real
-   neural audio as revivable if Google's TTS ever stops erroring, and nothing
-   about that verdict has changed. Only the button, its status line and the
-   click handler that assumed they existed are gone — leaving that handler wired
-   to deleted elements would throw at page load and silently break every onclick
-   registered after it, which is exactly the failure mode this file's own
-   history warns about. */
-
 /* One-time fresh start, at George's explicit request once the six-drill rework
    landed: "I would also like ot hit refresh on hte current learning. So restart all
    of hte progress, recreate the excersizes... that also means reseting hte progress
@@ -24733,10 +24296,6 @@ T("every card kind the builder can emit has a label and a side", () => {
       assertTrue(!!KIND_SIDE[k], k + " needs a side");
     });
 });
-T("GEMINI_TTS_MODELS is a list, so one retired name can't kill the feature", () => {
-  assertTrue(GEMINI_TTS_MODELS.length > 1, "a single dated preview name is what broke it");
-});
-
 /* ---- export / import ----
    parseImport is the gate between an arbitrary file on disk and the one store the app
    cannot rebuild, so it's tested for what it REFUSES at least as hard as for what it
@@ -24806,34 +24365,15 @@ T("aiPoolFor: only the lite alias is the big pool", () => {
   assertEq(aiPoolFor(""), "strong");
   assertEq(aiPoolFor(null), "strong");
 });
-/* ---- audio stops asking a question already answered ---- */
-T("audioFatal: a permanent refusal trips the breaker, a blip does not", () => {
-  /* THE BUG, NAMED. audioQuotaDead was set on /quota exhausted/ alone, which geminiTTS
-     throws only after a 429 from EVERY key. The HTTP 400 this account has returned since
-     August matched nothing, so nothing remembered the failure and every card asked again
-     — 12 requests against a 10-a-day pool for a feature that has never returned audio. */
-  assertTrue(audioFatal('HTTP 400: Developer instruction is not enabled for this model'),
-             "the exact error that has been retried on every card since August");
-  assertTrue(audioFatal("audio quota exhausted — HTTP 429"), "and the one it did catch");
-  assertTrue(audioFatal("HTTP 403: permission denied"));
-  assertTrue(!audioFatal("Failed to fetch"),
-             "a dropped connection says nothing about the next card");
-  assertTrue(!audioFatal("the request took longer than 20s"));
-  assertTrue(!audioFatal("empty audio reply"), "odd, but not a reason to stop trying");
-  assertTrue(!audioFatal(""));
-});
-T("ttsBody no longer sends the field Google is refusing", () => {
-  /* Google's 400 names systemInstruction itself, and it has failed every time since
-     2026-08-07. Asserted against the REQUEST, not the source text — the first version of
-     this test read String(geminiTTS) and matched the comment explaining the fix. */
-  const b = ttsBody("שלום");
-  assertTrue(!("systemInstruction" in b), "the rejected field must not be in the body");
-  const sent = b.contents[0].parts[0].text;
-  assertTrue(sent.indexOf("verbatim") !== -1,
-             "but the instruction it carried still has to be given, or a greeting gets " +
-             "answered instead of read aloud");
-  assertTrue(sent.indexOf("שלום") !== -1, "and the word itself is in there");
-  assertEq(b.generationConfig.responseModalities, ["AUDIO"]);
+/* ---- the TTS-clip purge must never touch a real voice note ---- */
+T("audioPurgeSynthetic: word:/sentence: go, note: survives untouched", () => {
+  const keys = ["word:x", "sentence:a:a", "sentence:b:q", "note:c"];
+  const dead = audioPurgeSynthetic(keys);
+  assertTrue(dead.indexOf("word:x") !== -1);
+  assertTrue(dead.indexOf("sentence:a:a") !== -1);
+  assertTrue(dead.indexOf("sentence:b:q") !== -1);
+  assertTrue(dead.indexOf("note:c") === -1, "a real recording must never be swept up");
+  assertEq(dead.length, 3);
 });
 
 /* ---- one node, one commission ---- */

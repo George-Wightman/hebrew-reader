@@ -18234,6 +18234,24 @@ function commissionAcceptable(it, lib, scaffoldSet, rescueSet, maxCarried) {
   return carried <= (maxCarried || 1);
 }
 
+/* ---- a commission that produces nothing has to SAY SO --------------------------
+   There were five ways to bank nothing here and all of them were `return 0`, which
+   campWarm then wrapped in `.catch(() => 0)`. Indistinguishable from "there was nothing
+   to do" — so generation stopped producing for four days across sessions on 26, 27, 28
+   and 29 August and the app never said a word about it. George only found out by
+   noticing the sessions repeat: "I saw the API ran but nothing was changed."
+
+   Written into the same log the AI star already shows, because a failure he cannot see
+   is the thing being fixed. Returns 0 so every caller's arithmetic is unchanged. */
+function commissionDead(spec, why, detail) {
+  try {
+    aiLogNote({ ts: Date.now(), ok: false, ms: 0,
+                label: "Writing practice sentences" + (spec && spec.setting ? " for " + spec.setting : ""),
+                err: "banked nothing — " + why, req: detail || "", res: "" });
+  } catch (e) {}
+  return 0;
+}
+
 /* ---- the whole pipeline ------------------------------------------------------ */
 /* Returns how many items were banked. Never throws for an ordinary failure: a batch
    that cannot be written is a session that runs on what is already there, which is
@@ -18252,11 +18270,16 @@ async function sentenceCommission(spec) {
   /* Nothing solid to build from. Below this the builder has no honest way to satisfy
      "every other word from this list", and it will either ignore the instruction or
      write three-word fragments — both worse than not spending the call. */
-  if (spec.scaffold.length < READY_MIN_FOR_SENTENCES) return 0;
+  if (spec.scaffold.length < READY_MIN_FOR_SENTENCES) {
+    return commissionDead(spec, "not enough solid vocabulary to build from",
+                          spec.scaffold.length + " ready, " + READY_MIN_FOR_SENTENCES + " needed");
+  }
   const briefs = await sentencePlan(spec);
-  if (!briefs.length) return 0;
+  if (!briefs.length) return commissionDead(spec, "the planner returned no briefs", "");
   const drafted = await sentenceWrite(spec, briefs);
-  if (!drafted.length) return 0;
+  if (!drafted.length) {
+    return commissionDead(spec, "the writer returned no items", briefs.length + " briefs sent");
+  }
   const scaffoldSet = new Set(spec.scaffold);
   /* Revisit words are permitted vocabulary alongside the rescue words — they count
      against the same carried limit, so a sentence may fold one in without becoming
@@ -18264,9 +18287,22 @@ async function sentenceCommission(spec) {
   const rescueSet = new Set((spec.rescue || []).concat(spec.revisit || []));
   const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet,
                                                           spec.maxCarried));
-  if (!clean.length) return 0;
+  if (!clean.length) {
+    return commissionDead(spec, "every item failed the vocabulary gate",
+                          drafted.length + " written, " + drafted.length + " rejected: " +
+                          drafted.slice(0, 3).map(it => it && it.he).filter(Boolean).join(" / "));
+  }
   const kept = await learnReviewItems({ items: clean });
-  return learnIngest(kept);
+  const n = learnIngest(kept);
+  /* Passing the gate and still banking nothing is its own distinct failure — the
+     reviewer binned them, or learnIngest's own duplicate/near-duplicate/unknown-word
+     drops did. Silent until now, and indistinguishable from never having run. */
+  if (!n) {
+    return commissionDead(spec, "nothing survived review and ingest",
+                          clean.length + " passed the gate, " +
+                          ((kept && kept.items) || []).length + " came back from review");
+  }
+  return n;
 }
 
 /* ---- throwing away what's finished with -------------------------------------
@@ -23709,6 +23745,27 @@ T("bankPrune: refreshes, so an item with empty uses is recovered not dropped", (
            "recomputing has to happen BEFORE the filter, or the filter throws it away");
   assertEq(bankPrune(bank, { "בית": {} }).length, 0,
            "but a sentence genuinely about nothing he has is still pruned");
+});
+
+T("commissionDead: reports the stage, and still returns 0 for the caller's arithmetic", () => {
+  /* Four days of sessions banked nothing and the app said nothing, because every way
+     of failing here was a bare `return 0`. The log entry is the whole point. */
+  const before = aiLogAll();
+  try {
+    assertEq(commissionDead({ setting: "your home" }, "the writer returned no items", "9 briefs sent"), 0,
+             "callers add this to a running total — it has to stay 0");
+    const top = aiLogAll()[0];
+    assertTrue(aiLogAll().length > before.length || before.length === AI_LOG_MAX,
+               "a silent failure is the bug, not the behaviour");
+    assertTrue(!top.ok, "it is a failure and must read as one in the star");
+    assertTrue(top.err.indexOf("the writer returned no items") !== -1, "it must name the stage");
+    assertTrue(top.label.indexOf("your home") !== -1, "and which node it was for");
+  } finally {
+    /* No localStorage isolation between tests — see CLAUDE.md. Restore the exact array
+       rather than trimming by length: the log is capped, so writing to a full one drops
+       the oldest entry and a length-based restore would silently keep the test's own. */
+    aiLogSave(before);
+  }
 });
 
 /* ---- the words the gate could not see ---- */

@@ -3153,10 +3153,14 @@ function mergeObjUnion(a, b, mineIsNewer) {
 
 /* Union by id, newest kept. Deliberately NOT mergeById: that carries the bank's `seen`
    and `lvl` semantics, which mean nothing for a flag, and it resolves field-level
-   conflicts a flag cannot have — one is written once and never edited, so the only
-   question is whether BOTH devices' flags survive. They must: without a rule here the
-   generic array handling is `mineIsNewer ? mine : theirs`, and a thought he had on the
-   phone would be destroyed by the next sync from the laptop.
+   conflicts the ORIGINAL flag could not have — text and ctx are written once and never
+   edited, so the only question there was whether BOTH devices' flags survive. They
+   must: without a rule here the generic array handling is `mineIsNewer ? mine : theirs`,
+   and a thought he had on the phone would be destroyed by the next sync from the laptop.
+
+   `resolved` is the one field that DOES get edited after the fact — George marks a flag
+   addressed once a fix for it has shipped — so the same-id case now needs an actual
+   merge rather than "either copy is fine": see mergeOneFlag.
 
    Ids lead with Date.now(), so sorting by id is sorting by time and the cap keeps the
    newest. That also satisfies mergeById's standing warning: the output order must not
@@ -3164,10 +3168,22 @@ function mergeObjUnion(a, b, mineIsNewer) {
 function mergeFlags(a, b, cap) {
   const byId = {};
   [a, b].forEach(list => (Array.isArray(list) ? list : []).forEach(f => {
-    if (f && f.id && !byId[f.id]) byId[f.id] = f;
+    if (!f || !f.id) return;
+    byId[f.id] = byId[f.id] ? mergeOneFlag(byId[f.id], f) : f;
   }));
   const out = Object.keys(byId).sort().map(k => byId[k]);
   return cap ? out.slice(-cap) : out;
+}
+/* RESOLVED ANYWHERE WINS. The alternative — newer blob's copy wins — could un-resolve a
+   flag by merging in a device that synced before the tap reached it, which is exactly
+   the kind of field going backwards on its own edit that mergeById's own comment warns
+   against. When both sides resolved it independently, keep the earlier resolvedTs: that
+   is when it was actually addressed, not whichever sync happened to land last. */
+function mergeOneFlag(x, y) {
+  if (!x.resolved && !y.resolved) return x;         // identical otherwise; either is fine
+  const resolvedTs = x.resolved && y.resolved ? Math.min(x.resolvedTs || 0, y.resolvedTs || 0)
+                    : x.resolved ? x.resolvedTs : y.resolvedTs;
+  return Object.assign({}, x, { resolved: true, resolvedTs: resolvedTs });
 }
 
 /* Which rule each store gets. Anything absent falls through to the generic handling
@@ -10404,14 +10420,30 @@ function flagAdd(text, ctx) {
   flagSave(flagAll().concat([f]).slice(-FLAG_MAX));
   return f;
 }
-function flagDrop(id) { flagSave(flagAll().filter(f => f && f.id !== id)); }
+/* INERT, NOT DELETED — replacing what used to be flagDrop. Deleting a flag locally and
+   then syncing brought it straight back: mergeFlags is a union, so "my copy is missing
+   it" and "this never existed on my side" are indistinguishable, and George's own
+   Delete tap could be undone by the next sync. This app already solved this shape for
+   bank items going inert rather than pruned; a flag gets the same treatment. Stays in
+   the array (FLAG_MAX still bounds it), just stops rendering — see flagRender. */
+function flagResolve(id) {
+  const all = flagAll();
+  const i = all.findIndex(f => f && f.id === id);
+  if (i === -1) return;
+  all[i] = Object.assign({}, all[i], { resolved: true, resolvedTs: Date.now() });
+  flagSave(all);
+}
 
 /* HAVE THEY REACHED ME YET. Pure, because this is the one claim the feature makes and
    the sync code already carries a scar about an indicator that lied: syncMeta().last is
    stamped only after a successful push, so comparing the newest flag against it is an
-   honest answer rather than an optimistic one. */
+   honest answer rather than an optimistic one.
+
+   `resolvedTs` counts alongside `ts` — resolving a flag is a real mutation that has to
+   reach GitHub too, or an "addressed" tap sits on the phone forever, invisible to me. */
 function flagsWaiting(flags, lastSyncISO) {
-  const newest = (flags || []).reduce((m, f) => Math.max(m, (f && f.ts) || 0), 0);
+  const newest = (flags || []).reduce((m, f) =>
+    Math.max(m, (f && f.ts) || 0, (f && f.resolvedTs) || 0), 0);
   if (!newest) return false;
   const last = Date.parse(lastSyncISO || "");
   return !last || newest > last;
@@ -10490,9 +10522,11 @@ function flagRender() {
   const list = document.getElementById("flagList");
   if (!list) return;
   const flags = flagAll();
+  const open = flags.filter(f => !f.resolved);
+  const resolvedCount = flags.length - open.length;
   list.innerHTML = "";
   /* Newest first for reading; the store is oldest-first so it agrees with the merge. */
-  flags.slice().reverse().forEach(f => {
+  open.slice().reverse().forEach(f => {
     const row = document.createElement("div");
     row.className = "ailogrow";
     const head = document.createElement("div");
@@ -10515,28 +10549,37 @@ function flagRender() {
     btn.className = "linkbtn";
     btn.textContent = "More details";
     btn.onclick = () => {
-      const open = more.style.display === "none";
-      more.style.display = open ? "block" : "none";
-      btn.textContent = open ? "Fewer details" : "More details";
+      const isOpen = more.style.display === "none";
+      more.style.display = isOpen ? "block" : "none";
+      btn.textContent = isOpen ? "Fewer details" : "More details";
     };
-    const del = document.createElement("button");
-    del.className = "linkbtn";
-    del.style.marginLeft = "12px";
-    del.textContent = "Delete";
-    del.onclick = () => { flagDrop(f.id); flagRender(); flagPaint(); };
-    row.append(btn, del, more);
+    /* Resolve, not delete — see flagResolve. A flag removed locally used to come back
+       on the next sync, because a union cannot tell "gone" from "never arrived yet". */
+    const done = document.createElement("button");
+    done.className = "linkbtn";
+    done.style.marginLeft = "12px";
+    done.textContent = "Mark addressed";
+    done.onclick = () => { flagResolve(f.id); flagRender(); flagPaint(); };
+    row.append(btn, done, more);
     list.append(row);
   });
+  if (resolvedCount) {
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent = resolvedCount + " addressed and hidden.";
+    list.append(note);
+  }
 
   /* THE WHOLE PROMISE OF THE FEATURE, STATED. If these have not reached GitHub then I
      cannot read them, and he is entitled to know that rather than assume it. */
-  const note = document.getElementById("flagSyncNote");
-  if (!flags.length) note.textContent = "";
+  const syncNote = document.getElementById("flagSyncNote");
+  if (!flags.length) syncNote.textContent = "";
   else if (!syncConfigured())
-    note.textContent = "Sync isn't set up, so these are only on this device — turn it on in Settings.";
+    syncNote.textContent = "Sync isn't set up, so these are only on this device — turn it on in Settings.";
   else if (flagsWaiting(flags, syncMeta().last))
-    note.textContent = "Not synced yet. They go up at the end of your next session.";
-  else note.textContent = "Synced — " + flags.length + " noted.";
+    syncNote.textContent = "Not synced yet. They go up at the end of your next session.";
+  else syncNote.textContent = "Synced — " + open.length + " open" +
+    (resolvedCount ? ", " + resolvedCount + " addressed" : "") + ".";
 }
 
 function flagModalOpen(on) {
@@ -24882,6 +24925,33 @@ T("mergeFlags: something with no id cannot be merged and is dropped, not thrown 
   assertEq(mergeFlags([{ text: "no id" }, null], [{ id: "1-a" }], 40).map(f => f.id), ["1-a"]);
   assertEq(mergeFlags(null, undefined, 40), []);
 });
+T("mergeFlags: resolved anywhere wins, so a tap cannot be undone by a slow sync", () => {
+  /* The bug this replaces: Delete removed a flag locally, and the next sync saw "my
+     copy is missing it" and "GitHub's copy still has it" as indistinguishable from
+     "never existed", and put it straight back. */
+  const open = { id: "1-a", text: "x" };
+  const resolved = { id: "1-a", text: "x", resolved: true, resolvedTs: 500 };
+  assertTrue(mergeFlags([open], [resolved], 40)[0].resolved, "resolved beats open");
+  assertTrue(mergeFlags([resolved], [open], 40)[0].resolved, "either argument order");
+});
+T("mergeFlags: both sides resolved independently keeps the EARLIER time", () => {
+  const a = { id: "1-a", resolved: true, resolvedTs: 900 };
+  const b = { id: "1-a", resolved: true, resolvedTs: 300 };
+  assertEq(mergeFlags([a], [b], 40)[0].resolvedTs, 300, "when it was actually addressed");
+});
+T("mergeFlags: an untouched match merges to the same open flag either way", () => {
+  const f = { id: "1-a", text: "same", ctx: { view: "learn" } };
+  assertTrue(!mergeFlags([f], [Object.assign({}, f)], 40)[0].resolved);
+});
+T("flagResolve: stays in the store, inert rather than gone", () => {
+  lsSet(FLAG_KEY, JSON.stringify([{ id: "keep-me", text: "x" }]));
+  flagResolve("keep-me");
+  const out = flagAll();
+  assertEq(out.length, 1, "resolving is not deleting");
+  assertTrue(out[0].resolved);
+  assertTrue(out[0].resolvedTs > 0);
+  localStorage.removeItem(FLAG_KEY);
+});
 T("flagsWaiting: honest about whether they have actually reached GitHub", () => {
   /* syncMeta().last is stamped only after a successful push — see syncRun, which carries
      a scar about an indicator that said "synced just now" for a sync that never landed. */
@@ -24890,6 +24960,13 @@ T("flagsWaiting: honest about whether they have actually reached GitHub", () => 
   assertTrue(!flagsWaiting(flags, "2026-08-28T11:00:00Z"), "the push carried it up");
   assertTrue(flagsWaiting(flags, ""), "never synced at all is definitely waiting");
   assertTrue(!flagsWaiting([], ""), "and nothing written is nothing waiting");
+});
+T("flagsWaiting: resolving is a mutation too, and also has to reach GitHub", () => {
+  const flags = [{ ts: Date.parse("2026-08-28T09:00:00Z"),
+                   resolved: true, resolvedTs: Date.parse("2026-08-28T10:00:00Z") }];
+  assertTrue(flagsWaiting(flags, "2026-08-28T09:30:00Z"),
+             "the flag itself is old, but the tap that resolved it is not synced yet");
+  assertTrue(!flagsWaiting(flags, "2026-08-28T11:00:00Z"));
 });
 T("flagContextLine: says where he was, in the order he would say it", () => {
   assertEq(flagContextLine({ node: "How you are · Getting by",

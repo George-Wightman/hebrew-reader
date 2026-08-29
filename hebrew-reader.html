@@ -13048,8 +13048,41 @@ function genStatAdd(seen, dropped) {
 
 /* An item whose words have all since been deleted from the library can never be
    scheduled against anything again. */
+/* ---- `uses` IS DERIVED DATA AND THE LIBRARY GROWS UNDERNEATH IT ----------------
+   It is computed from `he` and `lib` once, at write time, and was then cached forever.
+   libKeyFor resolves a token only if the word is IN the library, so a sentence written
+   before its words arrive records them as absent — permanently.
+
+   That is not a rare race. The pipeline writes a node's material days ahead of him
+   reaching it (which is the behaviour George wants MORE of), while a node's words join
+   the library only on arrival, with src:"path". So every node is set up to hit this.
+   His Family & home node did: nine unseen sentences about חדר, דלת, שולחן and מיטה,
+   written 23 Aug, invisible to the node from 26 Aug when those words were added. The
+   only ones it could see were about דירה — the one node word already in the library
+   when the batch was written. George: "This session I have done contains the exact same
+   sentences and words as before. Literally nothing has changed."
+
+   Pure, and returns new objects rather than mutating: the suite drives it with plain
+   objects, and a caller holding the old array must not have it change under them. */
+function bankUsesRefresh(bank, lib) {
+  let changed = false;
+  const out = (bank || []).map(it => {
+    if (!it || !it.he) return it;
+    const fresh = bankUses(it.he, lib);
+    const old = it.uses || [];
+    if (fresh.length === old.length && fresh.every((u, i) => u === old[i])) return it;
+    changed = true;
+    return Object.assign({}, it, { uses: fresh });
+  });
+  return { bank: out, changed: changed };
+}
+/* Refreshed BEFORE the filter, and this order is the whole point: an item whose stored
+   `uses` came out empty fails `.some(u => lib[u])` and would be thrown away by the very
+   call that was supposed to rescue it. Every read path in the app goes through here, so
+   after this no reader can see a stale `uses`. */
 function bankPrune(bank, lib) {
-  return bank.filter(it => it && it.he && (it.uses || []).some(u => lib[u]));
+  return bankUsesRefresh(bank, lib).bank
+    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]));
 }
 
 /* ---- refusing the same sentence wearing a different hat ----------------------
@@ -21591,6 +21624,19 @@ runFreshStart();
   } catch (e) {}
 })();
 
+/* bankPrune already refreshes `uses` on every read, so this is not what makes the app
+   correct — it is what makes the CORRECTION PERSIST. Without it every device recomputes
+   the same repair forever and the stored bank stays wrong, so the fix would never reach
+   his phone through sync. Runs every load rather than behind a one-shot flag on purpose:
+   the library gains words continuously, and "repair once" is the assumption that caused
+   the bug. Saves only when something actually changed. */
+(function bankRepairUses() {
+  try {
+    const res = bankUsesRefresh(bankAll(), libAll());
+    if (res.changed) bankSave(res.bank);
+  } catch (e) {}
+})();
+
 /* One-time upgrade from the first scheduler, which had a single `streak` per word and
    no direction split. All prior drilling was productive — receptive grading didn't
    exist before this round — so it converts straight into `prod`. Idempotent: a record
@@ -23630,6 +23676,39 @@ T("bankUses: credits the lemma for a sentence written in real Hebrew", () => {
   withForms({ "קטנה": { lemma: "קטן", tag: "fs" } }, () => {
     assertEq(bankUses("הילד קטנה", lib).sort().join(","), ["ילד", "קטן"].sort().join(","));
   });
+});
+
+/* ---- uses is derived data, and the library grows underneath it ----
+   THE BUG, NAMED. `uses` was computed once at write time and cached forever. A node's
+   words join the library only when the node is REACHED, while the pipeline writes its
+   material days ahead — so every sentence written for a node recorded that node's own
+   words as absent, and campBuild (which ranks on `hits` off `uses`) filtered all of them
+   out of the one session they were written for. George: "This session I have done
+   contains the exact same sentences and words as before." */
+T("bankUsesRefresh: a word that joined the library later is credited now", () => {
+  const atWriteTime = { "יש": {}, "אחד": {} };            // חדר not taught yet
+  const bank = [{ id: "x", he: "יש חדר אחד", uses: bankUses("יש חדר אחד", atWriteTime) }];
+  assertEq(bank[0].uses.join(","), "יש,אחד", "the sentence is ABOUT חדר and never said so");
+
+  const now = { "יש": {}, "אחד": {}, "חדר": {} };          // the node arrived, חדר taught
+  const res = bankUsesRefresh(bank, now);
+  assertTrue(res.changed, "something has to say this needs saving");
+  assertTrue(res.bank[0].uses.indexOf("חדר") !== -1, "the node can finally see its own sentence");
+  assertEq(bank[0].uses.join(","), "יש,אחד", "and the input was not mutated");
+});
+T("bankUsesRefresh: nothing to do reports no change", () => {
+  const lib = { "בית": {}, "גדול": {} };
+  const bank = [{ id: "x", he: "הבית גדול", uses: bankUses("הבית גדול", lib) }];
+  assertTrue(!bankUsesRefresh(bank, lib).changed, "a no-op must not trigger a save every load");
+});
+T("bankPrune: refreshes, so an item with empty uses is recovered not dropped", () => {
+  /* Three of George's real items recorded uses:[] and so failed bankPrune's own
+     `.some(u => lib[u])` — invisible app-wide, not merely inside the node. */
+  const bank = [{ id: "x", he: "הדלת אדומה", uses: [] }];
+  assertEq(bankPrune(bank, { "דלת": {}, "אדום": {} }).length, 1,
+           "recomputing has to happen BEFORE the filter, or the filter throws it away");
+  assertEq(bankPrune(bank, { "בית": {} }).length, 0,
+           "but a sentence genuinely about nothing he has is still pruned");
 });
 
 /* ---- the words the gate could not see ---- */

@@ -6142,6 +6142,17 @@ document.getElementById("flagAddBtn").onclick = () => {
   document.getElementById("flagSaved").textContent = "Saved.";
   flagRender();
   flagPaint();
+  /* STRAIGHT TO GITHUB, mid-session or not. Without this a flag waits for the end of the
+     session or the next app open, and the flag most worth having is the one raised about
+     something that just went wrong — exactly the moment he is most likely to close the
+     tab rather than finish the session. One did sit for four hours that way.
+     pushOnly, not force: it must not pull GitHub's data down over a running drill. */
+  syncRun("flag", { pushOnly: true, quiet: true }).then(ok => {
+    const el = document.getElementById("flagSaved");
+    /* Only if he has not typed another since — that one has its own push in flight, and
+       its own "Saved." to overwrite. */
+    if (ok && el && el.textContent === "Saved.") el.textContent = "Saved — sent.";
+  });
 };
 document.getElementById("aiStar").onclick = () => aiModalOpen(true);
 document.getElementById("aiClose").onclick = () => aiModalOpen(false);
@@ -6601,9 +6612,18 @@ async function syncRun(reason, opts) {
   opts = opts || {};
   if (!syncConfigured() || syncInFlight) return false;
   /* Never mid-session: applying a merged hvr_srs under a running drill could change
-     the card on screen and the grade about to be written to it. */
-  if (sessionBusy() && !opts.force) return false;
-  if (!opts.force && Date.now() - syncLastRun < SYNC_MIN_GAP_MS) return false;
+     the card on screen and the grade about to be written to it.
+
+     opts.pushOnly is exempt because it does not APPLY — see below. That distinction is
+     the whole fix for a flag sitting on the phone: George raised one about a 503, closed
+     the tab, and it reached GitHub four hours later when he next opened the app, because
+     this guard held and the session he abandoned never ended to trigger the sync after
+     it. force:true would have got it up there by trampling the very thing this line
+     protects; pushing without applying gets it up there and protects it. */
+  if (sessionBusy() && !opts.force && !opts.pushOnly) return false;
+  /* The gap throttles the periodic syncs. A flag submit is a deliberate act, and one
+     tap should not have to wait out a timer it never started. */
+  if (!opts.force && !opts.pushOnly && Date.now() - syncLastRun < SYNC_MIN_GAP_MS) return false;
   if (!navigator.onLine) { if (!opts.quiet) syncSetStatus("offline — will sync later"); return false; }
 
   syncInFlight = true;
@@ -6631,17 +6651,31 @@ async function syncRun(reason, opts) {
        "is the phone up to date" was lying, which is worse than a visible failure. */
     if (sha === null) throw new Error("couldn't save to GitHub — it kept changing under us");
     /* Applied only after a successful push, so a failed sync never half-rewrites
-       local data with a merge that was never agreed. */
+       local data with a merge that was never agreed.
+
+       ...and not at all under pushOnly, which is the half of this function that is safe
+       to run mid-drill. The push has already carried everything local to GitHub; what is
+       skipped is pulling GitHub's version back down over the top, which is the only part
+       that could change the card he is looking at. Local ends up momentarily BEHIND
+       remote, which the next ordinary sync corrects. */
     let changed = 0;
-    Object.keys(merged.keys).forEach(k => {
-      const v = merged.keys[k];
-      if (v === null || v === undefined) return;
-      if (lsGet(k) !== v) { lsSet(k, v); changed++; }
-    });
+    if (!opts.pushOnly) {
+      Object.keys(merged.keys).forEach(k => {
+        const v = merged.keys[k];
+        if (v === null || v === undefined) return;
+        if (lsGet(k) !== v) { lsSet(k, v); changed++; }
+      });
+    }
     const m = syncMeta();
+    /* Stamped either way, and honestly: `last` is read by flagsWaiting to answer "have
+       they reached me yet", and after a pushOnly they have. Leaving it would keep the
+       flag indicator claiming a backlog that is already on GitHub. */
     m.sha = sha; m.last = new Date().toISOString();
     syncMetaSave(m);
-    syncLastRun = Date.now();
+    /* NOT stamped under pushOnly. syncLastRun gates the periodic syncs, and consuming
+       that budget here would let one flag suppress the end-of-session sync that does the
+       actual merging — trading a four-hour delay on flags for one on everything else. */
+    if (!opts.pushOnly) syncLastRun = Date.now();
     syncSetStatus("");
     if (changed) syncAfterApply();
     /* The flag's teal is a claim about whether GitHub has them. This is the moment that
@@ -24839,6 +24873,47 @@ T("flagsWaiting: resolving is a mutation too, and also has to reach GitHub", () 
   assertTrue(flagsWaiting(flags, "2026-08-28T09:30:00Z"),
              "the flag itself is old, but the tap that resolved it is not synced yet");
   assertTrue(!flagsWaiting(flags, "2026-08-28T11:00:00Z"));
+});
+T("syncRun pushOnly: a flag reaches GitHub mid-drill without pulling data down over it", async () => {
+  /* A flag about a 503 sat on the phone for four hours: syncRun refuses to run
+     mid-session, and the session he abandoned to close the tab never ended to trigger
+     the sync after it. force:true would have fixed the delay by trampling exactly what
+     that guard protects — a merged hvr_srs landing under the card on screen. pushOnly
+     pushes without applying, which is safe mid-drill and is the whole design.
+
+     Everything stubbed here is a plain function declaration, the same handle the
+     geminiSend tests use. Safe now that runSelfTests awaits each test in turn. */
+  const rC = syncConfigured, rB = sessionBusy, rPull = syncPull, rPush = syncPush;
+  const meta = lsGet(SYNC_META_KEY);              // a real store — put it back
+  const CANARY = "hvr_testcanary";
+  try {
+    lsSet(CANARY, "LOCAL");
+    syncConfigured = () => true;
+    sessionBusy = () => true;                     // mid-drill
+    let pushed = null;
+    syncPull = async () => ({ sha: "sha-old", blob: {
+      app: "hebrew-reader", schema: SYNC_SCHEMA, device: "other",
+      /* Newer than ours, so the merge genuinely prefers it — otherwise "local was not
+         overwritten" would pass for the wrong reason. */
+      updated: "2099-01-01T00:00:00.000Z", keys: { [CANARY]: "REMOTE" } } });
+    syncPush = async (merged) => { pushed = merged; return "sha-new"; };
+
+    assertEq(await syncRun("test", { quiet: true }), false,
+             "an ordinary sync must still refuse mid-session — that guard is not weakened");
+    assertEq(await syncRun("flag", { pushOnly: true, quiet: true }), true,
+             "but a flag gets through");
+    assertEq(lsGet(CANARY), "LOCAL",
+             "REMOTE won the merge and was PUSHED, but must not be applied under a drill");
+    assertEq(pushed.keys[CANARY], "REMOTE",
+             "the push is still a correct merge — pushOnly skips applying, not merging");
+    assertTrue(!!syncMeta().last,
+               "and `last` is stamped, or flagsWaiting keeps claiming a backlog that landed");
+  } finally {
+    syncConfigured = rC; sessionBusy = rB; syncPull = rPull; syncPush = rPush;
+    localStorage.removeItem(CANARY);
+    if (meta === null || meta === undefined) localStorage.removeItem(SYNC_META_KEY);
+    else lsSet(SYNC_META_KEY, meta);
+  }
 });
 T("flagContextLine: says where he was, in the order he would say it", () => {
   assertEq(flagContextLine({ node: "How you are · Getting by",

@@ -1003,6 +1003,40 @@
              text-transform: uppercase; }
   .lnew b { font-size: 1.15rem; color: var(--ink); font-weight: 600; }
   .lnewen { color: #8b8271; font-size: .8rem; }
+  /* THE WORDS ON THE TABLE. The coach has put these down and he builds from them, so
+     they are the constraint he works against for the whole round — not an instruction
+     read once. They stay on screen while he speaks, and they sit apart from the thread
+     rather than being captioned inside it, because the arrangement is the message: two
+     things laid out in front of you, to be picked up.
+
+     Deliberately not .lnew's amber pill. That colour means "a word you are not expected
+     to have yet", which is the opposite claim — these are words he HAS, chosen because
+     he can reach them. Neutral ground, so the Hebrew itself carries the weight. */
+  .lgive { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+           margin: 0 0 18px; }
+  .lgiveword { display: flex; flex-direction: column; align-items: center; gap: 1px;
+               padding: 8px 16px; border-radius: 10px; background: var(--bg);
+               border: 1px solid var(--border); }
+  .lgiveword b { font-family: "David", "Times New Roman", serif; font-size: 1.5rem;
+                 font-weight: 600; color: var(--hebrew); line-height: 1.2; }
+  .lgiveword span { font-size: .74rem; color: var(--muted); }
+  /* His own sentence, back from the recogniser, before it is sent. Editable-looking
+     rather than decorative: the whole point is that he can see a mishearing and run the
+     mic again instead of the coach answering something he never said. */
+  .lheard { width: 100%; margin: 4px 0 14px; padding: 10px 12px; border-radius: 10px;
+            background: var(--accent-soft); border: 1px solid #c8e0dc; }
+  .lheardlab { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
+               color: #6d8683; margin-bottom: 4px; }
+  .lheardhe { font-family: "David", "Times New Roman", serif; font-size: 1.1rem;
+              color: var(--hebrew); direction: rtl; text-align: right; line-height: 1.5; }
+  /* What the coach corrected, and why. Not an error colour: a correction here is the
+     lesson, not a mark against him — the SRS never records a miss from this card. */
+  .lfix { width: 100%; margin: 0 0 12px; padding: 10px 12px; border-radius: 10px;
+          background: rgba(176,137,74,.10); border: 1px solid rgba(176,137,74,.28); }
+  .lfixhe { font-family: "David", "Times New Roman", serif; font-size: 1.1rem;
+            color: var(--hebrew); direction: rtl; text-align: right; line-height: 1.5; }
+  .lfixwhy { font-size: .8rem; color: #8b7350; margin-top: 4px; }
+  .lbuilt { font-size: .72rem; color: var(--muted); text-align: center; margin: 2px 0 10px; }
   /* The prompt takes the map's face. It is the thing on the card you actually read. */
   .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
              margin: 0 0 4px; line-height: 1.25; color: var(--ink); }
@@ -16722,6 +16756,11 @@ function campOpenNode(id) {
   h += '<div class="pp-acts">';
   h += '<button class="btn secondary" id="campMeet">Meet the words</button>';
   h += '<button class="btn" id="campPractise">Practise</button>';
+  /* Between Practise and the conversation, which is where it sits pedagogically: free
+     production with the topic handed to you, in the gap between reproducing our sentence
+     and holding a conversation. Never disabled by the node's state — it is optional and
+     gates nothing, so the only thing that can stop it is having no words at all. */
+  h += '<button class="btn secondary" id="campCompose">Build sentences</button>';
   h += '<button class="btn' + (ready ? '' : ' secondary') + '" id="campConvo"' +
        (ready ? '' : ' disabled') + '>' +
        (graduated ? 'Conversation again' : 'The conversation') + '</button>';
@@ -16738,6 +16777,7 @@ function campOpenNode(id) {
   try { campWarm(n); } catch (e) { /* never block opening the sheet */ }
   document.getElementById("campMeet").onclick = () => campStartMeet(id);
   document.getElementById("campPractise").onclick = () => campStartPractise(id);
+  document.getElementById("campCompose").onclick = () => campStartCompose(id);
   const cv = document.getElementById("campConvo");
   if (ready) cv.onclick = () => campStartConvo(id);
 }
@@ -16780,6 +16820,253 @@ function campStartMeet(id) {
   const words = (n.words || []).filter(k => lib[k] && srsGradable(k, lib));
   if (!campBegin(words.map(k => ({ kind: "word", key: k, words: [k] })), id, CAMP_MEET_LESSON))
     campSay("Nothing to meet here — these words are already in your library.");
+}
+
+/* =====================  BUILDING SENTENCES WITH A COACH  =====================
+   The first open-ended card in the app, and that is the whole of what makes it
+   different. Every other kind has a target string — learnExpectedHe returns one,
+   alignSpoken aligns against it, convoContentCoverage scores against candidates. Here
+   the coach puts two words on the table and whatever he builds from them is the answer,
+   so there is nothing to align and nothing to be graded against.
+
+   George: "Im sitting down with a coach, they are giving me a couple of words and telling
+   me ot make a sentence, I say hte sentence then they reply, ask me a quesiton aobut what
+   I said/ push me to make some improvments etc, a light back and forth".
+
+   It is OPTIONAL and it is not a gate. campNodeWordsReady is `words.every(wordReady)` —
+   SRS production strength and nothing else — so this mode never needs to know a gate
+   exists. It writes srsAnswer like every other card and the node opens when the words
+   are ready, whichever surface got them there. Being optional is also what earns it the
+   right to require a connection, which it does: there is no scripted line to fall back
+   on when the coach has nothing to react to yet.
+
+   See docs/superpowers/specs/2026-08-30-composing-sentences-with-a-coach-design.md. */
+const COMPOSE_ROUNDS = 3;
+/* He is sitting in front of this, so it is not GEN_TIMEOUT_MS — but there is no
+   fallback line either, so failing fast buys nothing the way it does for a live
+   conversation turn (CONVO_LIVE_TIMEOUT_MS is 6s precisely because a scripted line is
+   already sitting there). Waiting a while beats "couldn't reach the coach". */
+const COMPOSE_TIMEOUT_MS = 15000;
+const CAMP_COMPOSE_LESSON = 3;
+const COMPOSE_GIVE = 2;
+
+/* Everything this node can legitimately ask him to build with: its own six words plus
+   the three carried from earlier, which exist precisely to make sentences possible. */
+function composePool(node, lib, srs) {
+  const out = [];
+  ((node && node.words) || []).concat((node && node.carry) || []).forEach(k => {
+    if (!k || out.indexOf(k) !== -1) return;
+    if (!lib[k] || !srsGradable(k, lib)) return;
+    out.push(k);
+  });
+  return out;
+}
+/* Round one only. There is nothing to respond to yet, so the app chooses — weakest
+   first, because those are the words the node is actually for. Every round after this
+   is chosen by the coach, which is what makes "can these two words make a sentence" a
+   question answered by something that knows Hebrew rather than by a rule about
+   parts of speech (which normalisePos only knows for words that have been through the
+   forms queue anyway). */
+function composeOpening(pool, srs, n) {
+  const rank = k => SRS_BANDS.indexOf(srsStrengthOf(srs, k, "prod"));
+  return pool.slice().sort((a, b) => rank(a) - rank(b)).slice(0, n || COMPOSE_GIVE);
+}
+
+function composePrompt(x) {
+  return "You are a warm, brisk Hebrew coach sitting next to an English speaker who is " +
+    "learning conversational Hebrew to talk with his partner's grandfather. Everyday " +
+    "spoken Hebrew, never textbook.\n\n" +
+    "HIS LEVEL IS " + x.level + " OF 5.\n" + LEVEL_RUBRIC + "\n\n" +
+    "YOU PUT THESE WORDS ON THE TABLE AND ASKED HIM TO MAKE A SENTENCE:\n  " +
+    x.give.join(", ") + "\n\n" +
+    "WORDS YOU MAY PUT DOWN NEXT (his, and only these):\n" + x.pool + "\n\n" +
+    (x.history ? "EARLIER THIS SESSION:\n" + x.history + "\n\n" : "") +
+    "HE SAID (via speech recognition, which is markedly less accurate on non-native " +
+    "speech — a swallowed prefix or an odd vowel may be a mishearing rather than a " +
+    "mistake, so judge generously):\n  " + (x.said || "(nothing)") + "\n\n" +
+    "THE LIBRARY WORDS THE APP DETECTED IN THAT:\n  " +
+    (x.saidKeys.length ? x.saidKeys.join(", ") : "(none)") + "\n\n" +
+    "Judge whether he CONVEYED something sensible using the words you gave him. A " +
+    "synonym, a richer construction, or extra content he volunteered is a PASS, not a " +
+    "fault. You are not checking whether he used your exact words.\n\n" +
+    "Round " + x.round + " of " + x.rounds + ".\n\n" +
+    "Return ONLY JSON, no markdown:\n" +
+    '{"lvl":1-5,"ok":"clean|minor|wrong","bad":[""],"fix":"","why":"",' +
+    '"say":{"he":"","tr":"","en":""},"give":["",""],"newWords":[{"he":"","tr":"","en":""}]}\n\n' +
+    "lvl — the level of what HE actually produced, by the rubric above. Not the level " +
+    "you were aiming at.\n" +
+    "ok — clean if it is natural Hebrew; minor if one small thing is off (agreement, a " +
+    "preposition, word order); wrong if it does not say anything sensible.\n" +
+    "bad — ONLY words from the detected list above that he used INCORRECTLY. Leave it " +
+    "empty when he used them all properly. Do not list words that are merely absent.\n" +
+    "fix — the corrected sentence in natural spoken Hebrew, or \"\" when it was clean.\n" +
+    "why — one short English line naming what to change, or \"\" when it was clean.\n" +
+    "say — your reply, in Hebrew he can follow at his level, WITH translit and English. " +
+    "React to what he actually said and ask him one thing about it.\n" +
+    "give — two words from the pool for the next round. Pick a pair that can genuinely " +
+    "make a sentence together and that he has not just used.\n" +
+    "newWords — any Hebrew word he said that is NOT in the pool or the detected list.";
+}
+
+/* Defensive in the same way convoLiveNormalise is: a reply that is merely odd must
+   degrade to a no-op, never throw under him mid-session. */
+function composeNormalise(out, pool) {
+  if (!out || typeof out !== "object") return null;
+  const lvl = Math.round(Number(out.lvl));
+  const ok = ["clean", "minor", "wrong"].indexOf(String(out.ok)) !== -1 ? String(out.ok) : "minor";
+  const say = out.say && typeof out.say === "object" ? out.say : {};
+  const give = (Array.isArray(out.give) ? out.give : [])
+    .filter(k => typeof k === "string" && pool.indexOf(k) !== -1);
+  return {
+    lvl: (isFinite(lvl) && lvl >= LEVEL_MIN && lvl <= LEVEL_MAX) ? lvl : null,
+    ok: ok,
+    /* Strings only, and matched against what the app itself detected — see
+       composeCredit, which never lets the model name a key it did not derive. */
+    bad: (Array.isArray(out.bad) ? out.bad : []).filter(k => typeof k === "string"),
+    fix: String(out.fix || "").trim(),
+    why: String(out.why || "").trim(),
+    say: { he: String(say.he || "").trim(), tr: String(say.tr || "").trim(),
+           en: String(say.en || "").trim() },
+    give: give
+  };
+}
+
+async function composeTurn(s, c) {
+  if (!geminiKeys().length) return null;
+  const lib = libAll(), srs = srsAll();
+  const pool = c.pool || [];
+  /* THE APP DERIVES THE KEYS, THE MODEL ONLY JUDGES THEM. bankUses resolves tokens to
+     library keys through libKeyFor, so prefixes ("האוטובוס" -> "אוטובוס") are handled by
+     the same code the bank and the conversation already use. Asking the model to return
+     the words instead would let a hallucinated or mis-spelled key reach srsAnswer, which
+     is the one place a bad reply could quietly corrupt the scheduler. */
+  const saidKeys = bankUses(c._said || "", lib);
+  const prompt = composePrompt({
+    level: learnerLevel(),
+    give: (c.give || []).map(k => convoWordLine(k, lib) || k),
+    pool: pool.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n"),
+    history: composeHistory(s.cards, s.i),
+    said: c._said || "", saidKeys: saidKeys,
+    round: (c.round || 0) + 1, rounds: COMPOSE_ROUNDS
+  });
+  let out = null;
+  try {
+    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+                                          { timeoutMs: COMPOSE_TIMEOUT_MS,
+                                            label: "Reading your sentence" }));
+  } catch (e) { return null; }
+  if (out && Array.isArray(out.newWords) && out.newWords.length) {
+    /* The reason the mode exists at all, in George's words: "its also a way for hte app
+       to learn to other words I ight be aware of that havent came up organically". Free
+       composition is where he reaches for words nobody scripted for him. */
+    try { padIngest({ words: out.newWords.map(w => ({ hebrew: w && w.he, translit: w && w.tr,
+                                                      english: w && w.en })) }); } catch (e) {}
+  }
+  return composeNormalise(out, pool);
+}
+
+function composeHistory(cards, upto) {
+  return (cards || []).slice(0, upto).filter(x => x && x.kind === "compose" && x._said)
+    .map(x => "  he built: " + x._said + (x._out && x._out.why ? "  (you said: " + x._out.why + ")" : ""))
+    .join("\n");
+}
+
+/* CREDIT ONLY, NEVER A MISS — the rule the whole scoring design rests on. He was not
+   asked about "red"; volunteering it and fumbling the agreement is not evidence that he
+   has lost the word, and the correction is what teaches the agreement. Grammar belongs
+   to the forms system; the SRS tracks retrieval, and he retrieved it.
+
+   Collateral crediting is what makes this worth more than a sentence card without
+   touching srsGain: one composed sentence credits three to five words where a sentence
+   card credits the words in one target sentence, and it credits them on UNPROMPTED
+   recall. George: "if I say ha-autobus ha-adom we would level up bus and red, even if
+   hte target was just bus."
+
+   Saying the same stock phrase every round cannot inflate anything: srsGain scales with
+   (1 - R), so a word answered again while R is near 1 grows stability by about nothing.
+   The scheduler already defends this and needs no help here. */
+function composeCredit(s, c, out) {
+  const lib = libAll(), srs = srsAll();
+  const bad = new Set((out && out.bad) || []);
+  const keys = bankUses(c._said || "", lib).filter(k => !bad.has(k) && srsGradable(k, lib));
+  keys.forEach(k => {
+    learnMark(s, srs, k);
+    srsAnswer(srs, k, 2, "prod", learnLogExtra(c));
+    s.strengthened[k] = true;
+  });
+  if (keys.length) srsSave(srs);
+  return keys;
+}
+
+function composeCard(pool, give, item, round, ti) {
+  return { kind: "compose", pool: pool, give: give || [], round: round || 0,
+           ti: ti === undefined ? round : ti, item: item || null, words: [] };
+}
+
+/* Everything between his sentence being judged and the next words appearing. The
+   session GROWS, exactly as a live conversation does — learnAdvance ends on
+   `s.i >= s.cards.length`, so the next card has to be pushed before it is called. */
+function composeAdvance(s, c, out) {
+  c._out = out || null;
+  const credited = composeCredit(s, c, out);
+  s.composeWords = s.composeWords || {};
+  credited.forEach(k => { s.composeWords[k] = true; });
+
+  if (out && out.lvl) {
+    s.composeLvls = (s.composeLvls || []).concat([out.lvl]);
+    try {
+      const lvlStore = levelAll();
+      /* Same currency as every other card: LEVEL_RUBRIC, via levelRecord. The level of
+         what HE built, which is a direct measurement rather than the inference the
+         other cards make from whether he recalled the app's guess about him. */
+      levelRecord(lvlStore, out.lvl, out.ok !== "wrong");
+      levelSave(lvlStore);
+    } catch (e) { /* a level write must never cost him the round */ }
+  }
+
+  const next = composeNextCard(c, out, srsAll(), s.cards.length);
+  if (next) s.cards.push(next);
+  learnAdvance(out ? out.ok !== "wrong" : false);
+}
+
+/* THE ROUND COUNT IS AUTHORITATIVE, NOT THE COACH. `give` is what the model wants; the
+   session ends after COMPOSE_ROUNDS whichever way it answers. A model that never
+   volunteers to move on must not be able to run the session forever — the same argument
+   CONVO_TURN_CAP makes, and the same one that made an empty {"items":[]} from the writer
+   worth a floor.
+
+   Split out of composeAdvance so it can be tested at all: composeAdvance ends in
+   learnAdvance, which reads the module-level session and repaints the DOM. This is the
+   part with the actual decision in it, and it takes everything it needs as arguments. */
+function composeNextCard(c, out, srs, ti) {
+  const nextRound = (c.round || 0) + 1;
+  if (nextRound >= COMPOSE_ROUNDS) return null;
+  const pool = c.pool || [];
+  const wanted = ((out && out.give) || []).filter(k => pool.indexOf(k) !== -1);
+  const give = wanted.length >= COMPOSE_GIVE ? wanted.slice(0, COMPOSE_GIVE)
+    /* The coach declined to choose, or chose words that are not his. Fall back to the
+       same weakest-first rule that opened the session, minus what he has just used, so a
+       thin reply costs a good pairing rather than the whole round. */
+    : composeOpening(pool.filter(k => (c.give || []).indexOf(k) === -1), srs);
+  return give.length ? composeCard(pool, give, null, nextRound, ti) : null;
+}
+
+async function campStartCompose(id) {
+  const n = campNode(id);
+  if (!n) return;
+  const btn = document.getElementById("campCompose");
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
+  try {
+    if (!geminiKeys().length) { campSay("Building sentences needs the AI — add a key in Settings."); return; }
+    if (!navigator.onLine) { campSay("Building sentences needs a connection — the coach has to read what you say."); return; }
+    const lib = libAll(), srs = srsAll();
+    const pool = composePool(n, lib, srs);
+    if (pool.length < COMPOSE_GIVE) { campSay("Meet the words first — there is nothing to build with yet."); return; }
+    const give = composeOpening(pool, srs);
+    campBegin([composeCard(pool, give, null, 0, 0)], id, CAMP_COMPOSE_LESSON);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* =====================  A NODE SESSION  =====================
@@ -18880,6 +19167,11 @@ const LEARN_KINDS = {
               ask: "Say your answer out loud, in Hebrew." },
   conversation: { glyph: "💬", label: "Have the conversation", dir: "עב → עב", flow: "in",
               ask: "Speak every answer out loud." },
+  /* The only kind with no right answer. Its `ask` is the whole instruction, because
+     there is no prompt to read and no target to reveal — the words on the table are the
+     card, and what he does with them is the answer. */
+  compose:  { glyph: "✎", label: "Build a sentence", dir: "עב → עב", flow: "out",
+              ask: "Make a sentence with these, out loud." },
   /* Chunks are retrieved WHOLE — that's the entire claim being trained, and it's
      why this card never breaks into per-word chips like every other multi-word
      card does. Assembling it word by word is the habit chunking replaces. */
@@ -18898,7 +19190,8 @@ const LEARN_KINDS = {
 /* Which strength record a card feeds. Listening is receptive knowledge; everything
    else is production — including shadowing, where he is producing Hebrew. */
 const KIND_SIDE = { word: "prod", sentence: "prod", listen: "recv", reply: "prod",
-                    chunk: "prod", shadow: "prod", conversation: "prod", note: "recv" };
+                    chunk: "prod", shadow: "prod", conversation: "prod", note: "recv",
+                    compose: "prod" };
 /* Kinds that play Hebrew at you and ask what it meant. `note` differs from `listen`
    only in where the audio comes from, so everything downstream treats them alike
    rather than growing a parallel set of branches. */
@@ -18924,7 +19217,9 @@ let learnPanelCtl = { repaint: () => {}, close: () => {} };
    and silently mapping a tap onto the wrong word would poison the scheduler with no
    way to notice. The card falls back to a single whole-card grade instead. */
 function learnTokens(c) {
-  if (!c || c.kind === "word" || !c.item) return null;
+  /* No item, and no chips even when one arrives: the chips exist to pair his words
+     against the target's, and a compose card has no target. */
+  if (!c || c.kind === "word" || c.kind === "compose" || !c.item) return null;
   const he = String(c.item.he || "").trim().split(/\s+/).filter(Boolean);
   const tr = String(c.item.tr || "").trim().split(/\s+/).filter(Boolean);
   if (!he.length || he.length !== tr.length) return null;
@@ -19771,6 +20066,11 @@ function learnRenderCard() {
   if (c.kind === "conversation") {
     const total = convoBeatCount(c.convo) || 1;
     learnRenderRoad(Math.min(total - 1, Object.keys(s.beatsHit || {}).length), total);
+  } else if (c.kind === "compose") {
+    /* Rounds, for the same reason a conversation draws beats: the card list grows as he
+       goes, so waymarks drawn from it would build themselves behind him and say nothing
+       about how far is left. Three rounds is the shape of the session. */
+    learnRenderRoad(Math.min(COMPOSE_ROUNDS - 1, c.round || 0), COMPOSE_ROUNDS);
   } else {
     learnRenderRoad(s.i, s.cards.length);
   }
@@ -19790,6 +20090,13 @@ function learnRenderCard() {
   const meta = LEARN_KINDS[c.kind];
   const ask = document.createElement("div"); ask.className = "lask"; ask.textContent = meta.ask;
   card.append(ask);
+
+  /* Compose renders itself and stops. It shares the prologue above — the road, the card
+     clock, the one-line ask — and none of what follows: there is no prompt to show, no
+     target to reveal, no hint ladder to climb towards an answer that does not exist, and
+     no grade buttons because he does not grade himself here. Branching inside each of
+     those in turn would have left five places quietly asserting c.item exists. */
+  if (c.kind === "compose") { learnRenderCompose(card, c, s); return; }
 
   /* THE CARD ADMITS WHAT IT IS DOING. This sentence deliberately contains one word he
      cannot yet say — that is the whole point of it, and everything else in it is a
@@ -19951,6 +20258,152 @@ function learnRenderCard() {
 }
 
 /* Where you are on the ladder, said on the button itself. */
+/* THE COMPOSE CARD, in three states on the one card rather than three cards: the words
+   go down, he speaks, the coach answers. `_stage` is on the card and not in a module
+   variable so that a re-render — a repaint, a resize, anything calling learnRenderCard
+   again — puts back what was on screen rather than resetting him to the microphone.
+
+   Style guide, §1 and §4: this is the world layer, so it reuses the conversation's
+   bubbles and the drill's own type rather than introducing a second register, and the
+   words on the table carry their meaning by ARRANGEMENT — laid out in front of him,
+   present for the whole round — rather than by a label explaining what they are for. */
+function learnRenderCompose(card, c, s) {
+  const lib = libAll();
+  let stage = c._stage || "ask";
+  /* Resumed from a stash that was taken mid-request, or from a request whose page has
+     gone. His transcript survived, so put him back in front of the Send button rather
+     than a spinner that will never resolve. */
+  if (stage === "sending" && composeInFlight !== c) stage = c._said ? "heard" : "ask";
+
+  const give = document.createElement("div"); give.className = "lgive";
+  (c.give || []).forEach(k => {
+    const w = document.createElement("div"); w.className = "lgiveword";
+    const b = document.createElement("b"); b.dir = "rtl"; b.textContent = k;
+    const en = document.createElement("span");
+    en.textContent = (lib[k] && lib[k].en) || (DICT[k] ? DICT[k][1] : "");
+    w.append(b, en); give.append(w);
+  });
+  card.append(give);
+
+  if (stage === "ask") {
+    const act = document.createElement("div"); act.className = "lactions";
+    if (speechSupported()) {
+      const mic = document.createElement("button");
+      mic.className = "lmic"; mic.type = "button"; mic.textContent = "🎤 Say it";
+      mic.onclick = () => learnSpeakAttempt(mic, c);
+      act.append(mic);
+    } else {
+      /* No recogniser at all. Rather than a dead card, he can type it — the same
+         escape the rest of the app gives a browser without speech. */
+      const ta = document.createElement("textarea");
+      ta.className = "lnotes"; ta.id = "lComposeType";
+      ta.placeholder = "type your sentence in Hebrew…";
+      card.append(ta);
+      const go = document.createElement("button");
+      go.className = "btn"; go.type = "button"; go.textContent = "Send to the coach";
+      go.onclick = () => { c._said = ta.value.trim(); if (c._said) composeSend(s, c); };
+      act.append(go);
+    }
+    card.append(act);
+    return;
+  }
+
+  const heard = document.createElement("div"); heard.className = "lheard";
+  const hl = document.createElement("div"); hl.className = "lheardlab";
+  hl.textContent = stage === "heard" ? "What I heard" : "You said";
+  const hh = document.createElement("div"); hh.className = "lheardhe"; hh.textContent = c._said || "";
+  heard.append(hl, hh);
+  card.append(heard);
+
+  if (stage === "heard") {
+    /* THE ONE MITIGATION THIS CARD HAS. learnAdjudicate rescues a mangled transcript by
+       telling the model what he was supposed to say, and there is no such thing here — so
+       a mishearing would have the coach answering a sentence he never said, which is
+       more disorienting than being marked wrong. He sees it first and can run the mic
+       again. Not a fix; the honest best available. */
+    const act = document.createElement("div"); act.className = "lactions";
+    const go = document.createElement("button");
+    go.className = "btn"; go.type = "button"; go.textContent = "Send to the coach";
+    go.onclick = () => composeSend(s, c);
+    act.append(go);
+    card.append(act);
+    const again = document.createElement("button");
+    again.className = "linkbtn lstuck"; again.type = "button";
+    again.textContent = "That's not what I said — say it again";
+    again.onclick = () => { c._said = ""; c._stage = "ask"; learnRenderCard(); };
+    card.append(again);
+    return;
+  }
+
+  if (stage === "sending") {
+    const b = convoBubble("them", "…", ""); b.classList.add("live");
+    card.append(b);
+    return;
+  }
+
+  /* stage === "reply" */
+  const out = c._out;
+  if (out && out.fix) {
+    const fix = document.createElement("div"); fix.className = "lfix";
+    const fh = document.createElement("div"); fh.className = "lfixhe"; fh.textContent = out.fix;
+    fix.append(fh);
+    if (out.why) { const w = document.createElement("div"); w.className = "lfixwhy";
+                   w.textContent = out.why; fix.append(w); }
+    card.append(fix);
+  }
+  if (out && out.lvl) {
+    const b = document.createElement("div"); b.className = "lbuilt";
+    b.textContent = "You built at level " + out.lvl + " · you're measured at " + learnerLevel();
+    card.append(b);
+  }
+  if (out && out.say && out.say.he) {
+    const bub = convoBubble("them", out.say.he, out.say.tr);
+    bub.classList.add("live");
+    card.append(bub);
+    if (out.say.en) {
+      const en = document.createElement("div"); en.className = "lask lquiet";
+      en.textContent = out.say.en; card.append(en);
+    }
+  }
+  if (!out) {
+    const err = document.createElement("div"); err.className = "lask lquiet";
+    err.textContent = "Couldn't reach the coach for that one — it still counts, " +
+                      "but there's no feedback on it.";
+    card.append(err);
+  }
+  const act = document.createElement("div"); act.className = "lactions";
+  const next = document.createElement("button");
+  next.className = "btn"; next.type = "button";
+  next.textContent = (c.round || 0) + 1 >= COMPOSE_ROUNDS ? "Finish" : "Next words";
+  next.onclick = () => { if (!c._done) { c._done = true; composeAdvance(s, c, c._out); } };
+  act.append(next);
+  card.append(act);
+}
+
+/* Fires the judge and repaints. Guarded on `s.i` the same way every other post-await
+   landing site in this file is: the answer arrives after the card may have moved. */
+/* MODULE STATE, NOT A FIELD ON THE CARD, and the difference matters. The session is
+   stashed to localStorage and restored — so a flag written onto the card survives a
+   closed tab, and a session stashed mid-request would come back rendering the "…" with
+   no request behind it and no way forward. Being in flight is a fact about this page
+   load, so it lives where page state lives. */
+let composeInFlight = null;
+async function composeSend(s, c) {
+  if (composeInFlight) return;
+  composeInFlight = c;
+  c._stage = "sending";
+  const at = s.i;
+  learnRenderCard();
+  let out = null;
+  try { out = await composeTurn(s, c); }
+  catch (e) { out = null; }
+  finally { composeInFlight = null; }
+  if (!learnSession || learnSession !== s || s.i !== at) return;
+  c._out = out;
+  c._stage = "reply";
+  learnRenderCard();
+}
+
 function learnStuckLabel(btn, c) {
   const left = learnHintSteps(c).length - learnHints;
   if (left > 0) { btn.textContent = learnHints ? "Still stuck?" : "Stuck?"; return; }
@@ -19971,8 +20424,15 @@ function learnStuckPress(btn, c) {
    only one — so scoring what he said against it would mark a perfectly good reply
    wrong. He gets to see both and judge. */
 function learnMicKinds(c) { return !isHearKind(c.kind); }
-function learnMicGrades(c) { return !isHearKind(c.kind) && c.kind !== "reply"; }
+/* `compose` joins `reply` here for the stronger version of the same reason. Reply has no
+   single correct answer; compose has no answer at all — there is nothing to align his
+   words against, so a per-word recommendation would be inventing a target. The coach
+   decides, and he never grades himself on this card. */
+function learnMicGrades(c) {
+  return !isHearKind(c.kind) && c.kind !== "reply" && c.kind !== "compose";
+}
 function learnExpectedHe(c) {
+  if (c.kind === "compose") return "";      // by design: no target string exists
   return (c.kind === "word" || c.kind === "chunk") ? c.key : (c.item ? c.item.he : "");
 }
 
@@ -20078,6 +20538,20 @@ async function learnSpeakAttempt(btn, c) {
     return;
   }
   learnScoreSpoken(c, res.text, res);
+  /* Compose stops here rather than revealing: the transcript goes on screen for him to
+     check, and only a deliberate press sends it. Everything after this point — the
+     reveal, the adjudicator — is about a target answer this card does not have. */
+  if (c.kind === "compose") {
+    /* Read BEFORE the render, which clears learnSpoken along with every other per-card
+       variable. Checking it afterwards is always false, so the warning would never once
+       have appeared — and on the card with no adjudicator behind it, "the mic wasn't
+       confident" is the most useful thing the app can say. */
+    const unsure = !!(learnSpoken && learnSpoken.unsure);
+    c._stage = "heard";
+    learnRenderCard();
+    if (unsure) learnMicUnsure(document.getElementById("lCard"));
+    return;
+  }
   learnReveal();
   const card2 = document.getElementById("lCard");
   if (learnSpoken.unsure) learnMicUnsure(card2);
@@ -20313,6 +20787,23 @@ function learnScoreSpoken(c, text, res) {
   const said = heWords(text);
   const lib = libAll();
   let expected, a, convoCoverage = null;
+  /* NOTHING TO SCORE AGAINST, so nothing is scored. Everything below this point aligns
+     his words against an expected list; a compose card has none, and alignSpoken against
+     an empty expected would mark every word he said as "extra" and recommend a grade
+     from it. The transcript is recorded and the coach judges it — see composeTurn.
+
+     learnAdjudicate is reached afterwards and is safe: learnAdjudicateWanted reads
+     `status`, which is empty here, so it returns nothing to ask about and exits. That
+     rescue genuinely is unavailable on this card — it works by telling the model what he
+     was SUPPOSED to say — which is why the transcript is shown for confirmation before
+     it is sent. */
+  if (c.kind === "compose") {
+    c._said = String(text || "").trim();
+    learnSpoken = { text: String(text || ""), status: [], extra: [], english: {},
+                    alts: (res && res.alts) || [], conf: (res && res.confidence) || 0,
+                    unsure: micUnsure(res && res.confidence), expected: [] };
+    return;
+  }
   if (c.kind === "conversation") {
     const m = convoBestMatch(c.item, said, lib);
     c._matched = m.cand;         // which candidate this attempt is graded against
@@ -20595,6 +21086,12 @@ function learnTakeHint(btn, c) {
 
 function learnReveal() {
   const s = learnSession; if (!s || learnRevealed) return;
+  const c0 = s.cards[s.i];
+  /* There is nothing to reveal. Everything below assumes a target — c.item.he, the chips,
+     the grade row — and a compose card has none, so Space (which reaches here) would
+     strip the card's own controls and rebuild it around an answer that does not exist.
+     The compose card advances through composeSend instead. */
+  if (c0 && c0.kind === "compose") return;
   learnRevealed = true;
   const c = s.cards[s.i];
   const lib = libAll();
@@ -21582,6 +22079,21 @@ function learnFinish() {
      counting turns rewarded a short exchange and quietly punished one that went well
      enough to keep going — more turns, more chances to stumble, worse number. What the
      conversation set out to cover is the thing that is actually true of it. */
+  /* REPORT MOVEMENT, NOT CURRENCY — the style guide's rule, and the reason there is no
+     score on this mode at all. What it did is credit words on unprompted recall and
+     measure the level he actually built at, so those are the two things worth saying.
+     "You built at 3.3, you're measured at 2" is a comparison he can act on; a blended
+     accuracy-and-complexity number would only invite writing the same safe sentence. */
+  if (s.cards.length && s.cards[0].kind === "compose") {
+    const lvls = s.composeLvls || [];
+    const built = lvls.length
+      ? Math.round((lvls.reduce((a, b) => a + b, 0) / lvls.length) * 10) / 10 : 0;
+    const words = Object.keys(s.composeWords || {}).length;
+    document.getElementById("lEndScore").textContent = lvls.length + " built";
+    sub = words + " word" + (words === 1 ? "" : "s") + " levelled";
+    if (built) sub += " · you built at level " + built +
+                      " · you're measured at " + learnerLevel();
+  }
   if (s.cards.length && s.cards[0].kind === "conversation") {
     const total = convoBeatCount(s.cards[0].convo);
     const covered = Object.keys(s.beatsHit || {}).length;
@@ -24787,6 +25299,91 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(AI_Q_KEY, q || "");
   }
+});
+/* ---- building sentences with a coach ---- */
+T("composeNormalise: an odd reply degrades to a no-op rather than throwing", () => {
+  assertNull(composeNormalise(null, []));
+  assertNull(composeNormalise("not an object", []));
+  const out = composeNormalise({}, []);
+  assertNull(out.lvl, "no level claimed when none was returned");
+  assertEq(out.ok, "minor", "an unreadable verdict is not allowed to read as 'wrong'");
+  assertEq(out.bad, []);
+  assertEq(out.give, []);
+  assertEq(out.fix, "");
+  /* A level outside the rubric is not clamped into it — it is discarded. Clamping would
+     invent evidence for levelRecord out of a reply that was already wrong. */
+  assertNull(composeNormalise({ lvl: 9 }, []).lvl);
+  assertNull(composeNormalise({ lvl: "three" }, []).lvl);
+});
+T("composeNormalise: the coach may only hand over words from the pool", () => {
+  /* give goes straight onto the next card, so an invented word would put Hebrew on the
+     table that is not his and that srsGradable would then silently drop. */
+  const out = composeNormalise({ give: ["בית", "מכונית", "לאדינו"] }, ["בית", "מכונית"]);
+  assertEq(out.give, ["בית", "מכונית"]);
+});
+T("composeOpening: the weakest words go on the table first", () => {
+  /* A node's whole purpose is the words at the bottom of its own sort — the same
+     argument campBuild makes for not reusing learnTargets' reachability order. */
+  const srs = { "חזק": { prod: { n: 9, stab: 40, diff: 3, streak: 6, last: todayISO() } },
+                "חלש": { prod: { n: 2, stab: 1, diff: 8, streak: 0, last: todayISO() } } };
+  assertEq(composeOpening(["חזק", "חלש"], srs, 1), ["חלש"]);
+});
+T("composeCredit: credits what he said, and can never record a miss", () => {
+  /* THE RULE THE WHOLE SCORING DESIGN RESTS ON. He was not asked about the second word;
+     volunteering it and fumbling it is not evidence that he has lost it. */
+  const lib = libAll();
+  const k1 = Object.keys(lib).filter(k => srsGradable(k, lib))[0];
+  const k2 = Object.keys(lib).filter(k => srsGradable(k, lib))[1];
+  assertTrue(!!k1 && !!k2, "needs two gradable library words to test with");
+  const realSrs = lsGet(SRS_KEY);
+  try {
+    const s = { strengthened: {}, back: {} };
+    const c = { kind: "compose", _said: k1 + " " + k2 };
+    const got = composeCredit(s, c, { bad: [k2] });
+    assertEq(got, [k1], "the word he used well is credited");
+    const srs = srsAll();
+    assertTrue(!!(srs[k1] && srs[k1].prod && srs[k1].prod.n), "and actually written");
+    assertTrue(!s.back[k2], "the fumbled one is not marked as gone backwards");
+    /* The strongest form of the claim: nothing at all was written for it, so a later
+       session sees a word that was never asked, not a word that was failed. */
+    assertTrue(got.indexOf(k2) === -1, "and it earns nothing rather than a miss");
+  } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
+              else lsSet(SRS_KEY, realSrs); }
+});
+T("compose: the card carries no target for anything to align against", () => {
+  const c = { kind: "compose", give: ["בית"], item: null };
+  assertEq(learnExpectedHe(c), "", "there is no right answer to expect");
+  assertNull(learnTokens(c), "and so no per-word chips");
+  assertTrue(!learnMicGrades(c), "the mic must not recommend a grade with no target");
+  assertTrue(learnMicKinds(c), "but it is still a speaking card");
+  assertEq(KIND_SIDE.compose, "prod");
+  assertTrue(!!LEARN_KINDS.compose && !!LEARN_KINDS.compose.ask);
+});
+T("composeNextCard: three rounds, and the coach does not get to extend them", () => {
+  /* `give` is what the model WANTS. A model that keeps volunteering another round must
+     not be able to run the session forever — the same argument CONVO_TURN_CAP makes. */
+  const pool = ["בית", "מכונית", "ילד", "גדול"];
+  const keen = { ok: "clean", lvl: 3, bad: [], give: ["ילד", "גדול"] };
+  const r0 = composeNextCard(composeCard(pool, ["בית"], null, 0, 0), keen, {}, 1);
+  assertTrue(!!r0, "round 1 hands over the next words");
+  assertEq(r0.round, 1);
+  assertEq(r0.give, ["ילד", "גדול"], "the coach's pairing is used when it is his own words");
+  assertTrue(!!composeNextCard(composeCard(pool, ["בית"], null, 1, 1), keen, {}, 2));
+  assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
+             "COMPOSE_ROUNDS is the authority, not the coach");
+});
+T("composeNextCard: a coach that declines to choose still hands over words", () => {
+  const pool = ["בית", "מכונית", "ילד", "גדול"];
+  const used = ["בית", "מכונית"];
+  [[], ["לאדינו"], ["בית"]].forEach(give => {
+    /* Nothing, words that are not his, and too few to make a pair — all the same
+       situation: a thin reply costs a good pairing, never the round. */
+    const next = composeNextCard(composeCard(pool, used, null, 0, 0),
+                                 { ok: "minor", lvl: 2, bad: [], give: give }, {}, 1);
+    assertTrue(!!next && next.give.length > 0, "gave up on give: " + JSON.stringify(give));
+    assertTrue(next.give.every(k => used.indexOf(k) === -1),
+               "and never the two he has just used: " + next.give.join(","));
+  });
 });
 T("GEMINI_MAX_ATTEMPTS: depth shrank so breadth could be afforded", () => {
   /* Three attempts against GEN_TIMEOUT_MS is ~137s per model; now that geminiSend walks

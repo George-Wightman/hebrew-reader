@@ -10499,8 +10499,16 @@ const GEMINI_THINKING = { thinkingConfig: { thinkingLevel: "minimal" } };
    made an explanation fail outright: the audio path got this same policy earlier
    and it was never back-ported here, so a single transient blip was a hard fail.
    Returns the response untouched for every non-5xx status, so the 429 and 400
-   handling below is completely unaffected. */
-const GEMINI_MAX_ATTEMPTS = 3;
+   handling below is completely unaffected.
+
+   TWO, NOT THREE — because geminiSend now walks on to the next model after this
+   gives up, and depth had to shrink for breadth to be affordable. A 503 is "this
+   model is overloaded", and the remedy for that is a model that is not, never the
+   same one 700ms later. Three attempts against GEN_TIMEOUT_MS is ~137s per model;
+   walked across two models and two keys that is nine minutes of a commission
+   failing. One retry catches a genuine blip; anything past that is answered
+   better by the fallback list. */
+const GEMINI_MAX_ATTEMPTS = 2;
 /* `timeoutMs` is threaded from the caller rather than read from a shared default,
    because the live conversation turn wants a much shorter leash than everything else:
    there, a slow answer is worse than no answer — the scripted line is sitting right
@@ -10520,6 +10528,11 @@ async function geminiFetchWithRetry(url, body, timeoutMs) {
 /* Last call's elapsed time and the model that actually answered. Surfaced in the
    pad's status line so "it feels slow" becomes a number next time. */
 let lastGeminiTiming = null;
+/* ...and the model/key combinations the last call WALKED, success or not. The sibling
+   lastGeminiTiming can only ever describe the winner, which left the failure log with
+   an empty `model` field and nothing to diagnose from. Reset at the top of every
+   geminiSend, so it always describes the most recent call and never accumulates. */
+let lastGeminiTried = [];
 
 /* opts.waitOnRateLimit — sit out a per-minute 429 instead of moving on. OFF by
    default, and deliberately so: waiting is right for the background form queue
@@ -10549,8 +10562,13 @@ async function geminiRequest(parts, models, opts) {
                 req: aiLogParts(parts), res: String(out).slice(0, AI_LOG_PREVIEW) });
     return out;
   } catch (e) {
+    /* `model` on a failure is the LIST it walked, not a single winner there never was —
+       "flash → flash-lite" says the fallback was exhausted, where "" said nothing at
+       all. Read in only two places, aiLogRender and flagContext, both of which treat it
+       as an opaque string. */
     aiLogNote({ ts: Date.now(), label: label, ok: false, ms: Date.now() - started,
-                model: "", err: (e && e.message) || String(e),
+                model: (lastGeminiTried || []).join(" → "),
+                err: (e && e.message) || String(e),
                 req: aiLogParts(parts), res: "" });
     throw e;                       // rethrown: every caller's error handling is unchanged
   } finally {
@@ -10566,10 +10584,20 @@ async function geminiSend(parts, models, opts) {
   let lastWaitHint = null;
   let sawRateHint = false;      // a SHORT retry hint => rate limit, not daily quota
   let lastNetErr = null;        // a timeout or a dead socket, which is not a quota problem
+  let lastHttpErr = null;       // a 5xx: Google's server, not our request and not our quota
   const started = Date.now();
+  /* WHAT WAS ACTUALLY ATTEMPTED. lastGeminiTiming answers this on success and is
+     stamped nowhere else, so a failed call logged `model: ""` and the log could not
+     say which model faltered, on which key, or how far down the list it got. That is
+     the same blind spot as reporting a timeout as "daily free limit reached" — the
+     diagnosis had to be reasoned from the throw site instead of read off the evidence.
+     Short strings, because this ends up in a log line he reads on a phone. */
+  lastGeminiTried = [];
   for (let ki = 0; ki < keys.length; ki++) {
     const key = keys[ki];
     for (const model of (models || GEMINI_MODELS)) {
+      lastGeminiTried.push(model.replace("gemini-", "").replace("-latest", "") +
+                           (keys.length > 1 ? "#" + (ki + 1) : ""));
       /* Model APIs churn — a dated model name has already been retired underneath
          this app once. If the speed config is what's rejected, retry without it:
          slower but working beats broken. */
@@ -10634,6 +10662,15 @@ async function geminiSend(parts, models, opts) {
            but it is not evidence that the day is gone. */
         if (spent) { aiQNote(model, dayGone ? "spent" : "ok"); break; }
         if (resp.status === 400 && cfg) continue;   // the config was the problem — retry plain
+        /* A 5xx IS THIS MODEL FAILING, NOT THE CALL FAILING — the identical argument the
+           timeout above makes, and the identical bug. `throw` here escaped the config,
+           model AND key loops at once, so one overloaded gemini-flash killed a whole
+           sentence commission (HTTP 503, 2026-08-30) without ever asking gemini-flash-lite
+           or touching the second key. "This model is overloaded" is the case the fallback
+           list exists for; it is not a reason to stop walking it.
+           Deliberately narrower than the netErr break above: only 5xx, so a 401 or a 403
+           still throws at once rather than retrying a broken key against every model. */
+        if (resp.status >= 500) { lastHttpErr = "HTTP " + resp.status; break; }
         throw new Error("HTTP " + resp.status);      // not a quota problem — don't blame the key
       }
     }
@@ -10648,6 +10685,12 @@ async function geminiSend(parts, models, opts) {
   /* Said as what it was. Reporting a timeout as "daily free limit reached" sent George
      to his quota dashboard for a problem that was never quota — 12 of 20 used. */
   if (lastNetErr) throw new Error(lastNetErr);
+  /* Same rule, same reason: this one is Google's capacity, and calling it a quota
+     problem would send him to the dashboard again. Reached only once every model on
+     every key has faltered, so "overloaded" is a claim about Gemini rather than about
+     one unlucky request. */
+  if (lastHttpErr) throw new Error("Gemini is overloaded just now (" + lastHttpErr +
+                                   ") — try again in a moment");
   throw new Error(keys.length > 1
     ? "both keys' daily free limit is used up"
     : "daily free limit reached" + (lastWaitHint ? " — try again " + lastWaitHint : ""));
@@ -21925,16 +21968,29 @@ function runSelfTests() {
     out.failures.push({ name: name, error: String((e && e.message) || e) });
     console.error("FAIL " + name + " — " + ((e && e.message) || e));
   };
-  const pending = [];
+  /* ONE AT A TIME, and that is a correctness rule rather than a tidiness one.
+
+     This used to call t.fn() for every test in a synchronous loop and only await the
+     promises afterwards, so async tests ran CONCURRENTLY. Two of them stubbing the same
+     global — window.fetch, or geminiFetchWithRetry — meant the second's stub was live
+     while the first was still awaiting, and each failed with the other's error. The
+     previous session hit this and wrote the constraint down instead ("anything stubbing a
+     shared binding has to be a single sequential test"), which held exactly until a
+     second such test was needed: adding the 503 case broke the timeout case beside it,
+     with neither test wrong.
+
+     Sync tests are unaffected in order or behaviour — they still run in declaration
+     order and settle immediately; they simply do so one microtask apart. */
+  let chain = Promise.resolve();
   SELFTESTS.forEach(t => {
-    try {
-      const r = t.fn();
-      if (r && typeof r.then === "function") {
-        pending.push(r.then(() => pass(t.name), e => fail(t.name, e)));
-      } else {
-        pass(t.name);
-      }
-    } catch (e) { fail(t.name, e); }
+    chain = chain.then(() => {
+      let r;
+      try { r = t.fn(); }
+      catch (e) { fail(t.name, e); return; }
+      if (r && typeof r.then === "function")
+        return r.then(() => pass(t.name), e => fail(t.name, e));
+      pass(t.name);
+    });
   });
   const finish = () => {
     window.__selftest = out;
@@ -21944,7 +22000,7 @@ function runSelfTests() {
   };
   /* Resolved, never rejected — every rejection is already accounted for above, and a
      throw here would be the suite reporting its own failure as a page error. */
-  return pending.length ? Promise.all(pending).then(finish) : finish();
+  return chain.then(finish);
 }
 
 /* ---- test helpers shared across suites ---- */
@@ -23155,6 +23211,7 @@ T("fetchWithTimeout: a real network failure keeps its own message", () => {
       () => { throw new Error("should have rejected"); },
       (err) => assertEq(err.message, "Failed to fetch")));
 });
+
 
 /* ---- a turn read as a beat ----
    The whole live-conversation rework rests on one claim: every conversation ALREADY in
@@ -24606,12 +24663,10 @@ T("campWarmDecide: force must not start a second request beside a running one", 
 });
 
 /* ---- a timeout is this model failing, not the call failing ---- */
-/* ONE test, not two, and the reason is a trap in the runner rather than a style
-   preference. runSelfTests starts every test synchronously and only awaits the promises
-   afterwards, so async tests run CONCURRENTLY — two of them stubbing the same global
-   means the second's stub is live while the first is still awaiting. Written as two
-   tests, this failed with the other one's error. Anything stubbing a shared binding has
-   to be a single sequential test. */
+/* This carried a warning that async tests run concurrently, so anything stubbing a shared
+   binding had to be a single test. That was true of the old runner and is no longer: it
+   awaits each test before starting the next — see runSelfTests. The warning is kept only
+   as history, because it is why this test is one long one rather than three. */
 T("geminiSend: a timeout is this model failing, not the call failing", async () => {
   /* Three sentence commissions died on gemini-flash at exactly 20.0s without ever asking
      gemini-flash-lite, which had 15 a minute and 500 a day going spare. fetchWithTimeout
@@ -24640,6 +24695,70 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
     try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
     assertEq(msg, "the request took longer than 20s");
   } finally { geminiFetchWithRetry = realFetch; geminiKeys = realKeys; }
+});
+/* Kept as one test to match the timeout case above, which it mirrors exactly. It no
+   longer HAS to be: writing it as three is what proved the runner was starting async
+   tests concurrently, and fixing that was the price of this test existing at all. */
+T("geminiSend: a 503 is this model being busy, not the call failing", async () => {
+  /* The identical bug, one status code along. `throw new Error("HTTP " + resp.status)`
+     escaped the config, model AND key loops at once, so an overloaded gemini-flash killed
+     a whole sentence commission (2026-08-30) without ever asking gemini-flash-lite. */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  /* hvr_ai_q is a live counter and the success case below writes an "ok" into it. */
+  const q = lsGet(AI_Q_KEY);
+  const busy = () => Promise.resolve({ ok: false, status: 503,
+    text: () => Promise.resolve('{"error":{"code":503,"message":"overloaded"}}') });
+  try {
+    geminiKeys = () => ["k"];
+    const asked = [];
+    geminiFetchWithRetry = (url) => {
+      asked.push(url.indexOf("gemini-flash-lite") !== -1 ? "lite" : "flash");
+      if (url.indexOf("gemini-flash-lite") === -1) return busy();
+      return Promise.resolve({ ok: true, json: async () => ({
+        candidates: [{ content: { parts: [{ text: "written" }] } }] }) });
+    };
+    assertEq(await geminiSend([{ text: "x" }], null, {}), "written",
+             "a busy flash must not stop the walk to flash-lite");
+    assertTrue(asked.indexOf("lite") !== -1, "and lite is actually reached");
+
+    /* Every model on every key busy. The old code threw "HTTP 503" from the first one;
+       worse, had it fallen through it would have hit the daily-limit message below and
+       blamed a quota that was barely touched — the same lie the timeout case fixes. */
+    geminiKeys = () => ["k1", "k2"];
+    geminiFetchWithRetry = busy;
+    let msg = "";
+    try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
+    assertTrue(/overloaded/.test(msg), "got: " + msg);
+    assertTrue(!/daily|limit/.test(msg), "must not blame quota: " + msg);
+    /* And the failure log can now say what was walked, where it recorded model: "". */
+    assertEq(lastGeminiTried.length, 4, "two models on each of two keys");
+    assertTrue(/#2/.test(lastGeminiTried.join(" ")),
+               "the second key must be reached: " + lastGeminiTried.join(" "));
+
+    /* Deliberately narrow. A malformed request is not fixed by a different model, so a
+       400 still throws at once rather than spending the whole list to rediscover it. */
+    geminiKeys = () => ["k"];
+    const tried = [];
+    geminiFetchWithRetry = (url) => { tried.push(url);
+      return Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve("bad") }); };
+    msg = "";
+    try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
+    assertEq(msg, "HTTP 400");
+    /* Twice, both on flash: once with the thinking config and once without, which is the
+       pre-existing "maybe the config was the problem" retry. Never flash-lite. */
+    assertEq(tried.length, 2);
+    assertTrue(tried.every(u => u.indexOf("gemini-flash-lite") === -1),
+               "a 400 must not walk on to the next model");
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    lsSet(AI_Q_KEY, q || "");
+  }
+});
+T("GEMINI_MAX_ATTEMPTS: depth shrank so breadth could be afforded", () => {
+  /* Three attempts against GEN_TIMEOUT_MS is ~137s per model; now that geminiSend walks
+     on rather than throwing, that would be nine minutes across two models and two keys.
+     One retry catches a blip — the fallback list answers everything past that. */
+  assertEq(GEMINI_MAX_ATTEMPTS, 2);
 });
 T("GEN_TIMEOUT_MS: background writing gets longer than an interactive lookup", () => {
   assertTrue(GEN_TIMEOUT_MS > FETCH_TIMEOUT_MS,

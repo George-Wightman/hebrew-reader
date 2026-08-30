@@ -160,6 +160,30 @@ For Phase 2, `syncRun` is not reachable without stubbing GitHub, and the change 
 of conditionals rather than arithmetic. Verified live instead: raise a flag mid-session,
 confirm `progress.json` moves within seconds.
 
+### The runner had to be fixed first, and that was not planned
+
+Writing the three cases above surfaced a trap in `runSelfTests`. It called `t.fn()` for
+every test in a synchronous loop and only awaited the promises afterwards, so **async
+tests ran concurrently**. Two of them stubbing the same global — `window.fetch`, or
+`geminiFetchWithRetry` — meant the second's stub was live while the first was still
+awaiting, and each failed with the other's error.
+
+A previous session hit this and wrote the constraint down rather than fixing it: *"anything
+stubbing a shared binding has to be a single sequential test."* That held exactly until a
+second such test was needed. Adding the 503 case broke the timeout case beside it, with
+neither test wrong — the same globals, two concurrent stubbings.
+
+So `runSelfTests` now awaits each test before starting the next. Sync tests are unchanged
+in order and behaviour; they simply settle one microtask apart. This is in scope because
+without it the 503 case cannot be tested at all except by appending its assertions to an
+unrelated test, and the trap would keep costing a session every time someone writes the
+next async test.
+
+Not fixed, and worth its own look: the timeout test beside this one lets `aiQNote` write a
+synthetic `ok` into the real `hvr_ai_q` counter on its success path. Low impact — the
+counter rolls daily — but it is the localStorage-isolation rule in `CLAUDE.md` being
+broken. The new test guards the key; the old one still does not.
+
 ## Deferred, with reasons
 
 **Parallelising calls across the two keys.** George suggested it. Real, but not here: the

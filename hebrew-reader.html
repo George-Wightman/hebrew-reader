@@ -16904,6 +16904,7 @@ function composePrompt(x) {
         "him one more thing about what he just said.") + "\n\n" +
     "Return ONLY JSON, no markdown:\n" +
     '{"lvl":1-5,"ok":"clean|minor|wrong","bad":[""],"fix":"","why":"",' +
+    '"best":{"he":"","tr":"","en":""},' +
     '"say":{"he":"","tr":"","en":""},"give":["",""],"newWords":[{"he":"","tr":"","en":""}]}\n\n' +
     "lvl — the level of what HE actually produced, by the rubric above. Not the level " +
     "you were aiming at.\n" +
@@ -16913,6 +16914,9 @@ function composePrompt(x) {
     "empty when he used them all properly. Do not list words that are merely absent.\n" +
     "fix — the corrected sentence in natural spoken Hebrew, or \"\" when it was clean.\n" +
     "why — one short English line naming what to change, or \"\" when it was clean.\n" +
+    "best — the version of his sentence worth keeping for him to practise later: his " +
+    "own when it was clean, the corrected one otherwise. Give he, tr (transliteration) " +
+    "and en (English). Leave he empty if the sentence is not worth keeping.\n" +
     "say — your reply, in Hebrew he can follow at his level, WITH translit and English. " +
     "React to what he actually said and ask him one thing about it.\n" +
     "give — two words from the pool for the next round. Pick a pair that can genuinely " +
@@ -16927,6 +16931,7 @@ function composeNormalise(out, pool) {
   const lvl = Math.round(Number(out.lvl));
   const ok = ["clean", "minor", "wrong"].indexOf(String(out.ok)) !== -1 ? String(out.ok) : "minor";
   const say = out.say && typeof out.say === "object" ? out.say : {};
+  const best = out.best && typeof out.best === "object" ? out.best : {};
   const give = (Array.isArray(out.give) ? out.give : [])
     .filter(k => typeof k === "string" && pool.indexOf(k) !== -1);
   return {
@@ -16939,8 +16944,38 @@ function composeNormalise(out, pool) {
     why: String(out.why || "").trim(),
     say: { he: String(say.he || "").trim(), tr: String(say.tr || "").trim(),
            en: String(say.en || "").trim() },
+    best: { he: String(best.he || "").trim(), tr: String(best.tr || "").trim(),
+            en: String(best.en || "").trim() },
     give: give
   };
+}
+
+/* HIS OWN SENTENCES, BACK IN THE ROTATION. Every sentence in the bank today was written
+   by Gemini guessing at his level; one he composed and got right is by definition at his
+   level and about something he actually wanted to say.
+
+   The CORRECTED version, never the raw one — banking a sentence with an agreement error
+   in it would teach him the error every time it came round. Which makes the drill later
+   the corrected form of his own mistake, spaced, and that is better material than a
+   generated sentence precisely because it was his.
+
+   learnIngest does the rest and is reused rather than reimplemented: it drops a sentence
+   with no library word in it, drops one containing a word he has never met
+   (bankUnknowns — the spec's "every content word is in the library", already written),
+   and drops exact and near duplicates. Its return value is how many actually landed, so
+   nothing here has to guess whether a gate rejected it. */
+function composeBank(out) {
+  if (!out || out.ok === "wrong") return 0;
+  const best = out.best || {};
+  if (!best.he || !best.tr) return 0;
+  /* Not below the level he is already measured at. The bank is what later sessions are
+     built from, and filling it with sentences easier than he is would be the ratchet
+     pickByLevel exists to prevent. */
+  if (!out.lvl || out.lvl < learnerLevel()) return 0;
+  try {
+    return learnIngest({ items: [{ he: best.he, tr: best.tr, en: best.en || "",
+                                   type: "sentence", lvl: out.lvl }] });
+  } catch (e) { return 0; }
 }
 
 async function composeTurn(s, c) {
@@ -17067,6 +17102,8 @@ function composeAdvance(s, c, out) {
       levelSave(lvlStore);
     } catch (e) { /* a level write must never cost him the round */ }
   }
+
+  s.composeBanked = (s.composeBanked || 0) + composeBank(out);
 
   const next = composeNextCard(c, out, srsAll(), s.cards.length);
   if (next) s.cards.push(next);
@@ -22189,6 +22226,8 @@ function learnFinish() {
     sub = words + " word" + (words === 1 ? "" : "s") + " levelled";
     if (built) sub += " · you built at level " + built +
                       " · you're measured at " + learnerLevel();
+    const kept = s.composeBanked || 0;
+    if (kept) sub += " · " + kept + " sentence" + (kept === 1 ? "" : "s") + " kept to practise";
   }
   if (s.cards.length && s.cards[0].kind === "conversation") {
     const total = convoBeatCount(s.cards[0].convo);
@@ -25467,6 +25506,62 @@ T("composeNextCard: three rounds, and the coach does not get to extend them", ()
   assertTrue(!!composeNextCard(composeCard(pool, ["בית"], null, 1, 1), keen, {}, 2));
   assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
              "COMPOSE_ROUNDS is the authority, not the coach");
+});
+T("composeBank: keeps the corrected sentence, and only when it is worth keeping", () => {
+  const realBank = lsGet(BANK_KEY);
+  try {
+    const lib = libAll();
+    /* Two library words, so learnIngest's "drills none of his words" gate passes and
+       bankUnknowns finds nothing to object to. */
+    const ks = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
+    const he = ks[0] + " " + ks[1];
+    const good = { ok: "minor", lvl: LEVEL_MAX, bad: [],
+                   best: { he: he, tr: "corrected translit", en: "corrected english" } };
+    lsSet(BANK_KEY, JSON.stringify([]));
+    assertEq(composeBank(good), 1, "a corrected sentence at level is kept");
+    const it = bankAll()[0];
+    assertEq(it.he, he, "the corrected version, never the raw one");
+    assertEq(it.lvl, LEVEL_MAX, "and at the level he actually built at");
+    assertEq(it.type, "sentence");
+    /* Every rejection path, each against a fresh empty bank. */
+    const cases = [
+      ["wrong sentences are never banked", { ok: "wrong", lvl: LEVEL_MAX, best: good.best }],
+      ["nothing worth keeping", { ok: "clean", lvl: LEVEL_MAX, best: { he: "", tr: "" } }],
+      ["no transliteration means it cannot be drilled",
+       { ok: "clean", lvl: LEVEL_MAX, best: { he: he, tr: "" } }],
+      ["no level claimed", { ok: "clean", lvl: null, best: good.best }]
+    ];
+    cases.forEach(cse => {
+      lsSet(BANK_KEY, JSON.stringify([]));
+      assertEq(composeBank(cse[1]), 0, cse[0]);
+    });
+    /* And a duplicate is refused by learnIngest's own gates rather than by a second
+       copy of them living here. */
+    lsSet(BANK_KEY, JSON.stringify([]));
+    assertEq(composeBank(good), 1);
+    assertEq(composeBank(good), 0, "the same sentence twice is one sentence");
+  } finally {
+    if (realBank === null || realBank === undefined) localStorage.removeItem(BANK_KEY);
+    else lsSet(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
+});
+T("composeBank: a sentence easier than he is does not go in the bank", () => {
+  /* The bank is what later sessions are built from; filling it below his own level is
+     the ratchet pickByLevel exists to prevent. Uses a level strictly under whatever he
+     is measured at, so the test says what it means whatever that happens to be. */
+  const at = learnerLevel();
+  if (at <= LEVEL_MIN) { assertTrue(true, "no level below the floor to test with"); return; }
+  const realBank = lsGet(BANK_KEY);
+  try {
+    lsSet(BANK_KEY, JSON.stringify([]));
+    assertEq(composeBank({ ok: "clean", lvl: at - 1, bad: [],
+                           best: { he: "בית גדול", tr: "bayit gadol", en: "a big house" } }), 0);
+  } finally {
+    if (realBank === null || realBank === undefined) localStorage.removeItem(BANK_KEY);
+    else lsSet(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
 });
 T("composeNextKind: the exchange is a floor, not a ceiling — and it has a ceiling", () => {
   const pool = ["בית", "מכונית", "ילד", "גדול"];

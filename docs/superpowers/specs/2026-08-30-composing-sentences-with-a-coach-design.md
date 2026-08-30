@@ -111,15 +111,26 @@ exchanges remain.
 {
   lvl:  3,                       // LEVEL_RUBRIC 1-5, for what HE produced
   ok:   "clean" | "minor" | "wrong",
-  used: [{ he: "אוטובוס", ok: true }, { he: "אדום", ok: true }],
-  fix:  "האוטובוס האדום נוסע",   // the corrected sentence, or null when clean
+  bad:  ["אדום"],                // of the words the APP detected, which were misused
+  fix:  "האוטובוס האדום נוסע",   // the corrected sentence, or "" when clean
   why:  "one line on what was off",
+  best: { he, tr, en },          // the version worth banking: his, or the corrected one
   say:  { he, tr, en },          // the coach's next line
-  give: ["…", "…"],              // next round's words, or null to stay in this one
-  done: false,                   // the coach ending the session
+  give: ["…", "…"],              // next round's words, or empty to stay in this one
   newWords: [{ he, tr, en }]     // anything he said that is not in the library
 }
 ```
+
+**`bad`, not `used`.** An earlier draft had the model return the words he used and whether
+each was correct. The app derives them instead — `bankUses` resolves tokens to library
+keys through `libKeyFor`, handling prefixes the same way the bank and the conversation
+already do — and the model is asked only which of *those* were misused. Same rule, but a
+hallucinated or mis-spelled key can never reach `srsAnswer`, which is the one place a bad
+reply could quietly corrupt the scheduler.
+
+**No `done`.** `give` already means "this round has run its course", so a separate
+end-the-session field would be a second way to say the same thing — and the round count is
+authoritative regardless.
 
 `lvl` reuses `LEVEL_RUBRIC` verbatim, so compose feeds `levelRecord` in exactly the same
 currency as every other card rather than inventing a second scale.

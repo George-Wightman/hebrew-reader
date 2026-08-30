@@ -16842,6 +16842,11 @@ function campStartMeet(id) {
 
    See docs/superpowers/specs/2026-08-30-composing-sentences-with-a-coach-design.md. */
 const COMPOSE_ROUNDS = 3;
+/* Turns per round, counting his opening sentence. Three means: build it, answer one
+   follow-up, answer one more — after which the round ends whether or not the coach was
+   ready to stop. The conversation's own risk note is a model enjoying a tangent and never
+   landing the beats; this is the same cap for the same reason, one level down. */
+const COMPOSE_EXCHANGE_CAP = 3;
 /* He is sitting in front of this, so it is not GEN_TIMEOUT_MS — but there is no
    fallback line either, so failing fast buys nothing the way it does for a live
    conversation turn (CONVO_LIVE_TIMEOUT_MS is 6s precisely because a scripted line is
@@ -16877,8 +16882,10 @@ function composePrompt(x) {
     "learning conversational Hebrew to talk with his partner's grandfather. Everyday " +
     "spoken Hebrew, never textbook.\n\n" +
     "HIS LEVEL IS " + x.level + " OF 5.\n" + LEVEL_RUBRIC + "\n\n" +
-    "YOU PUT THESE WORDS ON THE TABLE AND ASKED HIM TO MAKE A SENTENCE:\n  " +
-    x.give.join(", ") + "\n\n" +
+    "YOU PUT THESE WORDS ON THE TABLE THIS ROUND:\n  " + x.give.join(", ") + "\n\n" +
+    (x.theirLine
+      ? "HE IS ANSWERING THIS, WHICH YOU JUST SAID TO HIM:\n  " + x.theirLine + "\n\n"
+      : "YOU ASKED HIM TO MAKE A SENTENCE WITH THEM.\n\n") +
     "WORDS YOU MAY PUT DOWN NEXT (his, and only these):\n" + x.pool + "\n\n" +
     (x.history ? "EARLIER THIS SESSION:\n" + x.history + "\n\n" : "") +
     "HE SAID (via speech recognition, which is markedly less accurate on non-native " +
@@ -16889,7 +16896,12 @@ function composePrompt(x) {
     "Judge whether he CONVEYED something sensible using the words you gave him. A " +
     "synonym, a richer construction, or extra content he volunteered is a PASS, not a " +
     "fault. You are not checking whether he used your exact words.\n\n" +
-    "Round " + x.round + " of " + x.rounds + ".\n\n" +
+    "Round " + x.round + " of " + x.rounds + ", exchange " + x.exchange + " of at most " +
+    x.exchangeCap + " in this round. " +
+    (x.lastExchange
+      ? "THIS IS THE LAST EXCHANGE OF THE ROUND — return `give` with the next two words."
+      : "Return `give` only when this round has run its course; leave it empty to ask " +
+        "him one more thing about what he just said.") + "\n\n" +
     "Return ONLY JSON, no markdown:\n" +
     '{"lvl":1-5,"ok":"clean|minor|wrong","bad":[""],"fix":"","why":"",' +
     '"say":{"he":"","tr":"","en":""},"give":["",""],"newWords":[{"he":"","tr":"","en":""}]}\n\n' +
@@ -16947,7 +16959,14 @@ async function composeTurn(s, c) {
     pool: pool.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n"),
     history: composeHistory(s.cards, s.i),
     said: c._said || "", saidKeys: saidKeys,
-    round: (c.round || 0) + 1, rounds: COMPOSE_ROUNDS
+    theirLine: (c.item && c.item.qhe) || "",
+    round: (c.round || 0) + 1, rounds: COMPOSE_ROUNDS,
+    exchange: (c.exchange || 0) + 1, exchangeCap: COMPOSE_EXCHANGE_CAP,
+    /* Told outright when the round must end, rather than left to infer it from the
+       counts — the conversation's own risk note is that a model enjoying a tangent never
+       lands the remaining beats, and the cap will cut it off anyway. Better it chooses
+       the next pair than has the fallback choose for it. */
+    lastExchange: (c.exchange || 0) + 1 >= COMPOSE_EXCHANGE_CAP
   });
   let out = null;
   try {
@@ -16967,8 +16986,12 @@ async function composeTurn(s, c) {
 
 function composeHistory(cards, upto) {
   return (cards || []).slice(0, upto).filter(x => x && x.kind === "compose" && x._said)
-    .map(x => "  he built: " + x._said + (x._out && x._out.why ? "  (you said: " + x._out.why + ")" : ""))
-    .join("\n");
+    .map(x => {
+      let line = "  he said: " + x._said;
+      if (x._out && x._out.why) line += "  (you corrected: " + x._out.why + ")";
+      if (x._out && x._out.say && x._out.say.he) line += "\n  you replied: " + x._out.say.he;
+      return line;
+    }).join("\n");
 }
 
 /* CREDIT ONLY, NEVER A MISS — the rule the whole scoring design rests on. He was not
@@ -16998,9 +17021,30 @@ function composeCredit(s, c, out) {
   return keys;
 }
 
-function composeCard(pool, give, item, round, ti) {
+/* `give` is the words on the table and stays the same for every card in a round — they
+   are the constraint he is working against, not a prompt shown once. `item` is the
+   coach's line when this card is an answer to one, and null on the card that opens a
+   round, where there is nothing yet to answer. */
+function composeCard(pool, give, item, round, ti, exchange) {
   return { kind: "compose", pool: pool, give: give || [], round: round || 0,
+           exchange: exchange || 0,
            ti: ti === undefined ? round : ti, item: item || null, words: [] };
+}
+
+/* Which of the three things happens after a turn, as one decision in one place: stay in
+   this round and let him answer, put new words down, or stop.
+
+   BEATS ARE A FLOOR, NOT A CEILING — the argument the conversation settled, applied to
+   the exchange rather than the round. A clean sentence the coach has nothing to ask about
+   moves on immediately; a thin one earns another turn or two. What it cannot do is run
+   forever: `give` from the coach ends the round, and the cap ends it whether or not the
+   coach ever offers. */
+function composeNextKind(c, out) {
+  const exchange = (c.exchange || 0) + 1;
+  const asked = !!(out && out.say && out.say.he);
+  const moving = !!(out && out.give && out.give.length);
+  if (asked && !moving && exchange < COMPOSE_EXCHANGE_CAP) return "same";
+  return (c.round || 0) + 1 < COMPOSE_ROUNDS ? "round" : "end";
 }
 
 /* Everything between his sentence being judged and the next words appearing. The
@@ -17039,16 +17083,23 @@ function composeAdvance(s, c, out) {
    learnAdvance, which reads the module-level session and repaints the DOM. This is the
    part with the actual decision in it, and it takes everything it needs as arguments. */
 function composeNextCard(c, out, srs, ti) {
-  const nextRound = (c.round || 0) + 1;
-  if (nextRound >= COMPOSE_ROUNDS) return null;
   const pool = c.pool || [];
+  const kind = composeNextKind(c, out);
+  if (kind === "end") return null;
+  /* Same round: the words stay on the table and the coach's line becomes the thing he is
+     answering. The card he answers ON is a new one, so the thread has a record of each
+     turn rather than one card being rewritten under him. */
+  if (kind === "same")
+    return composeCard(pool, c.give || [],
+                       { qhe: out.say.he, qtr: out.say.tr, qen: out.say.en },
+                       c.round || 0, ti, (c.exchange || 0) + 1);
   const wanted = ((out && out.give) || []).filter(k => pool.indexOf(k) !== -1);
   const give = wanted.length >= COMPOSE_GIVE ? wanted.slice(0, COMPOSE_GIVE)
     /* The coach declined to choose, or chose words that are not his. Fall back to the
        same weakest-first rule that opened the session, minus what he has just used, so a
        thin reply costs a good pairing rather than the whole round. */
     : composeOpening(pool.filter(k => (c.give || []).indexOf(k) === -1), srs);
-  return give.length ? composeCard(pool, give, null, nextRound, ti) : null;
+  return give.length ? composeCard(pool, give, null, (c.round || 0) + 1, ti, 0) : null;
 }
 
 async function campStartCompose(id) {
@@ -20285,6 +20336,48 @@ function learnRenderCompose(card, c, s) {
   });
   card.append(give);
 
+  /* What has already been said IN THIS ROUND. Built from the cards actually played, for
+     the same reason convoThread is: the coach's lines are generated, so there is no
+     script to replay them from, and quoting anything but what happened would be fiction.
+     Only this round — the words on the table changed at the boundary, so the exchange
+     before it is a different conversation. */
+  const mine = (s.cards || []).slice(0, s.i).filter(x =>
+    x && x.kind === "compose" && (x.round || 0) === (c.round || 0));
+  /* ONE THREAD, built the way convoThread builds one — the history and the line he is
+     answering right now in the same RTL column, or the newest line sits outside it and
+     aligns to the opposite side from every other bubble.
+
+     And each card contributes only the line it was ANSWERING plus what he said. A card's
+     own `_out.say` is deliberately not drawn here: it is the same sentence as the next
+     card's `item.qhe`, so drawing both printed the coach's question twice, once in the
+     log and once live underneath it. */
+  if (mine.length || (c.item && c.item.qhe)) {
+    const wrap = document.createElement("div"); wrap.className = "lthread";
+    const list = document.createElement("div"); list.className = "lbubbles";
+    mine.forEach(x => {
+      if (x.item && x.item.qhe) list.append(convoBubble("them", x.item.qhe, x.item.qtr));
+      if (x._said) list.append(convoBubble("you", x._said, ""));
+    });
+    if (c.item && c.item.qhe) {
+      const b = convoBubble("them", c.item.qhe, c.item.qtr);
+      /* Only while it is still the thing he owes an answer to. Once he has spoken it is
+         history like the rest, and keeping it ringed would leave two live-looking lines
+         on screen at once. */
+      if (stage === "ask") b.classList.add("live");
+      list.append(b);
+    }
+    /* Not at "heard": there his sentence is sitting in the confirmation box below, and
+       printing it twice would make the box look like part of the transcript rather than
+       the thing he is being asked to check. */
+    if ((stage === "sending" || stage === "reply") && c._said)
+      list.append(convoBubble("you", c._said, ""));
+    wrap.append(list); card.append(wrap);
+  }
+  if (c.item && c.item.qen && stage === "ask") {
+    const en = document.createElement("div"); en.className = "lask lquiet";
+    en.textContent = c.item.qen; card.append(en);
+  }
+
   if (stage === "ask") {
     const act = document.createElement("div"); act.className = "lactions";
     if (speechSupported()) {
@@ -20308,14 +20401,14 @@ function learnRenderCompose(card, c, s) {
     return;
   }
 
-  const heard = document.createElement("div"); heard.className = "lheard";
-  const hl = document.createElement("div"); hl.className = "lheardlab";
-  hl.textContent = stage === "heard" ? "What I heard" : "You said";
-  const hh = document.createElement("div"); hh.className = "lheardhe"; hh.textContent = c._said || "";
-  heard.append(hl, hh);
-  card.append(heard);
-
   if (stage === "heard") {
+    const heard = document.createElement("div"); heard.className = "lheard";
+    const hl = document.createElement("div"); hl.className = "lheardlab";
+    hl.textContent = "What I heard";
+    const hh = document.createElement("div"); hh.className = "lheardhe";
+    hh.textContent = c._said || "";
+    heard.append(hl, hh);
+    card.append(heard);
     /* THE ONE MITIGATION THIS CARD HAS. learnAdjudicate rescues a mangled transcript by
        telling the model what he was supposed to say, and there is no such thing here — so
        a mishearing would have the coach answering a sentence he never said, which is
@@ -20374,8 +20467,11 @@ function learnRenderCompose(card, c, s) {
   const act = document.createElement("div"); act.className = "lactions";
   const next = document.createElement("button");
   next.className = "btn"; next.type = "button";
-  next.textContent = (c.round || 0) + 1 >= COMPOSE_ROUNDS ? "Finish" : "Next words";
-  next.onclick = () => { if (!c._done) { c._done = true; composeAdvance(s, c, c._out); } };
+  /* The button says which of the three things is about to happen, rather than a generic
+     Next that means something different every time it is pressed. */
+  const kind = composeNextKind(c, c._out);
+  next.textContent = kind === "same" ? "Answer them" : kind === "round" ? "Next words" : "Finish";
+  next.onclick = () => { if (!c._advanced) { c._advanced = true; composeAdvance(s, c, c._out); } };
   act.append(next);
   card.append(act);
 }
@@ -25371,6 +25467,37 @@ T("composeNextCard: three rounds, and the coach does not get to extend them", ()
   assertTrue(!!composeNextCard(composeCard(pool, ["בית"], null, 1, 1), keen, {}, 2));
   assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
              "COMPOSE_ROUNDS is the authority, not the coach");
+});
+T("composeNextKind: the exchange is a floor, not a ceiling — and it has a ceiling", () => {
+  const pool = ["בית", "מכונית", "ילד", "גדול"];
+  const asks = { say: { he: "ואיפה?" }, give: [] };
+  const c0 = composeCard(pool, ["בית"], null, 0, 0, 0);
+  assertEq(composeNextKind(c0, asks), "same", "a question keeps him in the round");
+  /* `give` is the coach saying the round is done, whatever else it returned. */
+  assertEq(composeNextKind(c0, { say: { he: "ואיפה?" }, give: ["ילד", "גדול"] }), "round");
+  /* Nothing to answer — a clean sentence it had no follow-up for moves straight on. */
+  assertEq(composeNextKind(c0, { say: { he: "" }, give: [] }), "round");
+  /* And the cap ends the round whether or not the coach ever offers to. */
+  const capped = composeCard(pool, ["בית"], null, 0, 0, COMPOSE_EXCHANGE_CAP - 1);
+  assertEq(composeNextKind(capped, asks), "round",
+           "a coach enjoying a tangent must not be able to hold the round open");
+  const last = composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 0, COMPOSE_EXCHANGE_CAP - 1);
+  assertEq(composeNextKind(last, asks), "end");
+});
+T("composeNextCard: staying in the round keeps the words and carries the coach's line", () => {
+  const pool = ["בית", "מכונית", "ילד", "גדול"];
+  const c = composeCard(pool, ["בית", "מכונית"], null, 1, 0, 0);
+  const next = composeNextCard(c, { say: { he: "ואיפה הבית?", tr: "ve'eifo habayit?",
+                                           en: "and where is the house?" }, give: [] }, {}, 1);
+  assertEq(next.round, 1, "same round");
+  assertEq(next.exchange, 1);
+  assertEq(next.give, ["בית", "מכונית"], "the words stay on the table for the whole round");
+  assertEq(next.item.qhe, "ואיפה הבית?", "and he is answering what the coach actually said");
+  /* Crossing into a new round resets the exchange, or the cap would carry over. */
+  const roundOn = composeNextCard(c, { say: { he: "יופי" }, give: ["ילד", "גדול"] }, {}, 1);
+  assertEq(roundOn.round, 2);
+  assertEq(roundOn.exchange, 0);
+  assertNull(roundOn.item, "a round opener has nothing to answer");
 });
 T("composeNextCard: a coach that declines to choose still hands over words", () => {
   const pool = ["בית", "מכונית", "ילד", "גדול"];

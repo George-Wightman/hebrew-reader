@@ -55,33 +55,41 @@ programmatically rather than trusting the screenshot.
 real store (not a passed-in plain object) must restore what it found in a
 `finally` block, or it leaves synthetic data sitting in the app's real state
 forever. Prefer driving pure functions with plain objects; only touch a real
-store when the thing under test is the store itself.
+store when the thing under test is the store itself. The same applies to any
+reassigned global — `geminiFetchWithRetry`, `syncPull`, `sessionBusy` are all
+plain function declarations that tests swap and must put back.
 
-## Audio is the device, not the API
+Async tests **run one at a time** as of 2026-08-30. They did not before:
+`runSelfTests` started every test synchronously and only awaited afterwards, so
+two async tests stubbing the same global clobbered each other and each failed
+with the other's error. If you see failures whose messages belong to a different
+test, suspect a stale cached build first (above) — that symptom now has two
+causes and only one of them is still in the code.
 
-Practice audio comes from the **device's own TTS voice** (`speakHe` → `HE_VOICE`),
-not from Gemini. `playHe` looks for a cached neural clip first and calls
-`audioEnsure` to make one, and that path failed from 2026-08-07 to 2026-08-29:
-every model in `GEMINI_TTS_MODELS` returned `HTTP 400 "Developer instruction is
-not enabled for this model"`, Google rejecting the `systemInstruction` field.
-`ttsBody` no longer sends that field — the read-verbatim instruction is in the
-prompt text instead — but **whether that fixed it is unverified**. George checks
-with Settings → "Generate a test clip"; ask him rather than assuming either way.
+## Audio is the device, and only the device
 
-Two things follow, and note that the first of these was WRONG here for three
-weeks and misled a session on 2026-08-29:
+Practice audio comes from the **device's own TTS voice** (`speakHe` → `HE_VOICE`).
+There is no longer any other path: Gemini TTS was deleted outright on 2026-08-29
+(`62e57f5`, spec `2026-08-29-remove-gemini-tts-design.md`) after George pointed out
+his Pixel does it free and unlimited. `geminiTTS`, `GEMINI_TTS_MODELS`, `ttsBody`,
+`audioEnsure`, `audioFatal`, `audioQuotaDead` and the Settings "Generate a test
+clip" button are all **gone — grep returns nothing**. Don't go looking for them,
+and don't ask George whether TTS works; the question no longer means anything.
 
-- **Audio does cost quota, and it is a separate pool.** `geminiTTS` is a sibling
-  of `geminiRequest`, not a caller — it has its own fetch, its own retry, and its
-  own per-model allowance (`gemini-3.1-flash-tts-preview` is **10/day**, far
-  tighter than the text pools). It was silently spending it: `audioQuotaDead`
-  only tripped on `/quota exhausted/`, so the permanent 400 was retried on every
-  card, every session, until it went over. `audioFatal` now trips on any 4xx.
-  If audio is silent, check the AI star's log first — TTS appears there now — and
-  only then blame the device (no Hebrew voice installed, muted, Bluetooth).
+Two things follow:
+
+- **If audio is silent, it is the device.** No Hebrew voice installed, muted,
+  Bluetooth routing. There is no API in this path to blame and no quota to check.
+  A stale AI-log entry mentioning `gemini-3.1-flash-tts-preview` predates the
+  deletion — one such entry on a 2026-08-30 flag cost a session real time before
+  someone checked whether the code still existed.
 - George practises on a Pixel, so `speechRateFor` takes the
   `SPEECH_RATE_NATURAL` branch (0.90 / 0.65). The slower Windows figures only
   apply to the flat SAPI voice.
+
+`playHe(cacheKey, text, slow)` keeps its old signature and ignores `cacheKey`; the
+`clips` IndexedDB store still exists but now holds only `note:` keys — the real
+voice-note recordings, which are untouched by any of this.
 
 ## AI usage
 

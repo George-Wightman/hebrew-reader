@@ -1503,6 +1503,10 @@
   .lwtrack i.tier-weak { background: #d99b91; }
   .lwtrack i.tier-progressing { background: #e2bb70; }
   .lwtrack i.tier-strong { background: #6fae8b; }
+  /* How well he knows it, under the solid fill and always at or beyond it, so it reads
+     as the same bar reaching further rather than as a second measurement. Appended
+     first, so the solid fill paints over it with no z-index needed. */
+  .lwtrack i.lwknow { opacity: .3; }
   /* Where the word stood when the session started. */
   .lwfrom { position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px;
             background: rgba(60,45,20,.42); z-index: 2; }
@@ -14474,6 +14478,30 @@ function srsReachOf(srs, key, side) {
   const r = (srs || {})[key];
   return r ? srsReach(r[side || "prod"]) : 0;
 }
+/* ---- the half of reach that a same-day session can actually move ---------------
+   srsReach is min(byStab, byDiff) and that is correct: it means DISTANCE TO STRONG,
+   and taking the worse of the two is what stops a full bar contradicting a caption
+   that still says "progressing".
+
+   But srsDaysSince works in whole days, so every same-day answer gives R = 1 and
+   srsGain returns exactly 1 — stability cannot move inside a sitting, by design.
+   min() then lets the frozen half cap the bar however far the other half travels.
+   Measured on George's own log: 140 of 196 clean answers sit at R = 1, and the
+   session that carried מיטה out of the weak band drew its bar as +0.
+
+   This is the other half, on its own: how well he knows the word TODAY, which is
+   the thing a second sitting genuinely changes. Not a replacement for reach and not
+   a rival progress score — reach still draws the bar and still means what it says.
+   An untested side is 0 here for the same reason it is 0 there: a side never drilled
+   is not a side failed. */
+function srsKnown(rec) {
+  if (!rec || !rec.n) return 0;
+  return Math.max(0, Math.min(1, (10 - (rec.diff || 5)) / 5));
+}
+function srsKnownOf(srs, key, side) {
+  const r = (srs || {})[key];
+  return r ? srsKnown(r[side || "prod"]) : 0;
+}
 
 /* ---- what he's actually done ------------------------------------------------
    George is committing to this properly and wanted to see it: time, streak, words,
@@ -23630,7 +23658,14 @@ function learnMark(s, srs, key) {
   if (!s || !key) return;
   s.moved = s.moved || {};
   if (s.moved[key]) return;
-  s.moved[key] = { prod: srsReachOf(srs, key, "prod"), recv: srsReachOf(srs, key, "recv") };
+  /* `k*` is the knowledge half (srsKnown) and `b*` the band. Reach alone could not
+     report a session that only moved difficulty — which is every same-day session,
+     because stability is frozen inside a sitting. Both are snapshotted here for the
+     same reason reach always was: by the time the end screen runs, the scheduler has
+     long since moved on and there is nothing left to diff against. */
+  s.moved[key] = { prod: srsReachOf(srs, key, "prod"), recv: srsReachOf(srs, key, "recv"),
+                   kprod: srsKnownOf(srs, key, "prod"), krecv: srsKnownOf(srs, key, "recv"),
+                   bprod: srsStrengthOf(srs, key, "prod"), brecv: srsStrengthOf(srs, key, "recv") };
 }
 
 /* What the log wants to know about the card an answer came from, so a later pass can
@@ -23818,9 +23853,21 @@ function learnReport(s, srs) {
     if (!lib[k]) return;
     const was = s.moved[k];
     const now = { prod: srsReachOf(srs, k, "prod"), recv: srsReachOf(srs, k, "recv") };
-    const shift = (now.prod - was.prod) + (now.recv - was.recv);
+    const knowNow = { prod: srsKnownOf(srs, k, "prod"), recv: srsKnownOf(srs, k, "recv") };
+    /* A session stashed before the ghost existed has no `kprod`. Absent, not zero — a
+       missing snapshot must not be reported as "he knew none of it an hour ago". */
+    const knowWas = typeof was.kprod === "number" ? { prod: was.kprod, recv: was.krecv } : null;
+    const bandWas = was.bprod ? { prod: was.bprod, recv: was.brecv } : null;
+    const rshift = (now.prod - was.prod) + (now.recv - was.recv);
+    const kshift = knowWas ? (knowNow.prod - knowWas.prod) + (knowNow.recv - knowWas.recv) : 0;
     rows.push({ key: k, tr: lib[k].tr || k, en: lib[k].en || "",
-                was: was, now: now, shift: shift,
+                was: was, now: now, knowWas: knowWas, knowNow: knowNow,
+                /* Knowledge counts toward "did this move". Without it a word carried
+                   clean out of the weak band by a second sitting lands under "Held
+                   steady" — which is what happened to מיטה, and is the report calling
+                   the best thing in the session nothing at all. */
+                rshift: rshift, kshift: kshift, shift: rshift + kshift,
+                bandWas: bandWas,
                 band: { prod: srsStrengthOf(srs, k, "prod"), recv: srsStrengthOf(srs, k, "recv") } });
   });
   /* Biggest movement first, in either direction: a word that slipped is as much the
@@ -23847,6 +23894,16 @@ function learnWordRow(r) {
     const line = document.createElement("div"); line.className = "lwline";
     const lab = document.createElement("u"); lab.textContent = label; line.append(lab);
     const track = document.createElement("div"); track.className = "lwtrack";
+    /* The knowledge half, drawn UNDER the solid fill and — because reach is
+       min(byStab, byDiff) and knowledge is byDiff — always at or beyond it, so it is
+       only ever visible in track the solid fill has not claimed. That is what keeps it
+       clear of the band colour: the earlier attempt at showing a second value laid a
+       lighter wash ACROSS the gained stretch and washed out the one thing the bar is
+       coloured to say. Same band colour, so no second colour language for one state. */
+    const know = document.createElement("i");
+    know.className = "tier-" + r.band[side] + " lwknow";
+    know.style.width = Math.round(r.knowNow[side] * 100) + "%";
+    track.append(know);
     const fill = document.createElement("i");
     fill.className = "tier-" + r.band[side];
     fill.style.width = Math.round(r.now[side] * 100) + "%";
@@ -23854,12 +23911,24 @@ function learnWordRow(r) {
     /* Where it stood before, marked on the bar it has since passed. Drawn as a line
        rather than as a lighter overlay across the gained stretch: an overlay washes out
        the band colour underneath, which is the one thing the bar is coloured to say. */
-    const delta = r.now[side] - r.was[side];
-    if (Math.abs(delta) > 0.001 && r.was[side] > 0.001) {
+    const rd = r.now[side] - r.was[side];
+    const kd = r.knowWas ? r.knowNow[side] - r.knowWas[side] : 0;
+    /* Whichever actually moved. Reporting reach alone is what drew +0 over a word that
+       had just been carried out of the weak band \u2014 inside a sitting stability cannot
+       move at all, so reach is not merely small, it is structurally pinned. The ghost
+       above is what this number refers to when knowledge is the mover, which is why
+       there is one number here and not two. */
+    const delta = Math.abs(kd) > Math.abs(rd) ? kd : rd;
+    if (Math.abs(rd) > 0.001 && r.was[side] > 0.001) {
       const from = document.createElement("u"); from.className = "lwfrom";
       from.style.left = Math.round(r.was[side] * 100) + "%";
       track.append(from);
     }
+    /* Discoverable rather than permanent \u2014 a line rendered under every bar forever
+       becomes wallpaper. This is the sentence he was owed and never got. */
+    if (Math.abs(kd) > 0.001 && Math.abs(rd) <= 0.001)
+      line.title = "You know this better today. How often it comes round only changes " +
+                   "once a night has passed.";
     line.append(track);
     const d = document.createElement("s");
     d.className = delta > 0.001 ? "up" : delta < -0.001 ? "down" : "flat";
@@ -29298,6 +29367,68 @@ T("learnMark: remembers where a word started and never overwrites it", () => {
   learnMark(sess, srs, "בית");
   assertEq(sess.moved["בית"].prod, first,
            "a word met twice in one session must still report from where it began");
+});
+T("learnMark: snapshots the knowledge half and the band, not just reach", () => {
+  const sess = {}, srs = {};
+  srs["בית"] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+  learnMark(sess, srs, "בית");
+  assertEq(typeof sess.moved["בית"].kprod, "number",
+           "without this the end screen has nothing to diff a same-day session against");
+  assertEq(sess.moved["בית"].bprod, "weak");
+});
+
+/* ---- the half of the bar a second sitting can move ----
+   srsGain returns exactly 1 for a same-day answer, so stability is pinned for the whole
+   of a sitting and reach — min(byStab, byDiff) — is pinned with it. */
+T("srsKnown: tracks difficulty and ignores the interval entirely", () => {
+  assertEq(srsKnown(null), 0, "an untested side is not a failed one");
+  assertEq(srsKnown(srsBlank()), 0);
+  const easy = { n: 4, stab: 1, diff: 2 }, hard = { n: 4, stab: 1, diff: 8 };
+  assertTrue(srsKnown(easy) > srsKnown(hard), "lower difficulty is more of the word held");
+  const short = { n: 4, stab: 1, diff: 5 }, long = { n: 4, stab: 300, diff: 5 };
+  assertEq(srsKnown(short), srsKnown(long),
+           "knowledge is the difficulty half ALONE — reach is what carries the interval");
+});
+/* מיטה's real numbers from hvr_srslog on 2026-08-31: three clean answers carried it out
+   of the weak band, and because every one was same-day its stability never moved, so the
+   end screen drew +0 over the best thing that happened in the session. */
+T("learnReport: a word carried out of weak by a same-day session is not 'held steady'", () => {
+  const lib = {}; lib["מיטה"] = { tr: "mita", en: "bed" };
+  const before = libAll();
+  try {
+    lsSet(LIB_KEY, JSON.stringify(lib));
+    const srs = { "מיטה": { prod: { n: 10, stab: 1, diff: 5.8, miss: 2.85 }, recv: srsBlank() } };
+    const wasRec = { n: 7, stab: 1, diff: 6.7, miss: 3.1 };
+    const sess = { moved: { "מיטה": {
+      prod: srsReach(wasRec), recv: 0, kprod: srsKnown(wasRec), krecv: 0,
+      bprod: srsStrength(wasRec), brecv: "new" } } };
+    const rep = learnReport(sess, srs);
+    assertEq(rep.moved.length, 1,
+             "it crossed weak -> progressing; reporting that as 'held steady' is the bug");
+    const row = rep.moved[0];
+    assertTrue(Math.abs(row.rshift) <= 0.001,
+               "reach genuinely cannot move on a same-day answer — that part was never wrong");
+    assertTrue(row.kshift > 0.1, "but the knowledge half moved a long way: " + row.kshift);
+    assertEq(row.bandWas.prod, "weak");
+    assertEq(row.band.prod, "progressing");
+    assertTrue(row.knowNow.prod > row.now.prod,
+               "the ghost is always at or beyond the solid fill, so it can never hide behind it");
+  } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
+});
+T("learnReport: a session stashed before the ghost existed reports no knowledge, not zero", () => {
+  const lib = {}; lib["בית"] = { tr: "bayit", en: "house" };
+  const before = libAll();
+  try {
+    lsSet(LIB_KEY, JSON.stringify(lib));
+    const srs = { "בית": { prod: srsBandRecord("progressing"), recv: srsBlank() } };
+    /* The old shape: reach only, no kprod. */
+    const rep = learnReport({ moved: { "בית": { prod: 0.2, recv: 0 } } }, srs);
+    assertEq(rep.moved.length + rep.held.length, 1, "it must still render at all");
+    const row = rep.moved.concat(rep.held)[0];
+    assertEq(row.knowWas, null,
+             "absent, not 0 — 0 would claim he knew none of it when the session began");
+    assertEq(row.kshift, 0, "and it contributes nothing to the movement it cannot describe");
+  } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
 });
 
 /* ---- the hint ladder ----

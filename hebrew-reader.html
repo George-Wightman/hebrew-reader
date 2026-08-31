@@ -10640,8 +10640,14 @@ function flagsWaiting(flags, lastSyncISO) {
 /* WHAT THE APP KNEW AT THAT INSTANT. Every branch is defensive and the whole thing is
    wrapped: a flag that throws while describing the screen is a flag he loses, and losing
    the thought is the only failure this feature actually has. */
-function flagContext() {
+function flagContext(report) {
   const c = { at: new Date().toISOString() };
+  /* Never allowed to cost him the thought. Building a report walks the bank and the
+     campaign, and a flag that throws while describing the screen is a flag he loses —
+     which is the only failure this feature actually has. */
+  try {
+    c.report = report || uhText(uhReportFor(uhHere()));
+  } catch (e) { c.report = ""; }
   try { c.view = lsGet(VIEW_KEY) || ""; } catch (e) {}
   try { c.screen = learnScreenShowing() || ""; } catch (e) {}
   try {
@@ -10656,10 +10662,6 @@ function flagContext() {
         c.card.beats = convoBeatCount(card.convo);
         c.card.covered = Object.keys(s.beatsHit || {}).length;
       }
-      /* What the scheduler thinks, which is exactly what a screenshot cannot carry. */
-      const srs = srsAll();
-      c.words = (card.words || []).slice(0, 8).map(w =>
-        w + " (" + srsStrengthOf(srs, w, "prod") + "/" + srsStrengthOf(srs, w, "recv") + ")");
     }
     if (s) c.session = { at: s.i + 1, of: (s.cards || []).length, got: s.got };
     if (s && s.path) c.lesson = s.path.id + " · lesson " + s.path.lesson;
@@ -10670,7 +10672,6 @@ function flagContext() {
     if (node) {
       const ch = campChapterOf(node.id);
       c.node = node.name + (ch ? " · " + ch.theme : "");
-      c.nodeWords = (node.words || []).join(", ");
     }
   } catch (e) {}
   /* Why a batch of pre-baked sentences has or has not arrived. Carried on every flag
@@ -10778,13 +10779,18 @@ function flagRender() {
     (resolvedCount ? ", " + resolvedCount + " addressed" : "") + ".";
 }
 
-function flagModalOpen(on) {
+/* `report` is the inspector's text for wherever he was — passed in when the flag was
+   raised from the panel, and otherwise gathered for the screen he is on. It REPLACES the
+   word bands and node word list flagContext used to assemble by hand: those were a
+   second, thinner implementation of what the registry already answers properly, and two
+   pieces of code answering the same question is how they drift apart. */
+function flagModalOpen(on, report) {
   document.getElementById("flagModal").style.display = on ? "flex" : "none";
   if (!on) return;
   /* Captured on OPEN, not on save: he may spend a minute typing, and by then a card can
      have moved on underneath him. The moment being described is the one he reached for
      the flag in. */
-  flagPending = flagContext();
+  flagPending = flagContext(report);
   document.getElementById("flagWhere").textContent = "About: " + flagContextLine(flagPending);
   document.getElementById("flagSaved").textContent = "";
   const box = document.getElementById("flagText");
@@ -11430,6 +11436,87 @@ UH.session = function (id, st) {
   };
 };
 
+UH.content = function (id, st) {
+  const rows = [];
+  try { rows.push({ label: "Last check", value: contentStatusLine() }); } catch (e) {}
+  try { rows.push({ label: "Version read", value: contentVersion() + "" }); } catch (e) {}
+  const claude = (st.bank || []).filter(b => b && b.src === "claude").length;
+  rows.push({ label: "Pre-baked items banked", value: claude + "" });
+  let thin = [];
+  try { thin = contentThinNow() || []; } catch (e) {}
+  rows.push({ label: "Thin nodes", value: thin.length ? thin.join(", ") : "none" });
+  return {
+    title: "Written content", subtitle: "what arrives from content/nodes.json",
+    sections: [
+      { name: "The pipeline", open: true, rows: rows },
+      { name: "What thin means", open: false, rows: [{ note:
+        "A node is thin below " + CONTENT_THIN_ITEMS + " servable sentences — roughly " +
+        "one session without repeats. Below that you start recognising every card, " +
+        "which is the complaint the whole content pipeline was built to answer." }] }
+    ]
+  };
+};
+
+/* ---- the escape hatch -------------------------------------------------------
+   George: "if its in the code/ underground I want a way to view it ... or any other
+   variable." Every subject above is one I could predict. This is for the ones I could
+   not, and it costs a generic loop over the key list.
+
+   SECRETS ARE NEVER RENDERED. The Gemini key and the sync token live in this same store
+   under the same prefix, and a panel whose whole purpose is being copied into a chat and
+   pushed to GitHub inside a flag must not be the thing that leaks them. Redacted to a
+   length and a fingerprint, which is everything a diagnosis ever needs from them —
+   "is one set", "are they the same one" — and nothing a thief does. */
+const UH_SECRET_KEYS = ["hvr_geminikey", "hvr_synctoken"];
+function uhRawValue(k) {
+  let v = null;
+  try { v = lsGet(k); } catch (e) { return "(unreadable)"; }
+  if (v === null) return "(not set)";
+  if (UH_SECRET_KEYS.indexOf(k) !== -1) {
+    /* Enough to tell one key from another and a set one from an empty one. Never enough
+       to use. The tail is the only part quoted because a leading fragment plus a known
+       provider prefix is most of a key. */
+    const t = String(v).trim();
+    return t ? "(set · " + t.length + " chars · ends " + t.slice(-4) + ")" : "(empty)";
+  }
+  return v;
+}
+function uhRawKeys() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf("hvr_") === 0) out.push(k);
+    }
+  } catch (e) {}
+  return out.sort();
+}
+UH.raw = function () {
+  return {
+    title: "Raw state", subtitle: "every key this device stores",
+    sections: [{ name: "Keys", open: true, rows: uhRawKeys().map(k => {
+      const v = uhRawValue(k);
+      return { label: k,
+               value: UH_SECRET_KEYS.indexOf(k) !== -1 ? v : v.length + " chars",
+               to: { kind: "rawKey", id: k } };
+    }) }]
+  };
+};
+UH.rawKey = function (k) {
+  const v = uhRawValue(k);
+  let pretty = v;
+  try { pretty = JSON.stringify(JSON.parse(v), null, 1); } catch (e) {}
+  return {
+    title: k, subtitle: v.length + " characters",
+    sections: [{ name: "Value", open: true, rows: [
+      UH_SECRET_KEYS.indexOf(k) !== -1
+        ? { note: "Redacted. This holds a credential, and this panel gets copied into " +
+                  "chats and pushed to GitHub inside flags. " + v }
+        : { pre: pretty.length > 20000 ? pretty.slice(0, 20000) + "\n… truncated" : pretty }
+    ] }]
+  };
+};
+
 /* The root. Where every open lands when nothing more specific is on screen: a count of
    where the library stands, and a box to find any word in it. */
 UH.root = function (id, st) {
@@ -11443,7 +11530,11 @@ UH.root = function (id, st) {
     sections: [{
       name: "Elsewhere", open: true, rows: [
         { label: "The campaign", value: "chapters, nodes, and what each can serve",
-          to: { kind: "campaign", id: "" } }
+          to: { kind: "campaign", id: "" } },
+        { label: "Written content", value: "what arrives from content/nodes.json",
+          to: { kind: "content", id: "" } },
+        { label: "Raw state", value: "every key this device stores",
+          to: { kind: "raw", id: "" } }
       ]
     }, {
       name: "The library", open: true, rows: SRS_BANDS.slice().reverse().map(b =>
@@ -11502,6 +11593,9 @@ function uhLabelFor(kind, id, st) {
   }
   if (kind === "rule") return (UH_RULES[id] && UH_RULES[id].title) || id;
   if (kind === "campaign") return "The campaign";
+  if (kind === "content") return "Written content";
+  if (kind === "raw") return "Raw state";
+  if (kind === "rawKey") return id;
   if (kind === "node") { const n = campNode(id, st && st.camp); return (n && n.name) || id; }
   if (kind === "bankItem") {
     const it = ((st && st.bank) || []).filter(x => x && x.id === id)[0];
@@ -11675,6 +11769,14 @@ function uhWhyBlock(why) {
   return box;
 }
 
+/* The single way a report is produced. The renderer and the flag both come through here
+   so what he reads on screen and what reaches me are the same object, not two
+   assemblies of the same idea. */
+function uhReportFor(at, st) {
+  const fn = UH[at && at.kind];
+  return fn ? fn(at.id, st || uhState()) : null;
+}
+
 function uhRender() {
   const body = document.getElementById("uhBody");
   const crumbs = document.getElementById("uhCrumbs");
@@ -11704,8 +11806,7 @@ function uhRender() {
      root off the left rather than hiding the thing you came to look at. */
   try { crumbs.scrollLeft = crumbs.scrollWidth; } catch (e) {}
 
-  const fn = UH[here.kind];
-  const rep = fn ? fn(here.id, st) : null;
+  const rep = uhReportFor(here, st);
   body.innerHTML = "";
   if (!rep) {
     const e = document.createElement("div");
@@ -11764,10 +11865,18 @@ function uhRender() {
       if (said) said.textContent = "Copied.";
     } catch (e) { if (said) said.textContent = "Could not copy."; }
   };
+  /* THE CHANNEL. Copy is for a chat he is already in; this is for the thought that
+     arrives mid-session, and it rides the flag's existing straight-to-GitHub push. A
+     flag raised from a node now carries that node's whole report — the blocked
+     breakdown, the bands, the stock — instead of the current card's snapshot. */
+  const flag = document.createElement("button");
+  flag.className = "btn";
+  flag.textContent = "Flag this";
+  flag.onclick = () => { const t = uhText(rep); uhModalOpen(false); flagModalOpen(true, t); };
   const said = document.createElement("span");
   said.className = "note";
   said.id = "uhSaid";
-  foot.append(copy, said);
+  foot.append(copy, flag, said);
 }
 
 /* The search box is rebuilt on every render like everything else, so the caret position
@@ -11816,6 +11925,7 @@ function uhRenderResults(wrap, st) {
    shows rather than a richer dump — what he pastes to me should be what he was looking
    at, or we are debugging two different things. */
 function uhText(rep) {
+  if (!rep) return "";
   const out = [rep.title];
   if (rep.subtitle) out.push(rep.subtitle);
   (rep.sections || []).forEach(sec => {
@@ -27377,6 +27487,82 @@ T("uhModalOpen: a card opens underneath its session, not stranded on the root", 
     assertEq(uhStack.map(x => x.kind), ["root", "campaign", "node"]);
     uhModalOpen(false);
   } finally { uhStack = savedStack; uhHistOn = savedHist; }
+});
+T("uhRawValue: a credential is never rendered, however it is reached", () => {
+  /* THIS PANEL IS DESIGNED TO BE COPIED INTO A CHAT AND PUSHED TO GITHUB INSIDE A FLAG.
+     The Gemini key and the sync token sit in the same store under the same prefix as
+     everything else, so the escape hatch that shows "any other variable" is exactly the
+     thing that would leak them. Both routes to a value are checked, because redacting
+     the list and not the leaf would be worse than redacting neither — it would look
+     safe. */
+  const saved = {};
+  try {
+    UH_SECRET_KEYS.forEach(k => { saved[k] = lsGet(k); lsSet(k, "AIzaSyTOTALLYREALSECRET1234"); });
+    UH_SECRET_KEYS.forEach(k => {
+      const v = uhRawValue(k);
+      assertTrue(v.indexOf("TOTALLYREALSECRET") === -1, k + " leaked through uhRawValue");
+      assertTrue(/^\(set · \d+ chars/.test(v), "but it still says one is set: " + v);
+      const leaf = uhText(UH.rawKey(k));
+      assertTrue(leaf.indexOf("TOTALLYREALSECRET") === -1, k + " leaked through the leaf");
+      const list = uhText(UH.raw("", uhState()));
+      assertTrue(list.indexOf("TOTALLYREALSECRET") === -1, k + " leaked through the list");
+    });
+  } finally {
+    /* Restored whatever happened — leaving a fake key in the real store would break
+       every AI call on this device, silently, forever. */
+    UH_SECRET_KEYS.forEach(k => {
+      if (saved[k] === null || saved[k] === undefined) { try { localStorage.removeItem(k); } catch (e) {} }
+      else lsSet(k, saved[k]);
+    });
+  }
+});
+T("uhRawValue: an unset key says so rather than reading as empty", () => {
+  assertEq(uhRawValue("hvr_definitely_not_a_real_key"), "(not set)");
+});
+T("flagContext: carries the inspector's report, and never throws away the thought", () => {
+  /* Losing the flag is the ONLY failure this feature has. Every branch of flagContext is
+     defensive for that reason, and the report is now the most expensive thing in it —
+     it walks the bank and the campaign — so it is the branch most able to break the
+     promise. */
+  const c = flagContext();
+  assertTrue(typeof c.report === "string", "a report is always a string, even when empty");
+  assertTrue(!!c.at, "and the rest of the context survives alongside it");
+
+  const given = flagContext("A REPORT HE WAS ACTUALLY LOOKING AT");
+  assertEq(given.report, "A REPORT HE WAS ACTUALLY LOOKING AT",
+    "a flag raised from the panel carries the panel's own report, not a fresh guess");
+
+  /* And if the registry throws outright, the flag still comes back. The subject to break
+     is whichever one uhHere() actually lands on — stubbing UH.root looked right and
+     tested nothing, because on the map uhHere() returns the campaign. */
+  const kind = uhHere().kind;
+  const saved = UH[kind];
+  try {
+    UH[kind] = () => { throw new Error("boom"); };
+    const broken = flagContext();
+    assertEq(broken.report, "", "a broken report costs the report, never the flag");
+    assertTrue(!!broken.at, "and everything else in the context still arrives");
+  } finally { UH[kind] = saved; }
+});
+T("flagContext: no longer hand-rolls what the registry answers", () => {
+  /* These two fields were a second, thinner implementation of the word bands and node
+     word list the inspector now produces properly. Two pieces of code answering one
+     question is how they drift, and the skill that reads these flags never used either. */
+  const c = flagContext();
+  assertEq(c.words, undefined, "card word bands come through the report now");
+  assertEq(c.nodeWords, undefined, "and so does the node's word list");
+  /* What the flag-reading skill DOES rely on has to survive untouched. */
+  assertTrue("ai" in c, "the AI log slice is still carried");
+});
+T("uhReportFor: renderer and flag build the same report from the same place", () => {
+  /* Two assemblies of the same idea is how what he reads on screen and what reaches me
+     stop being the same thing. */
+  const st = uhState();
+  assertEq(uhText(uhReportFor({ kind: "root", id: "" }, st)),
+           uhText(UH.root("", st)));
+  assertEq(uhReportFor({ kind: "nonesuch", id: "" }, st), null,
+    "an unregistered kind reports nothing rather than inventing a panel");
+  assertEq(uhText(null), "", "and nothing serialises to nothing, not a crash");
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },

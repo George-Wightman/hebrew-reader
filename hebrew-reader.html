@@ -371,12 +371,17 @@
      real threshold — this is the whole point of the feature and it gets the space. */
   .uh-why { margin: 2px 0 4px; }
   .uh-verdict { font-size: .84rem; margin-bottom: 5px; }
-  .uh-test { display: flex; gap: 7px; font-size: .79rem; padding: 2px 0; align-items: baseline; }
+  .uh-test { display: flex; gap: 7px; font-size: .79rem; padding: 2px 0; align-items: baseline;
+             flex-wrap: wrap; }
   .uh-mark { flex: 0 0 auto; width: 13px; font-weight: 700; }
   .uh-test.ok .uh-mark { color: var(--good); }
   .uh-test.no .uh-mark { color: var(--bad); }
-  .uh-test-t { flex: 1 1 auto; color: var(--muted); }
-  .uh-test-a { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .uh-test-t { flex: 1 1 auto; min-width: 0; color: var(--muted); }
+  /* The actual value SHRINKS AND WRAPS rather than holding its width. Most are a number
+     and sit neatly at the right, but "short on" lists every word still owed and a node
+     can owe six — held rigid, that ran straight through the condition beside it. */
+  .uh-test-a { flex: 0 1 auto; min-width: 0; text-align: right; word-break: break-word;
+               font-variant-numeric: tabular-nums; }
   .uh-next { font-size: .79rem; margin-top: 6px; color: var(--accent); }
   .uh-src { margin-top: 8px; }
 
@@ -10921,6 +10926,34 @@ const UH_RULES = {
     note: "\"Weak\" means the app has EVIDENCE of struggle, not merely a short interval — " +
           "otherwise every new word would be born weak."
   },
+  bankServable: {
+    title: "Whether a sentence can be served",
+    blurb: "Six outcomes, tested in this order. The first failure stops it.",
+    ladder: [
+      ["blocked", "it has no content words the library knows — nothing but filler"],
+      ["servable", "every content word is ready: nothing more to check"],
+      ["blocked", "a word is not ready and this session carries nothing (daily practice)"],
+      ["blocked", "more not-ready words than the session's carry limit"],
+      ["blocked", "its not-ready word is not the one being carried"],
+      ["blocked", "two words in it have never been met"],
+      ["blocked", "a supporting word is not solid enough"],
+      ["servable", "one carried word, everything else holding it up"]
+    ],
+    note: "Carrying one unknown word is what lets a node TEACH rather than only " +
+          "rehearse. It is fair only when everything around it is solid — a sentence " +
+          "with one weak word and two half-learned ones is the impossible card this " +
+          "gate exists to stop."
+  },
+  campNodeWordsReady: {
+    title: "When a node's conversation opens",
+    blurb: "Outcome, not attendance.",
+    ladder: [
+      ["open", "every one of the node's OWN words is ready"],
+      ["closed", "any of them is still new or weak"]
+    ],
+    note: "Carry words are excluded on purpose. They came in from earlier nodes to " +
+          "make this node's sentences possible, not to be earned a second time."
+  },
   wordReady: {
     title: "Whether a word can carry a sentence",
     blurb: "One test, on the production side only.",
@@ -10951,6 +10984,12 @@ function uhState() {
   const st = {};
   try { st.lib = libAll(); } catch (e) { st.lib = {}; }
   try { st.srs = srsAll(); } catch (e) { st.srs = {}; }
+  try { st.camp = campAll(); } catch (e) { st.camp = { chapters: [] }; }
+  /* PRUNED, like every consumer of the bank that matters. Reading the raw store here
+     would make the panel's counts disagree with the session builder's for items whose
+     `uses` have gone stale, and a diagnostic that disagrees with the thing it is
+     diagnosing is worse than none. */
+  try { st.bank = bankPrune(bankAll(), st.lib); } catch (e) { st.bank = []; }
   return st;
 }
 
@@ -11026,8 +11065,240 @@ UH.rule = function (name) {
   };
 };
 
-/* The root. Phase 1 has no campaign or card subject yet, so this is where every open
-   lands: a count of where the library stands, and a box to find any word in it. */
+/* ---- why a sentence will not serve ------------------------------------------
+   THE THING THAT COST THREE ROUND TRIPS. A node held nine sentences and served one, and
+   nothing anywhere could say which gate had eaten the other eight — the information
+   existed only as the shape of bankServable's control flow, which is exactly what a
+   screenshot cannot carry and what neither of us could see.
+
+   bankServable has six outcomes. This mirrors them in the same order and names the one
+   that fired. It is a SEPARATE function rather than bankServable returning a reason,
+   because the gate is on the hot path of every session build and must stay a boolean;
+   the price is that the two can drift, and the self-test suite is what stops that —
+   every item's verdict here is asserted against bankServable's own answer. */
+const UH_BANK_BLOCKS = {
+  filler: "nothing but filler — no content words the library knows",
+  nocarry: "a word is not ready, and this session is carrying nothing",
+  toomany: "more not-ready words than a session may carry at once",
+  notcarried: "its not-ready word is not one this session is carrying",
+  twonew: "two words in it you have never met",
+  support: "a supporting word is not solid enough to hold a new one up"
+};
+function whyBankServable(it, lib, srs, carry, opts) {
+  const T = (test, actual, pass) => ({ test: test, actual: actual, pass: pass });
+  const mk = (code, because, next) => ({
+    rule: "bankServable", code: code, verdict: code ? "blocked" : "servable",
+    because: because, next: next || (code ? UH_BANK_BLOCKS[code] : "")
+  });
+  const content = bankContentWords(it || {}, lib || {});
+  if (!content.length) return mk("filler", [
+    T("has content words the library knows",
+      ((it && it.uses) || []).length + " words, none of them in the library", false)],
+    "Its words have to be in the library at all before the scheduler can see them.");
+
+  const unready = content.filter(u => !wordReady(u, srs));
+  const because = [T("every content word is ready",
+    (content.length - unready.length) + " of " + content.length + " ready", !unready.length)];
+  if (!unready.length) return mk("", because);
+
+  if (!carry) return mk("nocarry",
+    because.concat([T("this session is carrying a word", "carrying nothing", false)]),
+    "Not ready: " + unready.join(", ") + ". Daily practice carries nothing, so this only " +
+    "serves inside a node session that is rescuing one of them.");
+
+  const maxCarried = (opts && opts.maxCarried) || 1;
+  because.push(T("at most " + maxCarried + " not-ready word",
+    unready.length + " (" + unready.join(", ") + ")", unready.length <= maxCarried));
+  if (unready.length > maxCarried) return mk("toomany", because);
+
+  const uncarried = unready.filter(u => !carry.has(u));
+  because.push(T("its not-ready words are ones being carried",
+    uncarried.length ? "not carrying " + uncarried.join(", ") : "yes", !uncarried.length));
+  if (uncarried.length) return mk("notcarried", because,
+    "It would serve in a session that was rescuing " + uncarried.join(" or ") + ".");
+
+  const never = unready.filter(u => srsStrengthOf(srs, u, "prod") === "new");
+  because.push(T("at most one never-met word",
+    never.length ? never.join(", ") : "none", never.length <= 1));
+  if (never.length > 1) return mk("twonew", because);
+
+  const wantReady = (opts && opts.support === "ready");
+  const ok = wantReady ? (u => wordReady(u, srs))
+                       : (u => srsStrengthOf(srs, u, "prod") === "strong");
+  const soft = content.filter(u => unready.indexOf(u) === -1 && !ok(u));
+  because.push(T("every supporting word is " + (wantReady ? "ready" : "strong"),
+    soft.length ? soft.join(", ") + " short of it" : "yes", !soft.length));
+  if (soft.length) return mk("support", because,
+    "Carrying an unknown word is only fair when everything holding it up is solid.");
+  return mk("", because);
+}
+
+/* Whether the closing conversation has opened. Carry words are deliberately excluded —
+   they came from earlier nodes to make its sentences possible, not to be re-earned —
+   and that exclusion is the sort of thing worth being able to read rather than infer. */
+function whyNodeWordsReady(node, srs) {
+  const words = ((node && node.words) || []);
+  const gradable = words.filter(k => !STOPLIST.has(k));
+  const short = gradable.filter(k => !wordReady(k, srs));
+  return {
+    rule: "campNodeWordsReady",
+    verdict: words.length && !short.length ? "open" : "closed",
+    because: [
+      { test: "the node has words at all", actual: words.length + "", pass: !!words.length },
+      { test: "every one of them is ready",
+        actual: short.length ? "short on " + short.join(", ")
+                             : gradable.length + " of " + gradable.length,
+        pass: !short.length }
+    ],
+    next: short.length
+      ? "The conversation opens once all of them are yours — that is what it is for."
+      : "Open."
+  };
+}
+
+/* The carry set a node session would build, so the blocked breakdown below is answering
+   "why will THIS node not serve it", not the weaker daily-practice question. */
+function uhNodeCarry(node, st) {
+  try {
+    return new Set(campWeakWords(node, st.srs).concat(campDebtWords(node, st.camp, st.srs)));
+  } catch (e) { return new Set(); }
+}
+/* Everything the node's session builder would consider — the same reachability filter
+   campBuild applies, so a count here means what the session means by it. */
+function uhNodeItems(node, st) {
+  const own = {}; ((node && node.words) || []).forEach(k => { own[k] = 1; });
+  return (st.bank || []).filter(it => (it.uses || []).some(u => own[u]));
+}
+
+UH.campaign = function (id, st) {
+  const c = st.camp || { chapters: [] };
+  let live = null;
+  try { live = campLiveChapter(c, st.srs); } catch (e) {}
+  const sections = (c.chapters || []).map(ch => ({
+    name: ch.theme || ch.name || "chapter",
+    open: !!(live && live === ch),
+    rows: (ch.nodes || []).map(n => {
+      let state = "?";
+      try { state = campNodeState(n.id, c, st.srs); } catch (e) {}
+      const p = campNodeProgress(n, st.srs);
+      const items = uhNodeItems(n, st);
+      const carry = uhNodeCarry(n, st);
+      const servable = items.filter(it =>
+        whyBankServable(it, st.lib, st.srs, carry, CAMP_SERVE).verdict === "servable").length;
+      /* Stock is the number that mattered and was never on screen. "0 banked" beside a
+         live node is the whole of the episode that produced this feature, in one row. */
+      return { label: n.name,
+               value: state + " · " + p.have + "/" + p.need + " yours · " +
+                      items.length + " banked, " + servable + " servable",
+               to: { kind: "node", id: n.id } };
+    })
+  }));
+  let contentLine = "";
+  try { contentLine = contentStatusLine(); } catch (e) {}
+  if (contentLine) sections.unshift({ name: "Written content", open: true,
+    rows: [{ label: "last check", value: contentLine },
+           { label: "thin nodes", value: (contentThinNow() || []).join(", ") || "none" }] });
+  return { title: "The campaign", subtitle: (c.chapters || []).length + " chapters",
+           sections: sections };
+};
+
+UH.node = function (id, st) {
+  const c = st.camp, n = campNode(id, c);
+  if (!n) return { title: id, subtitle: "no such node", sections: [] };
+  let state = "?", ch = null;
+  try { state = campNodeState(id, c, st.srs); } catch (e) {}
+  try { ch = campChapterOf(id, c); } catch (e) {}
+  const p = campNodeProgress(n, st.srs);
+  const carry = uhNodeCarry(n, st);
+  const items = uhNodeItems(n, st);
+  const verdicts = items.map(it => whyBankServable(it, st.lib, st.srs, carry, CAMP_SERVE));
+  const servable = verdicts.filter(v => v.verdict === "servable").length;
+
+  /* The breakdown, counted by which gate fired. Only codes that actually occurred are
+     listed — a row of zeroes for gates nothing hit is noise dressed as thoroughness. */
+  const blocked = {};
+  verdicts.forEach(v => { if (v.code) blocked[v.code] = (blocked[v.code] || 0) + 1; });
+
+  const sections = [
+    { name: "Where it stands", open: true, rows: [
+      { label: "State", value: state },
+      { label: "Chapter", value: (ch && (ch.theme || ch.name)) || "—" },
+      { label: "Progress", value: p.have + " of " + p.need + " words yours" },
+      { why: whyNodeWordsReady(n, st.srs),
+        to: { kind: "rule", id: "campNodeWordsReady" } },
+      { label: "Conversation", value: campConvoPassed(id) ? "passed" : "not passed yet" }
+    ] },
+    { name: "Its words", open: true, rows: (n.words || []).map(k => ({
+        label: k,
+        value: srsStrengthOf(st.srs, k, "prod") + " / " + srsStrengthOf(st.srs, k, "recv"),
+        band: srsStrengthBoth(st.srs, k),
+        to: { kind: "word", id: k }
+      })).concat((n.carry || []).length
+        ? [{ note: "Carried in from earlier nodes: " + (n.carry || []).join(", ") +
+                   " — not re-earned here." }] : []) },
+    { name: "Its sentences", open: true, rows: [
+        { label: "Banked", value: items.length + "" },
+        { label: "Servable now", value: servable + "" }
+      ].concat(Object.keys(blocked).map(code => ({
+        label: "×" + blocked[code], value: UH_BANK_BLOCKS[code]
+      }))).concat(items.length ? items.slice(0, 30).map((it, i) => ({
+        label: verdicts[i].verdict === "servable" ? "✓" : "✕",
+        value: it.he || it.en || it.id,
+        to: { kind: "bankItem", id: it.id }
+      })) : [{ note: "Nothing written for this node yet." }]) }
+  ];
+
+  /* WOULD OPENING THIS NODE SPEND THREE CALLS? The answer used to be readable only by
+     watching the AI star, which tells you it happened, never why. */
+  try {
+    sections.push({ name: "Would it commission", open: false, rows: [
+      { label: "campWarmNeeded", value: campWarmNeeded(n, st.lib, st.srs, st.bank) ? "yes" : "no" },
+      { note: campWarmNeeded(n, st.lib, st.srs, st.bank)
+          ? "Opening this node will spend calls: either it is short of stock, or a stuck " +
+            "word has nothing written to rescue it."
+          : "It has ample stock and every stuck word already has a rescue written. " +
+            "Opening it costs nothing." }
+    ] });
+  } catch (e) {}
+
+  return { title: n.name, subtitle: (ch && (ch.theme || ch.name)) || "", sections: sections };
+};
+
+UH.bankItem = function (id, st) {
+  const it = (st.bank || []).filter(x => x && x.id === id)[0];
+  if (!it) return { title: id, subtitle: "no longer in the bank", sections: [] };
+  const content = bankContentWords(it, st.lib);
+  /* Judged twice on purpose: the daily builder carries nothing and a node carries its
+     stuck words, so the same sentence is genuinely servable in one and not the other.
+     A single verdict here would be true half the time and unattributable. */
+  const daily = whyBankServable(it, st.lib, st.srs, null, null);
+  return {
+    title: it.he || it.id,
+    subtitle: [it.en, it.type || "sentence", "level " + bankLevel(it)].filter(Boolean).join(" · "),
+    sections: [
+      { name: "The sentence", open: true, rows: [
+        { label: "Hebrew", value: it.he || "—" },
+        { label: "English", value: it.en || "—" },
+        { label: "Type", value: (it.type || "sentence") + " · grades " + bankItemSide(it) },
+        { label: "Level", value: bankLevel(it) + (it.lvl ? "" : " (never reviewed — read as 2)") },
+        { label: "Difficulty", value: bankDifficulty(it, st.lib, st.srs) + "" },
+        { label: "Seen", value: (it.seen || 0) + " times" },
+        { label: "Written for", value: it.for || (it.src === "claude" ? "a pre-baked batch" : "—") }
+      ] },
+      { name: "Its words", open: true, rows: content.map(u => ({
+          label: u, value: srsStrengthOf(st.srs, u, "prod"),
+          band: srsStrengthOf(st.srs, u, "prod"), to: { kind: "word", id: u }
+        })).concat((it.uses || []).length > content.length
+          ? [{ note: "Filler and words the library does not have are not counted: " +
+                     (it.uses || []).filter(u => content.indexOf(u) === -1).join(", ") }] : []) },
+      { name: "In daily practice", open: true,
+        rows: [{ why: daily, to: { kind: "rule", id: "bankServable" } }] }
+    ]
+  };
+};
+
+/* The root. Where every open lands when nothing more specific is on screen: a count of
+   where the library stands, and a box to find any word in it. */
 UH.root = function (id, st) {
   const lib = st.lib || {}, srs = st.srs || {};
   const counts = { "new": 0, weak: 0, progressing: 0, strong: 0 };
@@ -11037,6 +11308,11 @@ UH.root = function (id, st) {
     subtitle: "Why the app did that",
     search: true,
     sections: [{
+      name: "Elsewhere", open: true, rows: [
+        { label: "The campaign", value: "chapters, nodes, and what each can serve",
+          to: { kind: "campaign", id: "" } }
+      ]
+    }, {
       name: "The library", open: true, rows: SRS_BANDS.slice().reverse().map(b =>
         ({ label: b, value: counts[b] + " word" + (counts[b] === 1 ? "" : "s"), band: b }))
         .concat([{ label: "total", value: Object.keys(lib).length + " words" }])
@@ -11086,10 +11362,23 @@ let uhHistOn = false;     // do we currently own a history entry to be popped?
 function uhLabelFor(kind, id, st) {
   if (kind === "root") return "Under the hood";
   if (kind === "rule") return (UH_RULES[id] && UH_RULES[id].title) || id;
+  if (kind === "campaign") return "The campaign";
+  if (kind === "node") { const n = campNode(id, st && st.camp); return (n && n.name) || id; }
+  if (kind === "bankItem") {
+    const it = ((st && st.bank) || []).filter(x => x && x.id === id)[0];
+    const t = (it && (it.he || it.en)) || id;
+    return t.length > 24 ? t.slice(0, 23) + "…" : t;
+  }
   return id || kind;
 }
 
 function uhGo(kind, id) {
+  /* Never stack a level on top of itself. The router already opens pointed at the node
+     or the campaign you are looking at, so a row leading to where you already are is
+     reachable in ordinary use — and each duplicate is a back press that appears to do
+     nothing, which is the fastest way to make a drill-down feel broken. */
+  const here = uhStack[uhStack.length - 1];
+  if (here && here.kind === kind && here.id === id) return;
   uhStack.push({ kind: kind, id: id });
   uhPushHist();
   uhRender();
@@ -26759,6 +27048,111 @@ T("uhHere: falls back to the root for a subject no inspector is registered for",
     assertTrue(!!UH[uhHere().kind], "whatever it picks, something can render it");
   } finally { if (saved) UH.card = saved; }
 });
+T("whyBankServable: its verdict always agrees with bankServable itself", () => {
+  /* THE TEST THAT STOPS THE BREAKDOWN LYING. bankServable is a boolean on the hot path
+     and must stay one, so the explanation is a second function mirroring its branches —
+     which means the two can drift. Every item in the real bank is judged both ways, in
+     both the carrying and the non-carrying case, and any disagreement fails here rather
+     than showing him a blocked count that no session actually agrees with. */
+  const lib = libAll(), srs = srsAll();
+  const bank = bankPrune(bankAll(), lib).slice(0, 120);
+  assertTrue(bank.length > 0, "needs a bank to check against");
+  const carry = new Set(Object.keys(srs).filter(k => !wordReady(k, srs)).slice(0, 3));
+  [[null, null], [carry, CAMP_SERVE]].forEach(pair => {
+    bank.forEach(it => {
+      const real = bankServable(it, lib, srs, pair[0], pair[1]);
+      const why = whyBankServable(it, lib, srs, pair[0], pair[1]);
+      assertEq(why.verdict === "servable", real,
+        "disagreement on " + (it.he || it.id) + " (carry: " + !!pair[0] + ")");
+    });
+  });
+});
+T("whyBankServable: every block names a gate that exists, and only when it blocked", () => {
+  /* A code with no label renders as "undefined" in the breakdown, which is exactly the
+     unreadable state this whole feature was built to end. */
+  const lib = { "בית": { en: "house" }, "עייף": { en: "tired" }, "מטבח": { en: "kitchen" } };
+  const srs = { "בית": { prod: srsBandRecord("strong") },
+                "עייף": { prod: srsBandRecord("new") },
+                "מטבח": { prod: srsBandRecord("new") } };
+  const two = whyBankServable({ id: "a", he: "x", uses: ["בית", "עייף", "מטבח"] },
+                              lib, srs, new Set(["עייף", "מטבח"]), { maxCarried: 2 });
+  assertEq(two.code, "twonew", "two never-met words is its own gate, whatever the limit allows");
+  assertTrue(!!UH_BANK_BLOCKS[two.code], "and the gate has a label");
+
+  const none = whyBankServable({ id: "b", he: "y", uses: ["בית", "עייף"] }, lib, srs, null, null);
+  assertEq(none.code, "nocarry", "daily practice carries nothing");
+  assertEq(none.verdict, "blocked");
+
+  const fine = whyBankServable({ id: "c", he: "z", uses: ["בית"] }, lib, srs, null, null);
+  assertEq(fine.code, "", "a servable item names no gate at all");
+  assertEq(fine.verdict, "servable");
+  Object.keys(UH_BANK_BLOCKS).forEach(k =>
+    assertTrue(typeof UH_BANK_BLOCKS[k] === "string" && UH_BANK_BLOCKS[k].length > 0,
+      "gate " + k + " has no description"));
+});
+T("whyBankServable: a word the library has never heard of is filler, not a hard word", () => {
+  /* These are opposite diagnoses with opposite fixes — one is "drill it", the other is
+     "it is not in the library at all". Conflating them is how the node episode started. */
+  const why = whyBankServable({ id: "a", he: "x", uses: ["לאדינו"] }, {}, {}, null, null);
+  assertEq(why.code, "filler");
+  assertTrue(/library/.test(why.next), "and it says which problem it is: " + why.next);
+});
+T("whyNodeWordsReady: agrees with campNodeWordsReady, carry words excluded", () => {
+  const srs = { "בית": { prod: srsBandRecord("strong") },
+                "מטבח": { prod: srsBandRecord("weak") },
+                "ספר": { prod: srsBandRecord("new") } };
+  const shut = { words: ["בית", "מטבח"], carry: ["ספר"] };
+  const open = { words: ["בית"], carry: ["ספר"] };
+  assertEq(whyNodeWordsReady(shut, srs).verdict === "open", campNodeWordsReady(shut, srs));
+  assertEq(whyNodeWordsReady(open, srs).verdict === "open", campNodeWordsReady(open, srs));
+  assertTrue(campNodeWordsReady(open, srs),
+    "a NEW carry word must not hold the conversation shut — it was never this node's to earn");
+  assertTrue(/מטבח/.test(whyNodeWordsReady(shut, srs).because[1].actual),
+    "and the word actually holding it shut is named");
+});
+T("UH.node: the blocked breakdown adds up to the items that are not servable", () => {
+  /* If the counts do not reconcile, the panel is quietly losing items and the number he
+     reads is not the number of sentences he has. */
+  const st = uhState();
+  const nodes = campNodes(st.camp).filter(n => (n.words || []).length);
+  assertTrue(nodes.length > 0, "needs a campaign to inspect");
+  nodes.slice(0, 6).forEach(n => {
+    const rep = UH.node(n.id, st);
+    const rows = rep.sections.filter(s => s.name === "Its sentences")[0].rows;
+    const banked = +rows.filter(r => r.label === "Banked")[0].value;
+    const servable = +rows.filter(r => r.label === "Servable now")[0].value;
+    const counted = rows.filter(r => /^×\d+$/.test(String(r.label)))
+                        .reduce((a, r) => a + parseInt(String(r.label).slice(1), 10), 0);
+    assertEq(servable + counted, banked,
+      n.name + ": " + servable + " servable + " + counted + " blocked ≠ " + banked + " banked");
+  });
+});
+T("UH.node: a node with nothing written says so instead of showing an empty list", () => {
+  /* "0 banked" beside a live node is the entire episode that produced this feature. It
+     has to be a sentence, not an absence. */
+  const st = uhState();
+  const rep = UH.node("nope-not-a-node", st);
+  assertEq(rep.sections.length, 0, "an unknown node reports nothing rather than inventing");
+  assertEq(rep.subtitle, "no such node");
+  const fake = { chapters: [{ theme: "t", nodes: [{ id: "n1", name: "Empty", words: ["בית"] }] }] };
+  const rep2 = UH.node("n1", { lib: {}, srs: {}, camp: fake, bank: [] });
+  const sent = rep2.sections.filter(s => s.name === "Its sentences")[0];
+  assertTrue(sent.rows.some(r => /Nothing written/.test(r.note || "")),
+    "it says so in words");
+});
+T("UH.bankItem: judged for daily practice, which carries nothing", () => {
+  /* The same sentence is genuinely servable in a node and not in daily practice. A
+     single unattributed verdict would be true half the time and diagnosable never. */
+  const lib = { "בית": { en: "house" }, "עייף": { en: "tired" } };
+  const srs = { "בית": { prod: srsBandRecord("strong") }, "עייף": { prod: srsBandRecord("new") } };
+  const it = { id: "x1", he: "הבית עייף", en: "the house is tired", uses: ["בית", "עייף"] };
+  const rep = UH.bankItem("x1", { lib: lib, srs: srs, bank: [it], camp: { chapters: [] } });
+  const why = rep.sections.filter(s => s.name === "In daily practice")[0].rows[0].why;
+  assertEq(why.verdict, "blocked");
+  assertEq(why.code, "nocarry");
+  assertEq(rep.sections.filter(s => s.name === "In daily practice")[0].rows[0].to.id, "bankServable",
+    "and it drills into the rule that decided it");
+});
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },
                       "מכונית": { tr: "mechonit", en: "car" } }, srs: {} };
@@ -26785,6 +27179,11 @@ T("uhStack: jumping to a crumb truncates to it and nothing deeper", () => {
     assertEq(uhStack[1].kind, "word");
     uhJump(1);    // already the last crumb: a no-op, not a truncation to nothing
     assertEq(uhStack.length, 2, "tapping where you already are does nothing");
+    uhGo("word", "בית");
+    assertEq(uhStack.length, 2, "and neither does drilling into the level you are on");
+    uhGo("word", "קטן");
+    assertEq(uhStack.length, 3, "a different word still goes deeper");
+    uhStack.pop();
     assertTrue(uhBackOne(), "and back still steps out");
     assertEq(uhStack.length, 1);
     assertEq(uhBackOne(), false, "the root cannot be stepped out of");

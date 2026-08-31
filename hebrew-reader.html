@@ -13309,8 +13309,29 @@ function bankServable(it, lib, srs, carry, opts) {
 /* Which word an item is carrying for this session, or null if it is fully within
    reach. The card uses this to say so out loud — being handed a sentence with a word
    you were never taught reads as a bug unless the card admits it is deliberate. */
+/* Which side of a word an item can supply evidence about — the same answer KIND_SIDE
+   gives for the card it becomes, asked of the bank item it comes from. */
+function bankItemSide(it) { return KIND_SIDE[(it && it.type) || "sentence"] || "prod"; }
+
 function bankCarried(it, lib, srs, carry) {
   if (!carry) return null;
+  /* A RESCUE HAS TO BE ANSWERABLE ON THE SIDE THAT IS FAILING, and every caller of this
+     function passes a `carry` set built from PRODUCTION weakness — campWeakWords,
+     campDebtWords and rescueWords all rank on srsStrengthOf(..., "prod"), via wordReady.
+
+     A `listen` item grades recv (KIND_SIDE), so offering one as the rescue for a
+     production-weak word is a drill that cannot move the thing that selected it. That is
+     not a theoretical fault: on 2026-08-30 the Family & home node picked חבר as debt —
+     prod weak, streak 0, two misses — and rescued it with `איפה החבר שלך?`, a listen
+     card, on a word whose RECV side was already a nine-answer streak with no misses.
+     Answering it perfectly credited recv, left prod untouched, and left חבר in debt, so
+     the identical card was chosen again the next session and the one after. George:
+     "This exact sentence keeps coming up ... like every session I do in the exact same
+     form."
+
+     Listening material is still served: campBuild keeps any item that hits a node word.
+     What it can no longer do is claim to be rescuing one. */
+  if (bankItemSide(it) !== "prod") return null;
   const unready = bankContentWords(it, lib).filter(u => !wordReady(u, srs));
   /* One or two now — a node sentence may carry a pair. The card names the first; the
      label says a word here is new to him, and naming one is enough for that to read
@@ -17288,7 +17309,10 @@ function campBuild(node, size) {
     .filter(it => bankServable(it, lib, srs, carry, CAMP_SERVE))
     .map(it => ({ it: it,
                   hits: (it.uses || []).filter(u => isNodeWord[u]).length,
-                  debt: (it.uses || []).some(u => debt.indexOf(u) !== -1),
+                  /* Same rule as bankCarried, for the same reason: debt is production
+                     debt, so a recv item revisiting the word is not paying any of it. */
+                  debt: bankItemSide(it) === "prod" &&
+                        (it.uses || []).some(u => debt.indexOf(u) !== -1),
                   carry: bankCarried(it, lib, srs, carry) }))
     /* Only material that touches this node. A node session containing a sentence
        about something else is the bug being fixed, not a graceful fallback — if there
@@ -18490,11 +18514,13 @@ function wordLine(k, lib) {
    real: the model has to commit to ten DIFFERENT jobs before it can reach for its
    favourite construction, and a list of ten jobs is visibly repetitive in a way that
    ten finished sentences are not. */
-async function sentencePlan(spec) {
+/* Split out of sentencePlan so the one thing worth asserting about it — that the planner
+   is told what he can actually say — is testable without spending a call. */
+function sentencePlanPrompt(spec) {
   const lib = spec.lib;
   const rescue = spec.rescue || [];
-  const prompt =
-    "You are planning a batch of spoken-Hebrew practice items for an English speaker " +
+  const scaffold = spec.scaffold || [];
+  return "You are planning a batch of spoken-Hebrew practice items for an English speaker " +
     "learning conversational Hebrew. He replies to WhatsApp voice notes from his " +
     "partner's grandad, so everything is warm, everyday and spoken.\n\n" +
     "DO NOT WRITE ANY HEBREW. You are writing the PLAN — a list of separate jobs that " +
@@ -18524,6 +18550,29 @@ async function sentencePlan(spec) {
         "where it fits — but it supplies the NOUNS, it is not the job. The job is the " +
         "function.\n\n"
       : "") +
+    /* THE VOCABULARY THE PLANNER NEVER HAD. This section is the whole of the fix for a
+       100% rejection rate: on 2026-08-30 two commissions in a row banked nothing, "10
+       written, 10 rejected" and "12 written, 12 rejected", on briefs like "Explain you
+       cannot drive right now because the city roads are completely blocked".
+
+       The gate was working correctly — those sentences needed שתית, בחוץ, בלאגן,
+       טלוויזיה, סלון, none of which he has. The fault was one stage earlier: the writer
+       has always been given this list and the planner never was, so it invented jobs
+       that CANNOT be written inside the vocabulary rule, and the writer could then only
+       obey the brief or obey the gate. Every item chose the brief and every item died.
+
+       A brief is a job, not a sentence, so this is a constraint on what to ask for
+       rather than a list to write from — the writer still owns the words. */
+    (scaffold.length
+      ? "THE ONLY WORDS HE HAS. Whoever writes these briefs may use these words and " +
+        "almost nothing else, so every brief must be doable with them. Do not plan a " +
+        "job that needs vocabulary outside this list — a brief that cannot be written " +
+        "is worse than a plainer one that can:\n" +
+        scaffold.map(k => wordLine(k, lib)).join("\n") + "\n\n" +
+        "Before you write each brief, check it against that list. If it needs a word " +
+        "that is not there and is not one of the stuck words above, plan something " +
+        "else.\n\n"
+      : "") +
     "THE FUNCTIONS — every brief must pick one, and NO TWO BRIEFS MAY USE THE SAME " +
     "FUNCTION FOR THE SAME WORD:\n" + LEARN_FUNCTIONS.map(f => "- " + f).join("\n") + "\n\n" +
     "Write " + (spec.count || PLAN_ITEMS) + " briefs. Return JSON only, no markdown:\n" +
@@ -18542,6 +18591,11 @@ async function sentencePlan(spec) {
     "THE TEST OF A GOOD PLAN: read your briefs back as a list. If two of them could be " +
     "satisfied by the same sentence, the plan has failed — rewrite them until every " +
     "one does something the others do not.";
+}
+
+async function sentencePlan(spec) {
+  const rescue = spec.rescue || [];
+  const prompt = sentencePlanPrompt(spec);
   /* The node's name rides along, so a background commission says which place it is for
      rather than only that something is being written. */
   const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
@@ -20198,7 +20252,7 @@ function learnRenderCard() {
   if (c.carry) {
     const nw = document.createElement("div"); nw.className = "lnew";
     const lab = document.createElement("span"); lab.className = "lnewlab";
-    lab.textContent = "New in this one";
+    lab.textContent = learnCarryLabel(c.carry, srsAll());
     const w = document.createElement("b"); w.dir = "rtl"; w.textContent = c.carry;
     nw.append(lab, w);
     const e = (lib[c.carry] || {}).en || "";
@@ -20556,6 +20610,21 @@ function learnStuckPress(btn, c) {
    right answer to "reply to grandad" — the bank holds one natural answer, not the
    only one — so scoring what he said against it would mark a perfectly good reply
    wrong. He gets to see both and judge. */
+/* WHY THIS WORD IS BEING POINTED AT, which is not always "it is new". The label was the
+   flat string "New in this one", and bankCarried returns any word that is not wordReady —
+   which is two quite different situations wearing one name.
+
+   George, on a word he has hit in nearly every session: "New in this one / חבר / friend —
+   boyfriend. When it's certainly not new." He was right and the card was wrong: חבר had
+   nine receptive answers and a production streak he had lost. Calling that new reads as
+   the app not knowing him, and worse, it hides the thing actually worth saying — this is
+   one you have been losing, so here it is inside a sentence where the context can carry
+   it, which is the entire reason the rescue machinery exists. */
+function learnCarryLabel(key, srs) {
+  return srsStrengthOf(srs || srsAll(), key, "prod") === "new"
+    ? "New in this one" : "The one you keep losing";
+}
+
 function learnMicKinds(c) { return !isHearKind(c.kind); }
 /* `compose` joins `reply` here for the stronger version of the same reason. Reply has no
    single correct answer; compose has no answer at all — there is nothing to align his
@@ -25506,6 +25575,50 @@ T("composeNextCard: three rounds, and the coach does not get to extend them", ()
   assertTrue(!!composeNextCard(composeCard(pool, ["בית"], null, 1, 1), keen, {}, 2));
   assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
              "COMPOSE_ROUNDS is the authority, not the coach");
+});
+/* ---- a rescue has to be answerable on the side that is failing ---- */
+T("bankCarried: a listen item cannot rescue a production-weak word", () => {
+  /* THE LOOP THIS BREAKS, from real data on 2026-08-30. חבר was picked as node debt
+     because its production was weak — streak 0, two misses — and the item chosen to
+     rescue it was `איפה החבר שלך?`, a listen card, on a word whose recv side was a
+     nine-answer streak with no misses. Answering it perfectly credited recv, left prod
+     untouched, and left חבר in debt, so the same card came back every session. */
+  const lib = { "חבר": { tr: "chaver", en: "friend" }, "איפה": { tr: "eifo", en: "where" } };
+  const srs = { "חבר": { prod: { n: 4, stab: 1, diff: 5.85, miss: 2, streak: 0 },
+                         recv: { n: 10, stab: 6.6, diff: 1, miss: 0, streak: 9 } },
+                "איפה": { prod: { n: 9, stab: 30, diff: 2, miss: 0, streak: 9 } } };
+  const carry = new Set(["חבר"]);
+  const base = { he: "איפה החבר שלך?", uses: ["איפה", "חבר"] };
+  assertEq(bankCarried(Object.assign({ type: "sentence" }, base), lib, srs, carry), "חבר",
+           "a sentence card asks him to SAY it, which is the side that is failing");
+  assertNull(bankCarried(Object.assign({ type: "listen" }, base), lib, srs, carry),
+             "a listen card grades recv and cannot move the prod weakness that chose it");
+  assertEq(bankCarried(Object.assign({ type: "reply" }, base), lib, srs, carry), "חבר",
+           "reply is a production card too");
+  assertEq(bankItemSide({ type: "listen" }), "recv");
+  assertEq(bankItemSide({ type: "sentence" }), "prod");
+  assertEq(bankItemSide({}), "prod", "an item with no type is a sentence");
+});
+T("learnCarryLabel: a word he keeps losing is not a word he has never met", () => {
+  const srs = { "חבר": { prod: { n: 4, stab: 1, diff: 5.85, miss: 2, streak: 0 } } };
+  assertEq(learnCarryLabel("חבר", srs), "The one you keep losing");
+  assertEq(learnCarryLabel("מילה", srs), "New in this one", "no record at all is genuinely new");
+});
+T("sentencePlanPrompt: the planner is told which words he actually has", () => {
+  /* Two commissions in a row banked nothing — "10 written, 10 rejected", "12 written,
+     12 rejected" — on briefs needing vocabulary he does not have. The writer had always
+     been given the scaffold and the planner never was, so it set jobs that could not be
+     written inside the gate. */
+  const lib = { "בית": { tr: "bayit", en: "house" }, "גדול": { tr: "gadol", en: "big" } };
+  const p = sentencePlanPrompt({ lib: lib, level: 2, count: 4,
+                                 scaffold: ["בית", "גדול"], rescue: [] });
+  assertTrue(p.indexOf("בית") !== -1, "the words themselves must be in the prompt");
+  assertTrue(p.indexOf("bayit") !== -1, "with the transliteration the writer will use");
+  assertTrue(/ONLY WORDS HE HAS/.test(p), "and named as a constraint, not decoration");
+  /* No scaffold is not the same as an empty instruction — the section is dropped rather
+     than telling the planner his vocabulary is nothing. */
+  assertTrue(sentencePlanPrompt({ lib: lib, level: 2, scaffold: [], rescue: [] })
+               .indexOf("ONLY WORDS HE HAS") === -1);
 });
 T("composeBank: keeps the corrected sentence, and only when it is worth keeping", () => {
   const realBank = lsGet(BANK_KEY);

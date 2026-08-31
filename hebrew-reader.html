@@ -19454,8 +19454,31 @@ async function contentIngest() {
      re-walking it on every load from then on would be the one cost this flag exists to
      avoid. */
   lsSet(CONTENT_V_KEY, String(parseInt(data.version, 10)));
-  if (n) { try { renderLibrary(); learnBadge(); } catch (e) {} }
+  /* learnRenderThin too: the whole point of a batch arriving is that the "running short"
+     line stops being true, and leaving it on screen after the sentences have landed is the
+     app contradicting itself. */
+  if (n) { try { renderLibrary(); learnBadge(); learnRenderThin(); } catch (e) {} }
   return n;
+}
+
+/* ONCE PER LOAD WAS NOT ENOUGH, and this is the bug George found within the hour.
+
+   contentIngest was called from exactly one place: a setTimeout 2.6 seconds after the page
+   loaded. He runs the app as an installed PWA on his phone, which stays resident for days —
+   so the single check ran once, before content/nodes.json had anything in it, and never
+   ran again. Meanwhile learnRenderStart repainted the "running short" line every time he
+   came back to the start screen, so the app kept asking for sentences that had been sitting
+   on the server for an hour.
+
+   A resident app has to re-check when he RETURNS to it, not only when it boots. Throttled,
+   because the start screen repaints often and this is a network fetch; ten minutes is far
+   below the rate new batches are ever written and far above the rate he switches tabs. */
+const CONTENT_RECHECK_MS = 10 * 60 * 1000;
+let contentLastCheck = 0;
+function contentCheck(force) {
+  if (!force && Date.now() - contentLastCheck < CONTENT_RECHECK_MS) return Promise.resolve(0);
+  contentLastCheck = Date.now();
+  return Promise.resolve(contentIngest()).catch(() => 0);
 }
 
 /* Below this a node cannot fill a session without repeating itself. CAMP_SESSION_CARDS is
@@ -20058,6 +20081,10 @@ function learnRenderStart() {
 
   learnRenderMapBar();
   learnRenderThin();
+  /* Checked at the same moment the "running short" line is drawn, so the claim and the
+     evidence for it can never be more than one throttle window apart. Fire-and-forget:
+     contentIngest repaints the line itself if a batch actually lands. */
+  contentCheck();
 
   if (n < 10) {
     document.getElementById("lStartTitle").textContent = "Not enough words yet";
@@ -22917,7 +22944,15 @@ setTimeout(() => syncRun("open", { quiet: true }), 1200);
    about to be replaced by a merge would do the near-duplicate work twice and could bank
    something the other device already had. Late enough to be off the opening critical
    path either way — nothing on screen is waiting for it. */
-setTimeout(() => { Promise.resolve(contentIngest()).catch(() => {}); }, 2600);
+setTimeout(() => { contentCheck(true); }, 2600);
+/* Coming back to a resident app is the moment that matters — see contentCheck. Guarded
+   because an old WebView may not have the event, and a missing re-check must degrade to
+   the load-time one rather than throwing on boot. */
+try {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) contentCheck();
+  });
+} catch (e) {}
 syncPadOffset();
 
 /* Automatic top-up: only once enough words have piled up to be worth a call, and
@@ -25927,6 +25962,24 @@ T("contentShouldIngest: only a file newer than the one already read", () => {
   assertTrue(!contentShouldIngest({ version: 1, items: [] }, 0), "empty items");
   assertTrue(!contentShouldIngest({ items: [{ he: "x" }] }, 0), "no version");
   assertTrue(!contentShouldIngest({ version: "soon", items: [{ he: "x" }] }, 0));
+});
+T("contentCheck: throttled, but a resident app does re-check", () => {
+  /* THE BUG GEORGE FOUND. The ingest ran once, 2.6s after load, and his phone runs the app
+     as a PWA that stays resident for days — so it checked before any content existed and
+     never looked again, while the "running short" line repainted every time he returned. */
+  const real = contentIngest, saveLast = contentLastCheck;
+  let calls = 0;
+  try {
+    contentIngest = () => { calls++; return Promise.resolve(0); };
+    contentLastCheck = 0;
+    contentCheck(true);
+    assertEq(calls, 1, "a forced check always runs");
+    contentCheck();
+    assertEq(calls, 1, "and an immediate second one is throttled away");
+    contentLastCheck = Date.now() - CONTENT_RECHECK_MS - 1;
+    contentCheck();
+    assertEq(calls, 2, "but coming back later checks again — this is the whole fix");
+  } finally { contentIngest = real; contentLastCheck = saveLast; }
 });
 T("learnIngest: provenance survives into the bank", () => {
   /* Without this there is no way in a month to ask whether pre-baked content actually

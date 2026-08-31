@@ -385,6 +385,18 @@
   .uh-next { font-size: .79rem; margin-top: 6px; color: var(--accent); }
   .uh-src { margin-top: 8px; }
 
+  .uh-ask { display: flex; gap: 6px; width: 100%; }
+  .uh-q { flex: 1 1 auto; min-width: 0; padding: 7px 9px; font: inherit; font-size: .84rem;
+          border: 1px solid var(--hair); border-radius: 8px; }
+  /* The answer is visibly a QUOTED OPINION, not a fact the app is stating. Tinted and
+     ruled off so it never reads as another row of the report underneath it. */
+  .uh-ans { background: var(--accent-soft); border-left: 2px solid var(--accent);
+            border-radius: 0 8px 8px 0; padding: 9px 11px; margin: 4px 0 12px; }
+  .uh-ansq { font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
+  .uh-ansa { font-size: .86rem; line-height: 1.5; white-space: pre-wrap; }
+  .uh-ansa.bad { color: var(--bad); }
+  .uh-ans .uh-note { margin-top: 7px; }
+
   .uh-search { width: 100%; padding: 8px 10px; font: inherit; font-size: .86rem;
                border: 1px solid var(--hair); border-radius: 8px; margin: 8px 0 2px; }
   .uh-empty { font-size: .82rem; color: var(--muted); padding: 10px 0; }
@@ -11613,18 +11625,21 @@ function uhGo(kind, id) {
   const here = uhStack[uhStack.length - 1];
   if (here && here.kind === kind && here.id === id) return;
   uhStack.push({ kind: kind, id: id });
+  uhAnswer = null;
   uhPushHist();
   uhRender();
 }
 function uhBackOne() {
   if (uhStack.length <= 1) return false;
   uhStack.pop();
+  uhAnswer = null;
   uhRender();
   return true;
 }
 function uhJump(i) {
   if (i < 0 || i >= uhStack.length - 1) return;
   uhStack = uhStack.slice(0, i + 1);
+  uhAnswer = null;
   uhRender();
 }
 
@@ -11642,7 +11657,7 @@ function uhPushHist() {
 window.addEventListener("popstate", () => {
   if (!uhHistOn) return;
   uhHistOn = false;
-  if (uhStack.length > 1) { uhStack.pop(); uhPushHist(); uhRender(); }
+  if (uhStack.length > 1) { uhStack.pop(); uhAnswer = null; uhPushHist(); uhRender(); }
   else uhModalOpen(false);
 });
 
@@ -11670,6 +11685,7 @@ function uhModalOpen(on, at) {
     uhStack.push(start);
   }
   uhQuery = "";
+  uhAnswer = null;
   uhPushHist();
   uhRender();
 }
@@ -11826,6 +11842,10 @@ function uhRender() {
     sub.textContent = rep.subtitle;
     body.append(sub);
   }
+  /* After the heading, before the report — so the answer is the first thing read and the
+     evidence it was given is the next, on the same screen. Slotted between the title and
+     the subtitle first, which split the heading in half. */
+  if (uhAnswer) body.append(uhAnswerBlock());
 
   if (rep.search) body.append(uhSearchBox(st));
 
@@ -11872,11 +11892,70 @@ function uhRender() {
   const flag = document.createElement("button");
   flag.className = "btn";
   flag.textContent = "Flag this";
-  flag.onclick = () => { const t = uhText(rep); uhModalOpen(false); flagModalOpen(true, t); };
+  flag.onclick = () => {
+    const t = uhText(rep) + uhAnswerText();
+    uhModalOpen(false);
+    flagModalOpen(true, t);
+  };
   const said = document.createElement("span");
   said.className = "note";
   said.id = "uhSaid";
   foot.append(copy, flag, said);
+
+  /* The question box, on every level. What it sends is this level's report plus the real
+     source of the rules this level names — so what he can ask about is exactly what he
+     is looking at. */
+  const ask = document.createElement("form");
+  ask.className = "uh-ask";
+  const q = document.createElement("input");
+  q.type = "text";
+  q.className = "uh-q";
+  q.placeholder = "Ask about this…";
+  q.disabled = !!(uhAnswer && uhAnswer.busy);
+  const go = document.createElement("button");
+  go.className = "btn secondary";
+  go.type = "submit";
+  go.textContent = (uhAnswer && uhAnswer.busy) ? "Asking…" : "Ask";
+  go.disabled = !!(uhAnswer && uhAnswer.busy);
+  ask.onsubmit = (e) => {
+    e.preventDefault();
+    const text = q.value.trim();
+    if (text) uhAsk(rep, text);
+  };
+  ask.append(q, go);
+  foot.append(ask);
+}
+
+/* Above the report, never instead of it. Everything the answer claims is checkable
+   against the numbers immediately below it, which is the only honest way to show a
+   model's reading of a fragment. */
+function uhAnswerBlock() {
+  const box = document.createElement("div");
+  box.className = "uh-ans";
+  const q = document.createElement("div");
+  q.className = "uh-ansq";
+  q.textContent = uhAnswer.q;
+  box.append(q);
+  const a = document.createElement("div");
+  a.className = "uh-ansa" + (uhAnswer.err ? " bad" : "");
+  a.textContent = uhAnswer.busy ? "Reading the code that decided this…"
+                : uhAnswer.err ? "Could not ask: " + uhAnswer.err
+                : uhAnswer.a;
+  box.append(a);
+  if (!uhAnswer.busy && !uhAnswer.err) {
+    const warn = document.createElement("div");
+    warn.className = "uh-note";
+    warn.textContent = "Answered from this panel and the rules named on it — not the " +
+                       "whole app. Check it against the numbers below.";
+    box.append(warn);
+  }
+  return box;
+}
+function uhAnswerText() {
+  if (!uhAnswer || uhAnswer.busy) return "";
+  const lines = ["", "", "## Asked in the panel", "Q: " + uhAnswer.q,
+                 "A: " + (uhAnswer.err ? "(failed: " + uhAnswer.err + ")" : uhAnswer.a)];
+  return lines.join("\n");
 }
 
 /* The search box is rebuilt on every render like everything else, so the caret position
@@ -11919,6 +11998,110 @@ function uhRenderResults(wrap, st) {
     results.append(uhRow({ label: k, value: (st.lib[k] && st.lib[k].en) || "",
                            band: band, to: { kind: "word", id: k } }, st));
   });
+}
+
+/* =====================  ASKING IT A QUESTION  =====================
+   George: "if i hada quick questions I could press a pop up ask it and it would ping it
+   to the API along with the segment of code. that way I can have live answers to the
+   things Im thinking and come to you more informed".
+
+   THE APP CAN READ ITS OWN SOURCE. sw.js caches the shell under its own path, so
+   fetch("./hebrew-reader.html") is served from cache — instantly, offline, at no network
+   cost. And every WHY result already names the function that made the judgement, so this
+   does not have to send a guessed excerpt: it sends the real body of the rule the panel
+   is currently explaining, with the constants that rule reads.
+
+   Not the whole file. It is over a megabyte, and a targeted extract is not merely cheaper
+   — it is better, because the answer is grounded in the function that actually decided
+   the thing he is asking about rather than diluted across the whole app.
+
+   THE ANSWER IS NOT TRUSTED, AND THE DESIGN SAYS SO. A model handed a fragment will
+   invent confidently, and him arriving at a conversation with a wrong theory is worse
+   than arriving with none. So: the answer renders above the report it was given, and is
+   checkable against the numbers on the same screen; the call is in the AI log like every
+   other; and the question and answer both ride the flag. When he does bring it to me I
+   see what he was told and can correct it in a line, instead of arguing against a prior
+   I cannot see. That last one is what turns the risk into a channel. */
+let uhSrcCache = null;
+async function uhSourceText() {
+  if (uhSrcCache !== null) return uhSrcCache;
+  try {
+    const r = await fetch("./hebrew-reader.html", { cache: "force-cache" });
+    uhSrcCache = r.ok ? await r.text() : "";
+  } catch (e) { uhSrcCache = ""; }
+  return uhSrcCache;
+}
+/* Reliable because the file is LF throughout and every declaration in it sits at column
+   zero — the same fact CLAUDE.md's duplicate-definition grep depends on. Stops at the
+   next top-level declaration or comment banner. */
+function uhSourceOf(src, name) {
+  if (!src || !name) return "";
+  let m = new RegExp("^(?:async )?function " + name + "\\s*\\(", "m").exec(src);
+  if (!m) m = new RegExp("^const " + name + "\\s*=", "m").exec(src);
+  if (!m) return "";
+  const rest = src.slice(m.index + 1);
+  const next = /^(?:\/\*|(?:async )?function |const |let |window\.|document\.)/m.exec(rest);
+  const body = src.slice(m.index, next ? m.index + 1 + next.index : src.length);
+  return body.replace(/\s+$/, "").slice(0, 6000);
+}
+/* The constants each rule reads, which are the numbers he is most likely to be asking
+   about and which do not appear in the function body as anything but a name. */
+const UH_RULE_CONSTS = {
+  srsStrength: ["RECENT_STRONG_MAX", "srsRecentRatio"],
+  wordReady: ["srsStrengthOf"],
+  bankServable: ["bankContentWords", "CAMP_SERVE", "CAMP_MAX_CARRIED"],
+  campNodeWordsReady: ["wordReady", "STOPLIST"]
+};
+/* Which rules the level on screen actually invoked. Walking the report rather than
+   keeping a per-subject list means a subject added later carries its own sources in
+   with it and nothing here has to be remembered. */
+function uhRulesOn(rep) {
+  const names = [];
+  (((rep || {}).sections) || []).forEach(sec => (sec.rows || []).forEach(r => {
+    const n = (r.why && r.why.rule) || (r.to && r.to.kind === "rule" && r.to.id);
+    if (n && names.indexOf(n) === -1) names.push(n);
+  }));
+  return names;
+}
+async function uhAskParts(rep, question) {
+  const src = await uhSourceText();
+  const rules = uhRulesOn(rep);
+  const wanted = [];
+  rules.forEach(r => {
+    if (wanted.indexOf(r) === -1) wanted.push(r);
+    (UH_RULE_CONSTS[r] || []).forEach(c => { if (wanted.indexOf(c) === -1) wanted.push(c); });
+  });
+  const code = wanted.map(n => uhSourceOf(src, n)).filter(Boolean).join("\n\n");
+  return [{ text:
+    "You are looking at a fragment of a much larger single-file Hebrew learning app. " +
+    "Below is a diagnostic panel the user is reading, and the source of the functions " +
+    "that produced it. Answer his question from THIS CODE AND THIS STATE.\n\n" +
+    "Rules you must follow:\n" +
+    "- If what is shown is not enough to answer, say so plainly and say what you would " +
+    "need. Do not guess at code you cannot see.\n" +
+    "- Quote the actual numbers from the panel rather than describing them generally.\n" +
+    "- Be brief. He is reading this on a phone, mid-session.\n" +
+    "- Do not suggest edits to the app. Explain what it is doing and why.\n\n" +
+    "=== WHAT THE PANEL SHOWS ===\n" + uhText(rep) +
+    (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
+    "\n\n=== HIS QUESTION ===\n" + question }];
+}
+let uhAnswer = null;      // { q, a, err, busy } for the level on screen; cleared on navigation
+async function uhAsk(rep, question) {
+  uhAnswer = { q: question, a: "", err: "", busy: true };
+  uhRender();
+  try {
+    const parts = await uhAskParts(rep, question);
+    /* `null` models is the strong pool — this is reasoning about code, and the weaker
+       model would be a false economy against a cap of 20 a day that real use never
+       approaches. One interactive call, so the per-minute limit that actually bites is
+       not in play. Logged by geminiRequest like everything else, with no new bookkeeping. */
+    const out = await geminiRequest(parts, null, { label: "Under the hood — a question" });
+    uhAnswer = { q: question, a: String(out || "").trim(), err: "", busy: false };
+  } catch (e) {
+    uhAnswer = { q: question, a: "", err: (e && e.message) || String(e), busy: false };
+  }
+  uhRender();
 }
 
 /* A report as plain text, for the clipboard. Deliberately the SAME information the panel
@@ -27563,6 +27746,107 @@ T("uhReportFor: renderer and flag build the same report from the same place", ()
   assertEq(uhReportFor({ kind: "nonesuch", id: "" }, st), null,
     "an unregistered kind reports nothing rather than inventing a panel");
   assertEq(uhText(null), "", "and nothing serialises to nothing, not a crash");
+});
+T("uhSourceOf: pulls one whole function and stops at the next declaration", () => {
+  /* The extraction rests on the file being LF throughout with every declaration at
+     column zero — the same fact CLAUDE.md's duplicate grep depends on. If that ever
+     stops being true this is where it shows up, rather than as a silently truncated
+     prompt that produces a confidently wrong answer. */
+  const src = [
+    "function alpha(a) {",
+    "  return a + 1;",
+    "}",
+    "const BETA = 7;",
+    "async function gamma() {",
+    "  return await Promise.resolve(1);",
+    "}"
+  ].join("\n");
+  const a = uhSourceOf(src, "alpha");
+  assertTrue(/^function alpha/.test(a), "starts at the declaration: " + a);
+  assertTrue(a.indexOf("return a + 1") !== -1, "and includes the body");
+  assertTrue(a.indexOf("BETA") === -1, "and stops before the next declaration");
+  assertEq(uhSourceOf(src, "BETA"), "const BETA = 7;", "a const is extractable too");
+  assertTrue(/^async function gamma/.test(uhSourceOf(src, "gamma")), "async is handled");
+  assertEq(uhSourceOf(src, "nosuchthing"), "", "a name that isn't there yields nothing");
+  assertEq(uhSourceOf("", "alpha"), "", "and so does no source at all");
+});
+T("uhSourceOf: finds the real rules in the real file", () => {
+  /* The synthetic case above proves the parser; this proves it against the actual file,
+     which is the thing that will drift. A rule whose source cannot be found sends the
+     model a prompt with no code in it and no sign that anything is missing. */
+  const src = document.documentElement.outerHTML;
+  Object.keys(UH_RULES).forEach(name => {
+    const body = uhSourceOf(src, name);
+    assertTrue(body.length > 0, "no source found for the rule " + name);
+    assertTrue(body.indexOf(name) !== -1, name + " extracted something that is not it");
+  });
+  Object.keys(UH_RULE_CONSTS).forEach(rule =>
+    UH_RULE_CONSTS[rule].forEach(c =>
+      assertTrue(uhSourceOf(src, c).length > 0,
+        rule + " asks for " + c + ", which does not exist")));
+});
+T("uhRulesOn: collects the rules a level actually invoked", () => {
+  /* Walked off the report rather than kept in a per-subject list, so a subject added
+     later brings its own sources with it and nothing here has to be remembered. */
+  const st = { lib: { "בית": { en: "house" } },
+               srs: { "בית": { prod: srsBandRecord("progressing") } },
+               camp: { chapters: [] }, bank: [], session: null };
+  const rules = uhRulesOn(UH.word("בית", st));
+  assertTrue(rules.indexOf("srsStrength") !== -1, "the banding rule is named");
+  assertTrue(rules.indexOf("wordReady") !== -1, "and so is the serving rule");
+  assertEq(rules.length, new Set(rules).size, "each named once, however many rows use it");
+  assertEq(uhRulesOn(null), [], "no report names no rules rather than throwing");
+});
+T("uhAskParts: sends the panel, the real code, and says it is a fragment", async () => {
+  /* The three things that stop a confident invention: the actual state, the actual rule,
+     and an instruction to admit when the fragment is not enough. */
+  const st = { lib: { "בית": { en: "house" } },
+               srs: { "בית": { prod: srsBandRecord("weak") } },
+               camp: { chapters: [] }, bank: [], session: null };
+  const rep = UH.word("בית", st);
+  const saved = uhSrcCache;
+  try {
+    uhSrcCache = document.documentElement.outerHTML;
+    const parts = await uhAskParts(rep, "why is this weak");
+    const text = parts[0].text;
+    assertTrue(text.indexOf("why is this weak") !== -1, "his question is in there");
+    assertTrue(text.indexOf("function srsStrength") !== -1,
+      "and the real body of the rule that decided it");
+    assertTrue(text.indexOf("RECENT_STRONG_MAX") !== -1,
+      "along with the constants that rule reads");
+    assertTrue(/fragment of a much larger/.test(text),
+      "and it is told plainly that it cannot see the whole app");
+    assertTrue(/say so plainly/.test(text), "and told to admit when that is not enough");
+  } finally { uhSrcCache = saved; }
+});
+T("uhAskParts: a report naming no rules still asks, without empty code headings", async () => {
+  const saved = uhSrcCache;
+  try {
+    uhSrcCache = "function nothing() {}";
+    const parts = await uhAskParts({ title: "Raw state", sections: [] }, "what is this");
+    assertTrue(parts[0].text.indexOf("THE CODE THAT PRODUCED IT") === -1,
+      "no code found means no heading claiming there is some");
+    assertTrue(parts[0].text.indexOf("what is this") !== -1, "the question still goes");
+  } finally { uhSrcCache = saved; }
+});
+T("uhAnswerText: an answer rides the flag with its question attached", () => {
+  /* THE MITIGATION THAT MATTERS. A wrong answer he acts on is worse than no answer — but
+     if I can see what he was told, I correct it in a line instead of arguing against a
+     prior I cannot see. */
+  const saved = uhAnswer;
+  try {
+    uhAnswer = null;
+    assertEq(uhAnswerText(), "", "nothing asked, nothing attached");
+    uhAnswer = { q: "why weak", a: "because the miss rate is 0.45", err: "", busy: false };
+    const t = uhAnswerText();
+    assertTrue(t.indexOf("why weak") !== -1, "the question rides along");
+    assertTrue(t.indexOf("0.45") !== -1, "and so does what it was told");
+    uhAnswer = { q: "why weak", a: "", err: "no key configured", busy: false };
+    assertTrue(/failed: no key configured/.test(uhAnswerText()),
+      "a failure is reported as one, not as silence");
+    uhAnswer = { q: "x", a: "", err: "", busy: true };
+    assertEq(uhAnswerText(), "", "a question still in flight attaches nothing");
+  } finally { uhAnswer = saved; }
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },

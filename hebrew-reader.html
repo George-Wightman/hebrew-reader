@@ -10990,6 +10990,10 @@ function uhState() {
      `uses` have gone stale, and a diagnostic that disagrees with the thing it is
      diagnosing is worse than none. */
   try { st.bank = bankPrune(bankAll(), st.lib); } catch (e) { st.bank = []; }
+  /* The live session, by reference. Not copied: a card's `item` is the bank object the
+     builder chose and a copy would compare unequal to it, and nothing here writes. */
+  try { st.session = (typeof learnSession !== "undefined") ? learnSession : null; }
+  catch (e) { st.session = null; }
   return st;
 }
 
@@ -11297,6 +11301,135 @@ UH.bankItem = function (id, st) {
   };
 };
 
+/* ---- what answering this card will do ---------------------------------------
+   Nothing in the app has ever shown this, and it is the sharpest thing in the panel:
+   the scheduler stops being a black box that can only be argued with after the fact.
+
+   RUN THROUGH srsApply ITSELF, on a deep copy, rather than predicting what it would do.
+   Re-deriving the interval arithmetic here would be a second implementation of the
+   scheduler that could disagree with the real one — and disagreeing confidently is the
+   one failure mode this whole feature exists to remove. The copy is per-word and
+   throwaway, so the real store is never touched. */
+function uhIfAnswered(srs, key, side, grade) {
+  const box = {};
+  const live = (srs || {})[key];
+  box[key] = live ? JSON.parse(JSON.stringify(live)) : { prod: srsBlank(), recv: srsBlank() };
+  let rec = null;
+  try { rec = srsApply(box, key, grade, side || "prod"); } catch (e) { return null; }
+  return { band: srsStrength(rec), stab: rec.stab, diff: rec.diff, due: rec.due };
+}
+/* One line per word: where it is now, and where each answer would put it. Bands only
+   when they actually move — "progressing → progressing" is noise, and the interval is
+   what changed, so that is what gets said instead. */
+function uhOutcomeLine(srs, key, side) {
+  const now = srsStrengthOf(srs, key, side);
+  const yes = uhIfAnswered(srs, key, side, 2);
+  const no = uhIfAnswered(srs, key, side, 0);
+  const say = (o) => !o ? "—"
+    : (o.band !== now ? now + " → " + o.band : "stays " + o.band) +
+      " · " + uhNum(o.stab) + "d";
+  return { right: say(yes), wrong: say(no) };
+}
+
+UH.card = function (id, st) {
+  const s = st.session;
+  const i = parseInt(id, 10);
+  const card = s && s.cards && s.cards[isNaN(i) ? s.i : i];
+  if (!card) return { title: "No card", subtitle: "nothing is being drilled right now",
+                      sections: [] };
+  const kind = card.kind || "sentence";
+  const side = KIND_SIDE[kind] || "prod";
+  const meta = (typeof LEARN_KINDS !== "undefined" && LEARN_KINDS[kind]) || null;
+  const it = card.item || {};
+  let he = "";
+  try { he = learnExpectedHe(card) || it.he || ""; } catch (e) { he = it.he || ""; }
+  /* The card's own words, not the item's: a conversation or a compose card carries a
+     word list that no bank item stands behind. */
+  const words = (card.words || bankContentWords(it, st.lib) || [])
+    .filter(w => !STOPLIST.has(w));
+
+  const sections = [
+    { name: "This card", open: true, rows: [
+      { label: "Kind", value: kind + (meta ? " — " + meta.label : "") },
+      { label: "Grades", value: side === "prod" ? "production (saying it)"
+                                                : "comprehension (hearing it)" },
+      { label: "Position", value: (s.i + 1) + " of " + (s.cards || []).length +
+                                  " · " + (s.got || 0) + " right so far" },
+      { label: "Hebrew", value: he || "—" },
+      /* A word card's item carries no `en` of its own — the gloss lives in the library
+         entry the card was built from. Reading "English —" on a card that plainly has
+         one is the panel looking broken over a lookup it could have done itself. */
+      { label: "English", value: it.en || (st.lib[he] && st.lib[he].en) ||
+                                 (words[0] && st.lib[words[0]] && st.lib[words[0]].en) || "—" }
+    ] }
+  ];
+
+  if (it.id) sections[0].rows.push(
+    { label: "From the bank", value: (it.he || it.id),
+      to: { kind: "bankItem", id: it.id } },
+    { label: "Level", value: bankLevel(it) + " · difficulty " +
+                             bankDifficulty(it, st.lib, st.srs) });
+
+  /* A carried word is the card admitting it handed him something he was never taught.
+     Reading that on the card is one thing; being able to see WHICH word and why it was
+     allowed through is the thing the panel adds. */
+  try {
+    const carried = card.carry || bankCarried(it, st.lib, st.srs, uhCardCarry(s, st));
+    if (carried) sections[0].rows.push({ label: "Carrying", value: carried +
+      " — " + srsStrengthOf(st.srs, carried, "prod") + ", handed to you deliberately" });
+  } catch (e) {}
+
+  sections.push({ name: "Its words", open: true, rows: words.map(w => ({
+    label: w, value: srsStrengthOf(st.srs, w, side),
+    band: srsStrengthOf(st.srs, w, side), to: { kind: "word", id: w }
+  })) });
+
+  sections.push({ name: "What answering it will do", open: true,
+    rows: words.length ? [].concat.apply([], words.map(w => {
+      const o = uhOutcomeLine(st.srs, w, side);
+      return [{ label: w + " — right", value: o.right },
+              { label: w + " — wrong", value: o.wrong }];
+    })) : [{ note: "No gradable words on this card." }] });
+
+  return { title: (meta && meta.label) || kind,
+           subtitle: he || ((s.path && s.path.id) || ""), sections: sections };
+};
+
+/* The carry set the running session built, recovered rather than rebuilt — a session
+   already decided what it was rescuing and guessing again could disagree with it. */
+function uhCardCarry(s, st) {
+  if (s && s.carry) return s.carry instanceof Set ? s.carry : new Set(s.carry);
+  const id = s && s.path && s.path.id;
+  const n = id ? campNode(id, st.camp) : null;
+  return n ? uhNodeCarry(n, st) : null;
+}
+
+UH.session = function (id, st) {
+  const s = st.session;
+  if (!s || !s.cards) return { title: "No session", subtitle: "nothing running",
+                               sections: [] };
+  let node = null;
+  try { node = s.path && s.path.id ? campNode(s.path.id, st.camp) : null; } catch (e) {}
+  return {
+    title: node ? node.name : "This session",
+    subtitle: (s.cards || []).length + " cards · " + (s.got || 0) + " right so far",
+    sections: [
+      { name: "Where it came from", open: true, rows: [
+        { label: "Node", value: node ? node.name : "daily practice",
+          to: node ? { kind: "node", id: node.id } : undefined },
+        { label: "Lesson", value: (s.path && s.path.lesson) !== undefined
+            ? String(s.path.lesson) : "—" }
+      ].filter(r => r.value !== undefined) },
+      { name: "The cards", open: true, rows: (s.cards || []).map((c, i) => ({
+        label: (i === s.i ? "▸ " : "") + (i + 1),
+        value: (c.kind || "?") + " · " +
+               ((c.item && (c.item.he || c.item.en)) || (c.words || []).join(" ") || "—"),
+        to: { kind: "card", id: String(i) }
+      })) }
+    ]
+  };
+};
+
 /* The root. Where every open lands when nothing more specific is on screen: a count of
    where the library stands, and a box to find any word in it. */
 UH.root = function (id, st) {
@@ -11361,6 +11494,12 @@ let uhHistOn = false;     // do we currently own a history entry to be popped?
 
 function uhLabelFor(kind, id, st) {
   if (kind === "root") return "Under the hood";
+  if (kind === "session") return "This session";
+  if (kind === "card") {
+    const s = st && st.session, i = parseInt(id, 10);
+    const c = s && s.cards && s.cards[isNaN(i) ? s.i : i];
+    return c ? "card " + ((isNaN(i) ? s.i : i) + 1) : "card";
+  }
   if (kind === "rule") return (UH_RULES[id] && UH_RULES[id].title) || id;
   if (kind === "campaign") return "The campaign";
   if (kind === "node") { const n = campNode(id, st && st.camp); return (n && n.name) || id; }
@@ -11425,7 +11564,17 @@ function uhModalOpen(on, at) {
   }
   const start = at || uhHere();
   uhStack = [start.kind === "root" ? start : { kind: "root", id: "" }];
-  if (start.kind !== "root") uhStack.push(start);
+  /* A card belongs under its session and a node under the campaign, so the trail he
+     lands in is the one he would have walked. Opening straight onto a leaf with an
+     empty breadcrumb behind it is how a drill-down leaves you with nowhere to go but
+     out — and the parents are exactly what he wants next when the card is not the
+     thing that is wrong. */
+  const UNDER = { card: "session", node: "campaign" };
+  if (start.kind !== "root") {
+    const parent = UNDER[start.kind];
+    if (parent && UH[parent]) uhStack.push({ kind: parent, id: "" });
+    uhStack.push(start);
+  }
   uhQuery = "";
   uhPushHist();
   uhRender();
@@ -27152,6 +27301,82 @@ T("UH.bankItem: judged for daily practice, which carries nothing", () => {
   assertEq(why.code, "nocarry");
   assertEq(rep.sections.filter(s => s.name === "In daily practice")[0].rows[0].to.id, "bankServable",
     "and it drills into the rule that decided it");
+});
+T("uhIfAnswered: previewing an answer never touches the real record", () => {
+  /* THE ONE THAT WOULD BE UNFORGIVABLE. This runs the actual scheduler to answer "what
+     would happen", so a shallow copy anywhere in the chain would mean merely LOOKING at
+     a card silently graded it. srsApply mutates in place and returns the record it
+     mutated, which is exactly the shape that makes this easy to get wrong. */
+  const srs = { "בית": { prod: { due: "2026-09-01", last: "2026-08-20", stab: 12, diff: 4.1,
+                                 n: 5, miss: 1, lapses: 0, streak: 3 } } };
+  const before = JSON.stringify(srs);
+  const yes = uhIfAnswered(srs, "בית", "prod", 2);
+  const no = uhIfAnswered(srs, "בית", "prod", 0);
+  assertEq(JSON.stringify(srs), before, "the store was written to by a read-only preview");
+  assertTrue(!!yes && !!no, "both outcomes are computed");
+  assertTrue(yes.stab > no.stab, "a right answer must not shorten the interval below a wrong one");
+});
+T("uhIfAnswered: a word with no record at all can still be previewed", () => {
+  /* The commonest case on a node card is a word he has never met, and that is precisely
+     the card he most wants to ask about before answering it. */
+  const srs = {};
+  const yes = uhIfAnswered(srs, "מטבח", "prod", 2);
+  assertTrue(!!yes, "no record is not a reason to refuse an answer");
+  assertEq(Object.keys(srs).length, 0, "and previewing did not create one");
+  /* Not "still new": srsApply's first-meeting branch writes n=1 and a two-day interval,
+     which bands as progressing. The claim worth asserting is that the preview reports
+     what srsStrength would say about the record srsApply actually produced — checked by
+     building that record the same way rather than by naming a band here, which would
+     have to be edited every time the first-meeting rule moved. */
+  const box = { "מטבח": { prod: srsBlank(), recv: srsBlank() } };
+  assertEq(yes.band, srsStrength(srsApply(box, "מטבח", 2, "prod")),
+    "the preview and the scheduler disagree about a first answer");
+  assertTrue(yes.band !== "new", "an answer starts a record, so it cannot still read new");
+});
+T("uhOutcomeLine: says what MOVED, and admits when nothing does", () => {
+  /* "progressing → progressing" is noise. The interval is what changed, so when the band
+     holds, that is what the line has to be about instead. */
+  const srs = { "בית": { prod: srsBandRecord("strong") } };
+  const line = uhOutcomeLine(srs, "בית", "prod");
+  assertTrue(/stays|→/.test(line.right), "the right-answer line says something: " + line.right);
+  assertTrue(/stays|→/.test(line.wrong), "and so does the wrong one: " + line.wrong);
+  assertTrue(line.right !== line.wrong, "and they are not the same line");
+});
+T("UH.card: reports the side it grades, which is not always production", () => {
+  /* A listen card grades recv. Showing production bands beside it would be describing a
+     drill that cannot move the thing on screen — the exact fault that made the same
+     rescue sentence come back every session. */
+  const st = { lib: { "בית": { en: "house" } },
+               srs: { "בית": { prod: srsBandRecord("weak"), recv: srsBandRecord("strong") } },
+               camp: { chapters: [] }, bank: [],
+               session: { i: 0, got: 0,
+                 cards: [{ kind: "listen", words: ["בית"], item: { he: "הבית", en: "the house" } }] } };
+  const rep = UH.card("0", st);
+  const rows = rep.sections[0].rows;
+  assertTrue(/comprehension/.test(rows.filter(r => r.label === "Grades")[0].value),
+    "a listen card grades comprehension");
+  const w = rep.sections.filter(s => s.name === "Its words")[0].rows[0];
+  assertEq(w.value, "strong", "so it is the recv band that is shown, not the weak prod one");
+});
+T("UH.card: with nothing being drilled it says so rather than throwing", () => {
+  const rep = UH.card("0", { lib: {}, srs: {}, camp: { chapters: [] }, bank: [], session: null });
+  assertEq(rep.sections.length, 0);
+  assertTrue(/nothing is being drilled/.test(rep.subtitle));
+});
+T("uhModalOpen: a card opens underneath its session, not stranded on the root", () => {
+  /* Landing on a leaf with an empty trail behind it leaves nowhere to go but out, and
+     the parent is exactly what he wants next when the card is not the thing that is
+     wrong. */
+  const savedStack = uhStack.slice(), savedHist = uhHistOn;
+  try {
+    uhModalOpen(false);
+    uhModalOpen(true, { kind: "card", id: "0" });
+    assertEq(uhStack.map(x => x.kind), ["root", "session", "card"]);
+    uhModalOpen(false);
+    uhModalOpen(true, { kind: "node", id: "c1-people" });
+    assertEq(uhStack.map(x => x.kind), ["root", "campaign", "node"]);
+    uhModalOpen(false);
+  } finally { uhStack = savedStack; uhHistOn = savedHist; }
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },

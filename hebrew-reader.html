@@ -19463,11 +19463,24 @@ function contentVersion() { return parseInt(lsGet(CONTENT_V_KEY), 10) || 0; }
    twice: learnIngest already refuses an exact `he` match and a near-duplicate, so
    re-ingesting the same file is harmless. The version only avoids walking a few hundred
    items past a growing bank on every single page load. */
-function contentShouldIngest(data, seen) {
+function contentShouldIngest(data, seen, have) {
   if (!data || !Array.isArray(data.items) || !data.items.length) return false;
   const v = parseInt(data.version, 10);
   if (!isFinite(v)) return false;
-  return v > (seen || 0);
+  if (v > (seen || 0)) return true;
+  /* THE STATE HIS PHONE GOT STUCK IN, and the reason this is not a pure version check.
+
+     On the load right after he reinstalled, contentIngest ran before the sync had restored
+     his library — so every sentence failed bankUnknowns, learnIngest banked nothing, and
+     the marker was stamped anyway on the reasoning that "everything was already a
+     duplicate" is a normal outcome. It is, but it is indistinguishable from "none of it
+     could land", and stamping made the difference permanent: file v1, read v1, zero items,
+     skipped forever. His flag read exactly that.
+
+     So the marker alone is not evidence of having the content. Read-and-have-nothing is
+     treated as not-read. Safe to retry because learnIngest deduplicates, and bounded by
+     contentCheck's throttle to one fetch per ten minutes in the pathological case. */
+  return v === (seen || 0) && !have;
 }
 
 /* Additive and failure-tolerant by design. No file, a 404, bad JSON, offline, a service
@@ -19501,9 +19514,10 @@ async function contentIngest() {
     if (!r || !r.ok) { contentNote("fetch-not-ok", { status: r ? r.status : "no response" }); return 0; }
     data = await r.json();
   } catch (e) { contentNote("fetch-threw", { err: (e && e.message) || String(e) }); return 0; }
-  if (!contentShouldIngest(data, contentVersion())) {
+  const had = bankAll().filter(b => b && b.src === "claude").length;
+  if (!contentShouldIngest(data, contentVersion(), had)) {
     contentNote("skipped", { fileVersion: data && data.version,
-                             items: data && data.items && data.items.length });
+                             items: data && data.items && data.items.length, have: had });
     return 0;
   }
   let n = 0;
@@ -19520,6 +19534,13 @@ async function contentIngest() {
   const landed = bankAll().filter(b => b && b.src === "claude").length;
   if (n > 0 && !landed) {
     contentNote("banked-but-vanished", { fileVersion: data.version, reported: n });
+    return 0;
+  }
+  /* NOTHING BANKED AND NOTHING HERE means it did not work, whatever learnIngest returned,
+     so the version is deliberately left unstamped and the next check tries again. This is
+     the exact stamp that stuck his phone on "read v1, zero items" for half a day. */
+  if (!n && !landed) {
+    contentNote("nothing-landed", { fileVersion: data.version, items: data.items.length });
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
@@ -26040,10 +26061,16 @@ T("hvr_campaign has a merge rule at all", () => {
 /* ---- content written ahead of time ---- */
 T("contentShouldIngest: only a file newer than the one already read", () => {
   const f = v => ({ version: v, items: [{ he: "x", tr: "x" }] });
-  assertTrue(contentShouldIngest(f(2), 1), "a newer version is read");
-  assertTrue(!contentShouldIngest(f(1), 1), "the same one is not read twice");
-  assertTrue(!contentShouldIngest(f(1), 3), "and neither is an older one");
-  assertTrue(contentShouldIngest(f(1), 0), "nothing read yet means read it");
+  assertTrue(contentShouldIngest(f(2), 1, 9), "a newer version is read");
+  assertTrue(!contentShouldIngest(f(1), 1, 9), "the same one is not read twice");
+  assertTrue(!contentShouldIngest(f(1), 3, 9), "and neither is an older one");
+  assertTrue(contentShouldIngest(f(1), 0, 0), "nothing read yet means read it");
+  /* THE STATE HIS PHONE WAS STUCK IN. The marker said version 1 had been read and the
+     bank held none of it, because the ingest ran before sync restored his library and
+     everything failed the vocabulary gate. Read-and-have-nothing is not read. */
+  assertTrue(contentShouldIngest(f(1), 1, 0), "marker set but nothing here: try again");
+  assertTrue(!contentShouldIngest(f(1), 1, 1), "one item present is enough to believe it");
+  assertTrue(!contentShouldIngest(f(1), 5, 0), "but an OLDER file is still not re-read");
   /* Every shape a static asset can arrive in when something has gone wrong. None of
      these may throw: the file is a bonus on top of a bank that already works, and an
      error here would surface to someone who just opened the app to do a session. */
@@ -26073,14 +26100,29 @@ T("contentIngest: every exit records why, and a lost write is not stamped", asyn
     assertEq(contentLast().stage, "fetch-threw");
     assertTrue(/offline/.test(contentLast().err));
 
-    /* Already read: the commonest silent no-op, and the one that looks identical to a
-       broken fetch from the outside. */
+    /* Already read AND present: the commonest silent no-op, and the one that looks
+       identical to a broken fetch from the outside. */
     lsSet(CONTENT_V_KEY, "5");
+    lsSet(BANK_KEY, JSON.stringify([{ id: "b1", he: "x", tr: "x", type: "sentence",
+                                      src: "claude", uses: [] }]));
     stub(() => Promise.resolve({ ok: true, status: 200,
       json: async () => ({ version: 5, items: [{ he: "x", tr: "x" }] }) }));
     await contentIngest();
     assertEq(contentLast().stage, "skipped");
     assertEq(contentLast().seen, 5);
+
+    /* AND THE STUCK STATE UNSTICKS ITSELF. Same marker, same file, but nothing from it in
+       the bank — which is exactly where his phone sat for half a day. */
+    lsSet(BANK_KEY, JSON.stringify([]));
+    let asked = 0;
+    const realIngest2 = learnIngest;
+    try {
+      learnIngest = () => { asked++; return 0; };
+      await contentIngest();
+      assertEq(asked, 1, "it tries again rather than skipping");
+      assertEq(contentLast().stage, "nothing-landed");
+      assertEq(lsGet(CONTENT_V_KEY), "5", "and does not move the marker forward on a no-op");
+    } finally { learnIngest = realIngest2; }
 
     /* THE GUARD THAT MATTERS. learnIngest reports items banked, but if the write did not
        stick — a full store, a merge landing on top — stamping the version would mean

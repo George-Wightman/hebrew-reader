@@ -323,7 +323,8 @@
      hood". Scrolling keeps the order honest AND keeps the deepest crumb visible, which
      was the only thing the rtl trick was bought for; uhRender pins it to the end. */
   .uh-crumbs { flex: 1 1 auto; min-width: 0; font-size: .78rem; color: var(--muted);
-               overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+               overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+               padding-right: 6px; }
   .uh-crumbs::-webkit-scrollbar { display: none; }
   /* Hebrew crumbs sit in an otherwise ltr trail, so each label is isolated — without
      this a Hebrew node or word name drags the separators around it to the wrong side. */
@@ -11596,7 +11597,11 @@ let uhQuery = "";
 let uhHistOn = false;     // do we currently own a history entry to be popped?
 
 function uhLabelFor(kind, id, st) {
-  if (kind === "root") return "Under the hood";
+  /* "Top", not "Under the hood". The trail is pinned to its deepest crumb, so on a phone
+     the root is the one that gets scrolled off — and a long root left "ler the hood"
+     hanging at the edge, which reads as a rendering fault rather than as scroll. The
+     panel still calls itself Under the hood in its own title at that level. */
+  if (kind === "root") return "Top";
   if (kind === "session") return "This session";
   if (kind === "card") {
     const s = st && st.session, i = parseInt(id, 10);

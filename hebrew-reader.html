@@ -2629,6 +2629,8 @@
       <div class="setrow">
         <div class="setrow-text"><b>Today's quota</b>
           <p id="aiQuotaDesc">Nothing asked yet today.</p>
+          <p id="contentDesc" class="muted"></p>
+          <button class="btn secondary" type="button" id="contentCheckBtn">Check for new practice content</button>
           <details><summary>Which features spend which pool</summary><p>Google gives two free models with separate daily allowances: <b>Flash</b> is the stronger one at only 20 requests a day, and <b>Flash-Lite</b> is nearly as good for short answers at 500. Transcribing a voice note, building a conversation, generating a path section and topping up a session use Flash, because those are the jobs where the stronger model earns its cost. Explaining a word, "why is it phrased like that?", the Sentence pad and filling in verb forms all use Flash-Lite. When Flash runs out the app falls back to Flash-Lite by itself rather than failing.</p></details>
           <details><summary>Why this can undercount</summary><p>This counts requests made in <em>this</em> browser. Google counts them per key, so requests from your phone come out of the same allowance and aren't included here unless the two have synced. It can therefore say you have more left than you do — but never less. The moment Google actually refuses, this says so, because that answer comes from Google rather than from counting.</p></details></div>
       </div>
@@ -6227,6 +6229,7 @@ function openSettings() {
   vnotesRenderStatus();
   paintStorageRow();
   paintAiQuotaRow();
+  paintContentRow();
   paintSpeakerBtn();
   syncPaintSettings();
   paintFormsAutoBtn();
@@ -6349,6 +6352,34 @@ function paintAiQuotaRow() {
     el.textContent = "Couldn't read the count — " + e.message;
   }
 }
+
+/* The same line the flag carries, on screen. He should not have to raise a flag and wait
+   for me to read it to find out whether a batch arrived. */
+function paintContentRow() {
+  const el = document.getElementById("contentDesc");
+  if (!el) return;
+  try {
+    const n = bankAll().filter(b => b && b.src === "claude").length;
+    el.textContent = "Pre-written practice: " + n + " sentence" + (n === 1 ? "" : "s") +
+                     " in your bank · " + contentStatusLine();
+  } catch (e) { el.textContent = "Couldn't read it — " + e.message; }
+}
+/* Not wrapped in settingsAction: that helper calls fn() synchronously inside a try, which
+   catches nothing from an async function — the rejection would escape as an unhandled
+   promise and reach the alarm bar. Own handler, own catch. */
+document.getElementById("contentCheckBtn").onclick = () => {
+  const el = document.getElementById("contentDesc");
+  if (el) el.textContent = "Checking…";
+  /* Bypassing the throttle, because pressing a button IS the intent the throttle exists to
+     distinguish from an incidental repaint. */
+  contentLastCheck = 0;
+  Promise.resolve(contentCheck(true)).then(n => {
+    paintContentRow();
+    if (el && n) el.textContent = "Added " + n + " new sentence" + (n === 1 ? "" : "s") +
+                                  ". " + el.textContent;
+    try { learnRenderThin(); } catch (e) {}
+  }).catch(e => { if (el) el.textContent = "Check failed — " + ((e && e.message) || e); });
+};
 
 function paintSpeakerBtn() {
   const b = document.getElementById("speakerBtn");
@@ -6640,7 +6671,7 @@ function SYNC_LOCAL_SET() {
        the marker is only an optimisation anyway, since the bank itself syncs and
        learnIngest deduplicates. Local also sidesteps a counter that could go backwards
        under the default newer-wins rule. */
-    CONTENT_V_KEY,
+    CONTENT_V_KEY, CONTENT_LAST_KEY,
     /* A LIVE DIAGNOSTIC FOR THE DEVICE IN YOUR HAND. It shipped syncing, because it is
        hvr_-prefixed and syncKeys is a prefix scan — and under the default array rule the
        laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
@@ -10514,6 +10545,14 @@ function flagContext() {
       c.node = node.name + (ch ? " · " + ch.theme : "");
       c.nodeWords = (node.words || []).join(", ");
     }
+  } catch (e) {}
+  /* Why a batch of pre-baked sentences has or has not arrived. Carried on every flag
+     because the one device that has ever had this problem is the one I cannot inspect,
+     and a flag is the only channel from it. */
+  try {
+    c.content = { status: contentStatusLine(), seen: contentVersion(),
+                  claudeItems: bankAll().filter(b => b && b.src === "claude").length,
+                  thin: contentThinNow() };
   } catch (e) {}
   try {
     c.ai = aiLogAll().slice(0, FLAG_AI_CALLS).map(e => ({
@@ -19435,20 +19474,56 @@ function contentShouldIngest(data, seen) {
    worker serving something stale — every one of those is a no-op. Pre-baked content is a
    bonus on top of a bank that already works, so nothing here may ever surface an error to
    someone who just opened the app to do a session. */
+/* EVERY EXIT SAYS WHY. This failed twice on George's phone while working on every machine
+   I could reach, and both times I reasoned from the code and shipped a fix for something
+   that was not happening. Six early returns and no way to tell them apart is not a thing
+   to debug by argument — it is a thing to measure. The outcome is stored (survives a
+   reload, which a variable would not), shown in Settings, and carried in flagContext, so
+   one flag from the device that actually has the problem settles it. */
+const CONTENT_LAST_KEY = "hvr_content_last";
+function contentLast() {
+  try { const o = JSON.parse(lsGet(CONTENT_LAST_KEY)); return (o && typeof o === "object") ? o : null; }
+  catch (e) { return null; }
+}
+function contentNote(stage, extra) {
+  const rec = Object.assign({ at: new Date().toISOString(), stage: stage,
+                              seen: contentVersion(), url: CONTENT_URL }, extra || {});
+  try { lsSet(CONTENT_LAST_KEY, JSON.stringify(rec)); } catch (e) {}
+  return rec;
+}
+
 async function contentIngest() {
   let data = null;
   try {
     /* no-store rather than the default: a push lands as a new static file and the point
        of the version field is lost if the browser serves last week's copy from cache. */
     const r = await fetchWithTimeout(CONTENT_URL, { cache: "no-store" }, FETCH_TIMEOUT_MS);
-    if (!r || !r.ok) return 0;
+    if (!r || !r.ok) { contentNote("fetch-not-ok", { status: r ? r.status : "no response" }); return 0; }
     data = await r.json();
-  } catch (e) { return 0; }
-  if (!contentShouldIngest(data, contentVersion())) return 0;
+  } catch (e) { contentNote("fetch-threw", { err: (e && e.message) || String(e) }); return 0; }
+  if (!contentShouldIngest(data, contentVersion())) {
+    contentNote("skipped", { fileVersion: data && data.version,
+                             items: data && data.items && data.items.length });
+    return 0;
+  }
   let n = 0;
   try {
     n = learnIngest({ items: data.items.map(it => Object.assign({}, it, { src: "claude" })) });
-  } catch (e) { return 0; }
+  } catch (e) {
+    contentNote("ingest-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
+    return 0;
+  }
+  /* DID THE WRITE ACTUALLY STICK. Stamping the version after a save that silently failed —
+     a full localStorage, a store replaced underneath us — would mean never trying again,
+     which is the worst possible failure for a one-shot marker. Cheap to check, and it
+     turns a permanent silent loss into a retry. */
+  const landed = bankAll().filter(b => b && b.src === "claude").length;
+  if (n > 0 && !landed) {
+    contentNote("banked-but-vanished", { fileVersion: data.version, reported: n });
+    return 0;
+  }
+  contentNote("ingested", { fileVersion: data.version, banked: n,
+                            items: data.items.length, bank: bankAll().length });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -19478,7 +19553,23 @@ let contentLastCheck = 0;
 function contentCheck(force) {
   if (!force && Date.now() - contentLastCheck < CONTENT_RECHECK_MS) return Promise.resolve(0);
   contentLastCheck = Date.now();
-  return Promise.resolve(contentIngest()).catch(() => 0);
+  return Promise.resolve(contentIngest())
+    .catch(e => { contentNote("check-threw", { err: (e && e.message) || String(e) }); return 0; });
+}
+/* One line saying where the pre-baked content stands, for the Settings pane and for the
+   flag context. Deliberately plain: it is read by someone trying to work out why a batch
+   has not arrived, which is exactly when a friendly summary is the wrong thing. */
+function contentStatusLine() {
+  const last = contentLast();
+  const seen = contentVersion();
+  if (!last) return "no check has completed yet" + (seen ? " (last read version " + seen + ")" : "");
+  const bits = [last.stage];
+  if (last.fileVersion !== undefined) bits.push("file v" + last.fileVersion);
+  if (last.seen !== undefined) bits.push("read v" + last.seen);
+  if (last.banked !== undefined) bits.push(last.banked + " banked");
+  if (last.status !== undefined) bits.push("HTTP " + last.status);
+  if (last.err) bits.push(last.err);
+  return bits.join(" · ") + " — " + syncAgo(last.at);
 }
 
 /* Below this a node cannot fill a session without repeating itself. CAMP_SESSION_CARDS is
@@ -25962,6 +26053,53 @@ T("contentShouldIngest: only a file newer than the one already read", () => {
   assertTrue(!contentShouldIngest({ version: 1, items: [] }, 0), "empty items");
   assertTrue(!contentShouldIngest({ items: [{ he: "x" }] }, 0), "no version");
   assertTrue(!contentShouldIngest({ version: "soon", items: [{ he: "x" }] }, 0));
+});
+T("contentIngest: every exit records why, and a lost write is not stamped", async () => {
+  /* This failed twice on his phone while working everywhere I could reach, and both times
+     I reasoned from the code instead of measuring. Six early returns that all looked the
+     same from outside is not debuggable by argument. */
+  const realFetch = window.fetch, realLast = lsGet(CONTENT_LAST_KEY), realV = lsGet(CONTENT_V_KEY);
+  const realBank = lsGet(BANK_KEY);
+  const stub = impl => { window.fetch = impl; };
+  try {
+    localStorage.removeItem(CONTENT_V_KEY);
+    stub(() => Promise.resolve({ ok: false, status: 404 }));
+    await contentIngest();
+    assertEq(contentLast().stage, "fetch-not-ok");
+    assertEq(contentLast().status, 404, "and it says which status");
+
+    stub(() => Promise.reject(new Error("offline")));
+    await contentIngest();
+    assertEq(contentLast().stage, "fetch-threw");
+    assertTrue(/offline/.test(contentLast().err));
+
+    /* Already read: the commonest silent no-op, and the one that looks identical to a
+       broken fetch from the outside. */
+    lsSet(CONTENT_V_KEY, "5");
+    stub(() => Promise.resolve({ ok: true, status: 200,
+      json: async () => ({ version: 5, items: [{ he: "x", tr: "x" }] }) }));
+    await contentIngest();
+    assertEq(contentLast().stage, "skipped");
+    assertEq(contentLast().seen, 5);
+
+    /* THE GUARD THAT MATTERS. learnIngest reports items banked, but if the write did not
+       stick — a full store, a merge landing on top — stamping the version would mean
+       never trying again. A retry beats a permanent silent loss. */
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([]));
+    const realIngest = learnIngest;
+    try {
+      learnIngest = () => 7;                       // claims 7, writes nothing
+      await contentIngest();
+      assertEq(contentLast().stage, "banked-but-vanished");
+      assertNull(lsGet(CONTENT_V_KEY), "and the version is NOT stamped, so it retries");
+    } finally { learnIngest = realIngest; }
+  } finally {
+    window.fetch = realFetch;
+    const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
 });
 T("contentCheck: throttled, but a resident app does re-check", () => {
   /* THE BUG GEORGE FOUND. The ingest ran once, 2.6s after load, and his phone runs the app

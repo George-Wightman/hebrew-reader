@@ -295,6 +295,102 @@
     word-break: break-word; max-height: 210px; overflow: auto;
   }
 
+  /* ---- under the hood ----
+     The interface register, not the world (style guide §1): flat, sans, teal. The one
+     borrowing from the world layer is the four band colours, which are fixed and must
+     never be respelled — "do not invent a second language for the same four states".
+
+     The modal is a flex COLUMN here rather than the default scrolling block, because
+     the breadcrumb and the footer have to stay put while the body scrolls. A
+     drill-down whose back button scrolls off the top is a drill-down you get lost in,
+     which is the one failure this panel cannot afford. */
+  .modal.uh { display: flex; flex-direction: column; padding: 0; overflow: hidden;
+              width: min(560px, 94vw); height: min(680px, 88vh); }
+  .uh-head { flex: 0 0 auto; padding: 14px 16px 10px; border-bottom: 1px solid var(--hair);
+             display: flex; align-items: center; gap: 8px; }
+  .uh-body { flex: 1 1 auto; overflow: auto; padding: 4px 16px 14px; }
+  .uh-foot { flex: 0 0 auto; padding: 10px 16px; border-top: 1px solid var(--hair);
+             display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* Back sits left of the breadcrumb and never moves. A 34px target is above the
+     comfortable minimum for a thumb on the phone this is actually used on. */
+  .uh-back { flex: 0 0 auto; width: 34px; height: 34px; border: 1px solid var(--hair);
+             background: none; border-radius: 8px; color: var(--accent); font-size: 1.1rem;
+             line-height: 1; cursor: pointer; }
+  .uh-back:disabled { color: var(--hair); cursor: default; }
+  /* Scrolled, not ellipsised. `direction: rtl` was tried here first, to make an overlong
+     trail truncate at the START and keep the deepest crumb readable — and it silently
+     REVERSED the whole trail, so "Under the hood > gadol" rendered as "gadol > Under the
+     hood". Scrolling keeps the order honest AND keeps the deepest crumb visible, which
+     was the only thing the rtl trick was bought for; uhRender pins it to the end. */
+  .uh-crumbs { flex: 1 1 auto; min-width: 0; font-size: .78rem; color: var(--muted);
+               overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .uh-crumbs::-webkit-scrollbar { display: none; }
+  /* Hebrew crumbs sit in an otherwise ltr trail, so each label is isolated — without
+     this a Hebrew node or word name drags the separators around it to the wrong side. */
+  .uh-crumbs > * { unicode-bidi: isolate; }
+  .uh-crumb { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .uh-crumb.here { color: var(--ink); cursor: default; text-decoration: none; font-weight: 600; }
+  .uh-sep { margin: 0 5px; opacity: .6; }
+  .uh-x { flex: 0 0 auto; }
+
+  .uh-title { margin: 12px 0 2px; font-size: 1.02rem; font-weight: 600; }
+  .uh-sub { margin: 0 0 10px; font-size: .8rem; color: var(--muted); }
+
+  .uh-sec { border-top: 1px solid var(--hair); }
+  .uh-sec:first-of-type { border-top: none; }
+  .uh-sech { width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+             padding: 10px 0 8px; font-size: .74rem; color: var(--muted);
+             text-transform: uppercase; letter-spacing: .04em; display: flex; gap: 6px; }
+  .uh-sech .uh-caret { transition: transform .12s ease; }
+  .uh-sec.open .uh-sech .uh-caret { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { .uh-sech .uh-caret { transition: none; } }
+  .uh-secb { padding-bottom: 8px; }
+
+  /* A row is a link ONLY if it goes somewhere, and it says so with a chevron. Not
+     knowing what is tappable is the classic way a drill-down goes wrong, so an inert
+     row gets no chevron, no pointer and no hover. */
+  .uh-row { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+            background: none; border: none; padding: 7px 0; font: inherit;
+            font-size: .84rem; border-top: 1px solid var(--hair); }
+  .uh-row:first-child { border-top: none; }
+  .uh-row.to { cursor: pointer; }
+  .uh-row.to:hover .uh-lab { color: var(--accent); }
+  .uh-lab { flex: 0 0 auto; color: var(--muted); }
+  .uh-val { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+  .uh-chev { flex: 0 0 auto; color: var(--accent); }
+  .uh-note { font-size: .78rem; color: var(--muted); margin: 6px 0 0; }
+
+  /* The four bands, in the colours they already have everywhere else. */
+  .uh-band { font-weight: 600; }
+  .uh-band.b-new { color: #8d8778; }
+  .uh-band.b-weak { color: var(--bad); }
+  .uh-band.b-progressing { color: var(--gold); }
+  .uh-band.b-strong { color: var(--good); }
+
+  /* The WHY checklist. A tick or a cross per condition, the real number beside the
+     real threshold — this is the whole point of the feature and it gets the space. */
+  .uh-why { margin: 2px 0 4px; }
+  .uh-verdict { font-size: .84rem; margin-bottom: 5px; }
+  .uh-test { display: flex; gap: 7px; font-size: .79rem; padding: 2px 0; align-items: baseline; }
+  .uh-mark { flex: 0 0 auto; width: 13px; font-weight: 700; }
+  .uh-test.ok .uh-mark { color: var(--good); }
+  .uh-test.no .uh-mark { color: var(--bad); }
+  .uh-test-t { flex: 1 1 auto; color: var(--muted); }
+  .uh-test-a { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .uh-next { font-size: .79rem; margin-top: 6px; color: var(--accent); }
+  .uh-src { margin-top: 8px; }
+
+  .uh-search { width: 100%; padding: 8px 10px; font: inherit; font-size: .86rem;
+               border: 1px solid var(--hair); border-radius: 8px; margin: 8px 0 2px; }
+  .uh-empty { font-size: .82rem; color: var(--muted); padding: 10px 0; }
+
+  @media (max-width: 560px) {
+    .modal.uh { height: 92vh; width: 100vw; border-radius: 12px 12px 0 0; }
+    .uh-head { padding: 12px 13px 9px; }
+    .uh-body { padding: 4px 13px 12px; }
+    .uh-foot { padding: 9px 13px; }
+  }
+
   /* ---- update offer ----
      Teal like the resume bar, and for the same reason: this is an offer, not a fault,
      so it must not borrow the alarm's red. */
@@ -1980,6 +2076,14 @@
   <button class="navstar" id="aiStar" type="button" title="AI activity" aria-label="AI activity">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8c.62 5.2 4.98 9.56 10.2 10.2-5.22.62-9.58 4.98-10.2 10.2-.62-5.22-4.98-9.58-10.2-10.2 5.22-.64 9.58-5 10.2-10.2z"/></svg>
   </button>
+  <!-- Under the hood. A magnifier, not a bug: the panel's job is not only faults, it is
+       "why is the app behaving this way", which is most of what he wants it for. Third
+       in the same row as the flag and the star because those two are the features that
+       actually get used, and always-there-one-tap is the reason why. -->
+  <button class="navstar" id="uhBtn" type="button" title="Under the hood — why the app did that"
+          aria-label="Under the hood">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.4 2.4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm5.9 11.3 1.4-1.4 4.6 4.6a1 1 0 0 1-1.4 1.4l-4.6-4.6z"/></svg>
+  </button>
   <button class="navgear" id="settingsBtn">⚙ Settings</button>
 </nav>
 
@@ -2702,6 +2806,20 @@
       <button class="linkbtn" id="aiLogClearBtn">Clear log</button>
       <button class="btn secondary" id="aiClose">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- Under the hood. Everything inside is built in JS from the inspector registry — the
+     markup here is only the furniture that has to stay put while the body scrolls. -->
+<div class="modal-backdrop" id="uhModal" style="display:none">
+  <div class="modal uh" role="dialog" aria-modal="true" aria-label="Under the hood">
+    <div class="uh-head">
+      <button class="uh-back" id="uhBack" type="button" aria-label="Back">‹</button>
+      <div class="uh-crumbs" id="uhCrumbs"></div>
+      <button class="linkbtn uh-x" id="uhClose" type="button">Close</button>
+    </div>
+    <div class="uh-body" id="uhBody"></div>
+    <div class="uh-foot" id="uhFoot"></div>
   </div>
 </div>
 
@@ -6285,6 +6403,10 @@ document.getElementById("flagAddBtn").onclick = () => {
   });
 };
 document.getElementById("aiStar").onclick = () => aiModalOpen(true);
+document.getElementById("uhBtn").onclick = () => uhModalOpen(true);
+document.getElementById("uhClose").onclick = () => uhModalOpen(false);
+document.getElementById("uhBack").onclick = () => { if (!uhBackOne()) uhModalOpen(false); };
+wireModalBackdropClose(document.getElementById("uhModal"), () => uhModalOpen(false));
 document.getElementById("aiClose").onclick = () => aiModalOpen(false);
 document.getElementById("aiLogClearBtn").onclick = () => { aiLogClear(); aiLogRender(); };
 document.getElementById("aiModal").onclick = ev => {
@@ -10666,6 +10788,614 @@ function flagModalOpen(on) {
   try { box.focus(); } catch (e) {}
 }
 let flagPending = null;
+
+/* =====================  UNDER THE HOOD  =====================
+   George: "I want the information, if its in the code/ underground I want a way to view
+   it (not all the time, but an option to see why somehting is behaving a certain way, Be
+   that word strength, data or any other variable)" — and, deciding what it is FOR:
+   "this could be a really cool and useful feature for me to better understand how the
+   app is working ot better tune it to my vision".
+
+   That second quote is what this is built against. It is not only a bug-reporting tool.
+   The app makes a few hundred judgements a day — this word is weak, that sentence cannot
+   be served, this node is not ready — and every one of them was invisible. A person
+   cannot tune what they cannot see.
+
+   TWO REGISTRIES, AND THE SECOND IS WHY THIS IS AFFORDABLE.
+
+   `UH` maps a subject to a report — a word, a rule, later a node or a card. That part is
+   ordinary and grows one function at a time.
+
+   `WHY` is the idea. Every judgement in this app has the same shape: some conditions,
+   the actual values, the thresholds, a verdict, and what would change it. So an explainer
+   is written once per RULE, not once per subject, and ONE renderer draws every
+   explanation in the app off about a dozen functions. Explaining a word's band costs
+   nothing extra once `whySrsStrength` exists, because there is only one rule behind every
+   word there has ever been.
+
+   Both kinds are PURE — state is passed in, never read from a store. That is what lets
+   the self-test suite drive them with plain objects instead of writing to the real ones,
+   which CLAUDE.md is emphatic about and which this file has been bitten by before. */
+
+/* Numbers as a person reads them, not as a float prints them. `4.130000000000001` in a
+   threshold checklist reads as noise and undermines the one thing the checklist is for. */
+function uhNum(x, dp) {
+  if (x === null || x === undefined || x === "" || isNaN(x)) return "—";
+  const n = Number(x);
+  if (dp === undefined) dp = Number.isInteger(n) ? 0 : 1;
+  return n.toFixed(dp);
+}
+
+/* ---- the WHY registry -------------------------------------------------------
+   Each returns { rule, verdict, because: [{test, actual, pass}], next }. `rule` names
+   the function that made the judgement — the drill-down leaf reads it, and Phase 5's
+   question box uses it to fetch that function's real source out of the shell. */
+
+/* The four bands, explained by the same thresholds srsStrength actually checks. The
+   conditions listed are the ones that DECIDED this band, in the order the code tests
+   them, so a reader can follow the function by reading the panel. */
+function whySrsStrength(rec) {
+  const rule = "srsStrength";
+  if (!rec || !rec.n) return {
+    rule: rule, verdict: "new",
+    because: [{ test: "answered at least once", actual: "never drilled", pass: false }],
+    next: "One answer, either way, starts its record."
+  };
+  const n = rec.n, miss = rec.miss || 0;
+  const ratio = n ? miss / n : 0;
+  const recent = srsRecentRatio(rec);
+  const recentTxt = rec.rn > 0
+    ? uhNum(recent, 2) + " (" + (rec.rmiss || 0) + " of last " + rec.rn + ")"
+    : uhNum(recent, 2) + " (" + miss + " of " + n + " — no recent window yet)";
+
+  /* Weak is tested first and either trigger is enough, so both are shown: knowing WHICH
+     one fired is the difference between "answer it more carefully" and "answer it more". */
+  const hardDiff = rec.diff >= 6.5;
+  const badRate = n >= 2 && ratio >= 0.4;
+  if (hardDiff || badRate) {
+    /* THE WEAK TEST IS LIFETIME, NOT RECENT, and deliberately so — srsStrength tried the
+       recent ratio here first and reverted. But that means a word he has been getting
+       right all week can still read weak, and without this line the panel shows him a
+       pile of lifetime numbers and no clue why his good run does not count. Said only
+       when the two actually disagree, so it stays a fact rather than boilerplate. */
+    const recentBetter = badRate && rec.rn > 0 && recent < ratio;
+    return {
+      rule: rule, verdict: "weak",
+      because: [
+        { test: "difficulty below 6.5", actual: uhNum(rec.diff), pass: !hardDiff },
+        { test: "miss rate below 0.40", actual: uhNum(ratio, 2) + " (" + miss + " of " + n + ")",
+          pass: !badRate }
+      ],
+      next: hardDiff
+        ? "Right answers pull difficulty down. Under 6.5 and it stops being weak."
+        : recentBetter
+          ? "Its miss rate has to come back under 0.40 — and that is the lifetime rate, " +
+            "not the recent one. Lately you are at " + recentTxt + ", which counts towards " +
+            "strong later but does not lift weak now."
+          : "Its miss rate has to come back under 0.40."
+    };
+  }
+
+  const okStab = rec.stab >= 21, okDiff = rec.diff <= 5, okRecent = recent <= RECENT_STRONG_MAX;
+  const because = [
+    { test: "stability at least 21 days", actual: uhNum(rec.stab) + "d", pass: okStab },
+    { test: "difficulty at most 5", actual: uhNum(rec.diff), pass: okDiff },
+    { test: "recent misses at most " + RECENT_STRONG_MAX, actual: recentTxt, pass: okRecent }
+  ];
+  if (okStab && okDiff && okRecent)
+    return { rule: rule, verdict: "strong", because: because,
+             next: "Nothing to do — this one is yours." };
+  const short = because.filter(b => !b.pass).map(b => b.test.replace(/^(.*?) (at least|below|at most).*/, "$1"));
+  return { rule: rule, verdict: "progressing", because: because,
+           next: "Short of strong on " + short.join(" and ") + "." };
+}
+
+/* Whether the scheduler will build a sentence around this word unaided. Thin on purpose
+   — wordReady really is one line — but it earns its place because "ready" is the gate
+   half the bank complains about, and pointing at the band that decides it is the answer. */
+function whyWordReady(rec) {
+  const band = srsStrength(rec);
+  const ok = band === "progressing" || band === "strong";
+  return {
+    rule: "wordReady", verdict: ok ? "ready" : "not ready",
+    because: [{ test: "production band is progressing or strong", actual: band, pass: ok }],
+    next: ok ? "Sentences can be built on it freely."
+             : "Sentences using it can only be served as a carried word."
+  };
+}
+
+/* ---- the rules, described --------------------------------------------------
+   The leaf of a drill-down. Not the source (that is Phase 5) — the ladder, in the order
+   the function tests it, so the whole rule is legible at once rather than only the
+   branch that happened to fire for the word he came in from. */
+const UH_RULES = {
+  srsStrength: {
+    title: "How a word gets its band",
+    blurb: "Four bands, tested in this order. The first one that matches wins.",
+    ladder: [
+      ["new", "no answers recorded at all"],
+      ["weak", "difficulty ≥ 6.5, OR at least 2 answers with a miss rate ≥ 0.40"],
+      ["strong", "stability ≥ 21 days AND difficulty ≤ 5 AND recent miss rate ≤ " + 0.15],
+      ["progressing", "everything else — drilled, not struggling, not yet reliable"]
+    ],
+    note: "\"Weak\" means the app has EVIDENCE of struggle, not merely a short interval — " +
+          "otherwise every new word would be born weak."
+  },
+  wordReady: {
+    title: "Whether a word can carry a sentence",
+    blurb: "One test, on the production side only.",
+    ladder: [
+      ["ready", "production band is progressing or strong"],
+      ["not ready", "production band is new or weak"]
+    ],
+    note: "A not-ready word can still appear, but only as the one word a sentence is " +
+          "allowed to carry — and the card says so out loud."
+  }
+};
+
+/* ---- the INSPECT registry ---------------------------------------------------
+   kind -> function(id, state) -> { title, subtitle, sections: [{name, open, rows}] }
+
+   Row shapes, all optional fields:
+     { label, value }              a plain fact
+     { label, value, band }        value coloured with the four fixed band colours
+     { why }                       a WHY result, drawn as verdict + threshold checklist
+     { to: {kind, id, label} }     makes the row a link, and gives it its chevron
+     { pre }                       raw JSON, for the escape-hatch cases
+     { note }                      a muted line of prose */
+const UH = {};
+
+/* Everything the inspectors read, gathered once per render. Passed in rather than
+   fetched inside, so every inspector below is a pure function of its arguments. */
+function uhState() {
+  const st = {};
+  try { st.lib = libAll(); } catch (e) { st.lib = {}; }
+  try { st.srs = srsAll(); } catch (e) { st.srs = {}; }
+  return st;
+}
+
+UH.word = function (key, st) {
+  const lib = st.lib || {}, srs = st.srs || {};
+  const e = lib[key] || null;
+  const r = srs[key] || {};
+  const dict = (typeof DICT !== "undefined" && DICT[key]) || null;
+  const both = srsStrengthBoth(srs, key);
+
+  const sections = [{
+    name: "The word", open: true, rows: [
+      { label: "Hebrew", value: key },
+      { label: "English", value: (e && e.en) || (dict && dict[1]) || "—" },
+      { label: "Written", value: (e && e.tr) || (dict && String(dict[0]).split("/")[0].trim()) || "—" },
+      { label: "Overall", value: both, band: both },
+      { label: "In the library", value: e
+          ? "yes · added " + (e.added || "?") + " · from " + (e.src || "?")
+          : "no — the scheduler cannot see it" }
+    ]
+  }];
+
+  /* Both sides, always, even one that has never been drilled — an absent side is a fact
+     about the word and hiding it would make "why is this amber" unanswerable. */
+  [["prod", "Say — production"], ["recv", "Hear — comprehension"]].forEach(pair => {
+    const side = pair[0], rec = r[side];
+    const why = whySrsStrength(rec);
+    sections.push({
+      name: pair[1], open: side === "prod",
+      /* No separate "Band: progressing" row above the why block. That block already
+         leads with the verdict in the same colour, and style guide §4 is explicit that
+         one signal beats several weak ones saying the same thing — the drill card lost
+         a glyph, a label and a direction pill to that exact argument. */
+      rows: [
+        { why: why, to: { kind: "rule", id: "srsStrength", label: "srsStrength" } },
+        { label: "Answers", value: rec && rec.n
+            ? rec.n + " · " + (rec.miss || 0) + " missed · " + (rec.lapses || 0) + " lapses"
+            : "none yet" },
+        { label: "Stability", value: rec ? uhNum(rec.stab) + " days" : "—" },
+        { label: "Difficulty", value: rec ? uhNum(rec.diff) : "—" },
+        { label: "Last / due", value: rec ? ((rec.last || "—") + " → " + (rec.due || "—")) : "—" },
+        { pre: JSON.stringify(rec || null, null, 1) }
+      ]
+    });
+  });
+
+  sections.push({
+    name: "Can it carry a sentence", open: false, rows: [
+      { why: whyWordReady(r.prod), to: { kind: "rule", id: "wordReady", label: "wordReady" } }
+    ]
+  });
+
+  return {
+    title: key,
+    subtitle: [(e && e.en) || (dict && dict[1]) || "", (e && e.tr) || ""].filter(Boolean).join(" · "),
+    sections: sections
+  };
+};
+
+UH.rule = function (name) {
+  const r = UH_RULES[name];
+  if (!r) return { title: name, subtitle: "no description written for this rule yet",
+                   sections: [] };
+  return {
+    title: r.title,
+    subtitle: name + "()",
+    sections: [
+      { name: "The ladder", open: true,
+        rows: [{ note: r.blurb }].concat(r.ladder.map(l =>
+          ({ label: l[0], value: l[1], band: l[0] }))) },
+      { name: "Why it is written that way", open: true, rows: [{ note: r.note }] }
+    ]
+  };
+};
+
+/* The root. Phase 1 has no campaign or card subject yet, so this is where every open
+   lands: a count of where the library stands, and a box to find any word in it. */
+UH.root = function (id, st) {
+  const lib = st.lib || {}, srs = st.srs || {};
+  const counts = { "new": 0, weak: 0, progressing: 0, strong: 0 };
+  Object.keys(lib).forEach(k => { counts[srsStrengthBoth(srs, k)]++; });
+  return {
+    title: "Under the hood",
+    subtitle: "Why the app did that",
+    search: true,
+    sections: [{
+      name: "The library", open: true, rows: SRS_BANDS.slice().reverse().map(b =>
+        ({ label: b, value: counts[b] + " word" + (counts[b] === 1 ? "" : "s"), band: b }))
+        .concat([{ label: "total", value: Object.keys(lib).length + " words" }])
+    }]
+  };
+};
+
+/* Same matching as the Strength list, so "find a word" behaves identically in both
+   places rather than being a second, subtly different search. */
+function uhSearch(q, st) {
+  const lib = st.lib || {};
+  q = String(q || "").trim().toLowerCase();
+  if (!q) return [];
+  return Object.keys(lib).filter(k => {
+    const e = lib[k];
+    return k.indexOf(q) !== -1 ||
+           String(e.tr || "").toLowerCase().indexOf(q) !== -1 ||
+           String(e.en || "").toLowerCase().indexOf(q) !== -1;
+  }).slice(0, 40);
+}
+
+/* ---- where you are ----------------------------------------------------------
+   Reuses exactly the detection flagContext() already does. Kinds this build has no
+   inspector for fall through to the root rather than opening an empty panel, so
+   Phase 2 and 3 add their subjects by registering them and nothing here changes. */
+function uhHere() {
+  const guess = [];
+  try {
+    const s = learnSession;
+    if (s && s.cards && s.cards[s.i]) guess.push({ kind: "card", id: String(s.i) });
+  } catch (e) {}
+  try { if (campSheetId) guess.push({ kind: "node", id: campSheetId }); } catch (e) {}
+  try { if ((lsGet(VIEW_KEY) || "") === "learn") guess.push({ kind: "campaign", id: "" }); } catch (e) {}
+  const hit = guess.filter(g => UH[g.kind])[0];
+  return hit || { kind: "root", id: "" };
+}
+
+/* ---- navigation -------------------------------------------------------------
+   George, twice: "make sure it easily navigatable". A stack, a breadcrumb where every
+   crumb is a jump, one back control that never moves, and a chevron on exactly the rows
+   that go somewhere — not knowing what is tappable is how a drill-down loses you. */
+let uhStack = [];
+let uhOpenSecs = {};      // "kind:id:section" -> bool, remembered for the session
+let uhQuery = "";
+let uhHistOn = false;     // do we currently own a history entry to be popped?
+
+function uhLabelFor(kind, id, st) {
+  if (kind === "root") return "Under the hood";
+  if (kind === "rule") return (UH_RULES[id] && UH_RULES[id].title) || id;
+  return id || kind;
+}
+
+function uhGo(kind, id) {
+  uhStack.push({ kind: kind, id: id });
+  uhPushHist();
+  uhRender();
+}
+function uhBackOne() {
+  if (uhStack.length <= 1) return false;
+  uhStack.pop();
+  uhRender();
+  return true;
+}
+function uhJump(i) {
+  if (i < 0 || i >= uhStack.length - 1) return;
+  uhStack = uhStack.slice(0, i + 1);
+  uhRender();
+}
+
+/* ANDROID BACK STEPS OUT A LEVEL, not out of the app. No other modal here does this and
+   none needs to — they are all one level deep. This one is not, and it is used on a phone
+   installed to the home screen where back is the reflex.
+
+   Exactly ONE entry is owned at a time. Popping re-pushes while there is still depth
+   left, so the browser's stack never accumulates a level per drill and closing never has
+   to unwind more than one. */
+function uhPushHist() {
+  if (uhHistOn) return;
+  try { history.pushState({ uh: 1 }, ""); uhHistOn = true; } catch (e) {}
+}
+window.addEventListener("popstate", () => {
+  if (!uhHistOn) return;
+  uhHistOn = false;
+  if (uhStack.length > 1) { uhStack.pop(); uhPushHist(); uhRender(); }
+  else uhModalOpen(false);
+});
+
+function uhModalOpen(on, at) {
+  const modal = document.getElementById("uhModal");
+  if (!modal) return;
+  modal.style.display = on ? "flex" : "none";
+  if (!on) {
+    /* Give the history entry back if we still hold one. uhHistOn is cleared FIRST so the
+       popstate this triggers returns immediately instead of trying to close us twice. */
+    if (uhHistOn) { uhHistOn = false; try { history.back(); } catch (e) {} }
+    return;
+  }
+  const start = at || uhHere();
+  uhStack = [start.kind === "root" ? start : { kind: "root", id: "" }];
+  if (start.kind !== "root") uhStack.push(start);
+  uhQuery = "";
+  uhPushHist();
+  uhRender();
+}
+
+/* ---- the renderer -----------------------------------------------------------
+   One function draws every subject, because every subject is the same shape. Built with
+   createElement and textContent throughout: none of this is escaped HTML, so a word, a
+   node name or a raw store value cannot break the panel or inject into it. */
+function uhRow(row, st) {
+  const el = document.createElement(row.to ? "button" : "div");
+  el.className = "uh-row" + (row.to ? " to" : "");
+  if (row.to) el.type = "button";
+
+  if (row.note !== undefined) {
+    el.classList.remove("uh-row");
+    el.className = "uh-note";
+    el.textContent = row.note;
+    return el;
+  }
+  if (row.pre !== undefined) {
+    const wrap = document.createElement("div");
+    wrap.className = "ailogmore";
+    const pre = document.createElement("pre");
+    pre.textContent = row.pre;
+    wrap.append(pre);
+    return wrap;
+  }
+  if (row.why) {
+    const box = document.createElement(row.to ? "button" : "div");
+    box.className = "uh-row uh-why" + (row.to ? " to" : "");
+    if (row.to) box.type = "button";
+    box.style.display = "block";
+    box.append(uhWhyBlock(row.why));
+    if (row.to) box.onclick = () => uhGo(row.to.kind, row.to.id);
+    return box;
+  }
+
+  const lab = document.createElement("span");
+  lab.className = "uh-lab";
+  lab.textContent = row.label === undefined ? "" : String(row.label);
+  const val = document.createElement("span");
+  val.className = "uh-val" + (row.band ? " uh-band b-" + row.band : "");
+  val.textContent = row.value === undefined ? "" : String(row.value);
+  el.append(lab, val);
+  if (row.to) {
+    const ch = document.createElement("span");
+    ch.className = "uh-chev";
+    ch.textContent = "›";
+    el.append(ch);
+    el.onclick = () => uhGo(row.to.kind, row.to.id);
+  }
+  return el;
+}
+
+/* The threshold checklist. This is the feature — a tick or a cross per condition, the
+   real number beside the real threshold, and one line saying what would move it. */
+function uhWhyBlock(why) {
+  const box = document.createElement("div");
+  const v = document.createElement("div");
+  v.className = "uh-verdict";
+  const strong = document.createElement("span");
+  strong.className = "uh-band b-" + why.verdict;
+  strong.textContent = why.verdict;
+  v.append(strong);
+  const tail = document.createElement("span");
+  tail.textContent = " — because:";
+  v.append(tail);
+  box.append(v);
+
+  (why.because || []).forEach(b => {
+    const t = document.createElement("div");
+    t.className = "uh-test " + (b.pass ? "ok" : "no");
+    const m = document.createElement("span");
+    m.className = "uh-mark";
+    m.textContent = b.pass ? "✓" : "✕";
+    const tt = document.createElement("span");
+    tt.className = "uh-test-t";
+    tt.textContent = b.test;
+    const aa = document.createElement("span");
+    aa.className = "uh-test-a";
+    aa.textContent = b.actual;
+    t.append(m, tt, aa);
+    box.append(t);
+  });
+  if (why.next) {
+    const n = document.createElement("div");
+    n.className = "uh-next";
+    n.textContent = why.next;
+    box.append(n);
+  }
+  if (why.rule) {
+    const s = document.createElement("div");
+    s.className = "uh-note uh-src";
+    s.textContent = "decided by " + why.rule + "() ›";
+    box.append(s);
+  }
+  return box;
+}
+
+function uhRender() {
+  const body = document.getElementById("uhBody");
+  const crumbs = document.getElementById("uhCrumbs");
+  const foot = document.getElementById("uhFoot");
+  const back = document.getElementById("uhBack");
+  if (!body) return;
+  const st = uhState();
+  const here = uhStack[uhStack.length - 1] || { kind: "root", id: "" };
+
+  back.disabled = uhStack.length <= 1;
+  crumbs.innerHTML = "";
+  uhStack.forEach((s, i) => {
+    if (i) {
+      const sep = document.createElement("span");
+      sep.className = "uh-sep";
+      sep.textContent = "›";
+      crumbs.append(sep);
+    }
+    const c = document.createElement("span");
+    const last = i === uhStack.length - 1;
+    c.className = "uh-crumb" + (last ? " here" : "");
+    c.textContent = uhLabelFor(s.kind, s.id, st);
+    if (!last) c.onclick = () => uhJump(i);
+    crumbs.append(c);
+  });
+  /* Pinned to the deepest crumb — where you actually are — so a long trail scrolls the
+     root off the left rather than hiding the thing you came to look at. */
+  try { crumbs.scrollLeft = crumbs.scrollWidth; } catch (e) {}
+
+  const fn = UH[here.kind];
+  const rep = fn ? fn(here.id, st) : null;
+  body.innerHTML = "";
+  if (!rep) {
+    const e = document.createElement("div");
+    e.className = "uh-empty";
+    e.textContent = "Nothing to show for " + here.kind + " yet.";
+    body.append(e);
+    return;
+  }
+
+  const h = document.createElement("div");
+  h.className = "uh-title";
+  h.textContent = rep.title;
+  body.append(h);
+  if (rep.subtitle) {
+    const sub = document.createElement("p");
+    sub.className = "uh-sub";
+    sub.textContent = rep.subtitle;
+    body.append(sub);
+  }
+
+  if (rep.search) body.append(uhSearchBox(st));
+
+  (rep.sections || []).forEach((sec, si) => {
+    const key = here.kind + ":" + here.id + ":" + si;
+    if (uhOpenSecs[key] === undefined) uhOpenSecs[key] = !!sec.open;
+    const wrap = document.createElement("div");
+    wrap.className = "uh-sec" + (uhOpenSecs[key] ? " open" : "");
+    const head = document.createElement("button");
+    head.className = "uh-sech";
+    head.type = "button";
+    const caret = document.createElement("span");
+    caret.className = "uh-caret";
+    caret.textContent = "›";
+    const nm = document.createElement("span");
+    nm.textContent = sec.name;
+    head.append(caret, nm);
+    head.onclick = () => { uhOpenSecs[key] = !uhOpenSecs[key]; uhRender(); };
+    wrap.append(head);
+    if (uhOpenSecs[key]) {
+      const b = document.createElement("div");
+      b.className = "uh-secb";
+      (sec.rows || []).forEach(r => b.append(uhRow(r, st)));
+      wrap.append(b);
+    }
+    body.append(wrap);
+  });
+
+  foot.innerHTML = "";
+  const copy = document.createElement("button");
+  copy.className = "btn secondary";
+  copy.textContent = "Copy";
+  copy.onclick = () => {
+    const said = document.getElementById("uhSaid");
+    try {
+      navigator.clipboard.writeText(uhText(rep));
+      if (said) said.textContent = "Copied.";
+    } catch (e) { if (said) said.textContent = "Could not copy."; }
+  };
+  const said = document.createElement("span");
+  said.className = "note";
+  said.id = "uhSaid";
+  foot.append(copy, said);
+}
+
+/* The search box is rebuilt on every render like everything else, so the caret position
+   and focus are restored by hand. Without this, typing a second character re-rendered
+   the panel out from under the cursor and the box lost focus after every keystroke. */
+function uhSearchBox(st) {
+  const wrap = document.createElement("div");
+  const box = document.createElement("input");
+  box.className = "uh-search";
+  box.type = "search";
+  box.placeholder = "Find a word — Hebrew, written, or English";
+  box.value = uhQuery;
+  box.oninput = () => {
+    uhQuery = box.value;
+    uhRenderResults(wrap, st);
+  };
+  wrap.append(box);
+  const results = document.createElement("div");
+  results.id = "uhResults";
+  wrap.append(results);
+  uhRenderResults(wrap, st);
+  setTimeout(() => { try { if (uhQuery) { box.focus(); box.setSelectionRange(999, 999); } } catch (e) {} }, 0);
+  return wrap;
+}
+function uhRenderResults(wrap, st) {
+  const results = wrap.querySelector("#uhResults");
+  if (!results) return;
+  results.innerHTML = "";
+  if (!uhQuery.trim()) return;
+  const hits = uhSearch(uhQuery, st);
+  if (!hits.length) {
+    const e = document.createElement("div");
+    e.className = "uh-empty";
+    e.textContent = "No word matches.";
+    results.append(e);
+    return;
+  }
+  hits.forEach(k => {
+    const band = srsStrengthBoth(st.srs || {}, k);
+    results.append(uhRow({ label: k, value: (st.lib[k] && st.lib[k].en) || "",
+                           band: band, to: { kind: "word", id: k } }, st));
+  });
+}
+
+/* A report as plain text, for the clipboard. Deliberately the SAME information the panel
+   shows rather than a richer dump — what he pastes to me should be what he was looking
+   at, or we are debugging two different things. */
+function uhText(rep) {
+  const out = [rep.title];
+  if (rep.subtitle) out.push(rep.subtitle);
+  (rep.sections || []).forEach(sec => {
+    out.push("", "## " + sec.name);
+    (sec.rows || []).forEach(r => {
+      if (r.note !== undefined) out.push(r.note);
+      else if (r.pre !== undefined) out.push(r.pre);
+      else if (r.why) {
+        out.push(r.why.verdict + " — because:");
+        (r.why.because || []).forEach(b =>
+          out.push("  " + (b.pass ? "[x]" : "[ ]") + " " + b.test + " — " + b.actual));
+        if (r.why.next) out.push("  → " + r.why.next);
+        if (r.why.rule) out.push("  (" + r.why.rule + "())");
+      } else out.push(r.label + ": " + r.value);
+    });
+  });
+  return out.join("\n");
+}
 
 function aiModalOpen(on) {
   document.getElementById("aiModal").style.display = on ? "flex" : "none";
@@ -25910,6 +26640,157 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
     lsSet(AI_Q_KEY, q || "");
   }
 });
+/* ---- under the hood ----
+   THE TEST THAT MATTERS IS THAT THE EXPLANATIONS DO NOT LIE. An inspector that
+   confidently explains a rule the app no longer follows is worse than no inspector at
+   all — it sends both of us down a hole carrying evidence. So every explainer is checked
+   against the function it claims to be explaining, using the same record, rather than
+   against a hand-written expectation that could drift alongside it. */
+T("whySrsStrength: the verdict always agrees with srsStrength itself", () => {
+  /* srsBandRecord is the app's own "a record squarely in this band". If a threshold is
+     ever changed in one place and not the other, this is the test that fails. */
+  SRS_BANDS.forEach(band => {
+    const rec = srsBandRecord(band);
+    assertEq(whySrsStrength(rec).verdict, srsStrength(rec),
+      "the explainer and the rule disagree about a " + band + " record");
+  });
+  assertEq(whySrsStrength(null).verdict, "new", "no record at all reads as new");
+  assertEq(whySrsStrength(undefined).verdict, srsStrength(undefined));
+});
+T("whySrsStrength: a failing threshold is named, not merely implied", () => {
+  /* The whole value of the panel is knowing WHICH condition fell short. A verdict with
+     every box ticked, or none, explains nothing. */
+  const prog = { n: 4, miss: 0, stab: 12, diff: 4.1, rn: 6, rmiss: 1, lapses: 0 };
+  const why = whySrsStrength(prog);
+  assertEq(why.verdict, "progressing");
+  assertEq(why.verdict, srsStrength(prog), "and it agrees with the rule");
+  const failed = why.because.filter(b => !b.pass);
+  assertTrue(failed.length > 0, "a progressing word must fail at least one strong test");
+  assertTrue(failed.length < why.because.length, "and pass at least one, or it would be weak");
+  assertTrue(why.because.some(b => /stability/.test(b.test) && !b.pass),
+    "12 days is short of 21 and the panel has to say so");
+  assertTrue(/stability/i.test(why.next), "and the next step names it too");
+});
+T("whySrsStrength: both weak triggers are shown, so he can tell which one fired", () => {
+  /* Difficulty and miss rate call for opposite responses — answer more carefully versus
+     answer more often — so collapsing them into one line would make the panel useless
+     at the exact moment it matters. */
+  const byDiff = { n: 3, miss: 0, stab: 4, diff: 7.2, lapses: 0 };
+  const byRate = { n: 5, miss: 3, stab: 4, diff: 3.0, lapses: 0 };
+  assertEq(whySrsStrength(byDiff).verdict, "weak");
+  assertEq(whySrsStrength(byRate).verdict, "weak");
+  assertEq(whySrsStrength(byDiff).because.filter(b => !b.pass).length, 1,
+    "difficulty alone made this weak, and only that line should be crossed");
+  assertEq(whySrsStrength(byRate).because.filter(b => !b.pass).length, 1,
+    "the miss rate alone made this weak");
+  assertTrue(/difficulty/i.test(whySrsStrength(byDiff).next));
+  assertTrue(/miss rate/i.test(whySrsStrength(byRate).next));
+});
+T("whySrsStrength: the recent window is quoted when there is one, and admitted when not", () => {
+  /* srsRecentRatio falls back to lifetime miss/n for a record with no rn. Reporting that
+     fallback as "recent" would be a quiet lie about which evidence decided the band. */
+  const withWindow = { n: 20, miss: 2, stab: 30, diff: 2, rn: 8, rmiss: 1, lapses: 0 };
+  const noWindow = { n: 4, miss: 0, stab: 30, diff: 2, lapses: 0 };
+  const a = whySrsStrength(withWindow).because.filter(b => /recent/.test(b.test))[0];
+  const b = whySrsStrength(noWindow).because.filter(b => /recent/.test(b.test))[0];
+  assertTrue(/of last 8/.test(a.actual), "the real window is quoted: " + a.actual);
+  assertTrue(/no recent window/.test(b.actual), "and its absence is admitted: " + b.actual);
+});
+T("whySrsStrength: a weak word says its GOOD recent run is not what is being tested", () => {
+  /* Found by a test fixture that accidentally landed here. The weak gate reads lifetime
+     miss rate, deliberately — so a word answered right all week still reads weak, and
+     the panel would otherwise show a wall of lifetime numbers and no hint why the good
+     run does not count. That is exactly the "why is it behaving like this" the whole
+     feature exists to answer. */
+  const rec = { n: 20, miss: 9, stab: 30, diff: 2, rn: 8, rmiss: 0, lapses: 0 };
+  const why = whySrsStrength(rec);
+  assertEq(why.verdict, "weak");
+  assertEq(why.verdict, srsStrength(rec), "and it agrees with the rule");
+  assertTrue(/lifetime rate/.test(why.next), "it names which rate is tested: " + why.next);
+  assertTrue(/of last 8/.test(why.next), "and quotes the recent run being discounted");
+  /* And it stays a fact, not boilerplate: a word whose recent run is no better says
+     nothing about it. */
+  const flat = { n: 5, miss: 3, stab: 4, diff: 3, lapses: 0 };
+  assertTrue(!/lifetime rate/.test(whySrsStrength(flat).next),
+    "no recent window to contrast, so no claim about one");
+});
+T("whyWordReady: agrees with wordReady, on the production side only", () => {
+  SRS_BANDS.forEach(band => {
+    const rec = srsBandRecord(band);
+    const srs = { "בית": { prod: rec, recv: srsBandRecord("new") } };
+    assertEq(whyWordReady(rec).verdict === "ready", wordReady("בית", srs),
+      "the explainer and wordReady disagree about a " + band + " word");
+  });
+});
+T("every rule an explainer names has a description to drill into", () => {
+  /* A "decided by srsStrength()" line that leads nowhere is worse than no line. */
+  [whySrsStrength(srsBandRecord("progressing")), whyWordReady(srsBandRecord("weak"))]
+    .forEach(w => assertTrue(!!UH_RULES[w.rule], "no UH_RULES entry for " + w.rule));
+});
+T("UH.word: reports both sides even when one has never been drilled", () => {
+  /* An absent side is a fact about the word. Hiding it makes "why is this amber"
+     unanswerable, since srsStrengthBoth averages only the sides that exist. */
+  const st = { lib: { "בית": { en: "house", tr: "bayit", added: "2026-01-01", src: "path" } },
+               srs: { "בית": { prod: srsBandRecord("strong") } } };
+  const rep = UH.word("בית", st);
+  assertEq(rep.title, "בית");
+  const names = rep.sections.map(s => s.name);
+  assertTrue(names.some(n => /production/.test(n)), "the say side is reported");
+  assertTrue(names.some(n => /comprehension/.test(n)), "and so is the undrilled hear side");
+  const recv = rep.sections.filter(s => /comprehension/.test(s.name))[0];
+  assertTrue(recv.rows.some(r => r.why && r.why.verdict === "new"),
+    "the undrilled side reads as new rather than being omitted");
+});
+T("UH.word: a word the library has never seen is still inspectable", () => {
+  /* This is precisely the case worth looking at — a word the scheduler cannot see is
+     invisible for a REASON, and the panel has to be able to say so. */
+  const rep = UH.word("מטבח", { lib: {}, srs: {} });
+  const rows = rep.sections[0].rows.filter(r => r.label === "In the library");
+  assertEq(rows.length, 1);
+  assertTrue(/^no/.test(rows[0].value), "it says so plainly: " + rows[0].value);
+});
+T("uhHere: falls back to the root for a subject no inspector is registered for", () => {
+  /* Phase 2 and 3 add subjects by registering them. Until then the router must land
+     somewhere real rather than opening an empty panel. */
+  const saved = UH.card;
+  try {
+    delete UH.card;
+    assertEq(uhHere().kind === "card", false, "an unregistered kind is never chosen");
+    assertTrue(!!UH[uhHere().kind], "whatever it picks, something can render it");
+  } finally { if (saved) UH.card = saved; }
+});
+T("uhSearch: matches Hebrew, transliteration and English alike", () => {
+  const st = { lib: { "בית": { tr: "bayit", en: "house" },
+                      "מכונית": { tr: "mechonit", en: "car" } }, srs: {} };
+  assertEq(uhSearch("בית", st), ["בית"]);
+  assertEq(uhSearch("mechon", st), ["מכונית"]);
+  assertEq(uhSearch("HOUSE", st), ["בית"], "case is not a reason to miss a word");
+  assertEq(uhSearch("", st), [], "an empty box lists nothing rather than everything");
+});
+T("uhText: a copied report carries the thresholds, not just the verdict", () => {
+  /* What he pastes to me has to be what he was looking at. A verdict with no numbers
+     under it is the screenshot problem again, in text. */
+  const txt = uhText(UH.word("בית", { lib: {}, srs: { "בית": { prod: srsBandRecord("progressing") } } }));
+  assertTrue(txt.indexOf("progressing") !== -1, "the verdict is there");
+  assertTrue(/\[[ x]\] stability/.test(txt), "and so is the checklist: " + txt.slice(0, 200));
+  assertTrue(txt.indexOf("srsStrength()") !== -1, "and the rule that decided it");
+});
+T("uhStack: jumping to a crumb truncates to it and nothing deeper", () => {
+  const saved = uhStack.slice();
+  try {
+    uhStack = [{ kind: "root", id: "" }, { kind: "word", id: "בית" },
+               { kind: "rule", id: "srsStrength" }];
+    uhJump(1);
+    assertEq(uhStack.length, 2);
+    assertEq(uhStack[1].kind, "word");
+    uhJump(1);    // already the last crumb: a no-op, not a truncation to nothing
+    assertEq(uhStack.length, 2, "tapping where you already are does nothing");
+    assertTrue(uhBackOne(), "and back still steps out");
+    assertEq(uhStack.length, 1);
+    assertEq(uhBackOne(), false, "the root cannot be stepped out of");
+  } finally { uhStack = saved; }
+});
+
 /* ---- building sentences with a coach ---- */
 T("composeNormalise: an odd reply degrades to a no-op rather than throwing", () => {
   assertNull(composeNormalise(null, []));

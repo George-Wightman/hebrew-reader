@@ -101,9 +101,20 @@ cands.map(it => ({ he: it.he,
 Fix or drop anything that fails, and re-run until clean. `unknown` non-empty is the single
 most common failure and the one that killed the Gemini batches.
 
-Optionally then run `learnReviewItems({items: cands})` — the app's existing reviewer, on
-Gemini. It is a genuine second opinion rather than the same model marking its own work, and
-it is cheap. Recommended, not required.
+`learnReviewItems({items: cands})` — the app's existing Gemini reviewer — would be a
+genuine second opinion rather than the same model marking its own work. **It is not
+available from a fixture browser:** the API keys deliberately never sync (`SYNC_NEVER_SET`
+holds `GEMINI_KEY`), so a browser loaded from `progress.json` has no key and
+`geminiRequest` throws "no key configured". Either skip it, or ask George to run the batch
+past it on his own device. Do not treat its absence as a reason to skip the gates above —
+those are local and mandatory.
+
+Expect the gates to reject some of what you write, and expect most of those to be
+`bankNearDuplicate` against sentences already in his bank rather than mistakes. On the
+first batch (2026-08-31) 50 candidates produced 49 banked items across two passes, and
+almost every rejection was a near-duplicate. Note also that the guards apply **within** a
+batch as it grows, so an item can pass in isolation and be refused once its neighbours are
+in — check against a bank you extend as you go, not a static snapshot.
 
 ### 5. Ship
 

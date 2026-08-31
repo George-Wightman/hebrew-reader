@@ -3222,8 +3222,94 @@ const MERGE_RULES = {
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
   "hvr_struggle":   (a, b) => mergeMaxNums(a, b),
   "hvr_recency":    (a, b) => mergeMaxNums(a, b),
-  "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX)
+  "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX),
+  "hvr_campaign":   (a, b) => mergeCampaign(a, b)
 };
+
+/* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
+
+   2026-08-31, from the sync repo's own history: commit 6500a0c8 (device aejta9) holds four
+   chapters and twelve nodes; commit 4300594b, the first sync ever made by device 6ed3u0,
+   holds two chapters and four — exactly campSeedChapter's output. Library, SRS and bank
+   came through identical, because they have rules. The campaign fell through to
+   mergeObjUnion, whose `chapters` array hit the generic `mineIsNewer ? mine : theirs`, and
+   a device that had been open for five minutes overwrote months of progress.
+
+   This is the same fault mergeFlags exists to prevent, and its comment already says it in
+   full: "Without a MERGE_RULES entry the generic array handling is `mineIsNewer ? mine :
+   theirs`, so one device's flags simply destroy the other's." Flags got a rule; the
+   campaign never did, and it stayed invisible because until that morning every sync in the
+   repo's history came from one device.
+
+   MORE NODES CANNOT LOSE. Chapters merge by `n`, nodes union by id, and a chapter's state
+   only ever moves forward. That is safe in this direction *only because nodes are never
+   removed* — campApplyPlan appends and campSeedChapter writes the first one, and nothing
+   prunes. If node removal is ever added, this has to be revisited. */
+const CHAPTER_STATE_RANK = { fog: 0, next: 1, live: 2, done: 3 };
+/* NOT mergeById, which sorts by id. Node order inside a chapter is meaningful — the seed
+   runs How you are, Who people are, Your day, Asking for things in ascending difficulty,
+   and campLayout draws a constellation in array order. Sorting by id turned that into
+   "Asking for things, Your day, How you are, Who people are" and quietly rearranged the
+   map. Union preserving the first side's order, then append what only the second has. */
+function mergeNodeList(xs, ys) {
+  const a = (xs || []).filter(n => n && n.id), b = (ys || []).filter(n => n && n.id);
+  /* WHICH SIDE'S ORDER SURVIVES cannot depend on which argument was called `a`, or two
+     devices merge to different arrays and rewrite the file on every sync forever — the
+     warning mergeById already carries. The longer list is the base; on a tie, the one
+     whose ids sort first, which is arbitrary but identical on both devices. */
+  const ida = a.map(n => n.id).join(""), idb = b.map(n => n.id).join("");
+  const base = (a.length > b.length || (a.length === b.length && ida <= idb)) ? a : b;
+  const other = base === a ? b : a;
+  const out = [], seen = {};
+  base.concat(other).forEach(n => {
+    if (seen[n.id]) return;
+    seen[n.id] = 1;
+    out.push(n);
+  });
+  return out;
+}
+function mergeChapter(x, y) {
+  const nodes = mergeNodeList(x.nodes, y.nodes);
+  const rank = s => CHAPTER_STATE_RANK[s] === undefined ? -1 : CHAPTER_STATE_RANK[s];
+  /* A fresh device calling a finished chapter "fog" must not un-finish it. */
+  const state = rank(x.state) >= rank(y.state) ? x.state : y.state;
+  /* The side that actually has something wins over the side that has nothing — the whole
+     point, applied to every field and not only to the node list. */
+  const pick = (a, b) => (a && (!a.length || a.length >= (b || []).length)) ? a : (b || a);
+  return Object.assign({}, y, x, {
+    nodes: nodes,
+    state: state,
+    sketch: pick(x.sketch, y.sketch),
+    theme: x.theme || y.theme
+  });
+}
+function mergeCampaign(a, b) {
+  a = a || {}; b = b || {};
+  const byKey = {}, order = [];
+  const add = (ch, i) => {
+    if (!ch || typeof ch !== "object") return;
+    /* Keyed on the chapter NUMBER, not the array index: two devices that seeded in a
+       different order would otherwise merge chapter 1 into chapter 2. */
+    const key = (ch.n === undefined || ch.n === null) ? "i" + i : "n" + ch.n;
+    if (!byKey[key]) { byKey[key] = ch; order.push(key); return; }
+    byKey[key] = mergeChapter(byKey[key], ch);
+  };
+  (Array.isArray(a.chapters) ? a.chapters : []).forEach(add);
+  (Array.isArray(b.chapters) ? b.chapters : []).forEach(add);
+  /* Sorted by chapter number so the output order cannot depend on which side was called
+     `a` — mergeById carries the same warning, and for the same reason: an order that
+     flips between devices rewrites the whole file on every sync, forever. */
+  order.sort((p, q) => {
+    const np = byKey[p].n, nq = byKey[q].n;
+    if (typeof np === "number" && typeof nq === "number") return np - nq;
+    return String(p) < String(q) ? -1 : 1;
+  });
+  const aLog = Array.isArray(a.log) ? a.log : [], bLog = Array.isArray(b.log) ? b.log : [];
+  return Object.assign({}, b, a, {
+    chapters: order.map(k => byKey[k]),
+    log: aLog.length >= bLog.length ? aLog : bLog
+  });
+}
 
 /* Merges one key's PARSED values. Returns the merged value, never a string. */
 function mergeOneKey(key, mine, theirs, mineIsNewer) {
@@ -25749,6 +25835,82 @@ T("composeNextCard: three rounds, and the coach does not get to extend them", ()
   assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
              "COMPOSE_ROUNDS is the authority, not the coach");
 });
+/* ---- a fresh device must not erase the campaign ---- */
+T("mergeCampaign: a seed campaign cannot destroy a populated one", () => {
+  /* THE 2026-08-31 CASE, from the sync repo's own history. A device open for five minutes
+     pushed campSeedChapter's output and took eight nodes with it. */
+  const seed = { v: 1, chapters: [
+    { n: 1, theme: "Getting by", state: "live", nodes: [{ id: "c1-hello" }, { id: "c1-people" }] },
+    { n: 2, theme: "further on", state: "fog", nodes: [], sketch: [{ name: "your week" }] }] };
+  const real = { v: 1, chapters: [
+    { n: 1, theme: "Getting by", state: "done", nodes: [{ id: "c1-hello" }, { id: "c1-people" }] },
+    { n: 2, theme: "More of your life", state: "live",
+      nodes: [{ id: "c2-0" }, { id: "c2-1" }, { id: "c2-2" }, { id: "c2-3" }] },
+    { n: 3, theme: "Looking back", state: "next", nodes: [{ id: "c3-0" }, { id: "c3-1" }] }] };
+  [[seed, real], [real, seed]].forEach(pair => {
+    const out = mergeCampaign(pair[0], pair[1]);
+    const ids = out.chapters.reduce((a, ch) => a.concat((ch.nodes || []).map(n => n.id)), []);
+    assertEq(ids.length, 8, "every node survives, whichever side is newer");
+    assertEq(out.chapters.length, 3);
+    assertEq(out.chapters[1].nodes.length, 4, "the unlocked chapter keeps its four");
+    assertEq(out.chapters[2].nodes.length, 2, "and the one beyond it is not dropped");
+  });
+});
+T("mergeCampaign: a chapter's state only ever moves forward", () => {
+  /* A device that has just seeded calls chapter 1 "live" and chapter 2 "fog". Neither may
+     un-finish work the other has done. */
+  const mk = (n, state, nodes) => ({ v: 1, chapters: [{ n: n, state: state, nodes: nodes || [] }] });
+  assertEq(mergeCampaign(mk(1, "fog"), mk(1, "live")).chapters[0].state, "live");
+  assertEq(mergeCampaign(mk(1, "live"), mk(1, "fog")).chapters[0].state, "live");
+  assertEq(mergeCampaign(mk(1, "next"), mk(1, "done")).chapters[0].state, "done");
+  assertEq(mergeCampaign(mk(1, "done"), mk(1, "next")).chapters[0].state, "done");
+});
+T("mergeCampaign: chapters key on their number, and nodes union", () => {
+  /* Two devices that each learned about a different node of the same chapter must end up
+     with both — the array default would have kept one side's list entire. */
+  const a = { chapters: [{ n: 2, state: "live", nodes: [{ id: "x" }, { id: "y" }] }] };
+  const b = { chapters: [{ n: 2, state: "live", nodes: [{ id: "y" }, { id: "z" }] }] };
+  const ids = mergeCampaign(a, b).chapters[0].nodes.map(n => n.id).sort();
+  assertEq(ids, ["x", "y", "z"]);
+  /* And the order INSIDE a chapter is preserved, not sorted. campLayout draws the
+     constellation in array order and the seed runs in ascending difficulty, so sorting by
+     id silently rearranged the map — which is what mergeById did here before. */
+  const canon = [{ id: "c1-hello" }, { id: "c1-people" }, { id: "c1-day" }, { id: "c1-asking" }];
+  const same = mergeCampaign({ chapters: [{ n: 1, nodes: canon }] },
+                             { chapters: [{ n: 1, nodes: canon.slice() }] });
+  assertEq(same.chapters[0].nodes.map(n => n.id),
+           ["c1-hello", "c1-people", "c1-day", "c1-asking"], "teaching order survives");
+  /* Order must also not depend on which side is `a` when one side has extra nodes. */
+  const long = { chapters: [{ n: 1, nodes: canon.concat([{ id: "c1-extra" }]) }] };
+  const short = { chapters: [{ n: 1, nodes: canon.slice(0, 2) }] };
+  assertEq(mergeCampaign(long, short).chapters[0].nodes.map(n => n.id),
+           mergeCampaign(short, long).chapters[0].nodes.map(n => n.id));
+  /* Keyed on n, not on position: a device whose array happens to be ordered differently
+     must not merge chapter 1 into chapter 2. */
+  const p = { chapters: [{ n: 1, nodes: [{ id: "one" }] }, { n: 2, nodes: [{ id: "two" }] }] };
+  const q = { chapters: [{ n: 2, nodes: [{ id: "two" }] }, { n: 1, nodes: [{ id: "one" }] }] };
+  const out = mergeCampaign(p, q);
+  assertEq(out.chapters.map(c => c.n), [1, 2], "sorted by number, not by argument order");
+  assertEq(out.chapters[0].nodes.map(n => n.id), ["one"]);
+});
+T("mergeCampaign: the output does not depend on which side is called `a`", () => {
+  /* mergeById's standing warning: an order that flips between devices writes a different
+     file on every sync, forever. */
+  const a = { chapters: [{ n: 1, nodes: [{ id: "p" }] }, { n: 3, nodes: [{ id: "r" }] }] };
+  const b = { chapters: [{ n: 2, nodes: [{ id: "q" }] }] };
+  assertEq(mergeCampaign(a, b).chapters.map(c => c.n),
+           mergeCampaign(b, a).chapters.map(c => c.n));
+});
+T("hvr_campaign has a merge rule at all", () => {
+  /* The regression guard for the actual fault: without an entry it silently falls back to
+     the array default and one device destroys the other's. */
+  assertTrue(!!MERGE_RULES["hvr_campaign"], "or a fresh device erases the campaign again");
+  const merged = mergeOneKey("hvr_campaign",
+    { chapters: [{ n: 1, nodes: [{ id: "a" }] }] },
+    { chapters: [{ n: 1, nodes: [{ id: "b" }] }] }, true);
+  assertEq(merged.chapters[0].nodes.length, 2, "and it must actually be reached");
+});
+
 /* ---- content written ahead of time ---- */
 T("contentShouldIngest: only a file newer than the one already read", () => {
   const f = v => ({ version: v, items: [{ he: "x", tr: "x" }] });

@@ -100,6 +100,20 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   if (new URL(req.url).origin !== self.location.origin) return;
 
+  /* PRE-BAKED CONTENT IS NOT THE SHELL, and must not be treated as it. content/nodes.json
+     is written by Claude and pushed; the app reads it once, banks what is new, and never
+     needs it again — so there is nothing to gain by caching it and two things to lose.
+
+     Stale-while-revalidate would serve last week's copy first and only pick up a fresh
+     batch on the LOAD AFTER the one that asked for it, which quietly defeats the version
+     field the whole mechanism turns on. And the change comparison below would see the
+     bytes differ and call announceUpdate(), telling him a new version of the APP is
+     available because some sentences arrived.
+
+     Straight to the network. Offline it simply fails, and contentIngest already treats
+     any failure as a no-op — the bank it is topping up works perfectly well without it. */
+  if (new URL(req.url).pathname.indexOf("/content/") !== -1) return;
+
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const key = cacheKey(req);

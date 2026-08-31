@@ -1345,6 +1345,12 @@
              font-family: inherit; cursor: pointer; }
   .lmapbar:hover { border-color: var(--accent); }
   .lmapbar:active { background: var(--accent-soft); }
+  /* THE APP TALKING, NOT THE WORLD — so sans, muted, no paper and no serif. It is a note
+     about the app's own supplies, in the same register as the sync line, and it appears
+     only while it is true. A permanent "ask Claude" banner would be read once and become
+     wallpaper, which is the rule the voice banner above already learned. */
+  .lthin { font-size: .78rem; color: var(--muted); margin: 8px 0 0; line-height: 1.45; }
+  .lthin b { color: var(--ink); font-weight: 600; }
   .lmapbar b { font-size: .95rem; color: var(--ink); font-family: var(--display); }
   .lmapbar .gold b { color: var(--gold); }
   /* Seven bars, one per day. Deliberately tiny — it answers "have I been showing
@@ -2162,6 +2168,7 @@
              scoreboard makes more sense as the thing you press than as a landmark on
              the road. -->
         <button type="button" class="lmapbar" id="lMapBar" aria-label="Your practice — open full stats"></button>
+        <p class="lthin" id="lContentThin" style="display:none"></p>
         <div class="lbanner" id="lVoiceBanner" style="display:none">
           <div class="lbanner-head">
             <span><b>No Hebrew voice yet</b> — you'll read the pronunciation instead of hearing it.</span>
@@ -6542,6 +6549,12 @@ function SYNC_LOCAL_SET() {
     SESSION_KEY, BLOCK_KEY, ZOOM_KEY, HE_KEY, LIBVIEW_KEY, MAPPOS_KEY, MAPVIEW_KEY,
     COLLAPSE_KEY, VIEW_KEY, PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY, PAD_KEY,
     AUDIO_CONSENT_KEY, "hvr_migrated", "hvr_voicebanner",
+    /* "Have I read that file yet" is a fact about this device, not about him. Syncing it
+       would let one device's marker tell another to skip a file it has never read — and
+       the marker is only an optimisation anyway, since the bank itself syncs and
+       learnIngest deduplicates. Local also sidesteps a counter that could go backwards
+       under the default newer-wins rule. */
+    CONTENT_V_KEY,
     /* A LIVE DIAGNOSTIC FOR THE DEVICE IN YOUR HAND. It shipped syncing, because it is
        hvr_-prefixed and syncKeys is a prefix scan — and under the default array rule the
        laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
@@ -17498,6 +17511,12 @@ function campWarm(node, force) {
   const srs = srsAll(), lib = libAll();
   const weak = campWarmWords(node, srs, lib);
   if (!weak.length) return Promise.resolve(0);
+  /* Ahead of campWarmDecide, and ahead of `force`. force means "do not hand me the answer
+     you already have", which is a statement about caching; this is a statement about
+     whether the work is worth doing at all, and campStartPractise's own force:true path is
+     exactly the wasteful case — a node that already had rescue material, commissioning
+     three more calls behind a session that did not need them. */
+  if (!campWarmNeeded(node, lib, srs)) return Promise.resolve(0);
   const act = campWarmDecide(campWarming[node.id], campWarmed[node.id], force);
   if (act === "share") return campWarming[node.id];
   if (act === "reuse") return campWarmed[node.id];
@@ -19277,6 +19296,11 @@ function learnIngest(data) {
          malformed reply, review skipped for lack of a key) is left unset rather
          than guessed at, and bankLevel reads it as LEVEL_DEFAULT. */
       lvl: bankLevel(it),
+      /* WHO WROTE IT. Empty for everything the commission pipeline produces, "claude"
+         for a pre-baked batch. In a month the honest question is whether pre-baked
+         content actually outperforms the commissioned kind, and that cannot be answered
+         at all if the two are indistinguishable in the bank. */
+      src: it.src ? String(it.src) : "",
       uses: uses, seen: 0, added: todayISO()
     });
     n++;
@@ -19285,6 +19309,125 @@ function learnIngest(data) {
   rebuildTrIndex();
   if (seen) genStatAdd(seen, oov);
   return n;
+}
+
+/* =====================  CONTENT WRITTEN AHEAD OF TIME  =====================
+   Node breadth — the fifteen-to-thirty sentences a node needs across levels — is
+   slow-changing, wants the whole library in context at once, and can be verified before
+   it is ever served. That is a poor fit for three chained calls on the weakest model in
+   the pool under a 5/min limit, and on 2026-08-30 it showed: two commissions in a row
+   banked nothing, "10 written, 10 rejected" and "12 written, 12 rejected", and one write
+   took 137 seconds.
+
+   So it is written ahead of time by Claude, against his real library, and filtered
+   through THIS FILE'S OWN GATES — commissionAcceptable, bankUnknowns, bankNearDuplicate —
+   before it is committed. That verification loop is the actual argument for the change:
+   the rejection rate is zero by construction, where the commission path writes blind and
+   discovers the rejection afterwards.
+
+   What is NOT moved is the rescue writer. A sentence for the word he failed yesterday
+   depends on state that does not exist at generation time, so sentenceCommission stays
+   exactly where it is — and stays the fallback if nobody generates for a fortnight.
+
+   See docs/superpowers/specs/2026-08-31-prebaked-node-content-design.md. */
+const CONTENT_URL = "./content/nodes.json";
+const CONTENT_V_KEY = "hvr_content_v";
+function contentVersion() { return parseInt(lsGet(CONTENT_V_KEY), 10) || 0; }
+
+/* Purely an optimisation, and deliberately not the thing that makes this safe to run
+   twice: learnIngest already refuses an exact `he` match and a near-duplicate, so
+   re-ingesting the same file is harmless. The version only avoids walking a few hundred
+   items past a growing bank on every single page load. */
+function contentShouldIngest(data, seen) {
+  if (!data || !Array.isArray(data.items) || !data.items.length) return false;
+  const v = parseInt(data.version, 10);
+  if (!isFinite(v)) return false;
+  return v > (seen || 0);
+}
+
+/* Additive and failure-tolerant by design. No file, a 404, bad JSON, offline, a service
+   worker serving something stale — every one of those is a no-op. Pre-baked content is a
+   bonus on top of a bank that already works, so nothing here may ever surface an error to
+   someone who just opened the app to do a session. */
+async function contentIngest() {
+  let data = null;
+  try {
+    /* no-store rather than the default: a push lands as a new static file and the point
+       of the version field is lost if the browser serves last week's copy from cache. */
+    const r = await fetchWithTimeout(CONTENT_URL, { cache: "no-store" }, FETCH_TIMEOUT_MS);
+    if (!r || !r.ok) return 0;
+    data = await r.json();
+  } catch (e) { return 0; }
+  if (!contentShouldIngest(data, contentVersion())) return 0;
+  let n = 0;
+  try {
+    n = learnIngest({ items: data.items.map(it => Object.assign({}, it, { src: "claude" })) });
+  } catch (e) { return 0; }
+  /* Stamped even when nothing landed. Everything in the file being a duplicate already is
+     a completely normal outcome — a second device, or a re-read after a cache clear — and
+     re-walking it on every load from then on would be the one cost this flag exists to
+     avoid. */
+  lsSet(CONTENT_V_KEY, String(parseInt(data.version, 10)));
+  if (n) { try { renderLibrary(); learnBadge(); } catch (e) {} }
+  return n;
+}
+
+/* Below this a node cannot fill a session without repeating itself. CAMP_SESSION_CARDS is
+   ten and a few of those are solo word cards, so six servable sentences is roughly "one
+   session with no repeats" — the point at which George starts recognising every card,
+   which is the complaint that produced all of this: "it was basically just the same
+   content for two session in a row". */
+const CONTENT_THIN_ITEMS = 6;
+
+/* How much material a node can actually SERVE — not how much mentions it. An item that
+   fails bankServable is in the bank and unreachable, which from the session's point of
+   view is the same as absent, and counting it would let a node look stocked while
+   handing him the same four cards. */
+function contentNodeStock(node, bank, lib, srs) {
+  const own = {}; ((node && node.words) || []).forEach(k => { own[k] = 1; });
+  const carry = new Set(campWeakWords(node, srs));
+  return bank.filter(it => (it.uses || []).some(u => own[u]) &&
+                           bankServable(it, lib, srs, carry, CAMP_SERVE)).length;
+}
+/* Takes the nodes rather than fetching them, so the thing with the arithmetic in it can
+   be tested without a campaign, a library and an SRS store standing behind it. */
+function contentThinNodes(nodes, bank, lib, srs) {
+  return (nodes || []).filter(n => n && (n.words || []).length &&
+                                   contentNodeStock(n, bank, lib, srs) < CONTENT_THIN_ITEMS)
+                      .map(n => n.name);
+}
+/* Two sessions' worth without repeating. Higher than CONTENT_THIN_ITEMS on purpose: the
+   thin line is "tell him soon" and this is "there is nothing useful left to spend a call
+   on", and a single threshold doing both would either nag early or stand down late. */
+const CONTENT_AMPLE_ITEMS = 12;
+
+/* WHETHER SPENDING THREE CALLS ON THIS NODE WOULD BUY ANYTHING. campWarm fires on every
+   node open — plan, write, review — regardless of how much good material the node already
+   holds, which is most of what George means by "too janky, not smart enoguh and too slow".
+   With content written ahead of time that spend is usually pure waste.
+
+   Two conditions, and both have to be satisfied to stand down. Ample servable stock is
+   the obvious one. The second is the one that matters: a stuck word with nothing written
+   to rescue it still needs a commission even in a well-stocked node, because breadth and
+   rescue are different jobs and a node can be rich in one while starved of the other. */
+function campWarmNeeded(node, lib, srs, bank) {
+  const b = bank || bankPrune(bankAll(), lib);
+  if (contentNodeStock(node, b, lib, srs) < CONTENT_AMPLE_ITEMS) return true;
+  const weak = campWeakWords(node, srs);
+  if (!weak.length) return false;
+  const carry = new Set(weak);
+  const covered = {};
+  b.forEach(it => { const k = bankCarried(it, lib, srs, carry); if (k) covered[k] = 1; });
+  return weak.some(k => !covered[k]);
+}
+
+function contentThinNow() {
+  try {
+    const c = campAll(), lib = libAll(), srs = srsAll();
+    const ch = campLiveChapter(c, srs);
+    if (!ch) return [];
+    return contentThinNodes(ch.nodes || [], bankPrune(bankAll(), lib), lib, srs);
+  } catch (e) { return []; }
 }
 
 /* ---- the page -------------------------------------------------------------- */
@@ -19794,6 +19937,30 @@ function learnStatsOpen(on) {
   if (on) { learnRenderStats(); pane.scrollTop = 0; }
 }
 
+/* "Time to go to Claude, the plans are laid out" — George's own words for what this
+   should say. Names the nodes rather than announcing a state, because "Going places and
+   How it was are running short" is a fact he can act on and "content is low" is a nag. */
+function learnRenderThin() {
+  const el = document.getElementById("lContentThin");
+  if (!el) return;
+  const thin = contentThinNow();
+  if (!thin.length) { el.style.display = "none"; el.textContent = ""; return; }
+  el.style.display = "";
+  el.innerHTML = "";
+  el.append(document.createTextNode("Running short of practice for "));
+  const shown = thin.slice(0, 3), rest = thin.length - shown.length;
+  shown.forEach((name, i) => {
+    /* "and" only before the genuinely last thing said. With an overflow the tail is
+       "and 2 more", so the names before it are a plain comma list — otherwise it reads
+       "A, B and C and 2 more". */
+    if (i) el.append(document.createTextNode(
+      (!rest && i === shown.length - 1) ? " and " : ", "));
+    const b = document.createElement("b"); b.textContent = name; el.append(b);
+  });
+  if (rest) el.append(document.createTextNode(" and " + rest + " more"));
+  el.append(document.createTextNode(". Next time you're at a computer, ask Claude to write some."));
+}
+
 function learnRenderStart() {
   learnShow("lStart");
   const lib = libAll();
@@ -19804,6 +19971,7 @@ function learnRenderStart() {
   chips.innerHTML = "";
 
   learnRenderMapBar();
+  learnRenderThin();
 
   if (n < 10) {
     document.getElementById("lStartTitle").textContent = "Not enough words yet";
@@ -22659,6 +22827,11 @@ syncPaint();
 /* On open, but never in the way: deferred so first paint is never waiting on a
    network call, and quiet so a plane-mode launch says nothing. */
 setTimeout(() => syncRun("open", { quiet: true }), 1200);
+/* After the sync, not before: the sync merges the bank, and ingesting into a bank that is
+   about to be replaced by a merge would do the near-duplicate work twice and could bank
+   something the other device already had. Late enough to be off the opening critical
+   path either way — nothing on screen is waiting for it. */
+setTimeout(() => { Promise.resolve(contentIngest()).catch(() => {}); }, 2600);
 syncPadOffset();
 
 /* Automatic top-up: only once enough words have piled up to be worth a call, and
@@ -25576,6 +25749,100 @@ T("composeNextCard: three rounds, and the coach does not get to extend them", ()
   assertNull(composeNextCard(composeCard(pool, ["בית"], null, COMPOSE_ROUNDS - 1, 2), keen, {}, 3),
              "COMPOSE_ROUNDS is the authority, not the coach");
 });
+/* ---- content written ahead of time ---- */
+T("contentShouldIngest: only a file newer than the one already read", () => {
+  const f = v => ({ version: v, items: [{ he: "x", tr: "x" }] });
+  assertTrue(contentShouldIngest(f(2), 1), "a newer version is read");
+  assertTrue(!contentShouldIngest(f(1), 1), "the same one is not read twice");
+  assertTrue(!contentShouldIngest(f(1), 3), "and neither is an older one");
+  assertTrue(contentShouldIngest(f(1), 0), "nothing read yet means read it");
+  /* Every shape a static asset can arrive in when something has gone wrong. None of
+     these may throw: the file is a bonus on top of a bank that already works, and an
+     error here would surface to someone who just opened the app to do a session. */
+  assertTrue(!contentShouldIngest(null, 0));
+  assertTrue(!contentShouldIngest({}, 0));
+  assertTrue(!contentShouldIngest({ version: 1 }, 0), "no items");
+  assertTrue(!contentShouldIngest({ version: 1, items: [] }, 0), "empty items");
+  assertTrue(!contentShouldIngest({ items: [{ he: "x" }] }, 0), "no version");
+  assertTrue(!contentShouldIngest({ version: "soon", items: [{ he: "x" }] }, 0));
+});
+T("learnIngest: provenance survives into the bank", () => {
+  /* Without this there is no way in a month to ask whether pre-baked content actually
+     outperforms the commissioned kind — the two would be indistinguishable. */
+  const realBank = lsGet(BANK_KEY);
+  try {
+    const lib = libAll();
+    const ks = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
+    lsSet(BANK_KEY, JSON.stringify([]));
+    learnIngest({ items: [{ he: ks[0] + " " + ks[1], tr: "a b", en: "c",
+                            type: "sentence", lvl: 3, src: "claude" }] });
+    assertEq(bankAll()[0].src, "claude");
+    lsSet(BANK_KEY, JSON.stringify([]));
+    learnIngest({ items: [{ he: ks[0] + " " + ks[1], tr: "a b", en: "c", type: "sentence" }] });
+    assertEq(bankAll()[0].src, "", "the commission path stays unmarked");
+  } finally {
+    if (realBank == null) localStorage.removeItem(BANK_KEY); else lsSet(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
+});
+T("contentThinNodes: counts what a node can SERVE, not what mentions it", () => {
+  const lib = { "בית": { tr: "bayit", en: "house" }, "גדול": { tr: "gadol", en: "big" },
+                "זר": { tr: "zar", en: "stranger" } };
+  const strong = { prod: { n: 9, stab: 30, diff: 2, miss: 0, streak: 9 },
+                   recv: { n: 9, stab: 30, diff: 2, miss: 0, streak: 9 } };
+  const srs = { "בית": strong, "גדול": strong };      // זר deliberately unknown
+  const node = { name: "Home", words: ["בית"] };
+  const servable = n => ({ id: "s" + n, type: "sentence", he: "הבית גדול " + n,
+                           tr: "habayit gadol", uses: ["בית", "גדול"], lvl: 2 });
+  /* Mentions the node's word but cannot be served — it carries a word he has never met,
+     which is the case that let a node look stocked while repeating four cards. */
+  const blocked = n => ({ id: "b" + n, type: "sentence", he: "הזר בבית " + n,
+                          tr: "hazar babayit", uses: ["בית", "זר"], lvl: 2 });
+  const many = [];
+  for (let i = 0; i < CONTENT_THIN_ITEMS; i++) many.push(servable(i));
+  assertEq(contentThinNodes([node], many, lib, srs), [], "enough servable is not thin");
+  assertEq(contentThinNodes([node], many.slice(1), lib, srs), ["Home"], "one short is thin");
+  const padded = many.slice(1).concat([blocked(1), blocked(2), blocked(3)]);
+  assertEq(contentThinNodes([node], padded, lib, srs), ["Home"],
+           "unservable items must not make a starved node look stocked");
+  assertEq(contentThinNodes([{ name: "empty", words: [] }], many, lib, srs), [],
+           "a node with no words of its own is not short of anything");
+});
+T("campWarmNeeded: stands down on a stocked node, never on an unrescued weak word", () => {
+  /* campWarm fires three calls on every node open. With content written ahead of time
+     that is usually pure waste — but breadth and rescue are different jobs, so a node
+     can be rich in one and starved of the other. */
+  const lib = { "בית": { tr: "bayit", en: "house" }, "גדול": { tr: "gadol", en: "big" },
+                "מיטה": { tr: "mita", en: "bed" } };
+  const strong = { prod: { n: 9, stab: 30, diff: 2, miss: 0, streak: 9 },
+                   recv: { n: 9, stab: 30, diff: 2, miss: 0, streak: 9 } };
+  const weakRec = { prod: { n: 6, stab: 1, diff: 7.5, miss: 3, streak: 0 },
+                    recv: { n: 6, stab: 8, diff: 2, miss: 0, streak: 6 } };
+  const stock = [];
+  for (let i = 0; i < CONTENT_AMPLE_ITEMS; i++)
+    stock.push({ id: "s" + i, type: "sentence", he: "הבית גדול " + i, tr: "x",
+                 uses: ["בית", "גדול"], lvl: 2 });
+  const easy = { name: "Home", words: ["בית"] };
+  assertTrue(!campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, stock),
+             "a stocked node with nothing stuck does not need three more calls");
+  assertTrue(campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, stock.slice(2)),
+             "below ample it still commissions");
+  /* Stuck word, plenty of breadth, nothing written to rescue it: must still commission. */
+  const stuck = { name: "Home", words: ["בית", "מיטה"] };
+  const srsStuck = { "בית": strong, "גדול": strong, "מיטה": weakRec };
+  assertTrue(campWarmNeeded(stuck, lib, srsStuck, stock),
+             "breadth is not rescue — a stuck word with nothing written still needs one");
+  const withRescue = stock.concat([{ id: "r", type: "sentence", he: "המיטה גדולה", tr: "x",
+                                     uses: ["מיטה", "גדול"], lvl: 2 }]);
+  assertTrue(!campWarmNeeded(stuck, lib, srsStuck, withRescue),
+             "once the stuck word has a production sentence, it stands down");
+  /* And the rescue has to be production — the same rule bankCarried now enforces. */
+  const listenOnly = stock.concat([{ id: "l", type: "listen", he: "המיטה גדולה", tr: "x",
+                                     uses: ["מיטה", "גדול"], lvl: 2 }]);
+  assertTrue(campWarmNeeded(stuck, lib, srsStuck, listenOnly),
+             "a listen card does not count as having rescued a production-weak word");
+});
+
 /* ---- a rescue has to be answerable on the side that is failing ---- */
 T("bankCarried: a listen item cannot rescue a production-weak word", () => {
   /* THE LOOP THIS BREAKS, from real data on 2026-08-30. חבר was picked as node debt

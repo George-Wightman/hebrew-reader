@@ -62,6 +62,28 @@ campNodes(campAll()).map(n => ({ name: n.name, words: n.words, carry: n.carry,
 Target the thin ones. `CONTENT_AMPLE_ITEMS` (12) is roughly "two sessions without
 repeats" — aim past it.
 
+**Write down every live node's stock before you start, and check it again at the end.**
+The first batch (2026-08-31) shipped fifty sentences described as covering "the four live
+nodes" and gave **zero** to Family & home — the node he was actually sitting in that
+afternoon. Every item passed `bankUnknowns`, `bankUses`, `bankNearDuplicate` and
+`bankServable`, because all four are per-item and **nothing asked whether each node came
+out above the floor.** He got a session of ten bare word cards and flagged it.
+
+So the acceptance test for a batch is per node, not per item:
+
+```js
+campNodes(campAll()).filter(n => (n.words||[]).length).map(n =>
+  n.name + ": " + contentNodeStock(n, bankPrune(bankAll(), libAll()), libAll(), srsAll()))
+```
+
+No live node may finish below `CONTENT_AMPLE_ITEMS`. If one is short, the batch is not
+ready, however good the sentences in it are.
+
+Note that `contentNodeStock` counts only what a node session can actually serve — it
+excludes `reply` items, which `campBuild` refuses. Until 2026-08-31 it counted them, which
+is why Family & home read 13 against an ample line of 12 and was never topped up while
+holding six usable sentences.
+
 ### 3. Write the sentences
 
 For each node, 15–30 items spread across levels, using `LEVEL_RUBRIC` (in the file) as the
@@ -130,6 +152,16 @@ in — check against a bank you extend as you go, not a static snapshot.
 ## Common mistakes
 
 - **Shipping without running the gates.** The entire advantage over the Gemini path.
+- **Checking only per item, never per node.** Fifty good sentences that all land on two
+  nodes leave a third starved, and every per-item gate will pass while that happens.
+- **Writing "the NOUN is ADJECTIVE" sentences.** They exhaust fast: on the second batch
+  eleven of seventeen rejections were near-duplicates of that one shape already in his
+  bank. Vary the structure — verbs with objects, questions, two clauses, past tense.
+- **Trusting an inflected form is in his library.** `גדולה` and `נעימה` are not, while
+  `קטנה` and `חדשה` are. Multi-word entries (`בדרך כלל`) fail inline because
+  `bankUnknowns` splits on spaces. Only the gates settle it.
+- **Using a word against its gloss.** `ישן` is in his library as "old"; a sentence using
+  it as "sleeps" passes every gate and teaches him the wrong word.
 - **Not incrementing `version`.** The app silently ignores the file.
 - **Putting his synced data in the repo.** It is public. Scratchpad only.
 - **Leaving the `fixture` entry in `.claude/launch.json`.** Revert it.

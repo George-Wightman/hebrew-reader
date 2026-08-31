@@ -1482,6 +1482,16 @@
   #lEnd { background: linear-gradient(150deg, #f8f3e9, #f2ece0 48%, #eae1d0);
           margin: -20px -18px -40px; padding: 26px 18px 48px; min-height: 70vh; }
   #lEnd .lend { max-width: 620px; margin: 0 auto; }
+  /* The coach's voice, so the world's serif rather than the interface sans — this is a
+     person talking to him, not the app reporting. Left-aligned prose at reading size. */
+  .lcoach { font-family: var(--display); font-size: 1.02rem; line-height: 1.55;
+            color: var(--ink); text-align: left; margin: 18px 0 4px;
+            padding-left: 12px; border-left: 2px solid var(--gold-soft); }
+  /* Gold, and only for this: finishing a node's words is "you did this". */
+  .lfacts { text-align: left; margin: 16px 0 2px; font-size: .88rem; line-height: 1.5;
+            background: var(--gold-soft); border-radius: 8px; padding: 10px 12px; }
+  .lfacts b { color: #8a6520; }
+  .lfacts span { color: #7d6a4a; }
   .lwhead { font-size: .68rem; letter-spacing: .13em; text-transform: uppercase;
             color: #a49b88; margin: 22px 0 8px; text-align: left; }
   .lwrow { display: flex; align-items: center; gap: 12px; padding: 7px 0;
@@ -2398,6 +2408,12 @@
     <div class="lend">
       <div class="lbig" id="lEndScore"></div>
       <p class="lsub" id="lEndSub"></p>
+      <!-- The coach saying, in plain language, what the bars below are showing. Fills in
+           when it arrives and stays absent if it never does — the screen underneath is
+           already complete without it. -->
+      <div id="lEndCoach" class="lcoach" style="display:none"></div>
+      <!-- The node unlock. Computed locally and never dependent on the call above. -->
+      <div id="lEndFacts" class="lfacts" style="display:none"></div>
       <!-- What the session moved, word by word. The stats room next door already covers
            minutes and cards; this is the half it cannot say. -->
       <div id="lEndWords"></div>
@@ -23877,6 +23893,56 @@ function learnReport(s, srs) {
            held: rows.filter(r => Math.abs(r.shift) <= 0.001) };
 }
 
+/* ---- what this session actually did, in facts rather than bars --------------------
+   The bars report movement per word. They cannot report the two things that mattered
+   most in the session that produced this: that a word CROSSED a band, and that the
+   crossing opened the node's conversation. Both were true on 2026-08-31 and the end
+   screen said neither — the gate flip arrived as " · 5 of 5 words yours" appended to a
+   subtitle, phrased identically whether it had just happened or had been true for days.
+
+   Computed locally and completely. This is also the only thing the coach is ever shown,
+   so it has to be the whole truth about the session and it has to be right: the model
+   phrases these, it never infers them. Same discipline as campEvidence — hand over the
+   evidence, not the store. */
+function learnFacts(s, srs, rep, camp) {
+  const r = rep || learnReport(s, srs);
+  const rank = b => SRS_BANDS.indexOf(b);
+  const crossed = [], slipped = [], frozen = [];
+  r.moved.concat(r.held).forEach(row => {
+    if (!row.bandWas) return;               // stashed by a build with no band snapshot
+    ["prod", "recv"].forEach(side => {
+      const from = row.bandWas[side], to = row.band[side];
+      if (!from || !to || from === to) return;
+      /* A side he has never been tested on climbing out of "new" is not an achievement,
+         it is the first measurement. Reporting it as a crossing would make every new
+         word in every session look like a win. */
+      if (from === "new" && side === "recv" && !row.knowWas) return;
+      (rank(to) > rank(from) ? crossed : slipped)
+        .push({ key: row.key, tr: row.tr, side: side, from: from, to: to });
+    });
+    /* Better today, but the interval is pinned until a night has passed — the honest
+       answer to "I got them all correct, why didn't it move". Per word, not per answer:
+       what he is looking at is a row, and the row is what failed to move. */
+    if (row.kshift > 0.001 && Math.abs(row.rshift) <= 0.001) frozen.push(row.tr);
+  });
+  /* Did THIS session open the node? Being ready is not news; becoming ready is. */
+  let gate = null;
+  try {
+    const node = s.path && campNode(s.path.id, camp);
+    if (node && campNodeWordsReady(node, srs)) {
+      const wasShort = (node.words || []).some(k => {
+        const row = r.moved.concat(r.held).filter(x => x.key === k)[0];
+        return row && row.bandWas && !(row.bandWas.prod === "progressing" ||
+                                       row.bandWas.prod === "strong");
+      });
+      if (wasShort) gate = { name: node.name, need: (node.words || []).length,
+                             graduated: campConvoPassed(node.id) };
+    }
+  } catch (e) {}
+  return { crossed: crossed, slipped: slipped, frozen: frozen, gate: gate,
+           held: r.held.map(x => x.tr) };
+}
+
 /* Two bars a word: what you can SAY, and what you UNDERSTAND. Filled by srsReach, so a
    full bar always means strong, and coloured by the band it is actually in — reusing
    the tier colours the reading cards already use rather than inventing a second colour
@@ -23940,6 +24006,96 @@ function learnWordRow(r) {
   row.append(bars);
   return row;
 }
+/* ---- the coach saying it out loud ----------------------------------------------
+   George: "what I would like most is to jsut be otld whats happening. Like let me know
+   what nad where in plain language ... This is 'the coach' talking to me, personalised
+   for every sessions progress."
+
+   The SAME coach as composePrompt, deliberately — one voice in this app, not a second
+   one wearing the same name. And it is handed learnFacts and nothing else: no store, no
+   library, no schedule. It cannot overstate a session because it has never seen anything
+   it could overstate; every number it can say is one the app already computed and is
+   already drawing underneath. That is the whole reason this is safe to generate.
+
+   Split out so what it claims can be tested without spending a call, the same way
+   sentencePlanPrompt was. */
+function learnCoachPrompt(f, level) {
+  const bit = (head, lines) => lines.length ? head + "\n  " + lines.join("\n  ") + "\n\n" : "";
+  return "You are a warm, brisk Hebrew coach sitting next to an English speaker who is " +
+    "learning conversational Hebrew to talk with his partner's grandfather. He has just " +
+    "finished a practice session.\n\n" +
+    (level ? "HIS LEVEL IS " + level + " OF 5.\n\n" : "") +
+    "THESE ARE THE ONLY FACTS YOU HAVE. Every one was measured by the app. Do not invent " +
+    "any others, do not guess at effort or mood, and do not describe anything not listed " +
+    "here.\n\n" +
+    bit("WORDS THAT CROSSED INTO A STRONGER BAND:",
+        f.crossed.map(c => c.tr + " " + c.from + " -> " + c.to +
+                           " (" + (c.side === "prod" ? "saying it" : "understanding it") + ")")) +
+    bit("WORDS THAT SLIPPED BACK:",
+        f.slipped.map(c => c.tr + " " + c.from + " -> " + c.to)) +
+    (f.gate ? "HE HAS JUST FINISHED THE VOCABULARY FOR A PLACE ON THE MAP:\n  \"" +
+       f.gate.name + "\" — all " + f.gate.need + " of its words are now his, which OPENS " +
+       "the conversation for it" + (f.gate.graduated ? " again" : " for the first time") +
+       ". This is the biggest thing that happened and he does not know it yet.\n\n" : "") +
+    bit("BETTER TODAY, BUT DUE AT THE SAME TIME AS BEFORE:", f.frozen.length ? [
+        f.frozen.join(", "),
+        "(He practised these again the same day. The app only lengthens the gap between " +
+        "reviews once a night has passed, so they are genuinely better known but will " +
+        "come round just as soon. This is correct, not a fault — say so plainly if you " +
+        "mention it, because he has asked about exactly this.)"] : []) +
+    bit("UNCHANGED:", f.held.length ? [f.held.join(", ")] : []) +
+    "Write two or three short sentences to him, second person, no heading and no list. " +
+    "Lead with the biggest real thing. If nothing much moved, say that honestly and " +
+    "briefly rather than dressing it up — he would rather be told straight. Never " +
+    "congratulate him for something not in the facts above.";
+}
+/* Never a gate: the facts and the bars are already on screen when this is asked for, and
+   a failure leaves them exactly as they are. No spinner and no error line either — a
+   sentence that did not arrive is not a fault he needs to action, and the screen does not
+   look broken without it. */
+async function learnCoachNote(f) {
+  const box = document.getElementById("lEndCoach");
+  if (!box) return null;
+  box.style.display = "none";
+  box.textContent = "";
+  if (!f || (!f.crossed.length && !f.slipped.length && !f.gate && !f.frozen.length)) return null;
+  if (!geminiKeys().length) return null;
+  try {
+    const out = await geminiRequest([{ text: learnCoachPrompt(f, levelSettle(levelAll())) }],
+                                    GEMINI_MODELS_FAST,
+                                    { label: "What that session did", timeoutMs: FETCH_TIMEOUT_MS });
+    const txt = String(out || "").trim();
+    if (!txt) return null;
+    box.textContent = txt;
+    box.style.display = "";
+    return txt;
+  } catch (e) { return null; }
+}
+
+/* The unlock, and ONLY the unlock. The crossings and the frozen intervals are already
+   said twice over — by bars that can now move and by the coach note above — and a third
+   copy would be the "four weak signals" the style guide warns about. This one is here
+   because it is the only fact on the screen that neither of those can be relied on to
+   deliver: the bars cannot express it at all, and the coach note may never arrive.
+
+   Gold, because the map reserves gold for "you did this" and finishing a node's words is
+   exactly that. */
+function learnRenderFacts(f) {
+  const box = document.getElementById("lEndFacts");
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "none";
+  if (!f || !f.gate) return;
+  const b = document.createElement("b");
+  b.textContent = "All " + f.gate.need + " words of " + f.gate.name + " are yours.";
+  const s = document.createElement("span");
+  s.textContent = f.gate.graduated
+    ? " Its conversation is open again whenever you want it."
+    : " That opens its conversation — the graduation for this one.";
+  box.append(b, s);
+  box.style.display = "";
+}
+
 function learnRenderReport(rep) {
   const box = document.getElementById("lEndWords");
   if (!box) return;
@@ -24271,7 +24427,17 @@ function learnFinish() {
     }
   }
   document.getElementById("lEndSub").textContent = sub;
-  try { learnRenderReport(learnReport(s, srsAll())); } catch (e) {}
+  /* One read of the store for all three, so the bars, the unlock and the coach are
+     describing the same instant rather than three slightly different ones. The note is
+     deliberately not awaited: the screen is finished without it. */
+  try {
+    const srsNow = srsAll();
+    const rep = learnReport(s, srsNow);
+    learnRenderReport(rep);
+    const facts = learnFacts(s, srsNow, rep);
+    learnRenderFacts(facts);
+    learnCoachNote(facts);
+  } catch (e) {}
   lastFinishedPath = s.path || null;
   learnSession = null;
   learnShow("lEnd");
@@ -29429,6 +29595,90 @@ T("learnReport: a session stashed before the ghost existed reports no knowledge,
              "absent, not 0 — 0 would claim he knew none of it when the session began");
     assertEq(row.kshift, 0, "and it contributes nothing to the movement it cannot describe");
   } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
+});
+
+/* ---- the facts a session produced ----
+   The gate flip is the one the end screen swallowed: it arrived as " · 5 of 5 words
+   yours" appended to a subtitle, worded the same whether it had just happened or had
+   been true for a week. */
+const FACTS_LIB = { "חדר": { tr: "chadar", en: "room" }, "מיטה": { tr: "mita", en: "bed" } };
+const FACTS_CAMP = { v: 1, chapters: [{ n: 2, theme: "t", nodes: [
+  { id: "n1", name: "Family & home", words: ["חדר", "מיטה"], carry: [], needs: [] }] }] };
+function factsRun(srs, moved, path) {
+  const before = libAll();
+  try {
+    lsSet(LIB_KEY, JSON.stringify(FACTS_LIB));
+    return learnFacts({ moved: moved, path: path || null }, srs, null, FACTS_CAMP);
+  } finally { lsSet(LIB_KEY, JSON.stringify(before)); }
+}
+const FACTS_WEAK = { n: 7, stab: 1, diff: 6.7 };          // weak, and same-day frozen
+const FACTS_OK   = { n: 10, stab: 1, diff: 5.8 };         // progressing, stability unmoved
+T("learnFacts: a band crossing is named, with the side it happened on", () => {
+  const srs = { "חדר": { prod: FACTS_OK, recv: srsBlank() },
+                "מיטה": { prod: FACTS_OK, recv: srsBlank() } };
+  const moved = {};
+  ["חדר", "מיטה"].forEach(k => { moved[k] = {
+    prod: srsReach(FACTS_WEAK), recv: 0, kprod: srsKnown(FACTS_WEAK), krecv: 0,
+    bprod: "weak", brecv: "new" }; });
+  const f = factsRun(srs, moved);
+  assertEq(f.crossed.length, 2, "both crossed weak -> progressing");
+  assertEq(f.crossed[0].from, "weak");
+  assertEq(f.crossed[0].to, "progressing");
+  assertEq(f.crossed[0].side, "prod", "he can SAY it now — that is the side the node gate reads");
+  assertEq(f.slipped.length, 0);
+  assertTrue(f.frozen.indexOf("chadar") !== -1,
+             "better today and due at the same time: the exact thing he asked about");
+});
+T("learnFacts: the node gate is reported only by the session that opened it", () => {
+  const srs = { "חדר": { prod: FACTS_OK, recv: srsBlank() },
+                "מיטה": { prod: FACTS_OK, recv: srsBlank() } };
+  const opened = {};
+  ["חדר", "מיטה"].forEach(k => { opened[k] = {
+    prod: srsReach(FACTS_WEAK), recv: 0, kprod: srsKnown(FACTS_WEAK), krecv: 0,
+    bprod: "weak", brecv: "new" }; });
+  const f = factsRun(srs, opened, { id: "n1", lesson: 2 });
+  assertTrue(!!f.gate, "the words finished in THIS session, which is the news");
+  assertEq(f.gate.name, "Family & home");
+  assertEq(f.gate.need, 2);
+
+  /* Already his when the session began. Still ready, still not news. */
+  const already = {};
+  ["חדר", "מיטה"].forEach(k => { already[k] = {
+    prod: srsReach(FACTS_OK), recv: 0, kprod: srsKnown(FACTS_OK), krecv: 0,
+    bprod: "progressing", brecv: "new" }; });
+  assertEq(factsRun(srs, already, { id: "n1", lesson: 2 }).gate, null,
+           "being ready is not an event; becoming ready is");
+  assertEq(factsRun(srs, opened, null).gate, null, "and a session outside a node has no gate");
+});
+T("learnFacts: a word that lost ground is reported as slipped, not as crossed", () => {
+  const srs = { "חדר": { prod: FACTS_WEAK, recv: srsBlank() } };
+  const moved = { "חדר": { prod: srsReach(FACTS_OK), recv: 0, kprod: srsKnown(FACTS_OK),
+                           krecv: 0, bprod: "progressing", brecv: "new" } };
+  const f = factsRun(srs, moved);
+  assertEq(f.crossed.length, 0);
+  assertEq(f.slipped.length, 1, "the screen has to be able to deliver bad news too");
+  assertEq(f.slipped[0].to, "weak");
+});
+
+/* The coach is handed these and nothing else, so what the prompt contains IS what it is
+   able to say. Testable without spending a call, the same reason sentencePlanPrompt was
+   split out. */
+T("learnCoachPrompt: carries the crossings and the unlock, and names the unlock as biggest", () => {
+  const p = learnCoachPrompt({
+    crossed: [{ tr: "mita", from: "weak", to: "progressing", side: "prod" }],
+    slipped: [], frozen: ["chadar"], held: ["delet"],
+    gate: { name: "Family & home", need: 5, graduated: false } }, 2);
+  assertTrue(/mita/.test(p) && /weak -> progressing/.test(p), "the crossing is in the prompt");
+  assertTrue(/Family & home/.test(p) && /OPENS/.test(p), "and so is the unlock");
+  assertTrue(/biggest thing/.test(p), "and it is flagged as the lead, not left to be ranked");
+  assertTrue(/only facts/i.test(p), "and it is told these are the only facts it has");
+});
+T("learnCoachPrompt: omits sections it has nothing for, rather than asserting nothing happened", () => {
+  const p = learnCoachPrompt({ crossed: [], slipped: [], frozen: [], held: [], gate: null }, 1);
+  assertTrue(!/CROSSED INTO/.test(p), "an empty crossing list is left out, not sent empty");
+  assertTrue(!/SLIPPED BACK/.test(p));
+  assertTrue(!/UNCHANGED/.test(p));
+  assertTrue(/two or three short sentences/.test(p), "the instruction still stands");
 });
 
 /* ---- the hint ladder ----

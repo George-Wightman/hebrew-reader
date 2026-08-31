@@ -2362,6 +2362,10 @@
       <div id="lStatSpoken"></div>
       <h3 class="lstats-sub">Is the schedule right?</h3>
       <div id="lStatCalib"></div>
+      <!-- The other piece of machinery that judges constantly and was never checked:
+           the second opinion asked for whenever the recogniser drops a word. -->
+      <h3 class="lstats-sub">Is the second opinion worth asking?</h3>
+      <div id="lStatAdj"></div>
     </div>
   </div>
 
@@ -14540,8 +14544,25 @@ function statsSave(v) {
   }
   lsSet(STATS_KEY, JSON.stringify(v));
 }
+/* ---- adj*: is the second opinion earning its call? ----------------------------
+   George, twice: "review how useful having every audio clip reviewed by the API is. I
+   feel the voice recognition on my phone is pretty accurate. Run a test for if that's
+   even been useful."
+
+   It could not be answered. learnAdjudicate fires roughly once per imperfect spoken
+   card and has three ways to be worthless that look identical from outside: it declines
+   (`{"said":[]}`), it errors, or it comes back after he has already committed and the
+   whole result is thrown away. That last one is invisible, and if it is the common case
+   then the call is RIGHT and merely too late — a different fault with a different fix.
+
+   Riding in the existing daily buckets rather than a new store: statsDay already backfills
+   fields added later, statsSave already prunes to 400 days, and hvr_stats already syncs,
+   which hvr_ailog deliberately does not. So this reaches me without a second mechanism.
+
+   asked/won are WORDS; the rest are CALLS. */
 function statsBlank() {
-  return { sec: 0, cards: 0, clean: 0, sessions: 0, spoken: 0, spokenOk: 0, hints: 0 };
+  return { sec: 0, cards: 0, clean: 0, sessions: 0, spoken: 0, spokenOk: 0, hints: 0,
+           adjCalls: 0, adjAsked: 0, adjWon: 0, adjStale: 0, adjErr: 0 };
 }
 function statsDay(st, iso) {
   if (!st[iso]) st[iso] = statsBlank();
@@ -21433,6 +21454,7 @@ function learnRenderStats() {
     sp.append(r);
   }
   learnRenderCalib();
+  learnRenderAdj();
 }
 
 /* The scheduler grading its own homework. Every time it hands over a card it is
@@ -21442,6 +21464,47 @@ function learnRenderStats() {
    Deliberately shown rather than kept internal. It is an honest number about the
    machinery rather than about him, and if it is bad he should be able to see that it
    is bad instead of wondering why the sessions feel wrong. */
+/* ---- what the second opinion actually bought -----------------------------------
+   Totals rather than a chart: the question is "should this call exist at all", and it
+   is answered by four numbers. Pure so it can be tested without a store — the store
+   side is one Object.keys reduce and not the part that can be wrong.
+
+   The stale count is the one worth reading. A call that arrives after he has committed
+   is discarded whatever it said, so a high stale share means the second opinion is
+   losing a race rather than being wrong, and the fix is timing, not deletion. */
+function adjTotals(stats) {
+  const t = { calls: 0, asked: 0, won: 0, stale: 0, err: 0 };
+  Object.keys(stats || {}).forEach(d => {
+    const r = stats[d] || {};
+    t.calls += r.adjCalls || 0; t.asked += r.adjAsked || 0;
+    t.won += r.adjWon || 0; t.stale += r.adjStale || 0; t.err += r.adjErr || 0;
+  });
+  return t;
+}
+const ADJ_MIN_CALLS = 20;
+function learnRenderAdj() {
+  const box = document.getElementById("lStatAdj");
+  if (!box) return;
+  box.innerHTML = "";
+  box.className = "lstatnote";
+  const t = adjTotals(statsAll());
+  if (t.calls < ADJ_MIN_CALLS) {
+    box.textContent = t.calls
+      ? "Only " + t.calls + " check" + (t.calls === 1 ? "" : "s") + " so far. This needs " +
+        "about " + ADJ_MIN_CALLS + " before it means anything."
+      : "When the recogniser drops a word, the app asks the AI whether you probably said " +
+        "it anyway. Nothing recorded yet — this will say whether that was ever worth it.";
+    return;
+  }
+  const pct = n => Math.round(100 * n / t.calls) + "%";
+  box.textContent =
+    t.calls + " checks on " + t.asked + " words. " +
+    t.won + " word" + (t.won === 1 ? "" : "s") + " put back" +
+    (t.stale ? ", " + t.stale + " answers (" + pct(t.stale) + ") arrived after you had " +
+               "moved on" : "") +
+    (t.err ? ", " + t.err + " failed" : "") + ".";
+}
+
 const CALIB_MIN_TOTAL = 25, CALIB_MIN_BAND = 8;
 function learnRenderCalib() {
   const box = document.getElementById("lStatCalib");
@@ -22743,26 +22806,42 @@ async function learnAdjudicate(c, spoken, askedAt) {
   if (!spoken || !geminiKeys().length) return;
   const want = learnAdjudicateWanted(spoken);
   if (!want.length) return;
+  /* Counted at the point the call is actually spent, not at the point it succeeds —
+     the failures are the whole question. */
+  try { statsBump({ adjCalls: 1, adjAsked: want.length }); } catch (e) {}
   let said;
   try {
     const out = extractJSON(await geminiRequest(
       [{ text: learnAdjudicatePrompt(spoken, want) }], GEMINI_MODELS_FAST,
       { label: "Checking your answer" }));
     said = (out && Array.isArray(out.said)) ? out.said : null;
-  } catch (e) { return; }              // a second opinion that never arrives is fine
-  if (!said || !said.length) return;
+  } catch (e) {
+    try { statsBump({ adjErr: 1 }); } catch (e2) {}
+    return;                            // a second opinion that never arrives is fine
+  }
+  if (!said || !said.length) return;   // declined: the call landed and rescued nothing
   /* He has moved on, or answered, or the mic ran again. Any of those makes this stale,
-     and quietly rewriting a card he has already left is worse than saying nothing. */
-  if (!learnSession || learnSession.i !== askedAt || learnSpoken !== spoken) return;
-  let moved = 0;
+     and quietly rewriting a card he has already left is worse than saying nothing.
+
+     Counted, because "it was right and arrived too late" and "it had nothing to say" are
+     different problems and were indistinguishable until now. */
+  if (!learnSession || learnSession.i !== askedAt || learnSpoken !== spoken) {
+    try { statsBump({ adjStale: 1 }); } catch (e) {}
+    return;
+  }
+  let moved = 0, won = 0;
   said.forEach(i => {
     i = Number(i);
     if (want.indexOf(i) === -1) return;              // only what we actually asked about
     spoken.status[i] = "near";
+    won++;
     /* Marks he has already corrected by hand are left alone — only a standing
        "missed" is softened, so this can never undo a deliberate tap. */
     if (learnMarks && learnMarks[i] === 1) { learnMarks[i] = 2; moved++; }
   });
+  /* Words genuinely softened on a card he was still looking at — the only outcome that
+     was ever worth paying for. */
+  if (won) { try { statsBump({ adjWon: won }); } catch (e) {} }
   if (moved && learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
   /* Whole-card grading: recompute the recommendation from the softened statuses and
      redraw the buttons, rather than rebuilding the card under him. */
@@ -26912,6 +26991,90 @@ T("srsCalibration: bands report predicted against actual", () => {
   assertEq(Math.round(b.pred * 100), 92, "what the app claimed");
   assertEq(b.got, 0.75, "what actually happened");
 });
+/* ---- is the second opinion earning its call? ----
+   George asked twice and it could not be answered: learnAdjudicate can decline, error, or
+   come back after he has committed, and all three looked identical from outside. */
+T("adjTotals: sums across days and tolerates buckets written before the fields existed", () => {
+  const t = adjTotals({
+    "2026-08-30": { cards: 9, adjCalls: 3, adjAsked: 5, adjWon: 1, adjStale: 1 },
+    "2026-08-31": { cards: 4, adjCalls: 2, adjAsked: 2, adjErr: 1 },
+    "2026-08-29": { cards: 7 }               // an older day, no adj fields at all
+  });
+  assertEq(t.calls, 5); assertEq(t.asked, 7); assertEq(t.won, 1);
+  assertEq(t.stale, 1); assertEq(t.err, 1);
+  assertEq(adjTotals({}).calls, 0, "no data is not an error");
+  assertEq(adjTotals(null).calls, 0);
+});
+T("statsDay: backfills the adjudication fields so an old bucket cannot poison a sum", () => {
+  const st = { "2026-08-01": { sec: 10, cards: 2 } };
+  const d = statsDay(st, "2026-08-01");
+  assertEq(d.adjCalls, 0, "an undefined here would make every total NaN");
+  assertEq(d.adjStale, 0);
+  assertEq(d.cards, 2, "and what was already there is untouched");
+});
+T("learnAdjudicate: records the call, and tells a stale answer from a declined one", async () => {
+  const realStats = lsGet(STATS_KEY), realReq = geminiRequest, realKeys = geminiKeys;
+  const realSession = learnSession, realSpoken = learnSpoken, realMarks = learnMarks;
+  try {
+    lsSet(STATS_KEY, JSON.stringify({}));
+    geminiKeys = () => ["k"];
+    const spoken = { text: "דלת", expected: ["חדר", "אחד"], status: ["missed", "missed"] };
+    learnMarks = null;
+
+    /* Declined: the call is spent and rescues nothing. */
+    geminiRequest = async () => '{"said":[]}';
+    learnSession = { i: 0 }; learnSpoken = spoken;
+    await learnAdjudicate(null, spoken, 0);
+    let t = adjTotals(statsAll());
+    assertEq(t.calls, 1, "a call that rescued nothing still cost a call");
+    assertEq(t.asked, 2, "and it asked about both missed words");
+    assertEq(t.won, 0); assertEq(t.stale, 0);
+
+    /* Stale: it had something to say and he had already moved on. */
+    const spoken2 = { text: "דלת", expected: ["חדר", "אחד"], status: ["missed", "missed"] };
+    geminiRequest = async () => '{"said":[0]}';
+    learnSession = { i: 5 }; learnSpoken = spoken2;      // askedAt 0 !== 5
+    await learnAdjudicate(null, spoken2, 0);
+    t = adjTotals(statsAll());
+    assertEq(t.stale, 1,
+             "arriving too late is a different fault from having nothing to say");
+    assertEq(t.won, 0, "and nothing was put back, because the result was discarded");
+
+    /* Landed: still his card, and a word goes back. */
+    const spoken3 = { text: "דלת", expected: ["חדר", "אחד"], status: ["missed", "missed"] };
+    geminiRequest = async () => '{"said":[0]}';
+    learnSession = { i: 0 }; learnSpoken = spoken3;
+    await learnAdjudicate(null, spoken3, 0);
+    t = adjTotals(statsAll());
+    assertEq(t.won, 1, "the only outcome that was ever worth paying for");
+    assertEq(spoken3.status[0], "near", "and it softens to nearly, never to got-it");
+
+    /* Errored. */
+    const spoken4 = { text: "דלת", expected: ["חדר"], status: ["missed"] };
+    geminiRequest = async () => { throw new Error("busy"); };
+    learnSession = { i: 0 }; learnSpoken = spoken4;
+    await learnAdjudicate(null, spoken4, 0);
+    assertEq(adjTotals(statsAll()).err, 1);
+    assertEq(adjTotals(statsAll()).calls, 4, "every attempt is counted, not just the wins");
+  } finally {
+    geminiRequest = realReq; geminiKeys = realKeys;
+    learnSession = realSession; learnSpoken = realSpoken; learnMarks = realMarks;
+    if (realStats == null) localStorage.removeItem(STATS_KEY); else lsSet(STATS_KEY, realStats);
+  }
+});
+T("learnAdjudicate: a card with nothing missed never spends a call", async () => {
+  const realStats = lsGet(STATS_KEY), realKeys = geminiKeys;
+  try {
+    lsSet(STATS_KEY, JSON.stringify({}));
+    geminiKeys = () => ["k"];
+    await learnAdjudicate(null, { text: "חדר", expected: ["חדר"], status: ["got"] }, 0);
+    assertEq(adjTotals(statsAll()).calls, 0, "nothing to adjudicate is not a call");
+  } finally {
+    geminiKeys = realKeys;
+    if (realStats == null) localStorage.removeItem(STATS_KEY); else lsSet(STATS_KEY, realStats);
+  }
+});
+
 T("srsCalibration: nothing to score is not an error", () => {
   const cal = srsCalibration([]);
   assertEq(cal.n, 0);

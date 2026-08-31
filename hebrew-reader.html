@@ -19015,11 +19015,11 @@ function campBuild(node, size) {
   });
 
   /* 2. The point of the session: sentences carrying a stuck word. */
-  const carrying = pool.filter(x => x.carry && x.it.type !== "reply");
+  const carrying = pool.filter(x => x.carry && campNodeServes(x.it));
   take(carrying, Math.min(CAMP_CARRY_CARDS, room - cards.length));
 
   /* 3. Consolidation on the node words he already holds. */
-  const holding = pool.filter(x => !x.carry && x.it.type !== "reply");
+  const holding = pool.filter(x => !x.carry && campNodeServes(x.it));
   take(holding, room - cards.length);
 
   /* 4. Still short — a narrow node with a thin bank. Top up with the node's own words
@@ -21110,14 +21110,31 @@ function contentStatusLine() {
    content for two session in a row". */
 const CONTENT_THIN_ITEMS = 6;
 
+/* ONE RULE ABOUT WHAT A NODE SESSION CAN PUT ON A CARD, read by the builder that serves
+   the material and by the counter that decides whether more is needed. They disagreed:
+   campBuild refuses `reply` in both take() steps and keeps replyPick null, while
+   contentNodeStock counted replies as stock — so a node held three items it could never
+   reach and looked better supplied than it was for exactly that many.
+
+   Measured on George's Family & home on 2026-08-31: stock read 13, the builder could
+   serve 10, CONTENT_AMPLE_ITEMS is 12, and campWarmNeeded therefore stood down and never
+   commissioned anything. The session filled the gap with bare word cards — "I was also
+   getting a lot of just the words and not sentences" — and the node stayed starved
+   through a batch of fifty sentences that skipped it.
+
+   Same argument as CAMP_LABEL_HALF: two figures describing one clearance have to be one
+   figure, or they drift and the drift is invisible until it has cost a fortnight. */
+function campNodeServes(it) { return !!it && it.type !== "reply"; }
+
 /* How much material a node can actually SERVE — not how much mentions it. An item that
-   fails bankServable is in the bank and unreachable, which from the session's point of
-   view is the same as absent, and counting it would let a node look stocked while
-   handing him the same four cards. */
+   fails bankServable, or that a node session will not serve at all, is in the bank and
+   unreachable, which from the session's point of view is the same as absent, and counting
+   it would let a node look stocked while handing him the same four cards. */
 function contentNodeStock(node, bank, lib, srs) {
   const own = {}; ((node && node.words) || []).forEach(k => { own[k] = 1; });
   const carry = new Set(campWeakWords(node, srs));
   return bank.filter(it => (it.uses || []).some(u => own[u]) &&
+                           campNodeServes(it) &&
                            bankServable(it, lib, srs, carry, CAMP_SERVE)).length;
 }
 /* Takes the nodes rather than fetching them, so the thing with the arithmetic in it can
@@ -28417,6 +28434,19 @@ T("contentThinNodes: counts what a node can SERVE, not what mentions it", () => 
            "unservable items must not make a starved node look stocked");
   assertEq(contentThinNodes([{ name: "empty", words: [] }], many, lib, srs), [],
            "a node with no words of its own is not short of anything");
+  /* A reply passes bankServable and is still unreachable: campBuild keeps replyPick null
+     and both take() steps refuse the type, so it can never land on a card in a node
+     session. Counting it is counting stock the builder cannot spend — which is exactly
+     what happened to Family & home on 2026-08-31: stock read 13, the builder could serve
+     10, ample is 12, so campWarmNeeded stood down and the node was never topped up. */
+  const reply = n => ({ id: "r" + n, type: "reply", he: "כן, הבית גדול " + n,
+                        tr: "ken habayit gadol", uses: ["בית", "גדול"], lvl: 2 });
+  const withReplies = many.slice(1).concat([reply(1), reply(2), reply(3)]);
+  assertEq(contentThinNodes([node], withReplies, lib, srs), ["Home"],
+           "a reply is servable in general and unservable HERE, so it is not this node's stock");
+  assertTrue(!campNodeServes(reply(1)), "and the rule says so in one place");
+  assertTrue(campNodeServes(servable(1)) && campNodeServes({ type: "listen" }),
+             "sentences and listening material are both genuinely served");
 });
 T("campWarmNeeded: stands down on a stocked node, never on an unrescued weak word", () => {
   /* campWarm fires three calls on every node open. With content written ahead of time

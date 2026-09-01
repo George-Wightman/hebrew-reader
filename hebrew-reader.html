@@ -13967,7 +13967,7 @@ function addDays(iso, n) {
    automatically from comprehension. Sharing one schedule between them would let a
    word drilled by ear push out its production due date and read as finished while
    George still can't say it — which is the exact failure the app exists to avoid. */
-function srsBlank() { return { due: "", last: "", stab: 0, diff: 5, n: 0, miss: 0, lapses: 0, streak: 0 }; }
+function srsBlank() { return { due: "", last: "", lastAt: 0, stab: 0, diff: 5, n: 0, miss: 0, lapses: 0, streak: 0 }; }
 function srsSide(srs, key, side) {
   let r = srs[key];
   if (!r || !r.prod) r = srs[key] = { prod: srsBlank(), recv: srsBlank() };
@@ -14021,8 +14021,39 @@ function srsDaysSince(last, today) {
   if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000));
 }
-function srsR(rec, today) {
-  const t = srsDaysSince(rec && rec.last, today);
+/* The clock, in one place, so a test can simulate days passing and get exactly what it
+   got before this existed. With a `todayOverride` the clock is midnight of that date —
+   so two answers on the same simulated day are the same instant, t = 0, R = 1, which is
+   the old behaviour every existing scheduler test was written against. */
+function srsNowMs(todayOverride) {
+  const t = todayOverride ? Date.parse(todayOverride + "T00:00:00") : NaN;
+  return isNaN(t) ? Date.now() : t;
+}
+/* ---- how long it ACTUALLY was ---------------------------------------------------
+   `last` is a DATE, so srsDaysSince cannot tell twenty minutes from nine hours: both
+   are t = 0, both give R = 1, and srsGain then returns exactly 1 for both. That one
+   unit produced everything George felt — an evening session earning nothing after a
+   morning one, and "the R- or whatever punished me for sitting down and having a go".
+
+   Measured on his log before changing it: at R = 1 the app claimed 100% and he
+   delivered 85% across 172 answers. It was asserting a certainty the clock could not
+   support.
+
+   `lastAt` is a timestamp written alongside `last`. Absent — which is every record on
+   disk today — this falls straight back to whole days and behaves exactly as it did,
+   so nothing already scheduled moves. Same retrofit the original R work used.
+
+   Clamped at 0: a clock that has gone backwards must not hand out negative elapsed
+   time and, through (1 - R), a gain larger than any real interval could earn. */
+function srsElapsedDays(rec, today, nowMs) {
+  if (rec && rec.lastAt) {
+    const now = typeof nowMs === "number" ? nowMs : Date.now();
+    return Math.max(0, (now - rec.lastAt) / 86400000);
+  }
+  return srsDaysSince(rec && rec.last, today);
+}
+function srsR(rec, today, nowMs) {
+  const t = srsElapsedDays(rec, today, nowMs);
   if (t === null) return 0.9;                    // nothing to measure from: read as on time
   return Math.pow(0.9, t / Math.max(0.5, (rec && rec.stab) || 1));
 }
@@ -14052,6 +14083,7 @@ const RECENT_DECAY = 0.85;
 function srsApply(srs, key, grade, side, todayOverride) {
   const r = srsSide(srs, key, side || "prod");
   const today = todayOverride || todayISO();
+  const nowMs = srsNowMs(todayOverride);
 
   /* ---- F3: a first meeting is an introduction, not a failed recall ----------
      There is no "meet the word" card outside the Path, so a word's first ever
@@ -14070,6 +14102,7 @@ function srsApply(srs, key, grade, side, todayOverride) {
     r.stab = grade === 2 ? 2 : 1;
     r.due = addDays(today, r.stab);
     r.last = today;
+    r.lastAt = nowMs;
     r.streak = grade === 2 ? 1 : 0;
     return r;
   }
@@ -14095,7 +14128,13 @@ function srsApply(srs, key, grade, side, todayOverride) {
      treatment. At that point it isn't noise any more. */
   const forgiven = grade === 0 && (r.streak || 0) >= FORGIVE_STREAK;
   /* Measured before anything is written, because every branch below reads it. */
-  const R = srsR(r, today);
+  const R = srsR(r, today, nowMs);
+  /* `t` stays in WHOLE DAYS on purpose, and is a different question from R. R asks how
+     much of the word is still there, and now answers in real elapsed time. `t` asks
+     whether a DAY has turned, which is what the two uses below actually want: a repeat
+     twenty minutes later must not re-fuzz an interval it did not earn, and "nearly" must
+     not shorten one twice in a sitting. Making that sub-day too would rescatter due dates
+     within a session, which is the bug the one-place-writes-due clause exists to stop. */
   const t = srsDaysSince(r.last, today);
   /* A miss at high retrievability is "he should have known that". A miss at low
      retrievability is ordinary forgetting, and charging the WORD for that is how a
@@ -14214,6 +14253,9 @@ function srsApply(srs, key, grade, side, todayOverride) {
     r.due = addDays(today, srsFuzz(Math.max(1, Math.round(r.stab || 1))));
   }
   r.last = today;
+  /* Written every answer, beside `last` and never instead of it: `due` is still a date,
+     and every reader that compares dates keeps comparing dates. */
+  r.lastAt = nowMs;
   return r;
 }
 
@@ -14246,7 +14288,10 @@ function srsLogEntry(key, side, grade, before, extra, todayOverride) {
   if (!before || !before.n) return null;
   const today = todayOverride || todayISO();
   const e = { t: Date.now(), k: String(key || "").slice(0, 24), s: side || "prod", g: grade,
-              r: Math.round(srsR(before, today) * 1000) / 1000,
+              /* The same clock srsApply graded against, or the log would score the
+                 prediction against a different one than the one that made it — which is
+                 the whole reason this entry takes `before` rather than re-reading. */
+              r: Math.round(srsR(before, today, srsNowMs(todayOverride)) * 1000) / 1000,
               st: Math.round((before.stab || 0) * 10) / 10,
               d: Math.round((before.diff || 5) * 10) / 10 };
   if (extra) Object.keys(extra).forEach(x => {
@@ -26085,6 +26130,77 @@ T("srsGain: late is worth more, early is worth less, and the boost is capped", (
   assertTrue(srsGain(0.97, 5) > 1, "but still worth something");
   assertEq(srsGain(0.1, 1), SRS_GAIN_MAX, "a long absence cannot hand a word a year");
 });
+/* ---- the gap it actually had ----
+   `last` is a date, so twenty minutes and nine hours were both t = 0 and both claimed
+   R = 1. Measured on his log first: at R = 1 the app claimed 100% and he delivered 85%
+   across 172 answers. */
+const HOUR_MS = 3600000, T0 = Date.parse("2026-08-20T09:00:00Z");
+T("srsElapsedDays: prefers lastAt, and a record without one is untouched", () => {
+  assertEq(srsElapsedDays({ last: DAY1, stab: 10 }, DAY1), 0,
+           "no lastAt falls straight back to whole days, which is every record on disk");
+  assertEq(srsElapsedDays({ last: "2026-08-10", stab: 10 }, DAY1), 10);
+  const nine = srsElapsedDays({ lastAt: T0, stab: 1 }, DAY1, T0 + 9 * HOUR_MS);
+  assertTrue(Math.abs(nine - 0.375) < 1e-9, "nine hours is 0.375 of a day, not 0: " + nine);
+  assertEq(srsElapsedDays({ lastAt: T0, stab: 1 }, DAY1, T0 - 5 * HOUR_MS), 0,
+           "a clock that went backwards must not hand out a gain no interval could earn");
+});
+T("srsR: a second sitting is not the same instant as a repeat", () => {
+  const at = ms => srsR({ lastAt: T0, stab: 1 }, DAY1, T0 + ms);
+  assertTrue(at(20 * 60000) > 0.998, "twenty minutes later he obviously still has it");
+  assertTrue(Math.abs(at(9 * HOUR_MS) - Math.pow(0.9, 0.375)) < 1e-9,
+             "nine hours later is a real gap and R has to say so");
+  assertTrue(at(9 * HOUR_MS) < at(20 * 60000), "and it falls with time, monotonically");
+  assertTrue(Math.abs(at(24 * HOUR_MS) - 0.9) < 1e-9,
+             "and lands on exactly 0.9 at one day, where the old whole-day version was");
+});
+T("srsApply: a genuine second sitting earns credit; cramming still earns nothing", () => {
+  /* His 2026-08-30: a morning session and an evening one, every evening answer at R = 1
+     and every one worth exactly nothing. "punished me for sitting down and having a go." */
+  const rec = () => ({ n: 5, stab: 1, diff: 5, streak: 2, miss: 1,
+                       last: "2026-08-30", lastAt: T0, due: "2026-08-31" });
+  const run = (gapMs) => {
+    const srs = { w: { prod: rec() } };
+    const before = Object.assign({}, srs.w.prod);
+    const R = srsR(before, "2026-08-30", T0 + gapMs);
+    /* srsApply reads its own clock, so drive srsGain with the R the gap produces --
+       the arithmetic under test is (1 - R), not the wiring. */
+    return { R: R, gain: srsGain(R, before.diff) };
+  };
+  const crammed = run(20 * 60000), evening = run(9 * HOUR_MS), tomorrow = run(24 * HOUR_MS);
+  assertTrue(crammed.gain < 1.05, "twenty minutes later is still the same evidence read twice");
+  assertTrue(evening.gain > 1.35 && evening.gain < 1.6,
+             "nine hours later is real spacing and earns real credit: " + evening.gain);
+  assertTrue(evening.gain > crammed.gain, "and strictly more than cramming did");
+  assertTrue(Math.abs(tomorrow.gain - 2.12) < 1e-9,
+             "and a day later is EXACTLY the old ladder, or every schedule on disk moved");
+});
+T("srsApply: ten crams twenty minutes apart cannot inflate an interval", () => {
+  const srs = { w: { prod: { n: 5, stab: 1, diff: 5, streak: 2, miss: 1,
+                             last: "2026-08-30", lastAt: T0, due: "2026-08-31" } } };
+  let now = T0;
+  for (let i = 0; i < 10; i++) {
+    now += 20 * 60000;
+    const r = srsSide(srs, "w", "prod");
+    r.stab = Math.min(365, r.stab * srsGain(srsR(r, "2026-08-30", now), r.diff));
+    r.lastAt = now;
+  }
+  assertTrue(srsSide(srs, "w", "prod").stab < 1.5,
+             "a session of repeats must not buy days: " + srsSide(srs, "w", "prod").stab);
+});
+T("srsApply: writes lastAt beside last, and a test clock keeps the old behaviour", () => {
+  const srs = {};
+  srsApply(srs, "w", 2, "prod", "2026-08-31");
+  const r = srsSide(srs, "w", "prod");
+  assertEq(r.last, "2026-08-31", "the date is still a date, and due still compares to it");
+  assertEq(r.lastAt, Date.parse("2026-08-31T00:00:00"),
+           "under a date override the clock is that midnight, so simulated days still work");
+  /* Two answers on one simulated day are one instant: R = 1, gain = 1, exactly as before. */
+  const stabAfterFirst = r.stab;
+  srsApply(srs, "w", 2, "prod", "2026-08-31");
+  assertEq(srsSide(srs, "w", "prod").stab, stabAfterFirst,
+           "or every existing scheduler test was silently measuring something else");
+});
+
 T("srsR: 1 the day it is answered, 0.9 the day it falls due", () => {
   assertEq(srsR({ last: DAY1, stab: 10 }, DAY1), 1);
   assertTrue(Math.abs(srsR({ last: "2026-08-10", stab: 10 }, DAY1) - 0.9) < 1e-9,

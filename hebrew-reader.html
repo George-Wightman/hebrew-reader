@@ -78,6 +78,13 @@
     display: inline-block; margin-left: 6px; background: #b3403a; color: #fff;
     font-size: .68rem; font-weight: 700; padding: 1px 6px; border-radius: 9px; vertical-align: 2px;
   }
+  /* Earned and unclaimed. A dot rather than a count — the same shape the home-screen
+     badge shows for the same state — and gold, which in this app means "you did this"
+     and nothing else. */
+  .navbadge.badgereward {
+    background: var(--gold); width: 8px; height: 8px; padding: 0;
+    border-radius: 50%; vertical-align: 3px;
+  }
   .viewboard { max-width: 100%; margin: 0; padding: 20px 18px 40px; }
   .boardhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
   .boardhead .libbar { margin-bottom: 0; }
@@ -21694,13 +21701,70 @@ function learnEnter() {
   if (learnSession) { learnShow("lRun"); return; }   // resume, don't restart
   learnRenderStart();
 }
+/* ---- what the badge is actually for -------------------------------------------
+   George: "I feel I need something that pulls me into the app more."
+
+   Not a streak and not a score — he binned XP himself for diluting the pool, and the
+   style guide reserves gold for "you did this". The thing that would genuinely have
+   pulled him back had already happened and was invisible: finishing Family & home's
+   vocabulary opened a graduation conversation that was written and waiting, and nothing
+   said so. See 2026-08-31-a-session-that-says-what-it-did-design.md.
+
+   So there are two states and they are deliberately different SHAPES, because he asked
+   for both and one number cannot carry both — 3 would mean three rewards on Monday and
+   three due words on Tuesday:
+
+     reward   something earned and unclaimed. Announced, never counted, for the same
+              reason gold is not a quantity anywhere else in this app.
+     due      ordinary work waiting, and the same number the nav has always shown.
+
+   One reward kind only: a node whose words are ALL his where the conversation has not
+   been passed. Earned, his, sitting there. A dot that also meant "nearly" would stop
+   being an achievement signal, which is how the gold rule got written.
+
+   Pure, so what the badge claims can be tested without a store, a clock, or a browser
+   that supports badging at all. */
+function badgeState(camp, srs, due) {
+  const s = srs || srsAll();
+  const c = camp || campAll();
+  let unclaimed = 0;
+  try {
+    campNodes(c).forEach(n => {
+      if (!(n.words || []).length) return;
+      if (campNodeWordsReady(n, s) && !campConvoPassed(n.id)) unclaimed++;
+    });
+  } catch (e) {}
+  if (unclaimed) return { kind: "reward", n: unclaimed };
+  const d = due || srsDueCount();
+  return { kind: "due", n: Math.min(d.due + d.fresh, SESSION_CARDS) };
+}
+/* The home screen. No server, no permission prompt, and nothing to read when the browser
+   has no badging — an app that cannot set a badge must not say so out loud.
+
+   The page can only write this while it is RUNNING, so what he sees is the state as of
+   his last visit. That is honest for what it reports: a conversation that opened
+   yesterday is still open today. It reports rather than alerts, and periodicSync is
+   deliberately not being leaned on for the first version — see the spec. */
+function badgePaint(st) {
+  try {
+    if (!navigator.setAppBadge) return;
+    if (st.kind === "reward") navigator.setAppBadge();          // a dot: something happened
+    else if (st.n) navigator.setAppBadge(st.n);                 // a number: this much to do
+    else if (navigator.clearAppBadge) navigator.clearAppBadge();
+  } catch (e) {}
+}
 function learnBadge() {
   const el = document.getElementById("learnBadge");
-  if (Object.keys(libAll()).length < 10) { el.style.display = "none"; return; }
-  const c = srsDueCount();
-  const n = Math.min(c.due + c.fresh, SESSION_CARDS);
-  el.textContent = n;
-  el.style.display = n ? "inline-block" : "none";
+  if (Object.keys(libAll()).length < 10) { el.style.display = "none"; badgePaint({ kind: "due", n: 0 }); return; }
+  const st = badgeState();
+  /* A DOT for the reward and a number for the work — the same two shapes the home screen
+     shows, so one signal reads identically in both places. Gold, because that is what
+     gold means here. Deliberately not a star: the nav already carries the AI star, and
+     two glyphs one space apart would be two things to learn instead of one. */
+  el.textContent = st.kind === "reward" ? "" : st.n;
+  el.classList.toggle("badgereward", st.kind === "reward");
+  el.style.display = (st.kind === "reward" || st.n) ? "inline-block" : "none";
+  badgePaint(st);
 }
 
 /* ---- the two numbers that live on the front door ----------------------------
@@ -27110,6 +27174,71 @@ T("srsCalibration: bands report predicted against actual", () => {
 /* ---- is the second opinion earning its call? ----
    George asked twice and it could not be answered: learnAdjudicate can decline, error, or
    come back after he has committed, and all three looked identical from outside. */
+/* ---- the badge ----
+   "I feel I need something that pulls me into the app more." Not a streak and not a
+   score: the thing that would have pulled him back on 31 Aug had already been earned and
+   was invisible. A reward is announced, work is counted, and the two are different
+   shapes so one number never has to mean both. */
+const BADGE_CAMP = { v: 1, chapters: [{ n: 1, theme: "t", nodes: [
+  { id: "b1", name: "Ready, not graduated", words: ["בית"], carry: [], needs: [] },
+  { id: "b2", name: "Still short", words: ["בית", "מטבח"], carry: [], needs: [] }] }] };
+const BADGE_READY = { prod: srsBandRecord("progressing"), recv: srsBlank() };
+const BADGE_WEAK = { prod: srsBandRecord("weak"), recv: srsBlank() };
+function badgeRun(srs, pathScores, due) {
+  const real = lsGet(PATH_SCORES_KEY);
+  try {
+    lsSet(PATH_SCORES_KEY, JSON.stringify(pathScores || {}));
+    return badgeState(BADGE_CAMP, srs, due || { due: 4, fresh: 1 });
+  } finally {
+    if (real == null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, real);
+  }
+}
+T("badgeState: an earned, unclaimed conversation outranks the work waiting", () => {
+  const st = badgeRun({ "בית": BADGE_READY, "מטבח": BADGE_WEAK }, {});
+  assertEq(st.kind, "reward", "b1's word is his and its conversation is not passed");
+  assertEq(st.n, 1, "and only b1 — b2 is still short of a word");
+});
+T("badgeState: finished is not news, and nearly is not a reward", () => {
+  const passed = { b1: { 99: { pct: 100, ts: 1 } } };
+  const st = badgeRun({ "בית": BADGE_READY, "מטבח": BADGE_WEAK }, passed);
+  assertEq(st.kind, "due", "a node already graduated has nothing outstanding to announce");
+  assertEq(st.n, 5, "so it falls back to the work, due + fresh");
+  /* And a node one word short must not light it: the dot means "you did this". */
+  const short = badgeRun({ "בית": BADGE_WEAK, "מטבח": BADGE_WEAK }, {});
+  assertEq(short.kind, "due", "nothing is earned yet, so there is nothing to announce");
+});
+T("badgeState: two open conversations are still one signal, not a tally", () => {
+  const camp = { v: 1, chapters: [{ n: 1, theme: "t", nodes: [
+    { id: "b1", name: "one", words: ["בית"], carry: [], needs: [] },
+    { id: "b2", name: "two", words: ["בית"], carry: [], needs: [] }] }] };
+  const real = lsGet(PATH_SCORES_KEY);
+  try {
+    lsSet(PATH_SCORES_KEY, JSON.stringify({}));
+    const st = badgeState(camp, { "בית": BADGE_READY }, { due: 0, fresh: 0 });
+    assertEq(st.kind, "reward");
+    /* n is carried for the caller's own use; what matters is that the PAINT is a dot,
+       which is what badgePaint does with kind alone. Counting rewards on the home screen
+       is the thing the shape split exists to avoid. */
+    assertTrue(st.n >= 1);
+  } finally {
+    if (real == null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, real);
+  }
+});
+T("badgeState: nothing earned and nothing due clears rather than showing zero", () => {
+  const st = badgeRun({ "בית": BADGE_WEAK, "מטבח": BADGE_WEAK }, {}, { due: 0, fresh: 0 });
+  assertEq(st.kind, "due");
+  assertEq(st.n, 0, "a badge whose first act is to say you have nothing works against itself");
+});
+T("badgePaint: a browser with no badging support is silent, not broken", () => {
+  const real = navigator.setAppBadge;
+  try {
+    try { delete navigator.setAppBadge; } catch (e) {}
+    badgePaint({ kind: "reward", n: 1 });        // must not throw
+    badgePaint({ kind: "due", n: 3 });
+    assertTrue(true, "no badging is not an error he has to read");
+  } finally { if (real) try { navigator.setAppBadge = real; } catch (e) {} }
+});
+
 T("adjTotals: sums across days and tolerates buckets written before the fields existed", () => {
   const t = adjTotals({
     "2026-08-30": { cards: 9, adjCalls: 3, adjAsked: 5, adjWon: 1, adjStale: 1 },

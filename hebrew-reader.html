@@ -3396,6 +3396,9 @@ const MERGE_RULES = {
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
   "hvr_struggle":   (a, b) => mergeMaxNums(a, b),
+  /* Words landed in the coach: union, later landing wins. Gold reads this, so losing
+     one device's words would silently un-gold a node. */
+  "hvr_coachlanded": (a, b) => mergeMaxNums(a, b),
   "hvr_recency":    (a, b) => mergeMaxNums(a, b),
   "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX),
   "hvr_campaign":   (a, b) => mergeCampaign(a, b)
@@ -11286,7 +11289,19 @@ UH.node = function (id, st) {
       { label: "Progress", value: p.have + " of " + p.need + " words yours" },
       { why: whyNodeWordsReady(n, st.srs),
         to: { kind: "rule", id: "campNodeWordsReady" } },
-      { label: "Conversation", value: campConvoPassed(id) ? "passed" : "not passed yet" }
+      { label: "The coach", value: (() => {
+          const L = coachLandedAll();
+          const ws = (n.words || []).filter(k => !STOPLIST.has(k));
+          const got = ws.filter(k => L[k]);
+          if (campNodeAuto(id)) return "granted (words were already strong)";
+          if (got.length === ws.length) return "every word landed";
+          return got.length + " of " + ws.length + " words landed live";
+        })() },
+      { label: "Still to land", value: (() => {
+          const L = coachLandedAll();
+          const left = (n.words || []).filter(k => !STOPLIST.has(k) && !L[k]);
+          return left.length ? left.join(", ") : "—";
+        })() }
     ] },
     { name: "Its words", open: true, rows: (n.words || []).map(k => ({
         label: k,
@@ -16753,16 +16768,63 @@ function campNodeWordsReady(node, srs) {
   const s = srs || srsAll();
   return words.every(k => STOPLIST.has(k) || wordReady(k, s));
 }
+/* THE LEDGER OF WORDS HE HAS ACTUALLY PRODUCED. `{ word: lastLandedTimestamp }`.
+
+   Flat and GLOBAL rather than per-node, for two reasons. "I have said this word,
+   unprompted and correctly, in a live conversation" is a fact about the WORD — the node
+   it happened under is incidental. And a node's pool includes its three carry words, so
+   landing one of those credits the node that actually owns it instead of being thrown
+   away.
+
+   Deliberately NOT stored inside the lesson record, which was the obvious place:
+   mergePathScores picks whichever record has the higher `pct` WHOLESALE, so a landed map
+   living in there would lose one device's words on every two-device merge. Its own key
+   syncs on mergeMaxNums — union of words, later timestamp wins — which is commutative
+   for free and needed no new merge function. */
+const COACH_LANDED_KEY = "hvr_coachlanded";
+function coachLandedAll() {
+  try { return JSON.parse(lsGet(COACH_LANDED_KEY)) || {}; } catch (e) { return {}; }
+}
+function coachLandedSave(v) { lsSet(COACH_LANDED_KEY, JSON.stringify(v)); }
+function coachLandRecord(keys) {
+  const ks = (keys || []).filter(Boolean);
+  if (!ks.length) return 0;
+  const store = coachLandedAll();
+  const now = Date.now();
+  let added = 0;
+  ks.forEach(k => { if (!store[k]) added++; store[k] = now; });
+  coachLandedSave(store);
+  return added;
+}
+
 /* The graduation. George: "the conversation being a kind of 'graduation' from that
-   node, then the node turns gold." */
-const CAMP_CONVO_LESSON = 99;
-function campConvoPassed(id) {
-  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
-  return !!(r && r.pct >= PATH_PASS_PCT);
+   node, then the node turns gold." The conversation was that graduation until
+   2026-09-02; the coach is now, and 99 stays the slot so nothing needs migrating and
+   every node already gold stays gold. */
+const CAMP_COACH_LESSON = 99;
+/* GOLD IS THE LEDGER, NOT A PERCENTAGE. It used to be `pct >= PATH_PASS_PCT` on the
+   conversation, which asked how well one session went; this asks whether every word this
+   node teaches has been said, live and unprompted, at any point. George: "Gold should
+   mean that every word has bee correctly used in a sentence ... the gold status is like
+   a perfecting that module."
+
+   `carry` words are excluded here for the same reason campNodeWordsReady excludes them:
+   they came from earlier nodes and belong to those nodes' gold, not this one's. */
+function campCoachMastered(node, landed) {
+  if (!node) return false;
+  /* An auto-passed node was granted its graduation because every word was ALREADY
+     strong — campAutoPass's whole argument, and George's: "If hte words are strong
+     already give me the pass on that level". Asking him to then say them to a coach
+     would take back something the app has already given him. */
+  if (campNodeAuto(node.id)) return true;
+  const ws = (node.words || []).filter(k => !STOPLIST.has(k));
+  if (!ws.length) return false;
+  const L = landed || coachLandedAll();
+  return ws.every(k => !!L[k]);
 }
 function campNodeDone(id, c, srs) {
   const n = campNode(id, c);
-  return !!n && campNodeWordsReady(n, srs) && campConvoPassed(id);
+  return !!n && campNodeWordsReady(n, srs) && campCoachMastered(n);
 }
 /* ---- material he has already outgrown ---------------------------------------
    George: "The current nodes that are showing are using words that are already strong
@@ -16791,17 +16853,17 @@ function campAutoPass(c, srs) {
   const store = pathScoresAll();
   let n = 0;
   cc.chapters.forEach(ch => (ch.nodes || []).forEach(node => {
-    if (campConvoPassed(node.id)) return;
+    if (campCoachMastered(node)) return;
     if (!campNodeKnown(node, ss)) return;
     store[node.id] = store[node.id] || {};
-    store[node.id][CAMP_CONVO_LESSON] = { pct: 100, ts: Date.now(), auto: true };
+    store[node.id][CAMP_COACH_LESSON] = { pct: 100, ts: Date.now(), auto: true };
     n++;
   }));
   if (n) pathScoresSave(store);
   return n;
 }
 function campNodeAuto(id) {
-  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
+  const r = pathLessonRec(id, CAMP_COACH_LESSON);
   return !!(r && r.auto);
 }
 /* ---- did this node ever actually reach gold? --------------------------------
@@ -16813,7 +16875,7 @@ function campNodeAuto(id) {
    Stamped where the pass is already written rather than computed on read, because
    "it was gold once" is history and history has to be kept, not re-derived. */
 function campNodeEverGold(id) {
-  const r = pathLessonRec(id, CAMP_CONVO_LESSON);
+  const r = pathLessonRec(id, CAMP_COACH_LESSON);
   return !!(r && r.gold);
 }
 function campStampGold(c, srs) {
@@ -16822,7 +16884,7 @@ function campStampGold(c, srs) {
   let n = 0;
   campNodes(cc).forEach(node => {
     if (!campNodeDone(node.id, cc, ss)) return;
-    const rec = store[node.id] && store[node.id][CAMP_CONVO_LESSON];
+    const rec = store[node.id] && store[node.id][CAMP_COACH_LESSON];
     if (!rec || rec.gold) return;
     rec.gold = true;
     n++;
@@ -18490,7 +18552,7 @@ function campOpenNode(id) {
   const state = campNodeState(id, c, srs);
   const p = campNodeProgress(n, srs);
   const ready = campNodeWordsReady(n, srs);
-  const graduated = campConvoPassed(id);
+  const graduated = campCoachMastered(n);
 
   let h = '<div class="pp-head"><h3>' + campEscape(n.name) + '</h3>' +
           '<span class="pp-tier">level ' + (n.lvl || 1) + '</span>' +
@@ -18625,7 +18687,11 @@ const COMPOSE_TURN_CAP = 8;
    conversation turn (CONVO_LIVE_TIMEOUT_MS is 6s precisely because a scripted line is
    already sitting there). Waiting a while beats "couldn't reach the coach". */
 const COMPOSE_TIMEOUT_MS = 15000;
-const CAMP_COMPOSE_LESSON = 3;
+/* THE COACH WRITES THE GRADUATION SLOT. It used to write lesson 3, its own; it writes
+   99 now because 99 is what campAutoPass, campNodeAuto and campNodeEverGold read, and
+   reusing it means every node already gold stays gold with nothing migrated. Gold is
+   decided by the landed ledger rather than by this record's pct, so what the record
+   carries now is the session score and the auto/gold flags. */
 
 /* Everything this node can legitimately ask him to build with: its own six words plus
    the three carried from earlier, which exist precisely to make sentences possible. */
@@ -18940,6 +19006,16 @@ function composeAdvance(s, c, out) {
   credited.forEach(k => {
     if ((c.objectives || []).indexOf(k) !== -1) c.landed[k] = true;
   });
+  /* AND INTO THE LEDGER GOLD READS — every credited word, not only the four on the
+     table. composeCredit has already established that he produced these correctly and
+     unprompted, and that is the same quality of evidence whichever list the word was on.
+     Recording all of them is both the truthful reading and the thing that offsets how
+     strict a landing is: no fuzzy matching, no override, so the generosity has to come
+     from counting everything that genuinely happened.
+
+     The on-card checklist above still ticks objectives only. What the session was FOR
+     and what it PROVED are different questions. */
+  try { coachLandRecord(credited); } catch (e) { /* never cost him the turn */ }
 
   if (out && out.lvl) {
     s.composeLvls = (s.composeLvls || []).concat([out.lvl]);
@@ -18995,7 +19071,7 @@ async function campStartCompose(id) {
     /* Two is the floor because the opening sentence needs two. A pool of three gives a
        shorter checklist rather than no session — the words are what the node has. */
     if (pool.length < COMPOSE_OPENING) { campSay("Meet the words first — there is nothing to build with yet."); return; }
-    campBegin([composeCard(pool, composeObjectives(pool, srs), 0)], id, CAMP_COMPOSE_LESSON);
+    campBegin([composeCard(pool, composeObjectives(pool, srs), 0)], id, CAMP_COACH_LESSON);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -19408,7 +19484,7 @@ async function campStartConvo(id) {
     /* One card — see the note in learnBuild's conversation branch. */
     const first = convoScriptedCard(c, 0, 0);
     if (!first) { campSay("That conversation has no turns in it."); return; }
-    campBegin([first], id, CAMP_CONVO_LESSON);
+    campBegin([first], id, CAMP_COACH_LESSON);
   } catch (e) {
     campSay(/limit/.test(e.message || "") ? "Daily AI limit reached — try tomorrow."
                                           : "Couldn't reach the AI just now.");
@@ -21846,7 +21922,7 @@ function badgeState(camp, srs, due) {
   try {
     campNodes(c).forEach(n => {
       if (!(n.words || []).length) return;
-      if (campNodeWordsReady(n, s) && !campConvoPassed(n.id)) unclaimed++;
+      if (campNodeWordsReady(n, s) && !campCoachMastered(n)) unclaimed++;
     });
   } catch (e) {}
   if (unclaimed) return { kind: "reward", n: unclaimed };
@@ -24331,7 +24407,7 @@ function learnFacts(s, srs, rep, camp) {
                                        row.bandWas.prod === "strong");
       });
       if (wasShort) gate = { name: node.name, need: (node.words || []).length,
-                             graduated: campConvoPassed(node.id) };
+                             graduated: campCoachMastered(node) };
     }
   } catch (e) {}
   return { crossed: crossed, slipped: slipped, frozen: frozen, gate: gate,
@@ -24810,16 +24886,26 @@ function learnFinish() {
      this text just states the number. */
   if (s.path) {
     const lesson = s.path.lesson;
-    /* THE GOLD GATE. For a conversation this is beats covered, not turns answered — see
-       the note above. Every other lesson kind still has a fixed card count, so nothing
-       else changes. Without this a conversation that ran twelve turns to cover six beats
-       could only ever score 50%, and PATH_PASS_PCT is 60: the better the exchange went,
-       the more certainly the node would refuse to turn gold. */
-    const isConvo = s.cards.length && s.cards[0].kind === "conversation";
-    const beats = isConvo ? convoBeatCount(s.cards[0].convo) : 0;
+    /* THE SESSION SCORE. It no longer decides gold — the landed ledger does — so this is
+       free to be an honest report of how the session went rather than a gate to clear.
+
+       Both special cases exist because `got / cards.length` assumes a card per answer,
+       and neither of these kinds has that. A conversation grows past its beats, so it
+       would score 50% for a twelve-turn exchange that covered all six. Compose is now a
+       SINGLE card that grows in place, so `s.got` counts turns against a denominator of
+       1 — which shipped this morning writing pct: 400 into the store on a three-turn
+       session. Objectives landed over objectives given is the thing that is actually
+       true about a coach session. */
+    const first = s.cards.length ? s.cards[0] : null;
+    const isConvo = !!first && first.kind === "conversation";
+    const isCoach = !!first && first.kind === "compose";
+    const beats = isConvo ? convoBeatCount(first.convo) : 0;
+    const objs = isCoach ? (first.objectives || []).length : 0;
     const pct = isConvo
       ? (beats ? Math.round(100 * Object.keys(s.beatsHit || {}).length / beats) : 0)
-      : (s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0);
+      : isCoach
+        ? (objs ? Math.round(100 * Object.keys(first.landed || {}).length / objs) : 0)
+        : (s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0);
     const store = pathScoresAll();
     store[s.path.id] = store[s.path.id] || {};
     store[s.path.id][lesson] = { pct: pct, ts: Date.now() };
@@ -24827,13 +24913,22 @@ function learnFinish() {
     const passed = pathLessonPassed(lesson, pct);
     const node = campNode(s.path.id);
     if (node) {
-      /* Completion is the WORDS plus the conversation, so the end screen says which
-         half is outstanding rather than quoting a percentage that decides nothing. */
+      /* Completion is the WORDS plus every word landed with the coach, so the end screen
+         says which half is outstanding rather than quoting a percentage that decides
+         nothing. After a coach session the outstanding half is words he has yet to say
+         live, which is a different list from words he has yet to hold — naming it is
+         what tells him whether another coach session or more practice is the way to
+         gold. */
       const p = campNodeProgress(node);
+      const L = coachLandedAll();
+      const unsaid = (node.words || []).filter(k => !STOPLIST.has(k) && !L[k]);
       sub += campNodeDone(node.id)
         ? " · " + node.name + " complete"
-        : lesson === CAMP_CONVO_LESSON
-          ? " · " + node.name + (passed ? " — conversation passed" : " — worth another go")
+        : lesson === CAMP_COACH_LESSON
+          ? " · " + node.name + (unsaid.length
+              ? " — " + unsaid.length + " word" + (unsaid.length === 1 ? "" : "s") +
+                " still to say live"
+              : " — every word landed")
           : " · " + node.name + " — " + p.have + " of " + p.need + " words yours";
     }
   }
@@ -27013,13 +27108,18 @@ T("campNodeWalked: below the share it has not been walked", () => {
     assertTrue(!campNodeWalked("nd", st.c, st.srs));
   } finally { pathScoresSave(keep); }
 });
-T("campNodeWalked: all the words is gold, and gold is still gold", () => {
+T("campNodeWalked: all the words held plus all of them said live is gold", () => {
   const st = campWalkStores(6, 6);
-  const keep = pathScoresAll();
+  const keep = pathScoresAll(), keepL = lsGet(COACH_LANDED_KEY);
   try {
     pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
-    assertTrue(campNodeDone("nd", st.c, st.srs), "100% plus the conversation is gold");
-  } finally { pathScoresSave(keep); }
+    lsSet(COACH_LANDED_KEY, "{}");
+    assertTrue(!campNodeDone("nd", st.c, st.srs),
+               "a written pct is no longer what makes a node gold");
+    coachLandedSave(campLandWords(st.c.chapters[0].nodes));
+    assertTrue(campNodeDone("nd", st.c, st.srs), "the ledger is");
+  } finally { pathScoresSave(keep);
+              if (keepL == null) localStorage.removeItem(COACH_LANDED_KEY); else lsSet(COACH_LANDED_KEY, keepL); }
 });
 T("campNodeWalked: without any lesson record it is still walked", () => {
   /* THE CHAPTER 3 REGRESSION, at the node level. This used to require the conversation,
@@ -27418,13 +27518,16 @@ const BADGE_CAMP = { v: 1, chapters: [{ n: 1, theme: "t", nodes: [
   { id: "b2", name: "Still short", words: ["בית", "מטבח"], carry: [], needs: [] }] }] };
 const BADGE_READY = { prod: srsBandRecord("progressing"), recv: srsBlank() };
 const BADGE_WEAK = { prod: srsBandRecord("weak"), recv: srsBlank() };
-function badgeRun(srs, pathScores, due) {
-  const real = lsGet(PATH_SCORES_KEY);
+function badgeRun(srs, pathScores, due, landed) {
+  const real = lsGet(PATH_SCORES_KEY), realL = lsGet(COACH_LANDED_KEY);
   try {
     lsSet(PATH_SCORES_KEY, JSON.stringify(pathScores || {}));
+    /* Graduation is the ledger now, so the badge has to be run against one. */
+    lsSet(COACH_LANDED_KEY, JSON.stringify(landed || {}));
     return badgeState(BADGE_CAMP, srs, due || { due: 4, fresh: 1 });
   } finally {
     if (real == null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, real);
+    if (realL == null) localStorage.removeItem(COACH_LANDED_KEY); else lsSet(COACH_LANDED_KEY, realL);
   }
 }
 T("badgeState: an earned, unclaimed conversation outranks the work waiting", () => {
@@ -27433,8 +27536,9 @@ T("badgeState: an earned, unclaimed conversation outranks the work waiting", () 
   assertEq(st.n, 1, "and only b1 — b2 is still short of a word");
 });
 T("badgeState: finished is not news, and nearly is not a reward", () => {
-  const passed = { b1: { 99: { pct: 100, ts: 1 } } };
-  const st = badgeRun({ "בית": BADGE_READY, "מטבח": BADGE_WEAK }, passed);
+  /* Graduated means its words are in the coach ledger, not that a pct was written. */
+  const st = badgeRun({ "בית": BADGE_READY, "מטבח": BADGE_WEAK }, {},
+                      null, { "בית": 1 });
   assertEq(st.kind, "due", "a node already graduated has nothing outstanding to announce");
   assertEq(st.n, 5, "so it falls back to the work, due + fresh");
   /* And a node one word short must not light it: the dot means "you did this". */
@@ -29861,12 +29965,15 @@ T("bankCooldownSplit: junk inputs are empty pools, not a crash", () => {
    These replace four tests written against PATH_SECTIONS, which no longer decides
    anything. Each runs against a scratch campaign and a scratch SRS, restored after. */
 function withCamp(campaign, srs, scores, fn) {
-  const keys = [CAMP_KEY, SRS_KEY, PATH_SCORES_KEY];
+  const keys = [CAMP_KEY, SRS_KEY, PATH_SCORES_KEY, COACH_LANDED_KEY];
   const before = keys.map(k => lsGet(k));
   try {
     lsSet(CAMP_KEY, JSON.stringify(campaign));
     lsSet(SRS_KEY, JSON.stringify(srs || {}));
     lsSet(PATH_SCORES_KEY, JSON.stringify(scores || {}));
+    /* Gold is opt-in per test now: an empty ledger means no node is mastered, and a
+       test that wants gold calls coachLandedSave(campLandWords(...)) inside fn. */
+    lsSet(COACH_LANDED_KEY, "{}");
     fn();
   } finally {
     keys.forEach((k, i) => {
@@ -29881,6 +29988,14 @@ function campReadySrs(node) {
   return srs;
 }
 function campOneChapter() { return { v: 1, chapters: [campSeedChapter()], log: [] }; }
+/* Every word of these nodes said live — what gold now needs. */
+function campLandWords(nodes) {
+  const out = {};
+  (nodes || []).forEach(n => (n.words || []).forEach(k => {
+    if (!STOPLIST.has(k)) out[k] = Date.now();
+  }));
+  return out;
+}
 const CAMP_PASS = { 99: { pct: 90 } };
 
 T("campCurrentNode: with nothing done it is the first node of the first chapter", () => {
@@ -29894,15 +30009,17 @@ T("campCurrentNode: a node already started outranks one merely open", () => {
              "where he left off, not a fresh one");
   });
 });
-T("campNodeDone: needs the words AND the graduation, not either alone", () => {
+T("campNodeDone: needs the words held AND every one said live", () => {
   const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
   withCamp(camp, campReadySrs(node), {}, () => {
-    assertTrue(!campNodeDone("c1-hello"), "words alone are not a graduation");
+    assertTrue(!campNodeDone("c1-hello"), "holding the words is not a graduation");
   });
-  withCamp(camp, {}, { "c1-hello": CAMP_PASS }, () => {
-    assertTrue(!campNodeDone("c1-hello"), "a conversation passed without the words is not it either");
+  withCamp(camp, {}, {}, () => {
+    coachLandedSave(campLandWords([node]));
+    assertTrue(!campNodeDone("c1-hello"), "saying them without holding them is not it either");
   });
-  withCamp(camp, campReadySrs(node), { "c1-hello": CAMP_PASS }, () => {
+  withCamp(camp, campReadySrs(node), {}, () => {
+    coachLandedSave(campLandWords([node]));
     assertTrue(campNodeDone("c1-hello"), "both, and it is gold");
   });
 });
@@ -29927,7 +30044,10 @@ T("campCurrentNode: a chapter with nothing left to do offers nothing", () => {
     Object.assign(srs, campReadySrs(n));
     scores[n.id] = CAMP_PASS;
   });
-  withCamp(camp, srs, scores, () => { assertNull(campCurrentNode()); });
+  withCamp(camp, srs, scores, () => {
+    coachLandedSave(campLandWords(camp.chapters[0].nodes));
+    assertNull(campCurrentNode());
+  });
 });
 
 /* George: "once 60-75% (depending on isze of group) are gold the next session should
@@ -29935,6 +30055,68 @@ T("campCurrentNode: a chapter with nothing left to do offers nothing", () => {
 T("campThreshold: 60-75% across every chapter size", () => {
   assertEq([4, 5, 6].map(campThreshold), [3, 3, 4]);
   assertEq([4, 5, 6].map(n => Math.round(campThreshold(n) / n * 100)), [75, 60, 67]);
+});
+/* ---- gold is the ledger ---- */
+function withLanded(landed, fn) {
+  const before = lsGet(COACH_LANDED_KEY);
+  try { lsSet(COACH_LANDED_KEY, JSON.stringify(landed || {})); fn(); }
+  finally { if (before === null) localStorage.removeItem(COACH_LANDED_KEY);
+            else lsSet(COACH_LANDED_KEY, before); }
+}
+T("campCoachMastered: gold needs EVERY word said live, not most of them", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  const ws = node.words.filter(k => !STOPLIST.has(k));
+  const allButOne = {}; ws.slice(0, -1).forEach(k => { allButOne[k] = 1; });
+  const all = {}; ws.forEach(k => { all[k] = 1; });
+  withCamp(camp, campReadySrs(node), {}, () => {
+    withLanded(allButOne, () => {
+      assertTrue(!campCoachMastered(node), "one word short of the whole list");
+      assertTrue(!campNodeDone("c1-hello"), "so not gold");
+    });
+    withLanded(all, () => {
+      assertTrue(campCoachMastered(node));
+      assertTrue(campNodeDone("c1-hello"), "words held AND every one said live is gold");
+    });
+  });
+});
+T("campCoachMastered: an empty ledger is not mastery", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  withCamp(camp, campReadySrs(node), {}, () => {
+    withLanded({}, () => assertTrue(!campCoachMastered(node)));
+  });
+});
+T("campCoachMastered: an auto-passed node keeps its granted graduation", () => {
+  /* campAutoPass's bargain: words already strong get the pass without being made to
+     re-earn it. Requiring coach landings would quietly take that back. */
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  withCamp(camp, campReadySrs(node), { "c1-hello": { 99: { pct: 100, auto: true } } }, () => {
+    withLanded({}, () => {
+      assertTrue(campCoachMastered(node), "granted, with nothing in the ledger");
+      assertTrue(campNodeDone("c1-hello"));
+    });
+  });
+});
+T("coachLandRecord: records every credited word, objective or not", () => {
+  const before = lsGet(COACH_LANDED_KEY);
+  try {
+    lsSet(COACH_LANDED_KEY, JSON.stringify({}));
+    assertEq(coachLandRecord(["בית", "מכונית"]), 2);
+    assertEq(coachLandRecord(["בית"]), 0, "a word already landed is not landed twice");
+    const store = coachLandedAll();
+    assertTrue(!!store["בית"] && !!store["מכונית"]);
+    assertTrue(typeof store["בית"] === "number", "the value is when, so mergeMaxNums works");
+  } finally { if (before === null) localStorage.removeItem(COACH_LANDED_KEY);
+              else lsSet(COACH_LANDED_KEY, before); }
+});
+T("hvr_coachlanded: two devices' words union rather than replacing each other", () => {
+  /* THE BUG THAT KEPT THIS OUT OF THE LESSON RECORD. mergePathScores takes whichever
+     record has the higher pct WHOLESALE, so a landed map living in there would lose one
+     device's words on every merge — and gold reads this. */
+  const phone = { "בית": 1000, "מכונית": 3000 };
+  const laptop = { "בית": 2000, "ילד": 1500 };
+  const out = MERGE_RULES["hvr_coachlanded"](phone, laptop);
+  assertEq(Object.keys(out).sort(), ["בית", "ילד", "מכונית"].sort(), "every word survives");
+  assertEq(out["בית"], 2000, "and the later landing wins");
 });
 T("campNodeWalked: progression is the scheduler, with no lesson record at all", () => {
   /* THE CHAPTER 3 CASE, from his real campaign. Three of Chapter 2's four nodes sat at
@@ -29984,6 +30166,7 @@ T("campChapterComplete: opens on the threshold, not on every node", () => {
   let srs = {}, scores = {};
   nodes.slice(0, 3).forEach(n => { Object.assign(srs, campReadySrs(n)); scores[n.id] = CAMP_PASS; });
   withCamp(camp, srs, scores, () => {
+    coachLandedSave(campLandWords(nodes.slice(0, 3)));
     assertEq(campChapterGold(camp.chapters[0]), 3);
     assertTrue(campChapterComplete(camp.chapters[0]), "3 of 4 is the threshold");
   });

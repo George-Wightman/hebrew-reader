@@ -3385,7 +3385,7 @@ const MERGE_RULES = {
   "hvr_srs":        (a, b) => mergeSrs(a, b),
   "hvr_stats":      (a, b) => mergeStats(a, b),
   "hvr_archive":    (a, b) => mergeArchive(a, b),
-  "hvr_bank":       (a, b) => mergeById(a, b, BANK_MAX),
+  "hvr_bank":       (a, b) => bankDropStubs(mergeById(a, b, BANK_MAX)),
   "hvr_pathscores": (a, b) => mergePathScores(a, b),
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
@@ -8332,9 +8332,40 @@ function b64decodeUtf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
+/* ---- what does not need to ride the private sync ----------------------------
+   A bank item written by Claude comes from content/nodes.json, which is a PUBLIC file in
+   the repo the app is served from — every device can already fetch it, and contentIngest
+   re-reads it every ten minutes. Pushing its text through the private sync repo pays to
+   move content that is free, and it is the largest growing term in a payload that was
+   measured at 944,380 of GitHub's 1,000,000-byte cap: ~346 bytes an item, 77 today,
+   around 600 after a full batch.
+
+   The words are not device state. The id and the seen count are — seen drives rotation,
+   and a card he has already done on the phone should not lead on the laptop. So those
+   travel and nothing else does.
+
+   Anything NOT src:"claude" is untouched: rescue sentences are written on the device that
+   needed them and exist nowhere else. */
+function bankSlimForSync(raw) {
+  let a;
+  try { a = JSON.parse(raw); } catch (e) { return raw; }
+  if (!Array.isArray(a)) return raw;
+  return JSON.stringify(a.map(it => (it && it.src === "claude" && it.id)
+    ? { id: it.id, src: "claude", seen: it.seen || 0 }
+    : it));
+}
+/* A stub is not a bank item — it has no `he`, so bankPrune would refuse it anyway. Drop
+   it rather than storing it: the real one arrives from content/nodes.json on the next
+   check. The cost is a `seen` count reset for material this device has not fetched yet,
+   which self-corrects the moment it does. */
+function bankDropStubs(bank) {
+  return (Array.isArray(bank) ? bank : []).filter(it => it && it.he);
+}
+
 function syncSnapshot() {
   const keys = {};
   syncKeys().forEach(k => { keys[k] = lsGet(k); });
+  if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
   return { app: "hebrew-reader", schema: SYNC_SCHEMA,
            updated: new Date().toISOString(), device: syncDeviceId(), keys: keys };
 }
@@ -16475,7 +16506,16 @@ const BANK_KEY = "hvr_bank";
    is not the constraint: one draft plus one review per session against 20 Flash and
    500 Flash-Lite a day, doubled if a second key is set. */
 const BANK_MIN_UNSEEN = 18;
-const BANK_MAX = 400;
+/* 900, up from 400. Twelve nodes wanting ~50 servable items each is ~600, and the ~200
+   already banked sits under that with room left for rescue, daily material and notes.
+
+   The number was never really about the bank. Measured 2026-09-02, his synced blob was at
+   944,380 of GitHub's 1,000,000-byte Contents API read cap — so filling the bank even to
+   FOUR HUNDRED would have broken sync outright. Phase 0 removed that ceiling and the
+   claude-sourced items below no longer ride the sync at all, which is what makes this
+   affordable. Eviction is unchanged and is already the right rule: lowest level first,
+   then most-seen within a level. */
+const BANK_MAX = 900;
 function bankAll() {
   try { const a = JSON.parse(lsGet(BANK_KEY)); return Array.isArray(a) ? a : []; }
   catch (e) { return []; }
@@ -19672,6 +19712,8 @@ function campOpenNode(id) {
   const panel = document.getElementById("pathSheetInner");
   if (!n || !sheet || !panel) return;
   campSheetId = id;
+  /* Before campEnsureWords, which is what pulls carry and stretch into the library. */
+  if (campEnsureCarry(n, c)) campSave(c);
   campEnsureWords(n);
   const state = campNodeState(id, c, srs);
   const p = campNodeProgress(n, srs);
@@ -19735,10 +19777,81 @@ function campOpenNode(id) {
 /* Path words join the library so the scheduler can see them at all. src:"path" keeps
    them distinguishable from a batch import and from a word that arrived in a real
    message, without claiming the familiarity of either. */
+/* ---- what a node can build sentences out of ----------------------------------
+   A node ships six words and `carry: []`, and campBuild only keeps material touching the
+   node — so a session was assembled from six words, three debt words and STOPLIST filler.
+   That is the whole of "there needs to be some variety and challenge related to it". The
+   strength gate was never the constraint: bankServable already admits two not-ready words
+   per node sentence, one of them never met.
+
+   campPickCarry has existed since the chapter planner was written and is called for
+   nothing that is on his map. Filling it turns a six-word node into a twelve-to-fourteen
+   word one with no gate change at all.
+
+   STRETCH is the other half, and it is what makes new vocabulary arrive. After the unit
+   import almost nothing in units 1-20 is `new` any more, so the genuinely unmet words are
+   units 21+ — which he has not done on Duolingo either. Taking them in the course's order
+   runs the app deliberately a little ahead of him, and makes "variety" and "match my
+   Duolingo progress" the same mechanism rather than competing ones.
+
+   Both are PERSISTED on the node rather than recomputed per session. Sentences have to be
+   written for these words ahead of time, and a set that changed on every open could never
+   be written for. */
+const CAMP_STRETCH_PER_NODE = 2, CAMP_STRETCH_WINDOW = 40;
+function campStretchPool(lib) {
+  const from = duoUnit() + 1;
+  return Object.keys(DUO_UNITS)
+    .filter(k => DUO_UNITS[k] >= from && !lib[k] && DICT[k] &&
+                 k.length > 1 && !STOPLIST.has(k))
+    .sort((a, b) => (DUO_UNITS[a] - DUO_UNITS[b]) || (a < b ? -1 : 1));
+}
+/* Deterministic in the node's own id, so two nodes stretch toward different words and
+   each one keeps the same pair every time it is asked.
+
+   WITHIN A WINDOW, and that window is the point. Hashing across the whole pool picked
+   unit 46 for a node while he is on unit 20 — technically "ahead of him", pedagogically a
+   different language. "A little ahead" has to mean the next couple of units, not a word
+   drawn uniformly from the rest of the course. The window is wide enough that twelve
+   nodes get distinct pairs and narrow enough that all of them are the next thing. */
+function campStretchFor(node, lib, taken) {
+  const pool = campStretchPool(lib)
+    .filter(k => !(taken || {})[k])
+    .slice(0, CAMP_STRETCH_WINDOW);
+  if (!pool.length) return [];
+  let h = 0;
+  String((node && node.id) || "").split("").forEach(ch => { h = (h * 31 + ch.charCodeAt(0)) % 9973; });
+  const out = [];
+  for (let i = 0; i < CAMP_STRETCH_PER_NODE && i < pool.length; i++) {
+    out.push(pool[(h + i * 7) % pool.length]);
+  }
+  return out;
+}
+/* Fills what a node was shipped without. Returns true when it wrote something, so the
+   caller knows to save. */
+function campEnsureCarry(node, c, lib) {
+  if (!node) return false;
+  const l = lib || libAll();
+  let changed = false;
+  const taken = {};
+  campNodes(c).forEach(x => {
+    (x.words || []).forEach(w => { taken[w] = 1; });
+    if (x !== node) (x.stretch || []).forEach(w => { taken[w] = 1; });
+  });
+  if (!(node.carry || []).length) {
+    const carry = campPickCarry((node.words || []).slice(), taken);
+    if (carry.length) { node.carry = carry; changed = true; }
+  }
+  if (!(node.stretch || []).length) {
+    const stretch = campStretchFor(node, l, taken);
+    if (stretch.length) { node.stretch = stretch; changed = true; }
+  }
+  return changed;
+}
+
 function campEnsureWords(node) {
   const lib = libAll();
   let added = 0;
-  (node.words || []).concat(node.carry || []).forEach(k => {
+  (node.words || []).concat(node.carry || []).concat(node.stretch || []).forEach(k => {
     const base = genderBaseOf(k);
     const key = (base && base !== k) ? base : k;
     if (lib[key]) return;
@@ -20230,9 +20343,24 @@ async function campStartCompose(id) {
    campStartMeet builds its own card list by hand, and the conversation shape returns
    from learnBuild before a line of its logic runs. */
 
-/* Ten cards. Small on purpose: a node is a focused piece of work on six words, not a
-   second full session. */
-const CAMP_SESSION_CARDS = 10;
+/* Fourteen. It was ten, on the reasoning that "a node is a focused piece of work on six
+   words, not a second full session" — but node practice has since REPLACED daily
+   practice. George: "in my actual use the node practice is my main point of contact now,
+   and has seen in real usage a phase out of hte general daily practice". A session that
+   is the only session should not be sized as a supplement.
+
+   The extra four are all sentence cards. Solo cards stay capped at two, because isolated
+   recall is the drill that already failed him — see slice 1 below.
+
+   AND THE NODE'S OWN SHARE IS NOW A FLOOR, not a remainder. Slice 3 used to take
+   everything left over, which is exactly where widened vocabulary lands: at ten cards
+   that was 2+5+3, at fourteen it would have been 2+5+7, so lengthening the session and
+   widening the node together would have handed half of it to words the node is not about.
+   George asked for the opposite — "as long as a node is themed arpund the node with the
+   added learning material supplementing". 4 of the 14 are consolidation on its own words
+   and only 3 are the wider material, so eleven of fourteen stay the node's. */
+const CAMP_SESSION_CARDS = 14;
+const CAMP_OWN_CARDS = 4, CAMP_WIDER_CARDS = 3;
 /* The words a node session is FOR: its own words that he cannot yet say. Weakest
    first — the inverse of learnTargets, deliberately, and safe here for the reason it
    is dangerous there. Globally, weak-first is an unbounded pile that crowds out
@@ -20354,7 +20482,13 @@ function campBuild(node, size) {
     /* Only material that touches this node. A node session containing a sentence
        about something else is the bug being fixed, not a graceful fallback — if there
        is not enough, the session is shorter and honest about it. */
-    .filter(x => x.hits > 0 || x.carry || x.debt)
+    /* `x.debt` used to qualify on its own, and it is the one route by which a sentence
+       with NOTHING from this node in it reached a node session — carry cannot do that,
+       because campWeakWords only ever returns the node's own words. Invisible while the
+       bank was small and narrow; the thing George explicitly asked not to happen once it
+       is not. Debt still outranks plain consolidation in the sort below; it just has to
+       be carried by a sentence that is also about this node. */
+    .filter(x => x.hits > 0 || x.carry)
     /* Carrying a stuck word beats covering a known one, then most coverage, then
        least seen. `for` — the word an item was COMMISSIONED to rescue — outranks a
        word it merely happens to carry: those are the sentences written for this
@@ -20407,9 +20541,21 @@ function campBuild(node, size) {
   const carrying = pool.filter(x => x.carry && campNodeServes(x.it));
   take(carrying, Math.min(CAMP_CARRY_CARDS, room - cards.length));
 
-  /* 3. Consolidation on the node words he already holds. */
-  const holding = pool.filter(x => !x.carry && campNodeServes(x.it));
+  /* 3. Consolidation on the node's OWN words — a reserved share, not the remainder. */
+  const holding = pool.filter(x => !x.carry && campNodeServes(x.it) && x.hits > 0);
+  take(holding, Math.min(CAMP_OWN_CARDS, room - cards.length));
+
+  /* 3b. The wider material: carry, stretch and debt, every one of which still contains a
+         node word (see the filter above). Bounded, so it supplements the node rather than
+         becoming it. */
+  const wider = pool.filter(x => !x.carry && campNodeServes(x.it));
+  take(wider, Math.min(CAMP_WIDER_CARDS, room - cards.length));
+
+  /* 3c. Whatever is left over goes to either, own words first — a short session is worse
+         than an unbalanced one, and the quotas above are about how to spend a FULL
+         session, not a reason to hand back cards. */
   take(holding, room - cards.length);
+  take(wider, room - cards.length);
 
   /* 4. Still short — a narrow node with a thin bank. Top up with the node's own words
         as solo cards rather than reaching outside the node for filler. */
@@ -26535,6 +26681,66 @@ T("libAddDuoUnits: due dates are spread, not stacked on one day", () => {
     assertTrue(r.due <= addDays(r.last, r.stab),
                "never scheduled further out than the stability claims: " + k);
   });
+});
+T("campStretch: the next words are the course's next words, and each node gets its own", () => {
+  /* duoUnit reads a real store; it is a plain function declaration, so swap and restore. */
+  const rUnit = duoUnit;
+  try {
+    duoUnit = () => 20;
+    const lib = {};
+    const pool = campStretchPool(lib);
+    assertTrue(pool.length > 0, "there is material ahead of him");
+    assertTrue(pool.every(k => DUO_UNITS[k] > 20), "and none of it is behind him");
+    /* "A little ahead" has to mean the next couple of units. Hashing over the whole pool
+       picked a unit-46 word while he sits on 20 — ahead of him, and useless. */
+    const picked = campStretchFor({ id: "n1" }, {});
+    assertTrue(picked.every(k => DUO_UNITS[k] <= 20 + 6),
+               "stretch stays near his position, not scattered across the course");
+    assertTrue(DUO_UNITS[pool[0]] <= DUO_UNITS[pool[pool.length - 1]], "in teaching order");
+    /* Deterministic per node, or the words could never be written for ahead of time —
+       which is the entire point of persisting them on the node. */
+    const a = campStretchFor({ id: "n1" }, lib), b = campStretchFor({ id: "n2" }, lib);
+    assertEq(a, campStretchFor({ id: "n1" }, lib), "same node, same pair, every time");
+    assertTrue(a.join() !== b.join(), "different nodes stretch toward different words");
+    assertEq(a.length, CAMP_STRETCH_PER_NODE);
+    /* A word already his is not "next". */
+    const owned = {}; owned[a[0]] = { tr: "x", en: "x" };
+    assertTrue(campStretchFor({ id: "n1" }, owned).indexOf(a[0]) === -1,
+               "a word he already has is not offered as new");
+  } finally { duoUnit = rUnit; }
+});
+T("campBuild quotas: eleven of fourteen cards stay the node's own", () => {
+  /* The slices have to sum to the session, or the reserved shares are decoration and
+     whichever one runs last silently absorbs the difference — which is precisely what
+     the old unbounded consolidation slice did. */
+  assertEq(CAMP_SOLO_CARDS + CAMP_CARRY_CARDS + CAMP_OWN_CARDS + CAMP_WIDER_CARDS,
+           CAMP_SESSION_CARDS, "the quotas add up to the session");
+  assertEq(CAMP_SESSION_CARDS - CAMP_WIDER_CARDS, 11,
+           "and the wider material is the only part that is not about this node");
+  assertEq(CAMP_SOLO_CARDS, 2,
+           "the extra length is all sentences — isolated recall is the drill that failed him");
+});
+T("bank sync: content that came from a public file does not ride the private repo", () => {
+  const bank = [{ id: "c1", src: "claude", he: "אני הולך הביתה", tr: "ani holekh", en: "x",
+                  uses: ["הולך"], lvl: 2, seen: 3 },
+                { id: "r1", src: "commission", he: "מה שלומך", tr: "ma shlomkha", en: "y",
+                  uses: ["מה"], lvl: 1, seen: 1 }];
+  const slim = JSON.parse(bankSlimForSync(JSON.stringify(bank)));
+  assertEq(slim[0], { id: "c1", src: "claude", seen: 3 },
+           "a claude item travels as id and seen only");
+  assertEq(slim[1].he, "מה שלומך",
+           "a rescue sentence exists nowhere else and must travel whole");
+  /* seen is device state and has to survive, or a card done on the phone leads on the
+     laptop. mergeById already takes the higher of the two. */
+  const mine = [{ id: "c1", src: "claude", he: "אני הולך הביתה", uses: ["הולך"], seen: 1 }];
+  const merged = MERGE_RULES["hvr_bank"](mine, slim);
+  const c1 = merged.find(x => x.id === "c1"), r1 = merged.find(x => x.id === "r1");
+  assertEq(c1.he, "אני הולך הביתה", "my full copy survives their stub");
+  assertEq(c1.seen, 3, "and the higher seen count wins");
+  assertEq(r1.he, "מה שלומך", "while their rescue sentence arrives whole, as it must");
+  /* A device that has never fetched content/nodes.json receives only stubs. Those are not
+     bank items — bankPrune would refuse them for lack of `he` — so they are not stored. */
+  assertEq(MERGE_RULES["hvr_bank"]([], [{ id: "c9", src: "claude", seen: 0 }]).length, 0);
 });
 T("wordFamiliarity: new words arrive in Duolingo's order, and evidence still beats it", () => {
   const lib = { a: { src: "duo", duo: 3, added: todayISO() },

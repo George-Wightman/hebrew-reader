@@ -4542,6 +4542,365 @@ const DUO_UNITS = {
   "בלאגן":84,"כנרת":84,"נגב":84,"ביסלי":84,"מטקות":84,"עלייה":84,"פיתה":84,"מצדה":84,
   "אילת":84,"חיפה":84,"במבה":84,"שקשוקה":84,"קיסריה":84,"טבריה":84
 };
+const DUO_FORMS = {
+  "אבא":{"pl":["אבות","avot"],"sg":["אבא","aba"]},
+  "אהבה":{"pl":["אהבות","ahavot"],"sg":["אהבה","ahavah"]},
+  "יין":{"pl":["יינות","yayinot"],"sg":["יין","yayin"]},
+  "חלב":{"pl":["חלבים","khalavim"],"sg":["חלב","khalav"]},
+  "לחם":{"pl":["לחמים","l'khamim"],"sg":["לחם","lekhem"]},
+  "אמא":{"pl":["אמהות","imahot"],"sg":["אמא","ima"]},
+  "יונה":{"pl":["יונים","yonim"],"sg":["יונה","yonah"]},"אתה":{"fs":["את","at"]},
+  "לבוא":{"pres.fp":["באות","ba'ot"],"pres.fs":["באה","ba'ah"],"pres.mp":["באים","ba'im"],"pres.ms":["בא","ba"]},
+  "לאהוב":{"pres.fp":["אוהבות","ohavot"],"pres.fs":["אוהבת","ohevet"],"pres.mp":["אוהבים","ohavim"],"pres.ms":["אוהב","ohev"]},
+  "כלב":{"pl":["כלבים","k'lavim"],"sg":["כלב","kelev"]},
+  "מלך":{"pl":["מלכים","m'lakhim"],"sg":["מלך","melekh"]},
+  "ילד":{"pl":["ילדים","y'ladim"],"sg":["ילד","yeled"]},
+  "אגוז":{"pl":["אגוזים","egozim"],"sg":["אגוז","egoz"]},
+  "גבר":{"pl":["גברים","g'varim"],"sg":["גבר","gever"]},
+  "דרך":{"pl":["דרכים","d'rakhim"],"sg":["דרך","derekh"]},
+  "ילדה":{"pl":["ילדות","y'ladot"],"sg":["ילדה","yal'dah"]},
+  "אישה":{"pl":["נשים","nashim"],"sg":["אישה","ishah"]},
+  "משאית":{"pl":["משאיות","masa'iyot"],"sg":["משאית","masa'it"]},
+  "ללכת":{"pres.fp":["הולכות","hol'khot"],"pres.fs":["הולכת","holekhet"],"pres.mp":["הולכים","hol'khim"],"pres.ms":["הולך","holekh"]},
+  "לאכול":{"pres.fp":["אוכלות","okhelet"],"pres.fs":["אוכלת","okhelet"],"pres.ms":["אוכל","okhel"]},
+  "לראות":{"pres.fp":["רואות","ro'ot"],"pres.fs":["רואה","ro'ah"],"pres.mp":["רואים","ro'im"],"pres.ms":["רואה","ro'eh"]},
+  "לשתות":{"pres.fp":["שותות","shotot"],"pres.fs":["שותה","shotah"],"pres.mp":["שותים","shotim"],"pres.ms":["שותה","shoteh"]},
+  "שמח":{"fp":["שמחות","s'mekhot"],"fs":["שמחה","s'mekhah"],"mp":["שמחים","s'mekhim"]},
+  "תפוז":{"pl":["תפוזים","tapuzim"],"sg":["תפוז","tapuz"]},
+  "תפוח":{"pl":["תפוחים","tapukhim"],"sg":["תפוח","tapuakh"]},
+  "ספר":{"pl":["ספרים","s'farim"],"sg":["ספר","sefer"]},
+  "אפרסק":{"pl":["אפרסקים","afar's'kim"],"sg":["אפרסק","afarsek"]},
+  "עיתון":{"pl":["עיתונים","itonim"],"sg":["עיתון","iton"]},
+  "עוף":{"pl":["עופות","ofot"],"sg":["עוף","of"]},
+  "מיץ":{"pl":["תפוזים","tapuzim"],"sg":["מיץ","mitz"]},
+  "עוגה":{"pl":["עוגות","ugot"],"sg":["עוגה","ugah"]},
+  "לקרוא":{"pres.fp":["קוראות","kor'ot"],"pres.fs":["קוראת","koret"],"pres.mp":["קוראים","kor'im"],"pres.ms":["קורא","kore"]},
+  "עצוב":{"fp":["עצובות","atzuvot"],"fs":["עצובה","atzuvah"],"mp":["עצובים","atzuvim"]},
+  "יפה":{"fp":["יפות","yafot"],"fs":["יפה","yafah"],"mp":["יפים","yafim"]},
+  "טעים":{"fp":["טעימות","t'imot"],"fs":["טעימה","t'imah"],"mp":["טעימים","t'imim"]},
+  "טוב":{"fp":["טובות","tovot"],"fs":["טובה","tovah"],"mp":["טובים","tovim"]},
+  "רע":{"fp":["רעות","ra'ot"],"fs":["רעה","ra'ah"],"mp":["רעים","ra'im"]},
+  "לילה":{"pl":["לילות","leilot"],"sg":["לילה","lai'lah"]},
+  "בוקר":{"pl":["בקרים","b'karim"],"sg":["בוקר","boker"]},
+  "ערב":{"pl":["ערבים","aravim"],"sg":["ערב","erev"]},
+  "שלום":{"pl":["שלומות","sh'lomot"],"sg":["שלום","shalom"]},"לך":{"fs":["לך","lakh"]},
+  "לנו":{"fp":["לכן","lakhen"],"mp":["לכם","lakhem"]},
+  "דג":{"pl":["דגים","dagim"],"sg":["דג","dag"]},
+  "פרי":{"pl":["פירות","perot"],"sg":["פרי","p'ri"]},
+  "סוכר":{"pl":["סוכרים","sukarim"],"sg":["סוכר","sukar"]},
+  "תות":{"pl":["תויות","tuyot"],"sg":["תות","tut"]},
+  "בשר":{"pl":["בשרים","b'sarim"],"sg":["בשר","basar"]},
+  "מרק":{"pl":["מרקים","m'rakim"],"sg":["מרק","marak"]},
+  "שמן":{"pl":["שמנים","sh'manim"],"sg":["שמן","shemen"]},
+  "לימון":{"pl":["לימונים","limonim"],"sg":["לימון","limon"]},
+  "כריך":{"pl":["כריכים","k'rikhim"],"sg":["כריך","karikh"]},
+  "מלח":{"pl":["מלחים","m'lakhim"],"sg":["מלח","melakh"]},
+  "בקבוק":{"pl":["בקבוקים","bak'bukim"],"sg":["בקבוק","bakbuk"]},
+  "סלט":{"pl":["סלטים","salatim"],"sg":["סלט","salat"]},
+  "אננס":{"pl":["אננסים","ananasim"],"sg":["אננס","ananas"]},
+  "שוקולד":{"pl":["שוקולדים","shokoladim"],"sg":["שוקולד","shokolad/shokolad"]},
+  "זית":{"pl":["זיתים","zeitim"],"sg":["זית","zayit"]},
+  "צלחת":{"fp":["ברווזות","bar'vazot"],"pl":["צלחות","tzalakhot"],"sg":["צלחת","tzalakhat"]},
+  "ביצה":{"pl":["ביצים","beitzim"],"sg":["ביצה","beitzah"]},
+  "בירה":{"pl":["בירות","birot"],"sg":["בירה","birah"]},
+  "גבינה":{"pl":["גבינות","g'vinot"],"sg":["גבינה","g'vinah"]},
+  "עגבניה":{"pl":["עגבניות","ag'vaniyot"],"sg":["עגבניה","ag'vaniyah"]},
+  "בננה":{"pl":["בננות","bananot"],"sg":["בננה","banana"]},
+  "חמאה":{"pl":["חמאות","khama'ot"],"sg":["חמאה","khem'ah"]},
+  "פטרייה":{"pl":["פטריות","pit'riyot"],"sg":["פטרייה","pitriyah"]},
+  "פיצה":{"pl":["פיצות","pitzot"],"sg":["פיצה","pitzah"]},
+  "חתול":{"pl":["חתולים","khatulim"],"sg":["חתול","khatul"]},
+  "סוס":{"pl":["סוסים","susim"],"sg":["סוס","sus"]},
+  "פיל":{"pl":["פילים","pilim"],"sg":["פיל","pil"]},
+  "ברווז":{"pl":["ברווזים","bar'vazim"],"sg":["ברווז","bar'vaz"]},
+  "צב":{"pl":["צבים","tzabim"],"sg":["צב","tzav"]},
+  "חמור":{"pl":["חמורים","khamorim"],"sg":["חמור","khamor"]},
+  "סרטן":{"pl":["סרטנים","sar'tanim"],"sg":["סרטן","sar'tan"]},
+  "עכביש":{"pl":["עכבישים","akh'vishim"],"sg":["עכביש","akavish"]},
+  "דוב":{"pl":["דובים","dubim"],"sg":["דוב","dov"]},
+  "עכבר":{"pl":["עכברים","akh'barim"],"sg":["עכבר","akh'bar"]},
+  "גמל":{"pl":["גמלים","g'malim"],"sg":["גמל","gamal"]},
+  "אריה":{"pl":["אריות","arayot"],"sg":["אריה","aryeh"]},
+  "נשר":{"pl":["נשרים","n'sharim"],"sg":["נשר","nesher"]},
+  "זבוב":{"pl":["זבובים","z'vuvim"],"sg":["זבוב","z'vuv"]},
+  "חרק":{"pl":["חרקים","kharakim"],"sg":["חרק","kherek"]},
+  "ארנב":{"pl":["ארנבים","ar'navim"],"sg":["ארנב","ar'nav"]},
+  "נחש":{"pl":["נחשים","n'khashim"],"sg":["נחש","nakhash"]},
+  "קוף":{"pl":["קופים","kofim"],"sg":["קוף","kof"]},
+  "זנב":{"pl":["זנבות","z'navot"],"sg":["זנב","zanav"]},
+  "ינשוף":{"pl":["ינשופים","yan'shufim"],"sg":["ינשוף","yan'shuf"]},
+  "תרנגול":{"pl":["תרנגולים","tar'n'golim"],"sg":["תרנגול","tar'n'gol"]},
+  "חזיר":{"pl":["חזירים","khazirim"],"sg":["חזיר","khazir"]},
+  "ציפור":{"pl":["ציפורים","tziporim"],"sg":["ציפור","tzipor"]},
+  "חיה":{"pl":["חיות","khayot"],"sg":["חיה","khayah"]},
+  "דבורה":{"pl":["דבורים","d'vorim"],"sg":["דבורה","d'vorah"]},
+  "פרה":{"pl":["פרות","parot"],"sg":["פרה","parah"]},
+  "חתולה":{"pl":["חתולות","khatulot"],"sg":["חתולה","khatulah"]},
+  "כלבה":{"pl":["כלבים","k'lavim"],"sg":["כלבה","kal'bah"]},
+  "סוסה":{"pl":["סוסות","susot"],"sg":["סוסה","susah"]},
+  "פילה":{"pl":["פילים","pilim"],"sg":["פילה","pileh"]},
+  "ברוזה":{"pl":["ברווזים","bar'vazim"],"sg":["ברוזה","bar'vazah"]},
+  "צבה":{"pl":["צבים","tzabim"],"sg":["צבה","tzabah"]},
+  "אתון":{"pl":["אתונות","atonot"],"sg":["אתון","aton"]},
+  "דובה":{"pl":["דובות","dubot"],"sg":["דובה","dubah"]},
+  "לביאה":{"pl":["לביאות","l'vi'ot"],"sg":["לביאה","l'vi'ah"]},
+  "ארנבת":{"pl":["ארנבות","ar'navot"],"sg":["ארנבת","ar'nevet"]},
+  "תרנגולת":{"pl":["תרנגולות","tar'n'golot"],"sg":["תרנגולת","tar'n'golet"]},
+  "לנבוח":{"pres.fp":["נובחות","nov'khot"],"pres.fs":["נובחת","novakhat"],"pres.ms":["נובח","noveakh"]},
+  "שייך":{"fp":["שייכות","shayakhot"],"fs":["שייכת","shayekhet"],"mp":["שייכים","shayakhim"]},
+  "שלך":{"fs":["שלך","shelakh"]},"שלנו":{"fp":["שלכן","shelakhen"],"mp":["שלכם","shelakhem"]},
+  "חדש":{"pl":["חדשות","khadashot"]},"אותך":{"fs":["אותך","otakh"]},
+  "אותנו":{"fp":["אתכן","et'khen"],"mp":["אתכם","et'khem"]},
+  "מזלג":{"pl":["מזלגות","maz'l'got"],"sg":["מזלג","maz'leg"]},
+  "סכין":{"pl":["סכינות","sakinot"],"sg":["סכין","sakin"]},
+  "תפריט":{"pl":["תפריטים","tafritim"],"sg":["תפריט","tafrit"]},
+  "רוטב":{"pl":["רטבים","r'tavim"],"sg":["רוטב","rotev"]},
+  "ירק":{"pl":["ירקות","y'rakot"],"sg":["ירק","yerek"]},
+  "פלפל":{"pl":["פלפלים","pil'p'lim"],"sg":["פלפל","pil'pel"]},
+  "מתכון":{"pl":["מתכונים","mat'konim"],"sg":["מתכון","mat'kon"]},
+  "מטבח":{"pl":["מטבחים","mit'bakhim"],"sg":["מטבח","mit'bakh"]},
+  "מלפפון":{"pl":["מלפפונים","m'laf'fonim"],"sg":["מלפפון","m'laf'fon"]},
+  "גזר":{"pl":["גזרים","g'zarim"],"sg":["גזר","gezer"]},
+  "ממתק":{"pl":["ממתקים","mam'takim"],"sg":["ממתק","mam'tak"]},
+  "אבטיח":{"pl":["אבטיחים","avatikhim"],"sg":["אבטיח","avatiakh"]},
+  "בוטן":{"pl":["בוטנים","bot'nim"],"sg":["בוטן","boten"]},
+  "בצל":{"pl":["בצלים","b'tzalim"],"sg":["בצל","batzal"]},
+  "ענב":{"pl":["ענבים","anavim"],"sg":["ענב","anav"]},
+  "אבוקדו":{"pl":["אבוקדואים","avokado'im"],"sg":["אבוקדו","avokado"]},
+  "משקה":{"pl":["משקאות","mashka'ot"],"sg":["משקה","mashkeh"]},
+  "דובדבן":{"pl":["דובדבנים","duv'd'vanim"],"sg":["דובדבן","duvd'van"]},
+  "מסטיק":{"pl":["מסטיקים","mastikim"],"sg":["מסטיק","mastik"]},
+  "שום":{"pl":["שומים","shumim"],"sg":["שום","shum"]},
+  "ריח":{"pl":["ריחות","rekhot"],"sg":["ריח","reiakh"]},
+  "טעם":{"pl":["טעמים","t'amim"],"sg":["טעם","ta'am"]},
+  "סיר":{"pl":["סירים","sirim"],"sg":["סיר","sir"]},
+  "מצרך":{"pl":["מצרכים","mitz'rakhim"],"sg":["מצרך","mitz'rakh"]},
+  "קמח":{"pl":["קמחים","k'makhim"],"sg":["קמח","kemakh"]},
+  "ארוחה":{"pl":["ארוחות","arukhot"],"sg":["ארוחה","arukhah"]},
+  "כוס":{"pl":["כוסות","kosot"],"sg":["כוס","kos"]},
+  "מפית":{"pl":["מפיות","mapiyot"],"sg":["מפית","mapit"]},
+  "כף":{"pl":["כפות","kapot"],"sg":["כף","kaf"]},
+  "קערה":{"pl":["קערות","k'arot"],"sg":["קערה","k'arah"]},
+  "כפית":{"pl":["כפיות","kapiyot"],"sg":["כפית","kapit"]},
+  "מסעדה":{"pl":["מסעדות","mis'adot"],"sg":["מסעדה","mis'adah"]},
+  "עוגייה":{"pl":["עוגיות","ugiyot"],"sg":["עוגייה","ugiyah"]},
+  "ריבה":{"pl":["ריבות","ribot"],"sg":["ריבה","ribah"]},
+  "גלידה":{"pl":["גלידות","g'lidot"],"sg":["גלידה","g'lidah"]},
+  "לבשל":{"pres.fp":["מבשלות","m'vashlot"],"pres.fs":["מבשלת","m'vashelet"],"pres.mp":["מבשלים","m'vash'lim"],"pres.ms":["מבשל","m'vashel"]},
+  "לאפות":{"pres.fp":["אופות","ofot"],"pres.fs":["אופה","ofah"],"pres.mp":["אופים","ofim"],"pres.ms":["אופה","ofeh"]},
+  "מעיל":{"pl":["מעילים","m'ilim"],"sg":["מעיל","m'il"]},
+  "כובע":{"pl":["כובעים","kova'im"],"sg":["כובע","kova"]},
+  "גרב":{"pl":["גרביים","gar'bayim"],"sg":["גרב","gerev"]},
+  "תכשיט":{"pl":["תכשיטים","takh'shitim"],"sg":["תכשיט","takhshit"]},
+  "ז'קט":{"pl":["ז'קטים","jaketim"],"sg":["ז'קט","jaket"]},
+  "סוודר":{"pl":["סוודרים","s'vederim"],"sg":["סוודר","sveder"]},
+  "צמיד":{"pl":["צמידים","tz'midim"],"sg":["צמיד","tzamid"]},
+  "צעיף":{"pl":["צעיפים","tz'ifim"],"sg":["צעיף","tza'if"]},
+  "כיס":{"pl":["כיסים","kisim"],"sg":["כיס","kis"]},
+  "חולצה":{"pl":["חולצות","khul'tzot"],"sg":["חולצה","khul'tzah"]},
+  "נעל":{"pl":["נעליים","na'alayim"],"sg":["נעל","na'al"]},
+  "חצאית":{"pl":["חצאיות","khatza'iyot"],"sg":["חצאית","khatza'it"]},
+  "שמלה":{"pl":["שמלות","s'malot"],"sg":["שמלה","simlah"]},
+  "חליפה":{"pl":["חליפות","khalifot"],"sg":["חליפה","khalifah"]},
+  "חגורה":{"pl":["חגורות","khagorot"],"sg":["חגורה","khagorah"]},
+  "כפפה":{"pl":["כפפות","k'fafot"],"sg":["כפפה","k'fafah"]},
+  "טבעת":{"pl":["טבעות","taba'ot"],"sg":["טבעת","taba'at"]},
+  "שרשרת":{"pl":["שרשרות","shar'sherot"],"sg":["שרשרת","shar'sheret"]},
+  "תחפושת":{"pl":["תחפושות","takh'posot"],"sg":["תחפושת","takh'poset"]},
+  "עניבה":{"pl":["עניבות","anivot"],"sg":["עניבה","anivah"]},
+  "ללבוש":{"pres.fp":["לובשות","lov'shot"],"pres.fs":["לובשת","loveshet"],"pres.mp":["לובשים","lov'shim"],"pres.ms":["לובש","lovesh"]},
+  "לנעול":{"pres.fp":["נועלות","no'alot"],"pres.fs":["נועלת","no'elet"],"pres.mp":["נועלים","no'alim"],"pres.ms":["נועל","no'el"]},
+  "לחבוש":{"pres.fp":["חובשות","khov'shot"],"pres.fs":["חובשת","khoveshet"],"pres.mp":["חובשים","khov'shim"],"pres.ms":["חובש","khovesh"]},
+  "לענוד":{"pres.fp":["עונדות","on'dot"],"pres.fs":["עונדת","onedet"],"pres.mp":["עונדים","on'dim"],"pres.ms":["עונד","oned"]},
+  "לשים":{"pres.fp":["שמות","samot"],"pres.fs":["שמה","samah"],"pres.mp":["שמים","samim"],"pres.ms":["שם","sam"]},
+  "להרכיב":{"pres.fp":["מרכיבות","mar'kivot"],"pres.fs":["מרכיבה","mar'kivah"],"pres.mp":["מרכיבים","mar'kivim"],"pres.ms":["מרכיב","mar'kiv"]},
+  "לגרוב":{"pres.fp":["גורבות","gor'vot"],"pres.fs":["גורבת","gorevet"],"pres.mp":["גורבים","gor'vim"],"pres.ms":["גורב","gorev"]},
+  "לכתוב":{"pres.fp":["כותבות","kot'vot"],"pres.fs":["כותבת","kotevet"],"pres.mp":["כותבים","kot'vim"],"pres.ms":["כותב","kotev"]},
+  "לשמוע":{"pres.fp":["שומעות","shom'ot"],"pres.fs":["שומעת","shoma'at"],"pres.mp":["שומעים","shom'im"],"pres.ms":["שומע","shome'a"]},
+  "לישון":{"pres.fp":["ישנות","y'shenot"],"pres.fs":["ישנה","y'shenah"],"pres.mp":["ישנים","y'shenim"],"pres.ms":["ישן","yashen"]},
+  "לגעת":{"pres.fp":["נוגעות","nog'ot"],"pres.fs":["נוגעת","noga'at"],"pres.mp":["נוגעים","nog'im"],"pres.ms":["נוגע","noge'a"]},
+  "לומד":{"pres.fp":["אומרות","om'rot"],"pres.fs":["אומרת","omeret"],"pres.mp":["אומרים","om'rim"],"pres.ms":["אומר","omer"]},
+  "לעשות":{"pres.fp":["עושות","osot"],"pres.fs":["עושה","osah"],"pres.mp":["עושים","osim"],"pres.ms":["עושה","oseh"]},
+  "למצוא":{"pres.fp":["מוצאות","motz'ot"],"pres.fs":["מוצאת","motzet"],"pres.mp":["מוצאים","motz'im"],"pres.ms":["מוצא","motze"]},
+  "לתמוך":{"pres.fp":["תומכות","tom'khot"],"pres.fs":["תומכת","tomekhet"],"pres.mp":["תומכים","tom'khim"],"pres.ms":["תומך","tomekh"]},
+  "לקחת":{"pres.fp":["לוקחות","lok'khot"],"pres.fs":["לוקחת","lokakhat"],"pres.mp":["לוקחים","lok'khim"],"pres.ms":["לוקח","lokeakh"]},
+  "לדעת":{"pres.fp":["יודעות","yod'ot"],"pres.fs":["יודעת","yoda'at"],"pres.mp":["יודעים","yod'im"],"pres.ms":["יודע","yode'a"]},
+  "לתת":{"pres.fp":["נותנות","not'not"],"pres.fs":["נותנת","notenet"],"pres.mp":["נותנים","not'nim"],"pres.ms":["נותן","noten"]},
+  "לקנות":{"pres.fp":["קונות","konot"],"pres.fs":["קונה","konah"],"pres.mp":["קונים","konim"],"pres.ms":["קונה","koneh"]},
+  "למכור":{"pres.fp":["מוכרות","mokh'rot"],"pres.fs":["מוכרת","mokheret"],"pres.mp":["מוכרים","mokh'rim"],"pres.ms":["מוכר","mokher"]},
+  "לרשום":{"pres.fp":["רושמות","rosh'mot"],"pres.fs":["רושמת","roshemet"],"pres.mp":["רושמים","rosh'mim"],"pres.ms":["רושם","roshem"]},
+  "לסגור":{"pres.fp":["סוגרות","sog'rot"],"pres.fs":["סוגרת","sogeret"],"pres.mp":["סוגרים","sog'rim"],"pres.ms":["סוגר","soger"]},
+  "לפתוח":{"pres.fp":["פותחות","pot'khot"],"pres.fs":["פותחת","potakhat"],"pres.mp":["פותחים","pot'khim"],"pres.ms":["פותח","poteakh"]},
+  "לחשוב":{"pres.fp":["חושבות","khosh'vot"],"pres.fs":["חושבת","khoshevet"],"pres.mp":["חושבים","khosh'vim"],"pres.ms":["חושב","khoshev"]},
+  "לחזור":{"pres.fp":["חוזרות","khoz'rot"],"pres.fs":["חוזרת","khozeret"],"pres.mp":["חוזרים","khoz'rim"],"pres.ms":["חוזר","khozer"]},
+  "לשמור":{"pres.fp":["שומרות","shom'rot"],"pres.fs":["שומרת","shomeret"],"pres.mp":["שומרים","shom'rim"],"pres.ms":["שומר","shomer"]},
+  "ללמוד":{"pres.fp":["לומדות","lom'dot"],"pres.fs":["לומדת","lomedet"],"pres.mp":["לומדים","lom'dim"],"pres.ms":["לומד","lomed"]},
+  "הולך":{"pres.fp":["הולכות","hol'khot"],"pres.fs":["הולכת","holekhet"],"pres.mp":["הולכים","hol'khim"],"pres.ms":["הולך","holekh"]},
+  "לכעוס":{"pres.fp":["כועסות","ko'asot"],"pres.fs":["כועסת","ko'eset"],"pres.mp":["כועסים","ko'asim"],"pres.ms":["כועס","ko'es"]},
+  "לכלול":{"pres.fp":["כוללות","kol'lot"],"pres.fs":["כוללת","kolelet"],"pres.mp":["כוללים","kol'lim"],"pres.ms":["כולל","kolel"]},
+  "לזכור":{"pres.fp":["זוכרות","zokh'rot"],"pres.fs":["זוכרת","zokheret"],"pres.mp":["זוכרים","zokh'rim"],"pres.ms":["זוכר","zokher"]},
+  "לרוץ":{"pres.fp":["רצות","ratzot"],"pres.fs":["רצה","ratzah"],"pres.mp":["רצים","ratzim"],"pres.ms":["רץ","ratz"]},
+  "לשיר":{"pres.fp":["שרות","sharot"],"pres.fs":["שרה","sharah"],"pres.mp":["שרים","sharim"],"pres.ms":["שר","shar"]},
+  "לנוח":{"pres.fp":["נחות","nakhot"],"pres.fs":["נחה","nakhah"],"pres.mp":["נחים","nakhim"],"pres.ms":["נח","nakh"]},
+  "לשקול":{"pres.fp":["שוקלות","shok'lot"],"pres.fs":["שוקלת","shokelet"],"pres.mp":["שוקלים","shok'lim"],"pres.ms":["שוקל","shokel"]},
+  "לעזור":{"pres.fp":["עוזרות","oz'rot"],"pres.fs":["עוזרת","ozeret"],"pres.mp":["עוזרים","oz'rim"],"pres.ms":["עוזר","ozer"]},
+  "לשנוא":{"pres.fp":["שונאות","son'ot"],"pres.fs":["שונאת","sonet"],"pres.mp":["שונאים","son'im"],"pres.ms":["שונא","sone"]},
+  "חותם":{"pres.fp":["חותמות","khot'mot"],"pres.fs":["חותמת","khotemet"],"pres.mp":["חותמים","khot'mim"],"pres.ms":["חותם","khotem"]},
+  "רוקד":{"pres.fp":["רוקדות","rok'dot"],"pres.fs":["רוקדת","rokedet"],"pres.mp":["רוקדים","rok'dim"],"pres.ms":["רוקד","roked"]},
+  "ליצור":{"pres.fp":["יוצרות","yotz'rot"],"pres.fs":["יוצרת","yotzeret"],"pres.mp":["יוצרים","yotz'rim"],"pres.ms":["יוצר","yotzer"]},
+  "לעמוד":{"pres.fp":["עומדות","om'dot"],"pres.fs":["עומדת","omedet"],"pres.mp":["עומדים","om'dim"],"pres.ms":["עומד","omed"]},
+  "לחתוך":{"pres.fp":["חותכות","khot'khot"],"pres.fs":["חותכת","khotekhet"],"pres.mp":["חותכים","khot'khim"],"pres.ms":["חותך","khotekh"]},
+  "לשבת":{"pres.fp":["יושבות","yosh'vot"],"pres.fs":["יושבת","yoshevet"],"pres.mp":["יושבים","yosh'vim"],"pres.ms":["יושב","yoshev"]},
+  "לגדול":{"pres.fp":["גדלות","g'delot"],"pres.fs":["גדלה","g'delah"],"pres.mp":["גדלים","g'delim"],"pres.ms":["גדל","gadel"]},
+  "לשכוח":{"pres.fp":["שוכחות","shokh'khot"],"pres.fs":["שוכחת","shokhakhat"],"pres.mp":["שוכחים","shokh'khim"],"pres.ms":["שוכח","shokheakh"]},
+  "לצפות":{"pres.fp":["צופות","tzofot"],"pres.fs":["צופה","tzofah"],"pres.mp":["צופים","tzofim"],"pres.ms":["צופה","tzofeh"]},
+  "לצאת":{"pres.fp":["יוצאות","yotz'ot"],"pres.fs":["יוצאת","yotzet"],"pres.mp":["יוצאים","yotz'im"],"pres.ms":["יוצא","yotze"]},
+  "לבהות":{"pres.fp":["בוהות","bohot"],"pres.fs":["בוהה","bohah"],"pres.mp":["בוהים","bohim"],"pres.ms":["בוהה","boheh"]},
+  "לשכור":{"pres.fp":["שוכרות","sokh'rot"],"pres.fs":["שוכרת","sokheret"],"pres.mp":["שוכרים","sokh'rim"],"pres.ms":["שוכר","sokher"]},
+  "לשלוח":{"pres.fp":["שולחות","shol'khot"],"pres.fs":["שולחת","sholakhat"],"pres.mp":["שולחים","shol'khim"],"pres.ms":["שולח","sholeakh"]},
+  "לבדוק":{"pres.fp":["בודקות","bod'kot"],"pres.fs":["בודקת","bodeket"],"pres.mp":["בודקים","bod'kim"],"pres.ms":["בודק","bodek"]},
+  "לשבור":{"pres.fp":["שוברות","shov'rot"],"pres.fs":["שוברת","shoveret"],"pres.mp":["שוברים","shov'rim"],"pres.ms":["שובר","shover"]},
+  "לגנוב":{"pres.fp":["גונבות","gon'vot"],"pres.fs":["גונבת","gonevet"],"pres.mp":["גונבים","gon'vim"],"pres.ms":["גונב","gonev"]},
+  "להפוך":{"pres.fp":["הופכות","hof'khot"],"pres.fs":["הופכת","hofekhet"],"pres.mp":["הופכים","hof'khim"],"pres.ms":["הופך","hofekh"]},
+  "לברוח":{"pres.fp":["בורחות","bor'khot"],"pres.fs":["בורחת","borakhat"],"pres.mp":["בורחים","bor'khim"],"pres.ms":["בורח","boreakh"]},
+  "להכיר":{"pres.fp":["מכירות","makirot"],"pres.fs":["מכירה","makirah"],"pres.mp":["מכירים","makirim"],"pres.ms":["מכיר","makir"]},
+  "לענות":{"pres.fp":["עונות","onot"],"pres.fs":["עונה","onah"],"pres.mp":["עונים","onim"],"pres.ms":["עונה","oneh"]},
+  "צבע":{"pl":["צבעים","tz'va'im"],"sg":["צבע","tzeva"]},
+  "לצבוע":{"pres.fp":["צובעות","tzov'ot"],"pres.fs":["צובעת","tzova'at"],"pres.mp":["צובעים","tzov'im"],"pres.ms":["צובע","tzovea"]},
+  "עם":{"pl":["עמים","amim"],"sg":["עם","am"]},
+  "מספר":{"pl":["מספרים","mis'parim"],"sg":["מספר","mispar"]},
+  "אפס":{"pl":["אפסים","afasim"],"sg":["אפס","efes"]},
+  "לספור":{"pres.fp":["סופרות","sof'rot"],"pres.fs":["סופרת","soferet"],"pres.mp":["סופרים","sof'rim"],"pres.ms":["סופר","sofer"]},
+  "תשובה":{"pl":["תשובות","t'shuvot"],"sg":["תשובה","t'shuvah"]},
+  "שאלה":{"pl":["שאלות","sh'elot"],"sg":["שאלה","sh'elah"]},
+  "לשאול":{"pres.fp":["שואלות","sho'alot"],"pres.fs":["שואלת","sho'elet"],"pres.mp":["שואלים","sho'alim"],"pres.ms":["שואל","sho'el"]},
+  "האלו":{"fp":["כולן","kulan"]},"אחר":{"pl":["הצהריים","hatzaharayim"],"sg":["אחר","akhar"]},
+  "תלמיד":{"pl":["תלמידים","tal'midim"],"sg":["תלמיד","talmid"]},
+  "רופא":{"pl":["רופאים","rof'im"],"sg":["רופא","rofe"]},
+  "סופר":{"pl":["סופרים","sof'rim"],"sg":["סופר","sofer"]},
+  "מקצוע":{"pl":["מקצועות","miktzo'ot"],"sg":["מקצוע","miktzo'a"]},
+  "דוגמן":{"pl":["דוגמנים","dug'manim"],"sg":["דוגמן","dug'man"]},
+  "במאי":{"pl":["במאים","bama'im"],"sg":["במאי","bamai"]},
+  "קריירה":{"pl":["קריירות","kar'yerot"],"sg":["קריירה","kar'yerah"]},
+  "צוות":{"pl":["צוותים","tz'vatim"],"sg":["צוות","tzevet"]},
+  "אמן":{"pl":["אומנים","omanim"],"sg":["אמן","oman"]},
+  "מזכיר":{"pl":["מזכירים","maz'kirim"],"sg":["מזכיר","mazkir"]},
+  "צייר":{"pl":["ציירים","tzayarim"],"sg":["צייר","tzayar"]},
+  "שופט":{"pl":["שופטים","shof'tim"],"sg":["שופט","shofet"]},
+  "פועל":{"pl":["פעלים","p'alim"],"sg":["פועל","po'al"]},
+  "שוטר":{"pl":["שוטרים","shot'rim"],"sg":["שוטר","shoter"]},
+  "קצין":{"pl":["קצינים","k'tzinim"],"sg":["קצין","katzin"]},
+  "עיתונאי":{"pl":["עיתונאים","itona'im"],"sg":["עיתונאי","itonai"]},
+  "חייל":{"pl":["חיילים","khayalim"],"sg":["חייל","khayal"]},
+  "קברניט":{"pl":["קברניטים","kabar'nitim"],"sg":["קברניט","kabarnit"]},
+  "בוס":{"pl":["בוסים","bosim"],"sg":["בוס","bos"]},
+  "שומר":{"pl":["שומרים","shom'rim"],"sg":["שומר","shumar"]},
+  "שחקן":{"pl":["שחקנים","sakh'kanim"],"sg":["שחקן","sakh'kan"]},
+  "נהג":{"pl":["נהגים","nehagim"],"sg":["נהג","nehag"]},
+  "טבח":{"pl":["טבחים","tabakhim"],"sg":["טבח","tabakh"]},
+  "מלצר":{"pl":["מלצרים","mel'tzarim"],"sg":["מלצר","mel'tzar"]},
+  "מהנדס":{"pl":["מהנדסים","m'han'd'sim"],"sg":["מהנדס","m'handes"]},
+  "אדריכל":{"pl":["אדריכלים","ad'rikhalim"],"sg":["אדריכל","ad'rikhal"]},
+  "חקלאי":{"pl":["חקלאים","khak'la'im"],"sg":["חקלאי","khakla'i"]},
+  "עבודה":{"pl":["עבודות","avodot"],"sg":["עבודה","avodah"]},
+  "משטרה":{"pl":["משטרות","mish'tarot"],"sg":["משטרה","mish'tarah"]},
+  "התמחות":{"pl":["התמחויות","hit'makhuyot"],"sg":["התמחות","hit'makhut"]},
+  "אף":{"pl":["אפים","apim"],"sg":["אף","af"]},
+  "להימצא":{"pres.fp":["נמצאות","nim'tza'ot"],"pres.fs":["נמצאת","nim'tzet"],"pres.mp":["נמצאים","nim'tza'im"],"pres.ms":["נמצא","nim'tza"]},
+  "אל":{"pl":["אלים","elim"],"sg":["אל","el"]},
+  "לבקש":{"pres.fp":["מבקשות","m'vak'shot"],"pres.fs":["מבקשת","m'vakeshet"],"pres.mp":["מבקשים","m'vak'shim"],"pres.ms":["מבקש","m'vakesh"]},
+  "לשלם":{"pres.fp":["משלמות","m'shal'mot"],"pres.fs":["משלמת","m'shalemet"],"pres.mp":["משלמים","m'shal'mim"],"pres.ms":["משלם","m'shalem"]},
+  "לפספס":{"pres.fp":["מפספסות","m'fas'f'sot"],"pres.fs":["מפספסת","m'fas'feset"],"pres.mp":["מפספסים","m'fas'f'sim"],"pres.ms":["מפספס","m'pas'fes"]},
+  "לשחק":{"pres.fp":["משחקות","m'sakhakot"],"pres.fs":["משחקת","m'sakheket"],"pres.mp":["משחקים","m'sakhakim"],"pres.ms":["משחק","m'sakhek"]},
+  "לספר":{"pres.fp":["מספרות","m'sap'rot"],"pres.fs":["מספרת","m'saperet"],"pres.mp":["מספרים","m'sap'rim"],"pres.ms":["מספר","m'saper"]},
+  "לעצב":{"pres.fp":["מעצבות","m'atz'vot"],"pres.fs":["מעצבת","m'atzevet"],"pres.mp":["מעצבים","m'atz'vim"],"pres.ms":["מעצב","m'atzev"]},
+  "לשנות":{"pres.fp":["משנות","m'shanot"],"pres.fs":["משנה","m'shanah"],"pres.mp":["משנים","m'shanim"],"pres.ms":["משנה","m'shaneh"]},
+  "לנסות":{"pres.fp":["מנסות","m'nasot"],"pres.fs":["מנסה","m'nasah"],"pres.mp":["מנסים","m'nasim"],"pres.ms":["מנסה","m'naseh"]},
+  "לקוות":{"pres.fp":["מקוות","m'kavot"],"pres.fs":["מקווה","m'kavah"],"pres.mp":["מקווים","m'kavim"],"pres.ms":["מקווה","m'kaveh"]},
+  "לחפש":{"pres.fp":["מחפשות","m'khap'sot"],"pres.fs":["מחפשת","m'khapeset"],"pres.mp":["מחפשים","m'khap'sim"],"pres.ms":["מחפש","m'khapes"]},
+  "לגדל":{"pres.fp":["מגדלות","m'gad'lot"],"pres.fs":["מגדלת","m'gadelet"],"pres.mp":["מגדלים","m'gad'lim"],"pres.ms":["מגדל","m'gadel"]},
+  "לסמן":{"pres.fp":["מסמנות","m'sam'not"],"pres.fs":["מסמנת","m'samenet"],"pres.mp":["מסמנים","m'sam'nim"],"pres.ms":["מסמן","m'samen"]},
+  "לאחל":{"pres.fp":["מאחלות","m'akhalot"],"pres.fs":["מאחלת","m'akhelet"],"pres.mp":["מאחלים","m'akhalim"],"pres.ms":["מאחל","m'akhel"]},
+  "לערבב":{"pres.fp":["מערבבות","m'ar'b'vot"],"pres.fs":["מערבבת","m'ar'bevet"],"pres.mp":["מערבבים","m'ar'b'vim"],"pres.ms":["מערבב","m'ar'bev"]},
+  "לכבד":{"pres.fp":["מכבדות","m'khab'dot"],"pres.fs":["מכבדת","m'khabedet"],"pres.mp":["מכבדים","m'khab'dim"],"pres.ms":["מכבד","m'khabed"]},
+  "לסדר":{"pres.fp":["מסדרות","m'sad'rot"],"pres.fs":["מסדרת","m'saderet"],"pres.mp":["מסדרים","m'sad'rim"],"pres.ms":["מסדר","m'sader"]},
+  "לייבש":{"pres.fp":["מייבשות","m'yab'shot"],"pres.fs":["מייבשת","m'yabeshet"],"pres.mp":["מייבשים","m'yab'shim"],"pres.ms":["מייבש","m'yabesh"]},
+  "לחמם":{"pres.fp":["מחממות","m'khamemot"],"pres.fs":["מחממת","m'khamemet"],"pres.mp":["מחממים","m'khamemim"],"pres.ms":["מחמם","m'khamem"]},
+  "מייבא":{"pres.fp":["מייבאות","m'yabot"],"pres.fs":["מייבאת","m'yabet"],"pres.mp":["מייבאים","m'yabim"],"pres.ms":["מייבא","m'yabe"]},
+  "למלא":{"pres.fp":["ממלאות","m'mal'ot"],"pres.fs":["ממלאה","m'mal'ah"],"pres.mp":["ממלאים","m'mal'im"],"pres.ms":["ממלא","m'male"]},
+  "לבזבז":{"pres.fp":["מבזבזות","m'vaz'b'zot"],"pres.fs":["מבזבזת","m'vaz'bezet"],"pres.ms":["מבזבז","m'vaz'bez"]},
+  "לבקר":{"pres.fp":["מבקרות","m'vak'rot"],"pres.fs":["מבקרת","m'vakeret"],"pres.mp":["מבקרים","m'vak'rim"],"pres.ms":["מבקר","m'vaker"]},
+  "לקבל":{"pres.fp":["מקבלות","m'kab'lot"],"pres.fs":["מקבלת","m'kabelet"],"pres.mp":["מקבלים","m'kab'lim"],"pres.ms":["מקבל","m'kabel"]},
+  "לרחם":{"pres.fp":["מרחמות","m'rakhamot"],"pres.fs":["מרחמת","m'rakhemet"],"pres.mp":["מרחמים","m'rakhamim"],"pres.ms":["מרחם","m'rakhem"]},
+  "לקנא":{"pres.fp":["מקנאות","m'kan'ot"],"pres.fs":["מקנאה","m'kan'ah"],"pres.mp":["מקנאים","m'kan'im"],"pres.ms":["מקנא","m'kane"]},
+  "לטפס":{"pres.fp":["מטפסות","m'tap'sot"],"pres.fs":["מטפסת","m'tapeset"],"pres.mp":["מטפסים","m'tap'sim"],"pres.ms":["מטפס","m'tapes"]},
+  "לנצח":{"pres.fp":["מנצחות","m'natz'khot"],"pres.fs":["מנצחת","m'natzakhat"],"pres.mp":["מנצחים","m'natz'khim"],"pres.ms":["מנצח","m'natzeakh"]},
+  "לאמן":{"pres.fp":["מאמנות","m'am'not"],"pres.fs":["מאמנת","m'amenet"],"pres.mp":["מאמנים","m'am'nim"],"pres.ms":["מאמן","m'amen"]},
+  "לשקר":{"pres.fp":["משקרות","m'shak'rot"],"pres.fs":["משקרת","m'shakeret"],"pres.mp":["משקרים","m'shak'rim"],"pres.ms":["משקר","m'shaker"]},
+  "לאחר":{"pres.fp":["מאחרות","m'akharot"],"pres.fs":["מאחרת","m'akheret"],"pres.mp":["מאחרים","m'akharim"],"pres.ms":["מאחר","m'akher"]},
+  "לחכות":{"pres.fp":["מחכות","m'khakot"],"pres.fs":["מחכה","m'khakah"],"pres.mp":["מחכים","m'khakim"],"pres.ms":["מחכה","m'khakeh"]},
+  "לספק":{"pres.fp":["מספקות","m'sap'kot"],"pres.fs":["מספקת","m'sapeket"],"pres.mp":["מספקים","m'sap'kim"],"pres.ms":["מספק","m'sapek"]},
+  "לסיים":{"pres.fp":["מסיימות","m'say'mot"],"pres.fs":["מסיימת","m'sayemet"],"pres.mp":["מסיימים","m'say'mim"],"pres.ms":["מסיים","m'sayem"]},
+  "לשכנע":{"pres.fp":["משכנעות","m'shakh'n'ot"],"pres.fs":["משכנעת","m'shakh'na'at"],"pres.mp":["משכנעים","m'shakh'n'im"],"pres.ms":["משכנע","m'shakh'nea"]},
+  "לאבד":{"pres.fp":["מאבדות","m'ab'dot"],"pres.fs":["מאבדת","m'abedet"],"pres.mp":["מאבדים","m'ab'dim"],"pres.ms":["מאבד","m'abed"]},
+  "לצלם":{"pres.fp":["מצלמות","m'tzal'mot"],"pres.fs":["מצלמת","m'tzalemet"],"pres.mp":["מצלמים","m'tzal'mim"],"pres.ms":["מצלם","m'tzalem"]},
+  "לאמץ":{"pres.fp":["מאמצות","m'am'tzot"],"pres.fs":["מאמצת","m'ametzet"],"pres.mp":["מאמצים","m'am'tzim"],"pres.ms":["מאמץ","m'ametz"]},
+  "לפחד":{"pres.fp":["מפחדות","m'fakhadot"],"pres.fs":["מפחדת","m'fakhedet"],"pres.mp":["מפחדים","m'fakhadim"],"pres.ms":["מפחד","m'fakhed"]},
+  "לאשר":{"pres.fp":["מאשרות","m'ash'rot"],"pres.fs":["מאשרת","m'asheret"],"pres.mp":["מאשרים","m'ash'rim"],"pres.ms":["מאשר","m'asher"]},
+  "לגלות":{"pres.fp":["מגלות","m'galot"],"pres.fs":["מגלה","m'galah"],"pres.mp":["מגלים","m'galim"],"pres.ms":["מגלה","m'galeh"]},
+  "לגלח":{"pres.fp":["מגלחות","m'gal'khot"],"pres.fs":["מגלחת","m'galakhat"],"pres.mp":["מגלחים","m'gal'khim"],"pres.ms":["מגלח","m'galeakh"]},
+  "לחדש":{"pres.fp":["מחדשות","m'khad'shot"],"pres.fs":["מחדשת","m'khadeshet"],"pres.mp":["מחדשים","m'khad'shim"],"pres.ms":["מחדש","m'khadesh"]},
+  "לברך":{"pres.fp":["מברכות","m'var'khot"],"pres.fs":["מברכת","m'varekhet"],"pres.mp":["מברכים","m'var'khim"],"pres.ms":["מברך","m'varekh"]},
+  "לתאר":{"pres.fp":["מתארות","m'ta'arot"],"pres.fs":["מתארת","m'ta'eret"],"pres.mp":["מתארים","m'ta'arim"],"pres.ms":["מתאר","m'ta'er"]},
+  "לתקן":{"pres.fp":["מתקנות","m'tak'not"],"pres.fs":["מתקנת","m'takenet"],"pres.mp":["מתקנים","m'tak'nim"],"pres.ms":["מתקן","m'taken"]},
+  "יום":{"pl":["העצמאות","ha-atz'ma'ut"],"sg":["יום","yom"]},
+  "זמן":{"pl":["זמנים","z'manim"],"sg":["זמן","z'man"]},
+  "שבוע":{"pl":["שבועות","shavu'ot"],"sg":["שבוע","shavu'a"]},
+  "חודש":{"pl":["חודשים","khodashim"],"sg":["חודש","khodesh"]},
+  "תאריך":{"pl":["תאריכים","ta'arikhim"],"sg":["תאריך","ta'arikh"]},
+  "אביב":{"pl":["אביבים","avivim"],"sg":["אביב","aviv"]},
+  "חורף":{"pl":["חורפים","khorafim"],"sg":["חורף","khoref"]},
+  "סתיו":{"pl":["סתיווים","stavim"],"sg":["סתיו","stav"]},
+  "קיץ":{"pl":["קיצים","keitzim"],"sg":["קיץ","kayitz"]},
+  "רגע":{"pl":["רגעים","rega'im"],"sg":["רגע","rega"]},
+  "עשור":{"pl":["עשורים","asorim"],"sg":["עשור","asor"]},
+  "גיל":{"pl":["גילים","gilim"],"sg":["גיל","gil"]},
+  "דור":{"pl":["דורות","dorot"],"sg":["דור","dor"]},
+  "מהלך":{"pl":["מהלכים","mahalakhim"],"sg":["מהלך","mahalakh"]},
+  "שעה":{"pl":["שעות","sha'ot"],"sg":["שעה","sha'ah"]},
+  "דקה":{"pl":["דקות","dakot"],"sg":["דקה","dakah"]},
+  "שניה":{"pl":["שניות","sh'niyot"],"sg":["שניה","sh'niyah"]},
+  "עונה":{"pl":["עונות","onot"],"sg":["עונה","onah"]},
+  "תקופה":{"pl":["תקופות","t'kufot"],"sg":["תקופה","t'kufah"]},
+  "שנה":{"pl":["שנים","shanim"],"sg":["שנה","shanah"]},
+  "מאה":{"pl":["מאות","me'ot"],"sg":["מאה","me'ah"]},
+  "מסיבה":{"pl":["מסיבות","m'sibot"],"sg":["מסיבה","m'sibah"]},
+  "אופן":{"pl":["אופנים","ofanim"],"sg":["אופן","ofen"]},
+  "פעם":{"pl":["פעמים","p'amim"],"sg":["פעם","pa'am"]},
+  "לעיתים":{"pl":["רחוקות","r'khokot"],"sg":["לעיתים","l'itim"]},
+  "פה":{"pl":["פיות","piyot"],"sg":["פה","peh"]},
+  "בן":{"pl":["בנים","banim"],"sg":["בן","ben"]},
+  "אח":{"pl":["אחים","akhim"],"sg":["אח","akh"]},
+  "הורה":{"pl":["הורים","horim"],"sg":["הורה","horeh"]},
+  "בעל":{"pl":["בעלים","b'alim"],"sg":["בעל","ba'al"]},
+  "נישואין":{"pl":["נישואים","nisu'im"],"sg":["נישואין","nisu'in"]},
+  "סבא":{"pl":["סבים","sabim"],"sg":["סבא","saba"]},
+  "נכד":{"pl":["נכדים","n'khadim"],"sg":["נכד","nekhed"]},
+  "דוד":{"pl":["דוודים","d'vadim"],"sg":["דוד","dud"]},
+  "חתן":{"pl":["חתנים","khatanim"],"sg":["חתן","khatan"]},
+  "אחיין":{"pl":["אחיינים","akh'yanim"],"sg":["אחיין","akh'yan"]},
+  "תינוק":{"pl":["תינוקות","tinokot"],"sg":["תינוק","tinok"]},
+  "חיי":{"pl":["חיים","khayim"],"sg":["חיי","khai"]},
+  "בת":{"pl":["בנות","banot"],"sg":["בת","bat"]},
+  "אחות":{"pl":["אחיות","akhayot"],"sg":["אחות","akhot"]},
+  "משפחה":{"pl":["משפחות","mish'pakhot"],"sg":["משפחה","mish'pakhah"]},
+  "סבתא":{"pl":["סבתות","sav'tot"],"sg":["סבתא","sav'ta"]},
+  "נכדה":{"pl":["נכדות","n'khadot"],"sg":["נכדה","nekh'dah"]},
+  "חתונה":{"pl":["חתונות","khatunot"],"sg":["חתונה","khatunah"]},
+  "דודה":{"pl":["דודות","dodot"],"sg":["דודה","dodah"]},
+  "כלה":{"pl":["כלות","kalot"],"sg":["כלה","kalah"]},
+  "אחיינית":{"pl":["אחייניות","akh'yaniyot"],"sg":["אחיינית","akh'yanit"]}
+};
 const DUO_DICT = {
   "אהבה":["ahavah","love"],"יונה":["yonah","dove"],"לאהוב":["le'ehov","to love"],
   "מלך":["melekh","king"],"אגוז":["egoz","nut"],"גבר":["gever","man"],
@@ -8845,6 +9204,7 @@ function libAddDuoUnits(upTo, lib, srs) {
          tiles, multiple choice, listening — so understanding is the half he genuinely
          has, and drilling him on it would spend sessions proving something already true.
          Production is what this app is for, and what the bands above actually grade. */
+      duoFormsApply(l[k], k);
       srsSetBand(s, k, "recv", "strong");
       srsSetBand(s, k, "prod", band);
       const r = s[k] && s[k].prod;
@@ -8855,6 +9215,78 @@ function libAddDuoUnits(upTo, lib, srs) {
   });
   if (own) { libSave(l); srsSave(s); }
   return words.length;
+}
+
+/* ---- the printed conjugation tables ------------------------------------------
+   921 of the document's rows are not vocabulary at all: they are inflections listed
+   under the word they belong to — "Walk, Go (f.p - pres.) hol'khot הולכות", "Your (f.p)
+   shelakhen שלכן". The app already knows they are not words to drill, because STOPLIST
+   holds אותו, אותה, לי, לך and שלי by hand. What it did not have was anywhere to put
+   them, so they were being thrown away.
+
+   FORM_INDEX is built only from forms marked `verified`, and it is what lets the pad say
+   which form something is and what agreement checking rests on. A printed table beats
+   the FORMS_DAILY_CAP = 200 Gemini job that has been filling these by guesswork — his
+   library carries 337 forms still marked uncertain and 43 words with no bank at all.
+
+   NEVER OVERWRITES. A form he corrected by hand is `manual` and is final; a form already
+   `verified` is left alone rather than being rewritten with an identical value and a new
+   date. This only fills gaps. */
+function duoPosFromTags(tags) {
+  if (tags.some(t => t === "inf" || /^(pres|past|fut|imp)\./.test(t))) return "verb";
+  if (tags.every(t => t === "sg" || t === "pl")) return "noun";
+  if (tags.some(t => t === "ms" || t === "fs" || t === "mp" || t === "fp")) return "adj";
+  return null;
+}
+function duoFormsApply(entry, key) {
+  const table = DUO_FORMS[key];
+  if (!entry || !table) return 0;
+  const meta = entry.formsMeta || { src: {}, state: {} };
+  meta.src = meta.src || {}; meta.state = meta.state || {};
+  const forms = entry.forms || {};
+  let filled = 0;
+  Object.keys(table).forEach(tag => {
+    if (meta.src[tag] === "manual") return;            // George's word is final
+    if (meta.state[tag] === "verified") return;        // already settled, leave the date alone
+    const pair = table[tag];
+    if (!pair || !pair[0]) return;
+    forms[tag] = { he: pair[0], tr: pair[1] || "" };
+    meta.state[tag] = "verified";
+    meta.src[tag] = "duo";
+    filled++;
+  });
+  if (!filled) return 0;
+  entry.forms = forms;
+  if (!entry.pos) {
+    const pos = duoPosFromTags(Object.keys(forms));
+    if (pos) { entry.pos = pos; meta.expected = formTagsFor(pos).length; }
+  } else if (!meta.expected) {
+    meta.expected = formTagsFor(entry.pos).length;
+  }
+  meta.checked = todayISO();
+  if (!meta.lemma) meta.lemma = key;
+  entry.formsMeta = meta;
+  return filled;
+}
+/* Applies to everything he already has as well as to what the import adds — the 227
+   entries with a partial bank are exactly where a printed table is worth most. */
+function duoFormsFill(lib) {
+  const l = lib || libAll();
+  let filled = 0, touched = 0;
+  Object.keys(l).forEach(k => {
+    const n = duoFormsApply(l[k], k);
+    if (n) { filled += n; touched++; }
+  });
+  if (filled && !lib) { libSave(l); FORM_INDEX = buildFormIndex(l); }
+  return { forms: filled, words: touched };
+}
+function duoFormsFillIfNeeded() {
+  try {
+    if (localStorage.getItem("hvr_duoforms_v1")) return 0;
+    const r = duoFormsFill();
+    localStorage.setItem("hvr_duoforms_v1", "1");
+    return r.forms;
+  } catch (e) { return 0; }
 }
 
 /* His position when this shipped, from him: "I am currently working on 'Ask Questions'
@@ -25620,6 +26052,8 @@ syncShelves();   // needs srsAll/srsStrengthOf, so it runs here, not in the mid-
    After libAddDuoIfNeeded either way — that batch's words are already his, and this skips
    anything the library holds, so the older hand-checked entries win. */
 libAddDuoUnitsIfNeeded();
+/* After the import, so the words it just added are included in the same pass. */
+duoFormsFillIfNeeded();
 document.getElementById("libViewToggle").textContent = libViewMode() === "map" ? "Grid" : "Map";
 rebuildTrIndex();
 padLoad();
@@ -26073,6 +26507,50 @@ T("libAddDuoUnits: due dates are spread, not stacked on one day", () => {
     assertTrue(r.due <= addDays(r.last, r.stab),
                "never scheduled further out than the stability claims: " + k);
   });
+});
+T("duoFormsApply: an imported form is verified, or FORM_INDEX will not see it", () => {
+  /* buildFormIndex skips anything not marked `verified`, so a form banked as "uncertain"
+     is invisible to agreement checking and to the pad — which is the whole reason for
+     preferring a printed table to a guess. Getting the state wrong would leave the
+     import looking done while changing nothing. */
+  const key = Object.keys(DUO_FORMS).find(k => Object.keys(DUO_FORMS[k]).length >= 2);
+  const e = { tr: "x", en: "x", cat: "Verbs" };
+  const n = duoFormsApply(e, key);
+  assertTrue(n >= 2, "forms were written");
+  Object.keys(DUO_FORMS[key]).forEach(t => {
+    assertEq(e.formsMeta.state[t], "verified", t + " must be verified");
+    assertEq(e.formsMeta.src[t], "duo");
+  });
+  const idx = buildFormIndex({ [key]: e });
+  const someTag = Object.keys(DUO_FORMS[key])[0];
+  assertEq(idx[DUO_FORMS[key][someTag][0]].lemma, key, "and it reaches FORM_INDEX");
+});
+T("duoFormsApply: a form he settled himself is never rewritten", () => {
+  /* Two guards, and they are different. `manual` is his own correction and outranks
+     everything. `verified` is already settled — rewriting it with an identical value
+     would still move formsMeta.checked, which is the date the panel reads to decide
+     whether a bank needs looking at again. */
+  const key = Object.keys(DUO_FORMS).find(k => Object.keys(DUO_FORMS[k]).length >= 2);
+  const tags = Object.keys(DUO_FORMS[key]);
+  const e = { tr: "x", en: "x",
+              forms: { [tags[0]]: { he: "מִשֶׁלִּי", tr: "mine" },
+                       [tags[1]]: { he: "כְּבָר", tr: "already" } },
+              formsMeta: { src: { [tags[0]]: "manual" }, state: { [tags[1]]: "verified" },
+                           checked: "2026-01-01" } };
+  duoFormsApply(e, key);
+  assertEq(e.forms[tags[0]].he, "מִשֶׁלִּי", "a manual form is final");
+  assertEq(e.forms[tags[1]].he, "כְּבָר", "and a verified one is left settled");
+});
+T("duoFormsApply: the part of speech follows the tags that actually arrived", () => {
+  assertEq(duoPosFromTags(["inf", "pres.ms"]), "verb");
+  assertEq(duoPosFromTags(["sg", "pl"]), "noun", "a noun HAS a gender, it does not inflect for one");
+  assertEq(duoPosFromTags(["ms", "fs", "mp", "fp"]), "adj");
+  /* An entry that already knows what it is keeps that — the tags are weaker evidence
+     than whatever set pos in the first place. */
+  const key = Object.keys(DUO_FORMS)[0];
+  const e = { pos: "phrase", tr: "x", en: "x" };
+  duoFormsApply(e, key);
+  assertEq(e.pos, "phrase", "an existing pos is not second-guessed");
 });
 T("DUO import: every dictionary row is a usable pair, not a half-parsed one", () => {
   /* The generator drops a row whose transliteration disagrees with its Hebrew, so what

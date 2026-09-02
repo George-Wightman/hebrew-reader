@@ -5969,7 +5969,21 @@ function buildFormIndex(lib) {
          it rather than being silently replaced. Genuine homographs are real in
          Hebrew and neither answer is better, so stability beats whichever
          happened to be iterated last. */
-      if (!idx[f.he]) idx[f.he] = { lemma: lemma, tag: tag, pos: e.pos || null };
+      const rec = { lemma: lemma, tag: tag, pos: e.pos || null };
+      if (!idx[f.he]) idx[f.he] = rec;
+      /* AND THE UNPOINTED SPELLING, because 306 of these keys carry nikud and nothing
+         else in the app does. The forms-filling job writes pointed Hebrew — גָּרָה — while
+         every sentence, voice note and drill card is written the way people actually type,
+         גרה. So libKeyFor could not resolve a single one of them, and a sentence using an
+         ordinary inflected form was rejected as containing an untaught word. That is the
+         2026-08-26 finding ("the filter is blind to Hebrew inflection") arriving again by
+         a different route: the form was banked, verified, and unreachable.
+
+         A light strip, deliberately not normHe: that also folds final letter forms, which
+         would let two genuinely different words collide on one key. Nikud and cantillation
+         only, and the pointed spelling stays indexed alongside. */
+      const bare = String(f.he).replace(/[֑-ׇ]/g, "");
+      if (bare && bare !== f.he && !idx[bare]) idx[bare] = rec;
     });
   });
   return idx;
@@ -17355,8 +17369,18 @@ function campPickCarry(exclude, avoid) {
   const lib = libAll(), srs = srsAll();
   const ranked = Object.keys(lib)
     .filter(k => srsGradable(k, lib) && wordReady(k, srs) && exclude.indexOf(k) === -1)
-    .sort((a, b) => ((srs[a] && srs[a].prod && srs[a].prod.stab) || 0) -
-                    ((srs[b] && srs[b].prod && srs[b].prod.stab) || 0));
+    /* ANSWERED WORDS FIRST, then lowest stability. Carry means "fading from elsewhere" —
+       a word worth propping up inside a node about something else. Stability alone stopped
+       meaning that the moment the Duolingo import existed: srsBandRecord parks every
+       seeded word at stab 8, so 250 words he has never once answered all sort ahead of
+       everything he has, and a node about feeling ill drew "one", "zero" and "four".
+
+       srsBandRecord writes no lastAt — only srsApply does, when he actually answers — so
+       it is an exact test for "has this word ever been practised", not a proxy. */
+    .sort((a, b) => {
+      const ra = (srs[a] && srs[a].prod) || {}, rb = (srs[b] && srs[b].prod) || {};
+      return ((rb.lastAt ? 1 : 0) - (ra.lastAt ? 1 : 0)) || ((ra.stab || 0) - (rb.stab || 0));
+    });
   const fresh = avoid ? ranked.filter(k => !avoid[k]) : ranked;
   return (fresh.length >= CAMP_CARRY_PER_NODE ? fresh : ranked).slice(0, CAMP_CARRY_PER_NODE);
 }
@@ -19832,14 +19856,31 @@ function campEnsureCarry(node, c, lib) {
   if (!node) return false;
   const l = lib || libAll();
   let changed = false;
+  /* Everything already spoken for anywhere on the map. Another node's CARRY counts:
+     without it all four nodes in a chapter pick the same three lowest-stability words —
+     campPickCarry is deterministic — and a mechanism added for variety delivers the same
+     trio four times. campApplyPlan already threads a `carryUsed` accumulator through for
+     exactly this reason; this is the same rule applied to nodes that shipped without one. */
   const taken = {};
   campNodes(c).forEach(x => {
     (x.words || []).forEach(w => { taken[w] = 1; });
-    if (x !== node) (x.stretch || []).forEach(w => { taken[w] = 1; });
+    if (x === node) return;
+    (x.carry || []).forEach(w => { taken[w] = 1; });
+    (x.stretch || []).forEach(w => { taken[w] = 1; });
   });
-  if (!(node.carry || []).length) {
-    const carry = campPickCarry((node.words || []).slice(), taken);
-    if (carry.length) { node.carry = carry; changed = true; }
+  /* Empty, or wholly duplicated by a node earlier in the sweep. His live campaign has
+     FIVE nodes sharing אביב / אתמול / בדרך כלל — campApplyPlan threads a carryUsed
+     accumulator but scopes it per chapter, and campPickCarry silently ignores `avoid`
+     whenever fewer than CAMP_CARRY_PER_NODE words survive it. Three words repeated across
+     five nodes is the opposite of the variety this carry set exists to provide.
+
+     Only a carry that is ENTIRELY spoken for is replaced. A partial overlap is ordinary —
+     there are only so many fading words — and rewriting on that would churn a set that
+     content has already been written against. */
+  const carry = node.carry || [];
+  if (!carry.length || carry.every(w => taken[w])) {
+    const picked = campPickCarry((node.words || []).slice(), taken);
+    if (picked.length && picked.join() !== carry.join()) { node.carry = picked; changed = true; }
   }
   if (!(node.stretch || []).length) {
     const stretch = campStretchFor(node, l, taken);
@@ -26763,6 +26804,23 @@ T("wordFamiliarity: new words arrive in Duolingo's order, and evidence still bea
   assertTrue(wordFamiliarity("b", lib, srs, arch) > f("a"),
              "a word he keeps meeting outranks an earlier unit he has only been told about");
   assertTrue(f("d") > f("b"), "and answering it still beats an identical word he has not");
+});
+T("buildFormIndex: a pointed form is reachable from ordinary unpointed Hebrew", () => {
+  /* The forms job banks nikud (גָּרָה); everything else in the app — sentences, voice
+     notes, what he types — is unpointed (גרה). 306 of his verified forms were indexed
+     under a spelling nothing could ever produce, so libKeyFor returned null and a
+     sentence using a perfectly ordinary inflection was rejected as untaught. */
+  const idx = buildFormIndex({ "גר": {
+    pos: "verb",
+    forms: { "pres.fs": { he: "גָּרָה", tr: "gara" }, "pres.ms": { he: "גר", tr: "gar" } },
+    formsMeta: { state: { "pres.fs": "verified", "pres.ms": "verified" } } } });
+  assertEq(idx["גרה"].lemma, "גר", "reachable unpointed");
+  assertEq(idx["גָּרָה"].lemma, "גר", "and the pointed spelling still resolves");
+  /* Not normHe: that folds ך->כ and would let distinct words collide on one key. */
+  const idx2 = buildFormIndex({ "שלך": { pos: "noun",
+    forms: { sg: { he: "שלך", tr: "shelkha" } },
+    formsMeta: { state: { sg: "verified" } } } });
+  assertTrue(!idx2["שלכ"], "final letter forms are not folded away");
 });
 T("duoFormsApply: an imported form is verified, or FORM_INDEX will not see it", () => {
   /* buildFormIndex skips anything not marked `verified`, so a form banked as "uncertain"

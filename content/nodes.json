@@ -1,623 +1,2646 @@
 {
-  "version": 2,
-  "generated": "2026-08-31",
-  "note": "Written by Claude, every item verified against the app's own gates (bankUnknowns, bankUses, bankNearDuplicate, bankServable) against his real synced state before commit. See docs/superpowers/specs/2026-08-31-prebaked-node-content-design.md",
-  "items": [
-    {
-      "he": "הרחוב צר",
-      "tr": "ha-rechov tzar",
-      "en": "the street is narrow",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "העיר יפה",
-      "tr": "ha-ir yafe",
-      "en": "the city is beautiful",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "האוטובוס חדש",
-      "tr": "ha-otobus chadash",
-      "en": "the bus is new",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "האוטובוס אטי היום",
-      "tr": "ha-otobus iti hayom",
-      "en": "the bus is slow today",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "זה הרחוב שלי",
-      "tr": "ze ha-rechov sheli",
-      "en": "this is my street",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "אני נוסע לעיר",
-      "tr": "ani nose'a la-ir",
-      "en": "I am travelling to the city",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "סבא נוסע באוטובוס",
-      "tr": "saba nose'a ba-otobus",
-      "en": "grandpa travels by bus",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אני רואה את האוטובוס",
-      "tr": "ani ro'e et ha-otobus",
-      "en": "I can see the bus",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אתה נוסע לעיר?",
-      "tr": "ata nose'a la-ir?",
-      "en": "are you going to the city?",
-      "type": "listen",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אתמול נסעתי לעיר עם סבא",
-      "tr": "etmol nasati la-ir im saba",
-      "en": "yesterday I went to the city with grandpa",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "איפה האוטובוס לעיר?",
-      "tr": "eifo ha-otobus la-ir?",
-      "en": "where is the bus to the city?",
-      "type": "listen",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "מחר אני נוסע לעיר עם אמא",
-      "tr": "machar ani nose'a la-ir im ima",
-      "en": "tomorrow I am going to the city with mum",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "למה האוטובוס אטי היום?",
-      "tr": "lama ha-otobus iti hayom?",
-      "en": "why is the bus slow today?",
-      "type": "listen",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "אני נוסע לעיר כי יש לי עבודה",
-      "tr": "ani nose'a la-ir ki yesh li avoda",
-      "en": "I am going to the city because I have work",
-      "type": "sentence",
-      "lvl": 4,
-      "for": ""
-    },
-    {
-      "he": "הרחוב שלי קטן אבל נעים",
-      "tr": "ha-rechov sheli katan aval na'im",
-      "en": "my street is small but pleasant",
-      "type": "sentence",
-      "lvl": 4,
-      "for": ""
-    },
-    {
-      "he": "אני חולה",
-      "tr": "ani chole",
-      "en": "I am ill",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "חולה"
-    },
-    {
-      "he": "הראש כואב",
-      "tr": "ha-rosh ko'ev",
-      "en": "my head hurts",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "ראש"
-    },
-    {
-      "he": "הבטן כואבת",
-      "tr": "ha-beten ko'evet",
-      "en": "my stomach hurts",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "בטן"
-    },
-    {
-      "he": "סבא בריא",
-      "tr": "saba bari",
-      "en": "grandpa is healthy",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "בריא"
-    },
-    {
-      "he": "אני מרגיש טוב היום",
-      "tr": "ani margish tov hayom",
-      "en": "I feel good today",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אני לא מרגיש טוב",
-      "tr": "ani lo margish tov",
-      "en": "I do not feel well",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "מרגיש"
-    },
-    {
-      "he": "הראש שלי כואב",
-      "tr": "ha-rosh sheli ko'ev",
-      "en": "my head is hurting",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "ראש"
-    },
-    {
-      "he": "אתה מרגיש טוב?",
-      "tr": "ata margish tov?",
-      "en": "are you feeling all right?",
-      "type": "listen",
-      "lvl": 2,
-      "for": "מרגיש"
-    },
-    {
-      "he": "סבתא מרגישה טוב",
-      "tr": "savta margisha tov",
-      "en": "grandma is feeling well",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אתמול הייתי חולה",
-      "tr": "etmol hayiti chole",
-      "en": "yesterday I was ill",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "חולה"
-    },
-    {
-      "he": "הבטן שלי כואבת מאוד",
-      "tr": "ha-beten sheli ko'evet me'od",
-      "en": "my stomach hurts a lot",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "בטן"
-    },
-    {
-      "he": "למה אתה מרגיש רע?",
-      "tr": "lama ata margish ra?",
-      "en": "why do you feel bad?",
-      "type": "listen",
-      "lvl": 3,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אני מרגיש טוב אבל עייף",
-      "tr": "ani margish tov aval ayeif",
-      "en": "I feel fine but tired",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אני חולה אבל מרגיש קצת יותר טוב",
-      "tr": "ani chole aval margish ktzat yoter tov",
-      "en": "I am ill but feeling a little better",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "חולה"
-    },
-    {
-      "he": "הראש כואב כי אני עייף",
-      "tr": "ha-rosh ko'ev ki ani ayeif",
-      "en": "my head hurts because I am tired",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "ראש"
-    },
-    {
-      "he": "זה נחמד מאוד",
-      "tr": "ze nechmad me'od",
-      "en": "that is very nice",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "נחמד"
-    },
-    {
-      "he": "זה קצת קר",
-      "tr": "ze ktzat kar",
-      "en": "it is a little cold",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "קצת"
-    },
-    {
-      "he": "אני רוצה קצת מים",
-      "tr": "ani rotze ktzat mayim",
-      "en": "I would like a little water",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "קצת"
-    },
-    {
-      "he": "אני אוהב קפה מאוד",
-      "tr": "ani ohev kafe me'od",
-      "en": "I like coffee a lot",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אני שותה קצת תה",
-      "tr": "ani shote ktzat te",
-      "en": "I am drinking a little tea",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "קצת"
-    },
-    {
-      "he": "אתמול היה נחמד מאוד",
-      "tr": "etmol haya nechmad me'od",
-      "en": "yesterday was very nice",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "נחמד"
-    },
-    {
-      "he": "אני רוצה קצת תה בבקשה",
-      "tr": "ani rotze ktzat te bevakasha",
-      "en": "I would like a little tea please",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "קצת"
-    },
-    {
-      "he": "למה אתה רוצה קצת מים?",
-      "tr": "lama ata rotze ktzat mayim?",
-      "en": "why do you want a little water?",
-      "type": "listen",
-      "lvl": 3,
-      "for": "קצת"
-    },
-    {
-      "he": "סבא נחמד מאוד ואני אוהב אותו",
-      "tr": "saba nechmad me'od va-ani ohev oto",
-      "en": "grandpa is very nice and I love him",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "נחמד"
-    },
-    {
-      "he": "אני מרגיש קצת חולה",
-      "tr": "ani margish ktzat chole",
-      "en": "I feel a little ill",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "חולה"
-    },
-    {
-      "he": "אני לא בריא היום",
-      "tr": "ani lo bari hayom",
-      "en": "I am not well today",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "בריא"
-    },
-    {
-      "he": "סבא חולה?",
-      "tr": "saba chole?",
-      "en": "is grandpa ill?",
-      "type": "listen",
-      "lvl": 1,
-      "for": "חולה"
-    },
-    {
-      "he": "הבטן כואבת אבל הראש בסדר",
-      "tr": "ha-beten ko'evet aval ha-rosh beseder",
-      "en": "my stomach hurts but my head is fine",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "בטן"
-    },
-    {
-      "he": "אני מרגיש רע כי אני חולה",
-      "tr": "ani margish ra ki ani chole",
-      "en": "I feel bad because I am ill",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אתה בריא עכשיו?",
-      "tr": "ata bari achshav?",
-      "en": "are you well now?",
-      "type": "listen",
-      "lvl": 2,
-      "for": "בריא"
-    },
-    {
-      "he": "הראש שלי כואב מאוד היום",
-      "tr": "ha-rosh sheli ko'ev me'od hayom",
-      "en": "my head hurts a lot today",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "ראש"
-    },
-    {
-      "he": "אני חולה כבר שבוע",
-      "tr": "ani chole kvar shavu'a",
-      "en": "I have been ill for a week now",
-      "type": "sentence",
-      "lvl": 3,
-      "for": "חולה"
-    },
-    {
-      "he": "סבתא לא מרגישה טוב",
-      "tr": "savta lo margisha tov",
-      "en": "grandma is not feeling well",
-      "type": "sentence",
-      "lvl": 2,
-      "for": "מרגיש"
-    },
-    {
-      "he": "אני בריא וחזק",
-      "tr": "ani bari ve-chazak",
-      "en": "I am fit and strong",
-      "type": "sentence",
-      "lvl": 1,
-      "for": "בריא"
-    },
-    {
-      "he": "הראש כואב ואני עייף מאוד",
-      "tr": "ha-rosh ko'ev va-ani ayeif me'od",
-      "en": "my head hurts and I am very tired",
-      "type": "sentence",
-      "lvl": 4,
-      "for": "ראש"
-    },
-    {
-      "he": "החדר קטן",
-      "tr": "ha-cheder katan",
-      "en": "the room is small",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "החדר שלי קטן",
-      "tr": "ha-cheder sheli katan",
-      "en": "my room is small",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "אני גר בדירה קטנה",
-      "tr": "ani gar be-dira ktana",
-      "en": "I live in a small apartment",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אני רואה את הדלת",
-      "tr": "ani ro'e et ha-delet",
-      "en": "I see the door",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אמא רוצה שולחן חדש",
-      "tr": "ima rotza shulchan chadash",
-      "en": "mum wants a new table",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "יש מיטה בחדר",
-      "tr": "yesh mita ba-cheder",
-      "en": "there is a bed in the room",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אין דלת בחדר",
-      "tr": "ein delet ba-cheder",
-      "en": "there is no door in the room",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אני צריך שולחן",
-      "tr": "ani tzarich shulchan",
-      "en": "I need a table",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "המיטה בחדר הקטן",
-      "tr": "ha-mita ba-cheder ha-katan",
-      "en": "the bed is in the small room",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אתמול קניתי שולחן חדש",
-      "tr": "etmol kaniti shulchan chadash",
-      "en": "yesterday I bought a new table",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "אתמול ראיתי דירה יפה מאוד",
-      "tr": "etmol ra'iti dira yafa me'od",
-      "en": "yesterday I saw a very beautiful apartment",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "אני אוהב את החדר כי הוא גדול",
-      "tr": "ani ohev et ha-cheder ki hu gadol",
-      "en": "I like the room because it is big",
-      "type": "sentence",
-      "lvl": 4,
-      "for": ""
-    },
-    {
-      "he": "יש מיטה בחדר",
-      "tr": "yesh mita ba-cheder",
-      "en": "is there a bed in the room?",
-      "type": "listen",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "למה הדלת קטנה",
-      "tr": "lama ha-delet ktana",
-      "en": "why is the door small?",
-      "type": "listen",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "הילדים במיטה עכשיו",
-      "tr": "ha-yeladim ba-mita achshav",
-      "en": "the children are in bed now",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אני חושב שהדירה יפה",
-      "tr": "ani choshev she-ha-dira yafa",
-      "en": "I think the apartment is nice",
-      "type": "sentence",
-      "lvl": 4,
-      "for": ""
-    },
-    {
-      "he": "האוכל על השולחן",
-      "tr": "ha-ochel al ha-shulchan",
-      "en": "the food is on the table",
-      "type": "sentence",
-      "lvl": 1,
-      "for": ""
-    },
-    {
-      "he": "אתמול הלכתי לחדר",
-      "tr": "etmol halachti la-cheder",
-      "en": "yesterday I went to the room",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "בחדר יש שולחן ומיטה",
-      "tr": "ba-cheder yesh shulchan u-mita",
-      "en": "in the room there is a table and a bed",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "אני רוצה מיטה חדשה",
-      "tr": "ani rotze mita chadasha",
-      "en": "I want a new bed",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "הדירה של סבא ישנה",
-      "tr": "ha-dira shel saba yeshana",
-      "en": "grandpa's apartment is old",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "אני עייף ורוצה מיטה",
-      "tr": "ani ayeif ve-rotze mita",
-      "en": "I am tired and want a bed",
-      "type": "sentence",
-      "lvl": 4,
-      "for": ""
-    },
-    {
-      "he": "החדר קר מאוד היום",
-      "tr": "ha-cheder kar me'od hayom",
-      "en": "the room is very cold today",
-      "type": "sentence",
-      "lvl": 2,
-      "for": ""
-    },
-    {
-      "he": "אתמול קניתי מיטה",
-      "tr": "etmol kaniti mita",
-      "en": "yesterday I bought a bed",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "הדלת של הדירה חדשה",
-      "tr": "ha-delet shel ha-dira chadasha",
-      "en": "the apartment's door is new",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "יש שולחן קטן בחדר",
-      "tr": "yesh shulchan katan ba-cheder",
-      "en": "there is a small table in the room",
-      "type": "sentence",
-      "lvl": 3,
-      "for": ""
-    },
-    {
-      "he": "איפה המיטה שלך",
-      "tr": "eifo ha-mita shelcha",
-      "en": "where is your bed?",
-      "type": "listen",
-      "lvl": 2,
-      "for": ""
-    }
-  ]
+ "version": 3,
+ "generated": "2026-09-02",
+ "items": [
+  {
+   "he": "הרחוב צר",
+   "tr": "ha-rechov tzar",
+   "en": "the street is narrow",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "העיר יפה",
+   "tr": "ha-ir yafe",
+   "en": "the city is beautiful",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "האוטובוס חדש",
+   "tr": "ha-otobus chadash",
+   "en": "the bus is new",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "האוטובוס אטי היום",
+   "tr": "ha-otobus iti hayom",
+   "en": "the bus is slow today",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "זה הרחוב שלי",
+   "tr": "ze ha-rechov sheli",
+   "en": "this is my street",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע לעיר",
+   "tr": "ani nose'a la-ir",
+   "en": "I am travelling to the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "סבא נוסע באוטובוס",
+   "tr": "saba nose'a ba-otobus",
+   "en": "grandpa travels by bus",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני רואה את האוטובוס",
+   "tr": "ani ro'e et ha-otobus",
+   "en": "I can see the bus",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אתה נוסע לעיר?",
+   "tr": "ata nose'a la-ir?",
+   "en": "are you going to the city?",
+   "type": "listen",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אתמול נסעתי לעיר עם סבא",
+   "tr": "etmol nasati la-ir im saba",
+   "en": "yesterday I went to the city with grandpa",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "איפה האוטובוס לעיר?",
+   "tr": "eifo ha-otobus la-ir?",
+   "en": "where is the bus to the city?",
+   "type": "listen",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "מחר אני נוסע לעיר עם אמא",
+   "tr": "machar ani nose'a la-ir im ima",
+   "en": "tomorrow I am going to the city with mum",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "למה האוטובוס אטי היום?",
+   "tr": "lama ha-otobus iti hayom?",
+   "en": "why is the bus slow today?",
+   "type": "listen",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע לעיר כי יש לי עבודה",
+   "tr": "ani nose'a la-ir ki yesh li avoda",
+   "en": "I am going to the city because I have work",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "הרחוב שלי קטן אבל נעים",
+   "tr": "ha-rechov sheli katan aval na'im",
+   "en": "my street is small but pleasant",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני חולה",
+   "tr": "ani chole",
+   "en": "I am ill",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "חולה"
+  },
+  {
+   "he": "הראש כואב",
+   "tr": "ha-rosh ko'ev",
+   "en": "my head hurts",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ראש"
+  },
+  {
+   "he": "הבטן כואבת",
+   "tr": "ha-beten ko'evet",
+   "en": "my stomach hurts",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "בטן"
+  },
+  {
+   "he": "סבא בריא",
+   "tr": "saba bari",
+   "en": "grandpa is healthy",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "בריא"
+  },
+  {
+   "he": "אני מרגיש טוב היום",
+   "tr": "ani margish tov hayom",
+   "en": "I feel good today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אני לא מרגיש טוב",
+   "tr": "ani lo margish tov",
+   "en": "I do not feel well",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מרגיש"
+  },
+  {
+   "he": "הראש שלי כואב",
+   "tr": "ha-rosh sheli ko'ev",
+   "en": "my head is hurting",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "ראש"
+  },
+  {
+   "he": "אתה מרגיש טוב?",
+   "tr": "ata margish tov?",
+   "en": "are you feeling all right?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "מרגיש"
+  },
+  {
+   "he": "סבתא מרגישה טוב",
+   "tr": "savta margisha tov",
+   "en": "grandma is feeling well",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אתמול הייתי חולה",
+   "tr": "etmol hayiti chole",
+   "en": "yesterday I was ill",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חולה"
+  },
+  {
+   "he": "הבטן שלי כואבת מאוד",
+   "tr": "ha-beten sheli ko'evet me'od",
+   "en": "my stomach hurts a lot",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "בטן"
+  },
+  {
+   "he": "למה אתה מרגיש רע?",
+   "tr": "lama ata margish ra?",
+   "en": "why do you feel bad?",
+   "type": "listen",
+   "lvl": 3,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אני מרגיש טוב אבל עייף",
+   "tr": "ani margish tov aval ayeif",
+   "en": "I feel fine but tired",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אני חולה אבל מרגיש קצת יותר טוב",
+   "tr": "ani chole aval margish ktzat yoter tov",
+   "en": "I am ill but feeling a little better",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חולה"
+  },
+  {
+   "he": "הראש כואב כי אני עייף",
+   "tr": "ha-rosh ko'ev ki ani ayeif",
+   "en": "my head hurts because I am tired",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "ראש"
+  },
+  {
+   "he": "זה נחמד מאוד",
+   "tr": "ze nechmad me'od",
+   "en": "that is very nice",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "נחמד"
+  },
+  {
+   "he": "זה קצת קר",
+   "tr": "ze ktzat kar",
+   "en": "it is a little cold",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "קצת"
+  },
+  {
+   "he": "אני רוצה קצת מים",
+   "tr": "ani rotze ktzat mayim",
+   "en": "I would like a little water",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קצת"
+  },
+  {
+   "he": "אני אוהב קפה מאוד",
+   "tr": "ani ohev kafe me'od",
+   "en": "I like coffee a lot",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני שותה קצת תה",
+   "tr": "ani shote ktzat te",
+   "en": "I am drinking a little tea",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קצת"
+  },
+  {
+   "he": "אתמול היה נחמד מאוד",
+   "tr": "etmol haya nechmad me'od",
+   "en": "yesterday was very nice",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נחמד"
+  },
+  {
+   "he": "אני רוצה קצת תה בבקשה",
+   "tr": "ani rotze ktzat te bevakasha",
+   "en": "I would like a little tea please",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קצת"
+  },
+  {
+   "he": "למה אתה רוצה קצת מים?",
+   "tr": "lama ata rotze ktzat mayim?",
+   "en": "why do you want a little water?",
+   "type": "listen",
+   "lvl": 3,
+   "for": "קצת"
+  },
+  {
+   "he": "סבא נחמד מאוד ואני אוהב אותו",
+   "tr": "saba nechmad me'od va-ani ohev oto",
+   "en": "grandpa is very nice and I love him",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "נחמד"
+  },
+  {
+   "he": "אני מרגיש קצת חולה",
+   "tr": "ani margish ktzat chole",
+   "en": "I feel a little ill",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חולה"
+  },
+  {
+   "he": "אני לא בריא היום",
+   "tr": "ani lo bari hayom",
+   "en": "I am not well today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "בריא"
+  },
+  {
+   "he": "סבא חולה?",
+   "tr": "saba chole?",
+   "en": "is grandpa ill?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "חולה"
+  },
+  {
+   "he": "הבטן כואבת אבל הראש בסדר",
+   "tr": "ha-beten ko'evet aval ha-rosh beseder",
+   "en": "my stomach hurts but my head is fine",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "בטן"
+  },
+  {
+   "he": "אני מרגיש רע כי אני חולה",
+   "tr": "ani margish ra ki ani chole",
+   "en": "I feel bad because I am ill",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אתה בריא עכשיו?",
+   "tr": "ata bari achshav?",
+   "en": "are you well now?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "בריא"
+  },
+  {
+   "he": "הראש שלי כואב מאוד היום",
+   "tr": "ha-rosh sheli ko'ev me'od hayom",
+   "en": "my head hurts a lot today",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראש"
+  },
+  {
+   "he": "אני חולה כבר שבוע",
+   "tr": "ani chole kvar shavu'a",
+   "en": "I have been ill for a week now",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חולה"
+  },
+  {
+   "he": "סבתא לא מרגישה טוב",
+   "tr": "savta lo margisha tov",
+   "en": "grandma is not feeling well",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מרגיש"
+  },
+  {
+   "he": "אני בריא וחזק",
+   "tr": "ani bari ve-chazak",
+   "en": "I am fit and strong",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "בריא"
+  },
+  {
+   "he": "הראש כואב ואני עייף מאוד",
+   "tr": "ha-rosh ko'ev va-ani ayeif me'od",
+   "en": "my head hurts and I am very tired",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "ראש"
+  },
+  {
+   "he": "החדר קטן",
+   "tr": "ha-cheder katan",
+   "en": "the room is small",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "החדר שלי קטן",
+   "tr": "ha-cheder sheli katan",
+   "en": "my room is small",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אני גר בדירה קטנה",
+   "tr": "ani gar be-dira ktana",
+   "en": "I live in a small apartment",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני רואה את הדלת",
+   "tr": "ani ro'e et ha-delet",
+   "en": "I see the door",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אמא רוצה שולחן חדש",
+   "tr": "ima rotza shulchan chadash",
+   "en": "mum wants a new table",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "יש מיטה בחדר",
+   "tr": "yesh mita ba-cheder",
+   "en": "there is a bed in the room",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אין דלת בחדר",
+   "tr": "ein delet ba-cheder",
+   "en": "there is no door in the room",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני צריך שולחן",
+   "tr": "ani tzarich shulchan",
+   "en": "I need a table",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "המיטה בחדר הקטן",
+   "tr": "ha-mita ba-cheder ha-katan",
+   "en": "the bed is in the small room",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אתמול קניתי שולחן חדש",
+   "tr": "etmol kaniti shulchan chadash",
+   "en": "yesterday I bought a new table",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אתמול ראיתי דירה יפה מאוד",
+   "tr": "etmol ra'iti dira yafa me'od",
+   "en": "yesterday I saw a very beautiful apartment",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני אוהב את החדר כי הוא גדול",
+   "tr": "ani ohev et ha-cheder ki hu gadol",
+   "en": "I like the room because it is big",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "יש מיטה בחדר",
+   "tr": "yesh mita ba-cheder",
+   "en": "is there a bed in the room?",
+   "type": "listen",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "למה הדלת קטנה",
+   "tr": "lama ha-delet ktana",
+   "en": "why is the door small?",
+   "type": "listen",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הילדים במיטה עכשיו",
+   "tr": "ha-yeladim ba-mita achshav",
+   "en": "the children are in bed now",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני חושב שהדירה יפה",
+   "tr": "ani choshev she-ha-dira yafa",
+   "en": "I think the apartment is nice",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "האוכל על השולחן",
+   "tr": "ha-ochel al ha-shulchan",
+   "en": "the food is on the table",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אתמול הלכתי לחדר",
+   "tr": "etmol halachti la-cheder",
+   "en": "yesterday I went to the room",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "בחדר יש שולחן ומיטה",
+   "tr": "ba-cheder yesh shulchan u-mita",
+   "en": "in the room there is a table and a bed",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה מיטה חדשה",
+   "tr": "ani rotze mita chadasha",
+   "en": "I want a new bed",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "הדירה של סבא ישנה",
+   "tr": "ha-dira shel saba yeshana",
+   "en": "grandpa's apartment is old",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני עייף ורוצה מיטה",
+   "tr": "ani ayeif ve-rotze mita",
+   "en": "I am tired and want a bed",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "החדר קר מאוד היום",
+   "tr": "ha-cheder kar me'od hayom",
+   "en": "the room is very cold today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אתמול קניתי מיטה",
+   "tr": "etmol kaniti mita",
+   "en": "yesterday I bought a bed",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הדלת של הדירה חדשה",
+   "tr": "ha-delet shel ha-dira chadasha",
+   "en": "the apartment's door is new",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש שולחן קטן בחדר",
+   "tr": "yesh shulchan katan ba-cheder",
+   "en": "there is a small table in the room",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "איפה המיטה שלך",
+   "tr": "eifo ha-mita shelcha",
+   "en": "where is your bed?",
+   "type": "listen",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "שלום, איך אתה היום?",
+   "tr": "shalom, eikh ata hayom?",
+   "en": "Hello, how are you today?",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אני בסדר, תודה",
+   "tr": "ani beseder, toda",
+   "en": "I'm fine, thanks",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אני קצת עייף היום",
+   "tr": "ani ktzat ayef hayom",
+   "en": "I'm a little tired today",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "סליחה, אני לא שומע",
+   "tr": "slikha, ani lo shomea",
+   "en": "Sorry, I can't hear",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני מרגיש טוב עכשיו",
+   "tr": "ani margish tov akhshav",
+   "en": "I feel good now",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "בסדר, אני מרגיש נעים",
+   "tr": "beseder, ani margish na'im",
+   "en": "Okay, I feel pleasant",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אתה עייף או רק צמא?",
+   "tr": "ata ayef o rak tzame?",
+   "en": "Are you tired or just thirsty?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "תודה, זה נעים מאוד",
+   "tr": "toda, ze na'im me'od",
+   "en": "Thanks, that's very pleasant",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "סליחה, מה אמרת?",
+   "tr": "slikha, ma amarta?",
+   "en": "Sorry, what did you say?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה קפה עכשיו",
+   "tr": "ani rotze kafe akhshav",
+   "en": "I want coffee now",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "הקפה הזה טוב מאוד",
+   "tr": "hakafe haze tov me'od",
+   "en": "This coffee is very good",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "בוקר טוב, איך אתה?",
+   "tr": "boker tov, eikh ata?",
+   "en": "Good morning, how are you?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "ערב טוב, אני שמח לראות אותך",
+   "tr": "erev tov, ani sameakh lir'ot otkha",
+   "en": "Good evening, I'm happy to see you",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני עייף כי עבדתי הרבה",
+   "tr": "ani ayef ki avadeti harbe",
+   "en": "I'm tired because I worked a lot",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "תודה על הקפה",
+   "tr": "toda al hakafe",
+   "en": "Thanks for the coffee",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "סליחה, אני מדבר קצת עברית",
+   "tr": "slikha, ani medaber ktzat ivrit",
+   "en": "Sorry, I speak a little Hebrew",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "היום אני מרגיש חדש",
+   "tr": "hayom ani margish khadash",
+   "en": "Today I feel new",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "שלום סבא, אתה בסדר?",
+   "tr": "shalom saba, ata beseder?",
+   "en": "Hello grandpa, are you okay?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני לא עייף, אני רק חושב",
+   "tr": "ani lo ayef, ani rak khoshev",
+   "en": "I'm not tired, I'm just thinking",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "עכשיו הקפה קר",
+   "tr": "akhshav hakafe kar",
+   "en": "Now the coffee is cold",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "תודה, אתה נחמד מאוד",
+   "tr": "toda, ata nekhmad me'od",
+   "en": "Thanks, you're very nice",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני צריך קצת מים, בבקשה",
+   "tr": "ani tzarikh ktzat mayim, bevakasha",
+   "en": "I need a little water, please",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "שלום, נעים מאוד",
+   "tr": "shalom, na'im me'od",
+   "en": "Hello, very nice to meet you",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "סליחה, אני צריך ללכת",
+   "tr": "slikha, ani tzarikh lalekhet",
+   "en": "Sorry, I need to go",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אתה רוצה תה או קפה?",
+   "tr": "ata rotze te o kafe?",
+   "en": "Do you want tea or coffee?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "בסדר, אני מבין",
+   "tr": "beseder, ani mevin",
+   "en": "Okay, I understand",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "טוב לשמוע אותך",
+   "tr": "tov lishmoa otkha",
+   "en": "Good to hear you",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני עייף אבל שמח",
+   "tr": "ani ayef aval sameakh",
+   "en": "I'm tired but happy",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "המשפחה שלי גרה בעיר",
+   "tr": "hamishpakha sheli gara ba'ir",
+   "en": "My family lives in the city",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אמא שלי עובדת היום",
+   "tr": "ima sheli ovedet hayom",
+   "en": "My mom is working today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אבא שלי אוהב קפה",
+   "tr": "aba sheli ohev kafe",
+   "en": "My dad loves coffee",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "סבא שלי מדבר עברית יפה",
+   "tr": "saba sheli medaber ivrit yafa",
+   "en": "My grandpa speaks beautiful Hebrew",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבר"
+  },
+  {
+   "he": "סבתא שלי עושה אוכל טעים",
+   "tr": "savta sheli osa okhel ta'im",
+   "en": "My grandma makes tasty food",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש לי חבר טוב בעיר",
+   "tr": "yesh li khaver tov ba'ir",
+   "en": "I have a good friend in the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חבר"
+  },
+  {
+   "he": "החבר שלי לומד עברית",
+   "tr": "hakhaver sheli lomed ivrit",
+   "en": "My friend is learning Hebrew",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חבר"
+  },
+  {
+   "he": "אני הולך עם חבר לעבודה",
+   "tr": "ani holekh im khaver la'avoda",
+   "en": "I go with a friend to work",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבר"
+  },
+  {
+   "he": "חבר שלי בא היום",
+   "tr": "khaver sheli ba hayom",
+   "en": "My friend is coming today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חבר"
+  },
+  {
+   "he": "המשפחה שלי גרה קרוב לעיר",
+   "tr": "hamishpakha sheli gara karov la'ir",
+   "en": "My family lives near the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אמא ואבא שלי בבית",
+   "tr": "ima ve'aba sheli babayit",
+   "en": "My mom and dad are at home",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "סבתא שלי אישה נחמדה",
+   "tr": "savta sheli isha nekhmada",
+   "en": "My grandma is a nice woman",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "סבא שלי אוהב לספר",
+   "tr": "saba sheli ohev lesaper",
+   "en": "My grandpa loves to tell stories",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש לי משפחה יפה",
+   "tr": "yesh li mishpakha yafa",
+   "en": "I have a beautiful family",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "החבר שלי נחמד מאוד",
+   "tr": "hakhaver sheli nekhmad me'od",
+   "en": "My friend is very nice",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חבר"
+  },
+  {
+   "he": "אמא שלי אוהבת את הבית הזה",
+   "tr": "ima sheli ohevet et habayit haze",
+   "en": "My mom loves this house",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אבא שלי עובד בעיר",
+   "tr": "aba sheli oved ba'ir",
+   "en": "My dad works in the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "כל המשפחה כאן היום",
+   "tr": "kol hamishpakha kan hayom",
+   "en": "The whole family is here today",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "סבא וסבתא שלי גרים קרוב",
+   "tr": "saba vesavta sheli garim karov",
+   "en": "My grandpa and grandma live nearby",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני אוהב את המשפחה שלי",
+   "tr": "ani ohev et hamishpakha sheli",
+   "en": "I love my family",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "החבר שלי עובד עם אבא שלי",
+   "tr": "hakhaver sheli oved im aba sheli",
+   "en": "My friend works with my dad",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבר"
+  },
+  {
+   "he": "סבתא שלי שותה תה בבוקר",
+   "tr": "savta sheli shota te baboker",
+   "en": "My grandma drinks tea in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אמא שלי אישה חזקה",
+   "tr": "ima sheli isha khazaka",
+   "en": "My mom is a strong woman",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש לי חבר שמדבר עברית",
+   "tr": "yesh li khaver shemedaber ivrit",
+   "en": "I have a friend who speaks Hebrew",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חבר"
+  },
+  {
+   "he": "אבא שלי איש טוב",
+   "tr": "aba sheli ish tov",
+   "en": "My dad is a good man",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "המשפחה שלי אוהבת לאכול",
+   "tr": "hamishpakha sheli ohevet le'ekhol",
+   "en": "My family loves to eat",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "סבא שלי היה בעיר אתמול",
+   "tr": "saba sheli haya ba'ir etmol",
+   "en": "My grandpa was in the city yesterday",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "החבר שלי אוהב כלבים",
+   "tr": "hakhaver sheli ohev klavim",
+   "en": "My friend loves dogs",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבר"
+  },
+  {
+   "he": "אמא שלי קוראת ספר",
+   "tr": "ima sheli koret sefer",
+   "en": "My mom is reading a book",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "יש לך תה בבקשה?",
+   "tr": "yesh lekha te bevakasha?",
+   "en": "Do you have tea please?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אין לי זמן היום",
+   "tr": "ein li zman hayom",
+   "en": "I have no time today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "כמה ילדים יש במשפחה?",
+   "tr": "kama yeladim yesh bamishpakha?",
+   "en": "How many children are in the family?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני צריך עוד כוס",
+   "tr": "ani tzarikh od kos",
+   "en": "I need another cup",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "בבקשה, קח את זה",
+   "tr": "bevakasha, kakh et ze",
+   "en": "Please, take this",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש כאן כלב קטן",
+   "tr": "yesh kan kelev katan",
+   "en": "There's a small dog here",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה תה חם",
+   "tr": "ani rotze te kham",
+   "en": "I want hot tea",
+   "type": "sentence",
+   "lvl": 1,
+   "for": ""
+  },
+  {
+   "he": "אין לי הרבה זמן",
+   "tr": "ein li harbe zman",
+   "en": "I don't have a lot of time",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "כמה ילדים יש לך?",
+   "tr": "kama yeladim yesh lekha?",
+   "en": "How many children do you have?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני צריך ללכת עכשיו, סליחה",
+   "tr": "ani tzarikh lalekhet akhshav, slikha",
+   "en": "I need to go now, sorry",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש לך קצת מים קרים?",
+   "tr": "yesh lekha ktzat mayim karim?",
+   "en": "Do you have some cold water?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה לשאול שאלה",
+   "tr": "ani rotze lish'ol she'ela",
+   "en": "I want to ask a question",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "החדר שלי קטן אבל נעים",
+   "tr": "hakheder sheli katan aval na'im",
+   "en": "My room is small but pleasant",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הדלת של החדר קטנה",
+   "tr": "hadelet shel hakheder ktana",
+   "en": "The room's door is small",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "השולחן במטבח",
+   "tr": "hashulkhan bamitbakh",
+   "en": "The table is in the kitchen",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני הולך לישון במיטה",
+   "tr": "ani holekh lishon bamita",
+   "en": "I'm going to sleep in bed",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הדירה שלנו קטנה",
+   "tr": "hadira shelanu ktana",
+   "en": "Our apartment is small",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "יש לי חדר קטן בדירה",
+   "tr": "yesh li kheder katan badira",
+   "en": "I have a small room in the apartment",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "סבא שותה קפה ליד השולחן",
+   "tr": "saba shote kafe leyad hashulkhan",
+   "en": "Grandpa drinks coffee by the table",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני שומע את הדלת",
+   "tr": "ani shomea et hadelet",
+   "en": "I hear the door",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "המיטה שלי קטנה",
+   "tr": "hamita sheli ktana",
+   "en": "My bed is small",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "בדירה יש חדר גדול",
+   "tr": "badira yesh kheder gadol",
+   "en": "The apartment has a big room",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אמא שמה את האוכל על השולחן",
+   "tr": "ima sama et ha'okhel al hashulkhan",
+   "en": "Mom puts the food on the table",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני סוגר את הדלת",
+   "tr": "ani soger et hadelet",
+   "en": "I'm closing the door",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע לעיר היום",
+   "tr": "ani nosea la'ir hayom",
+   "en": "I'm travelling to the city today",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "האוטובוס בא בעוד דקות",
+   "tr": "ha'otobus ba be'od dakot",
+   "en": "The bus is coming in a few minutes",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הרחוב הזה ארוך מאוד",
+   "tr": "harekhov haze arokh me'od",
+   "en": "This street is very long",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע באוטובוס לעבודה",
+   "tr": "ani nosea ba'otobus la'avoda",
+   "en": "I travel by bus to work",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "איפה הרחוב הזה?",
+   "tr": "eifo harekhov haze?",
+   "en": "Where is this street?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "העיר יפה מאוד באביב",
+   "tr": "ha'ir yafa me'od ba'aviv",
+   "en": "The city is very beautiful in spring",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "לאן אתה נוסע?",
+   "tr": "le'an ata nosea?",
+   "en": "Where are you travelling to?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני הולך ברחוב עם חבר",
+   "tr": "ani holekh barekhov im khaver",
+   "en": "I walk in the street with a friend",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "בזמן האחרון אני נוסע הרבה",
+   "tr": "bazman ha'akharon ani nosea harbe",
+   "en": "Recently I travel a lot",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "בעיר יש הרבה אנשים",
+   "tr": "ba'ir yesh harbe anashim",
+   "en": "There are many people in the city",
+   "type": "sentence",
+   "lvl": 5,
+   "for": ""
+  },
+  {
+   "he": "אני עומד ברחוב",
+   "tr": "ani omed barekhov",
+   "en": "I'm standing in the street",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "האוטובוס מלא היום",
+   "tr": "ha'otobus male hayom",
+   "en": "The bus is full today",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "נוסעים לעיר בבוקר",
+   "tr": "nos'im la'ir baboker",
+   "en": "We travel to the city in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הרחוב ריק בלילה",
+   "tr": "harekhov reik balayla",
+   "en": "The street is empty at night",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "כמה זמן נוסעים לעיר?",
+   "tr": "kama zman nos'im la'ir?",
+   "en": "How long does it take to get to the city?",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע לעיר כל שבוע",
+   "tr": "ani nosea la'ir kol shavua",
+   "en": "I travel to the city every week",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "מאיפה בא האוטובוס?",
+   "tr": "me'eifo ba ha'otobus?",
+   "en": "Where does the bus come from?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "ברחוב יש מסעדה טובה",
+   "tr": "barekhov yesh mis'ada tova",
+   "en": "There's a good restaurant on the street",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני נוסע כי יש גשם",
+   "tr": "ani nosea ki yesh geshem",
+   "en": "I drive because it's raining",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "העיר קרה בחורף",
+   "tr": "ha'ir kara bakhoref",
+   "en": "The city is cold in winter",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "האוטובוס בא לרחוב הזה",
+   "tr": "ha'otobus ba larekhov haze",
+   "en": "The bus comes to this street",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני אוהב את זה מאוד",
+   "tr": "ani ohev et ze me'od",
+   "en": "I like this very much",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "זה נחמד מאוד, תודה",
+   "tr": "ze nekhmad me'od, toda",
+   "en": "That's very nice, thanks",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה קצת, לא הרבה",
+   "tr": "ani rotze ktzat, lo harbe",
+   "en": "I want a little, not a lot",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "הוא איש נחמד מאוד",
+   "tr": "hu ish nekhmad me'od",
+   "en": "He's a very nice man",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני אוהב קצת סוכר בקפה",
+   "tr": "ani ohev ktzat sukar bakafe",
+   "en": "I like a little sugar in coffee",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "איך אתה אוהב את התה?",
+   "tr": "eikh ata ohev et hate?",
+   "en": "How do you like your tea?",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "זה היה יום נחמד מאוד",
+   "tr": "ze haya yom nekhmad me'od",
+   "en": "That was a very nice day",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני רוצה קצת מרק, בבקשה",
+   "tr": "ani rotze ktzat marak, bevakasha",
+   "en": "I'd like a little soup, please",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "השבוע היה נחמד",
+   "tr": "hashavua haya nekhmad",
+   "en": "The week was nice",
+   "type": "sentence",
+   "lvl": 2,
+   "for": ""
+  },
+  {
+   "he": "אני אוהב את העיר מאוד",
+   "tr": "ani ohev et ha'ir me'od",
+   "en": "I love the city very much",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני מרגיש קצת חולה היום",
+   "tr": "ani margish ktzat khole hayom",
+   "en": "I feel a little ill today",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חולה"
+  },
+  {
+   "he": "כואב לי הראש",
+   "tr": "ko'ev li harosh",
+   "en": "My head hurts",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כואב"
+  },
+  {
+   "he": "כואבת לי הבטן",
+   "tr": "ko'evet li habeten",
+   "en": "My stomach hurts",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "בטן"
+  },
+  {
+   "he": "אני בריא, תודה",
+   "tr": "ani bari, toda",
+   "en": "I'm healthy, thanks",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "בריא"
+  },
+  {
+   "he": "סבא לא בריא השבוע",
+   "tr": "saba lo bari hashavua",
+   "en": "Grandpa isn't well this week",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "בריא"
+  },
+  {
+   "he": "אתה מרגיש חולה?",
+   "tr": "ata margish khole?",
+   "en": "Do you feel ill?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חולה"
+  },
+  {
+   "he": "הראש שלי כואב בבוקר",
+   "tr": "harosh sheli ko'ev baboker",
+   "en": "My head hurts in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כואב"
+  },
+  {
+   "he": "אני מרגיש טוב יותר עכשיו",
+   "tr": "ani margish tov yoter akhshav",
+   "en": "I feel better now",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "היא חולה ולא באה היום",
+   "tr": "hi khola velo ba'a hayom",
+   "en": "She's ill and isn't coming today",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חולה"
+  },
+  {
+   "he": "אני שותה תה כי כואב לי",
+   "tr": "ani shote te ki ko'ev li",
+   "en": "I'm drinking tea because I'm in pain",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "כואב"
+  },
+  {
+   "he": "הילד חולה כבר חודשים",
+   "tr": "hayeled khole kvar khodashim",
+   "en": "The boy has been ill for months",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חולה"
+  },
+  {
+   "he": "אמא בריאה ושמחה",
+   "tr": "ima bri'a usmekha",
+   "en": "Mom is healthy and happy",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "בריא"
+  },
+  {
+   "he": "איזה כאב יש לך?",
+   "tr": "eize ke'ev yesh lekha?",
+   "en": "What kind of pain do you have?",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "הבטן שלי לא בסדר",
+   "tr": "habeten sheli lo beseder",
+   "en": "My stomach isn't right",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "בטן"
+  },
+  {
+   "he": "אני מרגיש חם, אני חולה",
+   "tr": "ani margish kham, ani khole",
+   "en": "I feel hot, I'm ill",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חולה"
+  },
+  {
+   "he": "הראש שלי מלא היום",
+   "tr": "harosh sheli male hayom",
+   "en": "My head is full today",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראש"
+  },
+  {
+   "he": "אתמול עבדתי כל היום",
+   "tr": "etmol avadeti kol hayom",
+   "en": "Yesterday I worked all day",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עבדתי"
+  },
+  {
+   "he": "עבדתי בבית השבוע",
+   "tr": "avadeti babayit hashavua",
+   "en": "I worked at home this week",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עבדתי"
+  },
+  {
+   "he": "עבדתי הרבה ואני עייף",
+   "tr": "avadeti harbe va'ani ayef",
+   "en": "I worked a lot and I'm tired",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "עבדתי"
+  },
+  {
+   "he": "עבדתי בבוקר ובערב",
+   "tr": "avadeti baboker uva'erev",
+   "en": "I worked morning and evening",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "עבדתי"
+  },
+  {
+   "he": "עבדתי עם חבר טוב",
+   "tr": "avadeti im khaver tov",
+   "en": "I worked with a good friend",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "עבדתי"
+  },
+  {
+   "he": "הלכתי לעבודה ברגל",
+   "tr": "halakhti la'avoda beregel",
+   "en": "I walked to work",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הלכתי"
+  },
+  {
+   "he": "אתמול הלכתי לעיר",
+   "tr": "etmol halakhti la'ir",
+   "en": "Yesterday I went to the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הלכתי"
+  },
+  {
+   "he": "הלכתי עם סבא ברחוב",
+   "tr": "halakhti im saba barekhov",
+   "en": "I walked with grandpa in the street",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הלכתי"
+  },
+  {
+   "he": "הלכתי לישון בלילה",
+   "tr": "halakhti lishon balayla",
+   "en": "I went to sleep at night",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הלכתי"
+  },
+  {
+   "he": "הלכתי למסעדה עם המשפחה",
+   "tr": "halakhti lamis'ada im hamishpakha",
+   "en": "I went to a restaurant with the family",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הלכתי"
+  },
+  {
+   "he": "הייתי בבית כל הערב",
+   "tr": "hayiti babayit kol ha'erev",
+   "en": "I was at home all evening",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הייתי"
+  },
+  {
+   "he": "אתמול הייתי עייף מאוד",
+   "tr": "etmol hayiti ayef me'od",
+   "en": "Yesterday I was very tired",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הייתי"
+  },
+  {
+   "he": "הייתי בעיר בבוקר",
+   "tr": "hayiti ba'ir baboker",
+   "en": "I was in the city in the morning",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הייתי"
+  },
+  {
+   "he": "הייתי שמח לראות אותך",
+   "tr": "hayiti sameakh lir'ot otkha",
+   "en": "I was happy to see you",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הייתי"
+  },
+  {
+   "he": "הייתי חולה שבוע",
+   "tr": "hayiti khole shavua",
+   "en": "I was ill for a week",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הייתי"
+  },
+  {
+   "he": "אמרתי שלום לסבתא",
+   "tr": "amarti shalom lesavta",
+   "en": "I said hello to grandma",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "אמרתי"
+  },
+  {
+   "he": "אמרתי לו שאני עייף",
+   "tr": "amarti lo she'ani ayef",
+   "en": "I told him I'm tired",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "אמרתי"
+  },
+  {
+   "he": "אתמול אמרתי תודה",
+   "tr": "etmol amarti toda",
+   "en": "Yesterday I said thank you",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "אמרתי"
+  },
+  {
+   "he": "אמרתי את זה בעברית",
+   "tr": "amarti et ze be'ivrit",
+   "en": "I said it in Hebrew",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "אמרתי"
+  },
+  {
+   "he": "ראיתי את החבר שלי בעיר",
+   "tr": "ra'iti et hakhaver sheli ba'ir",
+   "en": "I saw my friend in the city",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראיתי"
+  },
+  {
+   "he": "אתמול ראיתי כלב ברחוב",
+   "tr": "etmol ra'iti kelev barekhov",
+   "en": "Yesterday I saw a dog in the street",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראיתי"
+  },
+  {
+   "he": "ראיתי את אמא בבוקר",
+   "tr": "ra'iti et ima baboker",
+   "en": "I saw mom in the morning",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "ראיתי"
+  },
+  {
+   "he": "לא ראיתי אותו השבוע",
+   "tr": "lo ra'iti oto hashavua",
+   "en": "I didn't see him this week",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראיתי"
+  },
+  {
+   "he": "ראיתי בית יפה באביב",
+   "tr": "ra'iti bayit yafe ba'aviv",
+   "en": "I saw a beautiful house in spring",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראיתי"
+  },
+  {
+   "he": "עבדתי ואז הלכתי לבית",
+   "tr": "avadeti ve'az halakhti labayit",
+   "en": "I worked and then went home",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "עבדתי"
+  },
+  {
+   "he": "הייתי במסעדה ואכלתי דג",
+   "tr": "hayiti bamis'ada ve'akhalti dag",
+   "en": "I was at a restaurant and ate fish",
+   "type": "sentence",
+   "lvl": 5,
+   "for": "הייתי"
+  },
+  {
+   "he": "אמרתי לילדים ללכת לישון",
+   "tr": "amarti layeladim lalekhet lishon",
+   "en": "I told the children to go to sleep",
+   "type": "sentence",
+   "lvl": 5,
+   "for": "אמרתי"
+  },
+  {
+   "he": "ראיתי אותה ליד הבית",
+   "tr": "ra'iti ota leyad habayit",
+   "en": "I saw her near the house",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "ראיתי"
+  },
+  {
+   "he": "הלכתי ברחוב בבוקר",
+   "tr": "halakhti barekhov baboker",
+   "en": "I walked in the street in the morning",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הלכתי"
+  },
+  {
+   "he": "הייתי בעבודה כל השבוע",
+   "tr": "hayiti ba'avoda kol hashavua",
+   "en": "I was at work all week",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הייתי"
+  },
+  {
+   "he": "קניתי לחם בבוקר",
+   "tr": "kaniti lekhem baboker",
+   "en": "I bought bread in the morning",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קניתי"
+  },
+  {
+   "he": "אתמול קניתי ספר חדש",
+   "tr": "etmol kaniti sefer khadash",
+   "en": "Yesterday I bought a new book",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קניתי"
+  },
+  {
+   "he": "קניתי קפה במסעדה",
+   "tr": "kaniti kafe bamis'ada",
+   "en": "I bought coffee at the restaurant",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קניתי"
+  },
+  {
+   "he": "קניתי עוגה לסבתא",
+   "tr": "kaniti uga lesavta",
+   "en": "I bought a cake for grandma",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קניתי"
+  },
+  {
+   "he": "קניתי פירות וגבינה",
+   "tr": "kaniti perot ugvina",
+   "en": "I bought fruit and cheese",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קניתי"
+  },
+  {
+   "he": "שילמתי הרבה על זה",
+   "tr": "shilamti harbe al ze",
+   "en": "I paid a lot for it",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "אתמול שילמתי על האוכל",
+   "tr": "etmol shilamti al ha'okhel",
+   "en": "Yesterday I paid for the food",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "שילמתי ואז הלכתי",
+   "tr": "shilamti ve'az halakhti",
+   "en": "I paid and then left",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "שילמתי בבית קפה",
+   "tr": "shilamti bebeit kafe",
+   "en": "I paid at a cafe",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "לקחתי את הספר לבית",
+   "tr": "lakakhti et hasefer labayit",
+   "en": "I took the book home",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "לקחתי"
+  },
+  {
+   "he": "לקחתי קצת מים",
+   "tr": "lakakhti ktzat mayim",
+   "en": "I took a little water",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לקחתי"
+  },
+  {
+   "he": "אתמול לקחתי את האוטובוס",
+   "tr": "etmol lakakhti et ha'otobus",
+   "en": "Yesterday I took the bus",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "לקחתי"
+  },
+  {
+   "he": "לקחתי את הילדים לעיר",
+   "tr": "lakakhti et hayeladim la'ir",
+   "en": "I took the children to the city",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "לקחתי"
+  },
+  {
+   "he": "נתתי לו את הכוס",
+   "tr": "natati lo et hakos",
+   "en": "I gave him the cup",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נתתי"
+  },
+  {
+   "he": "נתתי לסבא קפה",
+   "tr": "natati lesaba kafe",
+   "en": "I gave grandpa coffee",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נתתי"
+  },
+  {
+   "he": "נתתי לה ספר יפה",
+   "tr": "natati la sefer yafe",
+   "en": "I gave her a beautiful book",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נתתי"
+  },
+  {
+   "he": "אתמול נתתי לילד תפוח",
+   "tr": "etmol natati layeled tapuakh",
+   "en": "Yesterday I gave the boy an apple",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "נתתי"
+  },
+  {
+   "he": "קניתי ושילמתי היום",
+   "tr": "kaniti veshilamti hayom",
+   "en": "I bought and paid today",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "שילמתי"
+  },
+  {
+   "he": "לקחתי ונתתי, זה בסדר",
+   "tr": "lakakhti venatati, ze beseder",
+   "en": "I took and gave, it's fine",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "נתתי"
+  },
+  {
+   "he": "קניתי בשר לארוחה",
+   "tr": "kaniti basar la'arukha",
+   "en": "I bought meat for the meal",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קניתי"
+  },
+  {
+   "he": "נסעתי לעיר באוטובוס",
+   "tr": "nasati la'ir ba'otobus",
+   "en": "I travelled to the city by bus",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "אתמול נסעתי לעבודה",
+   "tr": "etmol nasati la'avoda",
+   "en": "Yesterday I travelled to work",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נסעתי"
+  },
+  {
+   "he": "נסעתי הרבה בחורף",
+   "tr": "nasati harbe bakhoref",
+   "en": "I travelled a lot in winter",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "נסעתי עם המשפחה שלי",
+   "tr": "nasati im hamishpakha sheli",
+   "en": "I travelled with my family",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "הגעתי לבית בערב",
+   "tr": "higati labayit ba'erev",
+   "en": "I arrived home in the evening",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הגעתי"
+  },
+  {
+   "he": "הגעתי לעבודה בבוקר",
+   "tr": "higati la'avoda baboker",
+   "en": "I arrived at work in the morning",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הגעתי"
+  },
+  {
+   "he": "אתמול הגעתי לעיר",
+   "tr": "etmol higati la'ir",
+   "en": "Yesterday I arrived in the city",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הגעתי"
+  },
+  {
+   "he": "הגעתי ואמרתי שלום",
+   "tr": "higati ve'amarti shalom",
+   "en": "I arrived and said hello",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הגעתי"
+  },
+  {
+   "he": "חזרתי לבית בערב",
+   "tr": "khazarti labayit ba'erev",
+   "en": "I came home in the evening",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חזרתי"
+  },
+  {
+   "he": "חזרתי מהעבודה עייף",
+   "tr": "khazarti meha'avoda ayef",
+   "en": "I came back from work tired",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חזרתי"
+  },
+  {
+   "he": "אתמול חזרתי בלילה",
+   "tr": "etmol khazarti balayla",
+   "en": "Yesterday I came back at night",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חזרתי"
+  },
+  {
+   "he": "חזרתי לעיר בבוקר",
+   "tr": "khazarti la'ir baboker",
+   "en": "I returned to the city in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חזרתי"
+  },
+  {
+   "he": "טסתי לעיר באביב",
+   "tr": "tasti la'ir ba'aviv",
+   "en": "I flew to the city in spring",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "טסתי עם החבר שלי",
+   "tr": "tasti im hakhaver sheli",
+   "en": "I flew with my friend",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "אתמול טסתי לבית",
+   "tr": "etmol tasti labayit",
+   "en": "Yesterday I flew home",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "טסתי"
+  },
+  {
+   "he": "טסתי הרבה בעבודה",
+   "tr": "tasti harbe ba'avoda",
+   "en": "I flew a lot for work",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "נסעתי וחזרתי באותו יום",
+   "tr": "nasati vekhazarti be'oto yom",
+   "en": "I travelled and came back the same day",
+   "type": "sentence",
+   "lvl": 5,
+   "for": "נסעתי"
+  },
+  {
+   "he": "הגעתי לרחוב ולא ראיתי אותו",
+   "tr": "higati larekhov velo ra'iti oto",
+   "en": "I got to the street and didn't see him",
+   "type": "sentence",
+   "lvl": 5,
+   "for": "הגעתי"
+  },
+  {
+   "he": "היה כיף מאוד",
+   "tr": "haya keif me'od",
+   "en": "It was really fun",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כיף"
+  },
+  {
+   "he": "זה היה מדהים",
+   "tr": "ze haya madhim",
+   "en": "It was amazing",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מדהים"
+  },
+  {
+   "he": "היה נהדר לראות אותך",
+   "tr": "haya nehedar lir'ot otkha",
+   "en": "It was wonderful to see you",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "נהדר"
+  },
+  {
+   "he": "חבל שלא באת",
+   "tr": "khaval shelo bata",
+   "en": "It's a shame you didn't come",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חבל"
+  },
+  {
+   "he": "זה היה מטורף",
+   "tr": "ze haya metoraf",
+   "en": "That was crazy",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מטורף"
+  },
+  {
+   "he": "היה כיף בעיר אתמול",
+   "tr": "haya keif ba'ir etmol",
+   "en": "It was fun in the city yesterday",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כיף"
+  },
+  {
+   "he": "האוכל היה מדהים",
+   "tr": "ha'okhel haya madhim",
+   "en": "The food was amazing",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מדהים"
+  },
+  {
+   "he": "היום היה נהדר",
+   "tr": "hayom haya nehedar",
+   "en": "Today was wonderful",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נהדר"
+  },
+  {
+   "he": "חבל, אני עייף מאוד",
+   "tr": "khaval, ani ayef me'od",
+   "en": "Shame, I'm very tired",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבל"
+  },
+  {
+   "he": "הרחוב היה מטורף בבוקר",
+   "tr": "harekhov haya metoraf baboker",
+   "en": "The street was crazy in the morning",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "מטורף"
+  },
+  {
+   "he": "כיף לשבת עם המשפחה",
+   "tr": "keif lashevet im hamishpakha",
+   "en": "It's fun to sit with the family",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "כיף"
+  },
+  {
+   "he": "הקפה כאן מדהים",
+   "tr": "hakafe kan madhim",
+   "en": "The coffee here is amazing",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מדהים"
+  },
+  {
+   "he": "היה נהדר, תודה",
+   "tr": "haya nehedar, toda",
+   "en": "It was wonderful, thanks",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נהדר"
+  },
+  {
+   "he": "חבל שהיום קר",
+   "tr": "khaval shehayom kar",
+   "en": "Shame it's cold today",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חבל"
+  },
+  {
+   "he": "היה מטורף בעבודה השבוע",
+   "tr": "haya metoraf ba'avoda hashavua",
+   "en": "Work was crazy this week",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "מטורף"
+  },
+  {
+   "he": "כיף לדבר עברית",
+   "tr": "keif ledaber ivrit",
+   "en": "It's fun to speak Hebrew",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כיף"
+  },
+  {
+   "he": "הבית שלהם מדהים",
+   "tr": "habayit shelahem madhim",
+   "en": "Their house is amazing",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "מדהים"
+  },
+  {
+   "he": "נהדר לשמוע אותך",
+   "tr": "nehedar lishmoa otkha",
+   "en": "Wonderful to hear you",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נהדר"
+  },
+  {
+   "he": "נסעתי לעיר בבוקר",
+   "tr": "nasati la'ir baboker",
+   "en": "I travelled to the city in the morning",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נסעתי"
+  },
+  {
+   "he": "נסעתי כל יום לעיר",
+   "tr": "nasati kol yom la'ir",
+   "en": "I travelled to the city every day",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "נסעתי באביב עם אמא",
+   "tr": "nasati ba'aviv im ima",
+   "en": "I travelled in spring with mom",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "נסעתי שבוע בחורף",
+   "tr": "nasati shavua bakhoref",
+   "en": "I travelled for a week in winter",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נסעתי"
+  },
+  {
+   "he": "הגעתי לעיר בערב",
+   "tr": "higati la'ir ba'erev",
+   "en": "I arrived in the city in the evening",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "הגעתי"
+  },
+  {
+   "he": "הגעתי בלילה לבית",
+   "tr": "higati balayla labayit",
+   "en": "I arrived home at night",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "הגעתי"
+  },
+  {
+   "he": "הגעתי עם סבא לבית",
+   "tr": "higati im saba labayit",
+   "en": "I arrived home with grandpa",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הגעתי"
+  },
+  {
+   "he": "הגעתי בבוקר לעיר",
+   "tr": "higati baboker la'ir",
+   "en": "I arrived in the city in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "הגעתי"
+  },
+  {
+   "he": "חזרתי לעיר אתמול",
+   "tr": "khazarti la'ir etmol",
+   "en": "I returned to the city yesterday",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חזרתי"
+  },
+  {
+   "he": "חזרתי עם המשפחה שלי",
+   "tr": "khazarti im hamishpakha sheli",
+   "en": "I came back with my family",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חזרתי"
+  },
+  {
+   "he": "חזרתי ושתיתי קפה",
+   "tr": "khazarti veshatiti kafe",
+   "en": "I came back and drank coffee",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "חזרתי"
+  },
+  {
+   "he": "חזרתי בבוקר לבית",
+   "tr": "khazarti baboker labayit",
+   "en": "I came home in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חזרתי"
+  },
+  {
+   "he": "טסתי בחורף לעיר",
+   "tr": "tasti bakhoref la'ir",
+   "en": "I flew to the city in winter",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "טסתי עם אמא ואבא",
+   "tr": "tasti im ima ve'aba",
+   "en": "I flew with mom and dad",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "טסתי שבוע באביב",
+   "tr": "tasti shavua ba'aviv",
+   "en": "I flew for a week in spring",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "טסתי"
+  },
+  {
+   "he": "טסתי ואז חזרתי",
+   "tr": "tasti ve'az khazarti",
+   "en": "I flew and then came back",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "טסתי"
+  },
+  {
+   "he": "קניתי תפוח ותה",
+   "tr": "kaniti tapuakh vete",
+   "en": "I bought an apple and tea",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קניתי"
+  },
+  {
+   "he": "קניתי סלט במסעדה",
+   "tr": "kaniti salat bamis'ada",
+   "en": "I bought a salad at the restaurant",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "קניתי"
+  },
+  {
+   "he": "קניתי חלב ולחם",
+   "tr": "kaniti khalav velekhem",
+   "en": "I bought milk and bread",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "קניתי"
+  },
+  {
+   "he": "שילמתי בבוקר על הקפה",
+   "tr": "shilamti baboker al hakafe",
+   "en": "I paid for the coffee in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "שילמתי קצת על הספר",
+   "tr": "shilamti ktzat al hasefer",
+   "en": "I paid a little for the book",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "שילמתי"
+  },
+  {
+   "he": "לקחתי כוס מים",
+   "tr": "lakakhti kos mayim",
+   "en": "I took a glass of water",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לקחתי"
+  },
+  {
+   "he": "לקחתי תה חם בבוקר",
+   "tr": "lakakhti te kham baboker",
+   "en": "I took hot tea in the morning",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "לקחתי"
+  },
+  {
+   "he": "נתתי לאמא עוגה",
+   "tr": "natati le'ima uga",
+   "en": "I gave mom a cake",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נתתי"
+  },
+  {
+   "he": "נתתי לילדה תפוח",
+   "tr": "natati layalda tapuakh",
+   "en": "I gave the girl an apple",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נתתי"
+  },
+  {
+   "he": "נתתי הרבה ולקחתי קצת",
+   "tr": "natati harbe velakakhti ktzat",
+   "en": "I gave a lot and took a little",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "נתתי"
+  },
+  {
+   "he": "היה כיף בבוקר",
+   "tr": "haya keif baboker",
+   "en": "It was fun in the morning",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כיף"
+  },
+  {
+   "he": "כיף לשתות קפה בבוקר",
+   "tr": "keif lishtot kafe baboker",
+   "en": "It's fun to drink coffee in the morning",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "כיף"
+  },
+  {
+   "he": "האוכל במסעדה מדהים",
+   "tr": "ha'okhel bamis'ada madhim",
+   "en": "The food at the restaurant is amazing",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "מדהים"
+  },
+  {
+   "he": "העיר מדהימה באביב",
+   "tr": "ha'ir madhima ba'aviv",
+   "en": "The city is amazing in spring",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "מדהים"
+  },
+  {
+   "he": "נהדר לשבת כאן",
+   "tr": "nehedar lashevet kan",
+   "en": "It's wonderful to sit here",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נהדר"
+  },
+  {
+   "he": "הבוקר היה נהדר",
+   "tr": "haboker haya nehedar",
+   "en": "The morning was wonderful",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נהדר"
+  },
+  {
+   "he": "חבל שאתה עייף",
+   "tr": "khaval she'ata ayef",
+   "en": "Shame you're tired",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבל"
+  },
+  {
+   "he": "חבל, אין לי תה",
+   "tr": "khaval, ein li te",
+   "en": "Shame, I have no tea",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "חבל"
+  },
+  {
+   "he": "היה מטורף בעיר",
+   "tr": "haya metoraf ba'ir",
+   "en": "It was crazy in the city",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "מטורף"
+  },
+  {
+   "he": "הילדים היו מטורפים",
+   "tr": "hayeladim hayu metorafim",
+   "en": "The children were crazy",
+   "type": "sentence",
+   "lvl": 4,
+   "for": "מטורף"
+  },
+  {
+   "he": "החדר גדול ויפה",
+   "tr": "hakheder gadol veyafe",
+   "en": "The room is big and beautiful",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  },
+  {
+   "he": "אני שם את הכוס על השולחן",
+   "tr": "ani sam et hakos al hashulkhan",
+   "en": "I put the cup on the table",
+   "type": "sentence",
+   "lvl": 4,
+   "for": ""
+  },
+  {
+   "he": "אני שומע ילדים בדירה",
+   "tr": "ani shomea yeladim badira",
+   "en": "I hear children in the apartment",
+   "type": "sentence",
+   "lvl": 3,
+   "for": ""
+  }
+ ]
 }

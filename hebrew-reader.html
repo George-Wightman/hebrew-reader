@@ -1162,7 +1162,13 @@
           background: rgba(176,137,74,.10); border: 1px solid rgba(176,137,74,.28); }
   .lfixhe { font-family: "David", "Times New Roman", serif; font-size: 1.1rem;
             color: var(--hebrew); direction: rtl; text-align: right; line-height: 1.5; }
-  .lfixwhy { font-size: .8rem; color: #8b7350; margin-top: 4px; }
+  /* The same treatment the coach's own lines get in .lbub-tr, because it is the same
+     job: a sentence he can sound out sitting under the Hebrew it belongs to. */
+  .lfixtr { font-size: .74rem; color: var(--muted); direction: ltr; text-align: right;
+            margin-top: 2px; }
+  .lfixen { font-size: .78rem; color: var(--ink); direction: ltr; text-align: right;
+            margin-top: 2px; }
+  .lfixwhy { font-size: .8rem; color: #8b7350; margin-top: 6px; text-align: right; }
   .lbuilt { font-size: .72rem; color: var(--muted); text-align: center; margin: 2px 0 10px; }
   /* The prompt takes the map's face. It is the thing on the card you actually read. */
   .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
@@ -20087,9 +20093,42 @@ function composePrompt(x) {
       ? "HE IS ANSWERING THIS, WHICH YOU JUST SAID TO HIM:\n  " + x.theirLine + "\n\n"
       : "YOU ASKED HIM TO MAKE A SENTENCE WITH THE FIRST TWO.\n\n") +
     (x.history ? "EARLIER THIS SESSION:\n" + x.history + "\n\n" : "") +
-    "HE SAID (via speech recognition, which is markedly less accurate on non-native " +
-    "speech — a swallowed prefix or an odd vowel may be a mishearing rather than a " +
-    "mistake, so judge generously):\n  " + (x.said || "(nothing)") + "\n\n" +
+    "HE SPOKE THIS ALOUD. What follows is a MACHINE TRANSCRIPT of his speech, not " +
+    "something he wrote:\n  " + (x.said || "(nothing)") + "\n" +
+    /* THE EVIDENCE THAT WAS BEING THROWN AWAY. The recogniser ranks up to five readings
+       of the same audio; the card kept the top one and dropped the rest, so a homophone
+       it happened to prefer became, to everything downstream, the word he said. Handing
+       the runners-up over is the same rescue learnAdjudicatePrompt makes on a drill
+       card, by the only route this card leaves open: free composition has no expected
+       sentence to check against, but it does have the other things the machine thought
+       it heard. */
+    (x.alts && x.alts.length
+      ? "The recogniser's other guesses at the same audio were:\n" +
+        x.alts.map(a => "  " + a).join("\n") + "\n" +
+        "Those are competing readings of ONE recording, not separate things he said. " +
+        "Where they differ, take whichever reading makes sense here — it is far more " +
+        "likely to be what he said than the top guess is.\n"
+      : "") +
+    /* HE IS SPEAKING, NOT WRITING, and the coach kept forgetting it. Unvocalised Hebrew
+       is full of homophones, so the recogniser has to guess which one it heard — and it
+       guessed wrong four turns running on אטי / איתי. Each time, the coach
+       "corrected" a word he had pronounced perfectly, then built its next line out of
+       the mistranscription. George, in that session: "the price recognition pics up the
+       words as the same since they do sound identical which is a problem for a chat like
+       this", and, of what came back, "the coach speaks gibberish sometimes."
+
+       Written as what to FAULT rather than what to forgive, because "judge generously"
+       was already in this prompt and did not stop any of it. A correction he cannot hear
+       is not a correction — it is the app telling him he mispronounced a word he
+       pronounced right, in letters he cannot read. */
+    "\nYOU ARE JUDGING SPEECH, NOT SPELLING. A written difference he could not possibly " +
+    "HEAR is the machine's mistake, never his. Do not fault one and do not explain one " +
+    "to him: homophones and near-homophones (אטי / איתי, לאט / לעט, " +
+    "בקר / בוקר), a missing or added א ה י ו, a prefix the recogniser " +
+    "swallowed. Fault only what would still be wrong if a person had HEARD him say it. " +
+    "And if the transcript reads as nonsense, that is the recogniser — work out the " +
+    "sensible sentence he was most likely saying and answer THAT, rather than building a " +
+    "reply out of the nonsense.\n\n" +
     "THE LIBRARY WORDS THE APP DETECTED IN THAT:\n  " +
     (x.saidKeys.length ? x.saidKeys.join(", ") : "(none)") + "\n\n" +
     "Judge whether he CONVEYED something sensible using the words you gave him. A " +
@@ -20119,12 +20158,23 @@ function composePrompt(x) {
     "bad — ONLY words from the detected list above that he used INCORRECTLY. Leave it " +
     "empty when he used them all properly. Do not list words that are merely absent.\n" +
     "fix — the corrected sentence in natural spoken Hebrew, or \"\" when it was clean.\n" +
-    "why — one short English line naming what to change, or \"\" when it was clean.\n" +
+    /* READABLE BY THE PERSON IT IS FOR. The model kept quoting Hebrew letters at an
+       English speaker who cannot read them — "'איתי' means 'with me', but you want
+       'אטי' for slow" — which is worth exactly as much to him as a blank line. His
+       own fix, and it is the right one: "If it said the anglecised Hebrew then in
+       brackets the translation that would be better." */
+    "why — one short line of ENGLISH naming what to change, written for a reader who " +
+    "cannot read the Hebrew alphabet at all. Every Hebrew word in it must appear as " +
+    "transliteration with the English in brackets, NEVER in Hebrew letters: write " +
+    "\"le'at (slowly)\", not \"לאט\". \"\" when it was clean.\n" +
     "best — the version of his sentence worth keeping for him to practise later: his " +
     "own when it was clean, the corrected one otherwise. Give he, tr (transliteration) " +
     "and en (English). Leave he empty if the sentence is not worth keeping.\n" +
     "say — your reply, in Hebrew he can follow at his level, WITH translit and English. " +
-    "React to what he actually said.\n" +
+    "React to what he actually said. It must be a sentence a Hebrew speaker would really " +
+    "utter — read it back to yourself before you send it. Never quote a " +
+    "mistranscription back at him, and never make your reply be ABOUT the wording of the " +
+    "transcript.\n" +
     /* THE FIELD THE WHOLE "never end on an unanswered question" RULE RESTS ON. The old
        code inferred this from say.he being non-empty, which is true of every reply the
        coach ever writes and therefore told it nothing — so he got cut off mid-question:
@@ -20212,7 +20262,7 @@ async function composeTurn(s, c) {
     outstanding: outstanding.map(k => convoWordLine(k, lib) || k),
     pool: pool.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n"),
     history: composeHistory(c.turns),
-    said: c._said || "", saidKeys: saidKeys,
+    said: c._said || "", saidKeys: saidKeys, alts: c._alts || [],
     theirLine: (c.item && c.item.qhe) || "",
     /* Told outright, and only when it is true — see the note in composePrompt about
        what telling it the count every turn did. `closing` is the app having already
@@ -20262,10 +20312,43 @@ function composeHistory(turns) {
    Saying the same stock phrase every round cannot inflate anything: srsGain scales with
    (1 - R), so a word answered again while R is near 1 grows stability by about nothing.
    The scheduler already defends this and needs no help here. */
+/* THE RESCUE THE DRILL CARDS HAVE, BY THE ONLY ROUTE THIS CARD LEAVES OPEN.
+   learnScoreSpoken softens a miss when the word turns up in a runner-up, and
+   learnAdjudicate asks a model whether the transcript is consistent with the word he was
+   asked for. Neither can run here — both start from an expected sentence, and free
+   composition has none. So the transcript stood as fact, and when the he-IL recogniser
+   wrote a homophone (איתי for אטי, identical out loud) the word he had just said
+   correctly earned nothing at all.
+
+   That is not only a lost credit. composeObjectives sorts weakest-first, so a word that
+   can never be landed can never stop being weakest, and comes back at the top of the
+   table every single session. George saw the symptom before the cause: "The coach should
+   shuffle words between session it is clearly an issue with he recognision."
+
+   ONLY THE WORDS ALREADY ON THE TABLE. A runner-up is a guess, and crediting whatever a
+   guess happens to contain would hand him words he never went near. Restricted to the
+   objectives it can only ever confirm a word he was visibly trying to say, which is what
+   makes the guess evidence rather than noise. Same asymmetry as every other layer here:
+   it softens a miss and can never create one. */
+function composeAltKeys(c, lib) {
+  const alts = c._alts || [], objectives = c.objectives || [];
+  if (!alts.length || !objectives.length) return [];
+  const out = [];
+  alts.forEach(t => bankUses(t, lib).forEach(k => {
+    if (objectives.indexOf(k) !== -1 && out.indexOf(k) === -1) out.push(k);
+  }));
+  return out;
+}
 function composeCredit(s, c, out) {
   const lib = libAll(), srs = srsAll();
   const bad = new Set((out && out.bad) || []);
-  const keys = bankUses(c._said || "", lib).filter(k => !bad.has(k) && srsGradable(k, lib));
+  /* `bad` filters the rescued words too, and that ordering is the point: a second
+     transcript is evidence about what he SAID, never about whether he used it properly.
+     If the coach read the sentence and found the word misused, another reading of the
+     same audio has nothing to add to that. */
+  const heard = bankUses(c._said || "", lib).concat(composeAltKeys(c, lib));
+  const keys = heard.filter((k, i) => heard.indexOf(k) === i)
+                    .filter(k => !bad.has(k) && srsGradable(k, lib));
   keys.forEach(k => {
     learnMark(s, srs, k);
     srsAnswer(srs, k, 2, "prod", learnLogExtra(c));
@@ -20382,6 +20465,7 @@ function composeAdvance(s, c, out) {
      underneath, no need for the different page". */
   c.item = { qhe: out.say.he, qtr: out.say.tr, qen: out.say.en };
   c._said = "";
+  c._alts = [];
   c._stage = "reply";
   /* Per TURN, not per session. learnAdvance does this for the last one, and without it
      here a six-turn session would report itself to the stats as a single card. */
@@ -24114,7 +24198,10 @@ function learnRenderCompose(card, c, s) {
       card.append(ta);
       const go = document.createElement("button");
       go.className = "btn"; go.type = "button"; go.textContent = "Send to the coach";
-      go.onclick = () => { c._said = ta.value.trim(); if (c._said) composeSend(s, c); };
+      /* Typed, so there are no runners-up to carry — and any left over from an earlier
+         spoken turn would be guesses at different audio entirely. */
+      go.onclick = () => { c._said = ta.value.trim(); c._alts = [];
+                           if (c._said) composeSend(s, c); };
       act.append(go);
       card.append(act);
     }
@@ -24146,7 +24233,8 @@ function learnRenderCompose(card, c, s) {
     again.textContent = "That's not what I said — say it again";
     /* Back to where he was, which is not always the opening state any more: mid-session
        there is a coach line still sitting there waiting for an answer. */
-    again.onclick = () => { c._said = ""; c._stage = c.item ? "reply" : "ask";
+    again.onclick = () => { c._said = ""; c._alts = [];
+                            c._stage = c.item ? "reply" : "ask";
                             learnRenderCard(); };
     card.append(again);
     return;
@@ -24186,6 +24274,26 @@ function learnRenderCompose(card, c, s) {
     const fix = document.createElement("div"); fix.className = "lfix";
     const fh = document.createElement("div"); fh.className = "lfixhe"; fh.textContent = out.fix;
     fix.append(fh);
+    /* THE CORRECTED SENTENCE, IN THE THREE FORMS EVERYTHING ELSE ON THIS CARD USES.
+       It was Hebrew letters and nothing else — the one line on the screen he cannot read,
+       and it is the line the whole turn is for. George: "Just not really following the
+       help." `best` already carried the translit and the English and they were being
+       dropped on the floor.
+
+       Only when `best` is demonstrably the SAME sentence as `fix`. The model is told to
+       leave `best.he` empty when the sentence is not worth banking, and a translit
+       printed under a different sentence would be worse than none — so this compares
+       them through normHe rather than trusting the pairing. */
+    const bestOf = out.best || {};
+    const sameSentence = bestOf.he && normHe(bestOf.he) === normHe(out.fix);
+    if (sameSentence && bestOf.tr) {
+      const t = document.createElement("div"); t.className = "lfixtr";
+      t.textContent = bestOf.tr; fix.append(t);
+    }
+    if (sameSentence && bestOf.en) {
+      const e = document.createElement("div"); e.className = "lfixen";
+      e.textContent = bestOf.en; fix.append(e);
+    }
     if (out.why) { const w = document.createElement("div"); w.className = "lfixwhy";
                    w.textContent = out.why; fix.append(w); }
     card.append(fix);
@@ -24617,11 +24725,18 @@ function learnScoreSpoken(c, text, res) {
 
      learnAdjudicate is reached afterwards and is safe: learnAdjudicateWanted reads
      `status`, which is empty here, so it returns nothing to ask about and exits. That
-     rescue genuinely is unavailable on this card — it works by telling the model what he
-     was SUPPOSED to say — which is why the transcript is shown for confirmation before
-     it is sent. */
+     rescue is unavailable on this card in the form the drill uses — it works by telling
+     the model what he was SUPPOSED to say — which is why the transcript is shown for
+     confirmation before it is sent.
+
+     THE RUNNERS-UP ARE KEPT, and they are what is left of that rescue here. They used to
+     be recorded on learnSpoken and read by nothing, because every reader of `alts` was
+     downstream of an expected sentence. composeCredit and composePrompt both take them
+     now: they are the only evidence on this card that the top transcript might be one
+     reading among several, which on a homophone is the whole question. */
   if (c.kind === "compose") {
     c._said = String(text || "").trim();
+    c._alts = (res && res.alts) || [];
     learnSpoken = { text: String(text || ""), status: [], extra: [], english: {},
                     alts: (res && res.alts) || [], conf: (res && res.confidence) || 0,
                     unsure: micUnsure(res && res.confidence), expected: [] };

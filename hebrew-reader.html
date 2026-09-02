@@ -22683,10 +22683,18 @@ function learnRenderCompose(card, c, s) {
     if ((stage === "sending" || stage === "failed") && c._said)
       list.append(convoBubble("you", c._said, ""));
     wrap.append(list); card.append(wrap);
-    /* THE LINE convoThread HAS HAD SINCE IT WAS WRITTEN AND THIS NEVER DID. .lbubbles is
+    /* WHAT convoThread HAS DONE SINCE IT WAS WRITTEN AND THIS NEVER DID. .lbubbles is
        capped at 190px and scrolls, so without this every repaint showed the top of the
        thread — which on a session that now lives on one card is every single turn.
-       George: "The conversation scrolls to the top when the page changes." */
+       George: "The conversation scrolls to the top when the page changes."
+
+       TWICE, and not for superstition. rAF alone is what the conversation does and it
+       does not fire in a backgrounded tab, so a turn that lands while he is in another
+       app comes back to the top of the thread — which is the exact bug, arriving by a
+       different route. The synchronous set gets it right immediately (reading
+       scrollHeight forces the layout it needs); the rAF is the settle pass, for a
+       reflow after the bubbles have their final metrics. */
+    list.scrollTop = list.scrollHeight;
     requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
   }
   if (answering && c.item.qen && stage === "ask") {
@@ -24734,8 +24742,24 @@ function learnFinish() {
     const built = lvls.length
       ? Math.round((lvls.reduce((a, b) => a + b, 0) / lvls.length) * 10) / 10 : 0;
     const words = Object.keys(s.composeWords || {}).length;
-    document.getElementById("lEndScore").textContent = lvls.length + " built";
+    /* THE CHECKLIST IS THE HEADLINE NOW, because it is what the session was for and the
+       only thing in it he was working towards. Words landed of words on the table, in
+       the same currency the card and the road both used while he was in there — not a
+       third way of saying it. */
+    const c0 = s.cards[0];
+    const objs = (c0.objectives || []).length;
+    const left = composeOutstanding(c0);
+    document.getElementById("lEndScore").textContent =
+      objs ? (objs - left.length) + "/" + objs : lvls.length + " built";
     sub = words + " word" + (words === 1 ? "" : "s") + " levelled";
+    /* SAID PLAINLY, NOT AS A FAILURE. The pointed turns already tried to make room for
+       these; naming them is the honest end of that, and it tells him what the next
+       session will still be carrying. */
+    if (left.length) {
+      const lib = libAll();
+      sub += " · still to land: " +
+             left.map(k => (lib[k] && lib[k].tr) || k).join(", ");
+    }
     if (built) sub += " · you built at level " + built +
                       " · you're measured at " + learnerLevel();
     const kept = s.composeBanked || 0;

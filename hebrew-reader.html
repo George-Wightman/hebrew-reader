@@ -8371,17 +8371,42 @@ function bankSlimForSync(raw) {
 /* A stub is not a bank item — it has no `he`, so bankPrune would refuse it anyway. Drop
    it rather than storing it: the real one arrives from content/nodes.json on the next
    check. The cost is a `seen` count reset for material this device has not fetched yet,
-   which self-corrects the moment it does. */
+   which self-corrects the moment it does.
+
+   ONLY EVER SEES SOMEONE ELSE'S STUBS, and that is the whole of what went wrong when it
+   did not. syncSnapshot used to slim before handing the bank to the merge, so by the time
+   this ran the device's OWN items were stubs too and it deleted the lot — all 330
+   pre-baked sentences, on every sync, pushed empty and written back over localStorage.
+   contentIngest put them back within ten minutes with fresh ids and seen: 0, which reset
+   the rotation and cooldown state for the whole shelf and handed him the same cards again.
+   That is the exact complaint the pre-baked pipeline exists to answer.
+
+   Slimming now happens at the moment of the PUSH and nowhere else (see syncSnapshotForPush),
+   so the merge and the local write-back both see real items and this filter only ever
+   removes a stub that arrived from the other side. */
 function bankDropStubs(bank) {
   return (Array.isArray(bank) ? bank : []).filter(it => it && it.he);
 }
 
+/* THE LOCAL TRUTH, unslimmed. What merges, and what gets written back to localStorage. */
 function syncSnapshot() {
   const keys = {};
   syncKeys().forEach(k => { keys[k] = lsGet(k); });
-  if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
   return { app: "hebrew-reader", schema: SYNC_SCHEMA,
            updated: new Date().toISOString(), device: syncDeviceId(), keys: keys };
+}
+/* WHAT GOES OVER THE WIRE, and the only place slimming belongs. Separated from
+   syncSnapshot rather than being a flag on it, because the difference between "the blob
+   we store" and "the blob we send" is exactly the distinction that got lost.
+
+   The saving is real and still wanted: base64 was measured at 944,380 of the Contents
+   API's 1,000,000-byte read cap with the bank half full, and the PUT crosses the same
+   line. Phase 0's blob fallback fixed the read; nothing fixes the write, so the payload
+   stays small on purpose. */
+function syncSnapshotForPush(blob) {
+  const keys = Object.assign({}, blob.keys);
+  if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
+  return Object.assign({}, blob, { keys: keys });
 }
 
 function ghURL(path) {
@@ -8444,8 +8469,9 @@ async function syncPull() {
 }
 
 async function syncPush(blob, sha) {
+  /* Slimmed HERE, at the wire, and nowhere earlier — see syncSnapshotForPush. */
   const body = { message: "practice from " + blob.device + " · " + blob.updated.slice(0, 16).replace("T", " "),
-                 content: b64encodeUtf8(JSON.stringify(blob)) };
+                 content: b64encodeUtf8(JSON.stringify(syncSnapshotForPush(blob))) };
   if (sha) body.sha = sha;
   const resp = await fetchWithTimeout(ghURL(SYNC_FILE), {
     method: "PUT", headers: ghHeaders(), body: JSON.stringify(body) });
@@ -8709,7 +8735,15 @@ function duoRenderRow() {
          n + " new word" + (n === 1 ? "" : "s") + "."
        : "Nothing new up to unit " + want + " — you already have all of it.");
 }
-document.getElementById("duoUnitInput").addEventListener("input", duoRenderRow);
+/* Debounced, because duoRenderRow reparses the whole library through duoWordsThrough and
+   that landed on the keypress path — measured at 4.7ms a call on desktop and several
+   times that on the phone this is actually used on. The count only has to be right once
+   the field has settled. */
+let duoRowTimer = null;
+document.getElementById("duoUnitInput").addEventListener("input", () => {
+  clearTimeout(duoRowTimer);
+  duoRowTimer = setTimeout(duoRenderRow, 150);
+});
 document.getElementById("duoUnitBtn").onclick = settingsAction(() => {
   const input = document.getElementById("duoUnitInput");
   const want = Math.max(1, Math.min(84, parseInt(input.value, 10) || 0));
@@ -9182,6 +9216,9 @@ const DUO_UNIT_KEY = "hvr_duounit";
    these words invisible to bankServable and unlock nothing. */
 const DUO_STRONG_THROUGH = 10;
 
+/* Walked on every keystroke in the Settings unit box and on every campStretchPool call,
+   so it is hoisted out of both rather than rebuilt from Object.keys each time. */
+const DUO_UNIT_KEYS = Object.keys(DUO_UNITS);
 function duoUnit() {
   const n = parseInt(lsGet(DUO_UNIT_KEY), 10);
   return isFinite(n) && n > 0 ? n : 0;
@@ -9194,7 +9231,7 @@ function duoUnitName(u) { return DUO_UNIT_NAME[String(u)] || ("unit " + u); }
    count offered in Settings is the count that actually arrives. */
 function duoWordsThrough(upTo, lib) {
   const l = lib || libAll();
-  return Object.keys(DUO_UNITS)
+  return DUO_UNIT_KEYS
     .filter(k => DUO_UNITS[k] <= upTo && !l[k] && DICT[k] &&
                  k.length > 1 && !STOPLIST.has(k))
     .sort((a, b) => (DUO_UNITS[a] - DUO_UNITS[b]) || (a < b ? -1 : 1));
@@ -9250,11 +9287,25 @@ function libAddDuoUnits(upTo, lib, srs) {
          has, and drilling him on it would spend sessions proving something already true.
          Production is what this app is for, and what the bands above actually grade. */
       duoFormsApply(l[k], k);
-      srsSetBand(s, k, "recv", "strong");
-      srsSetBand(s, k, "prod", band);
-      const r = s[k] && s[k].prod;
+      /* SPREAD ONLY WHAT WE ACTUALLY SEEDED. srsSetBand declines to touch a record that
+         is already in the requested band — that guard is the whole of "existing SRS
+         history is never overwritten" — but writing `due` afterwards went round it. A
+         word can be absent from the library and still hold a real record, because
+         deleteWord removes the library row and leaves the schedule behind; re-importing
+         it then kept n and stab and dragged `due` from 2027-06-01 back to next month,
+         which is exactly the "pulled straight back into rotation" failure srsSetBand's
+         own comment describes. Ask whether the band write landed, and only then spread. */
+      const seed = (side, wantBand) => {
+        const before = s[k] && s[k][side];
+        srsSetBand(s, k, side, wantBand);
+        const r = s[k] && s[k][side];
+        /* srsSetBand replaces the record wholesale when it writes, so a NEW object means
+           it wrote and the same one means it declined. */
+        return (r && r !== before) ? r : null;
+      };
+      const r = seed("prod", band);
       if (r) r.due = duoDueDate(band, i, list.length);
-      const rv = s[k] && s[k].recv;
+      const rv = seed("recv", "strong");
       if (rv) rv.due = duoDueDate("strong", i, list.length);
     });
   });
@@ -19824,7 +19875,7 @@ function campOpenNode(id) {
 const CAMP_STRETCH_PER_NODE = 2, CAMP_STRETCH_WINDOW = 40;
 function campStretchPool(lib) {
   const from = duoUnit() + 1;
-  return Object.keys(DUO_UNITS)
+  return DUO_UNIT_KEYS
     .filter(k => DUO_UNITS[k] >= from && !lib[k] && DICT[k] &&
                  k.length > 1 && !STOPLIST.has(k))
     .sort((a, b) => (DUO_UNITS[a] - DUO_UNITS[b]) || (a < b ? -1 : 1));
@@ -19844,9 +19895,14 @@ function campStretchFor(node, lib, taken) {
   if (!pool.length) return [];
   let h = 0;
   String((node && node.id) || "").split("").forEach(ch => { h = (h * 31 + ch.charCodeAt(0)) % 9973; });
+  /* Walk from the hashed start rather than striding by 7: (h + i*7) % len collides with
+     itself whenever len divides 7 — len 7 (or 1) handed the node the SAME word twice, and
+     nothing deduped `out`. A pool that small is ordinary late in the course, or once
+     `taken` has eaten the window. */
   const out = [];
-  for (let i = 0; i < CAMP_STRETCH_PER_NODE && i < pool.length; i++) {
-    out.push(pool[(h + i * 7) % pool.length]);
+  for (let i = 0; i < pool.length && out.length < CAMP_STRETCH_PER_NODE; i++) {
+    const w = pool[(h + i) % pool.length];
+    if (out.indexOf(w) === -1) out.push(w);
   }
   return out;
 }
@@ -20498,8 +20554,21 @@ function campBuild(node, size) {
      campDebtWords. Without it every sentence written with a left-behind word in it is
      refused by the gate on the way to the card, and the phase does nothing. */
   const debt = campDebtWords(node, null, srs).filter(k => lib[k] && srsGradable(k, lib));
-  const carry = new Set(weak.concat(debt));
+  /* THE STRETCH WORDS HAVE TO BE IN THIS SET OR THE WHOLE SLOT IS DECORATION. They are
+     units 21+ by construction, so campEnsureWords adds them with no SRS record at all and
+     wordReady is false for every one of them — and bankServable refuses any item whose
+     unready words are not ALL in `carry`. So a node could hold a stretch pair, have
+     sentences written for it, and serve none of them: node.stretch was written by
+     campEnsureCarry, read by campEnsureWords, and then consulted by nothing that builds a
+     session. The spec said it plainly — "entering the session's carry set so bankServable
+     admits them" — and that was the half that never landed. */
+  const stretch = (node.stretch || []).filter(k => lib[k] && srsGradable(k, lib));
+  const carry = new Set(weak.concat(debt).concat(stretch));
   const isNodeWord = {}; words.forEach(k => { isNodeWord[k] = true; });
+  /* Which of the three reasons an item is here, kept apart because the slices below are
+     quotas and a quota over an ill-defined set is arithmetic, not a design. */
+  const isRescue = {}; weak.forEach(k => { isRescue[k] = true; });
+  const isWider = {}; debt.concat(stretch).forEach(k => { isWider[k] = true; });
 
   /* Same once-per-session level bookkeeping the daily builder does, for the same
      reason: a run of node sessions must still age the evidence, or a fortnight of
@@ -20519,17 +20588,30 @@ function campBuild(node, size) {
                      debt, so a recv item revisiting the word is not paying any of it. */
                   debt: bankItemSide(it) === "prod" &&
                         (it.uses || []).some(u => debt.indexOf(u) !== -1),
+                  /* Pays down one of THIS node's stuck words — what slice 2 is for. */
+                  rescues: bankItemSide(it) === "prod" &&
+                           (it.uses || []).some(u => isRescue[u]),
+                  /* Reaches outside the node: a left-behind word or a stretch word. */
+                  wider: (it.uses || []).some(u => isWider[u]),
                   carry: bankCarried(it, lib, srs, carry) }))
     /* Only material that touches this node. A node session containing a sentence
        about something else is the bug being fixed, not a graceful fallback — if there
-       is not enough, the session is shorter and honest about it. */
-    /* `x.debt` used to qualify on its own, and it is the one route by which a sentence
-       with NOTHING from this node in it reached a node session — carry cannot do that,
-       because campWeakWords only ever returns the node's own words. Invisible while the
-       bank was small and narrow; the thing George explicitly asked not to happen once it
-       is not. Debt still outranks plain consolidation in the sort below; it just has to
-       be carried by a sentence that is also about this node. */
-    .filter(x => x.hits > 0 || x.carry)
+       is not enough, the session is shorter and honest about it.
+
+       `x.hits > 0` AND NOTHING ELSE, which is the only version of this that has ever
+       actually held. It read `x.hits > 0 || x.debt` and was changed to `x.hits > 0 ||
+       x.carry` on the reasoning that "carry cannot admit a sentence with nothing from
+       this node in it, because campWeakWords only ever returns the node's own words".
+       That is true of campWeakWords and false of `carry`, which is weak PLUS debt — and
+       campDebtWords returns only words that fail wordReady, so bankCarried finds the debt
+       word and reports it. A sentence about a left-behind word from three chapters ago,
+       containing not one word of this node, was admitted before the change and after it.
+       Verified: hits 0, x.carry "כלב", admitted.
+
+       A rescue carries a stuck NODE word, so it has a node word by definition; debt and
+       stretch material is written around a node word on purpose. Nothing legitimate needs
+       the disjunction, and it was the whole of the hole. */
+    .filter(x => x.hits > 0)
     /* Carrying a stuck word beats covering a known one, then most coverage, then
        least seen. `for` — the word an item was COMMISSIONED to rescue — outranks a
        word it merely happens to carry: those are the sentences written for this
@@ -20578,25 +20660,38 @@ function campBuild(node, size) {
     if (cards.length < room) cards.push({ kind: "word", key: k, words: [k] });
   });
 
+  /* THE THREE SLICES ARE DISJOINT, and until this was written they were not. Slice 3
+     filtered `!x.carry && serves && x.hits > 0` and slice 3b filtered `!x.carry &&
+     serves` — but the pool filter above guaranteed `x.hits > 0` for everything in it, so
+     the extra conjunct was redundant and the two selected THE SAME ITEMS. take() dedupes,
+     so 3b simply drew three more consolidation cards: a full session was 2 solo + 5
+     carrying + 7 consolidation, which is the exact 2+5+7 the split was introduced to
+     prevent. Nothing was reserved for wider material and nothing bounded it.
+
+     They now split on what an item actually is, not on a redundant restatement of the
+     pool filter: rescue (a stuck node word), wider (a debt or stretch word), own
+     (everything else, fully inside the node's ready vocabulary). */
+
   /* 2. The point of the session: sentences carrying a stuck word. */
-  const carrying = pool.filter(x => x.carry && campNodeServes(x.it));
+  const carrying = pool.filter(x => x.rescues && campNodeServes(x.it));
   take(carrying, Math.min(CAMP_CARRY_CARDS, room - cards.length));
 
   /* 3. Consolidation on the node's OWN words — a reserved share, not the remainder. */
-  const holding = pool.filter(x => !x.carry && campNodeServes(x.it) && x.hits > 0);
+  const holding = pool.filter(x => !x.rescues && !x.wider && campNodeServes(x.it));
   take(holding, Math.min(CAMP_OWN_CARDS, room - cards.length));
 
-  /* 3b. The wider material: carry, stretch and debt, every one of which still contains a
-         node word (see the filter above). Bounded, so it supplements the node rather than
+  /* 3b. The wider material: debt and stretch, every one of which still contains a node
+         word (see the filter above). Bounded, so it supplements the node rather than
          becoming it. */
-  const wider = pool.filter(x => !x.carry && campNodeServes(x.it));
+  const wider = pool.filter(x => !x.rescues && x.wider && campNodeServes(x.it));
   take(wider, Math.min(CAMP_WIDER_CARDS, room - cards.length));
 
-  /* 3c. Whatever is left over goes to either, own words first — a short session is worse
-         than an unbalanced one, and the quotas above are about how to spend a FULL
-         session, not a reason to hand back cards. */
+  /* 3c. Whatever is left over goes to any of the three, own words first — a short session
+         is worse than an unbalanced one, and the quotas above are about how to spend a
+         FULL session, not a reason to hand back cards. */
   take(holding, room - cards.length);
   take(wider, room - cards.length);
+  take(carrying, room - cards.length);
 
   /* 4. Still short — a narrow node with a thin bank. Top up with the node's own words
         as solo cards rather than reaching outside the node for filler. */
@@ -22514,7 +22609,11 @@ async function contentIngest() {
     if (!r || !r.ok) { contentNote("fetch-not-ok", { status: r ? r.status : "no response" }); return 0; }
     data = await r.json();
   } catch (e) { contentNote("fetch-threw", { err: (e && e.message) || String(e) }); return 0; }
-  const had = bankAll().filter(b => b && b.src === "claude").length;
+  /* `b.he`, not merely src:"claude" — a restored sync blob carries {id, src, seen} stubs
+     with no words in them, and counting those as "already have it" would let a fresh
+     install skip the ingest and then lose the stubs to bankPrune, leaving the shelf empty
+     with the version stamped. Having a stub is precisely NOT having the content. */
+  const had = bankAll().filter(b => b && b.src === "claude" && b.he).length;
   if (!contentShouldIngest(data, contentVersion(), had)) {
     contentNote("skipped", { fileVersion: data && data.version,
                              items: data && data.items && data.items.length, have: had });
@@ -22531,7 +22630,7 @@ async function contentIngest() {
      a full localStorage, a store replaced underneath us — would mean never trying again,
      which is the worst possible failure for a one-shot marker. Cheap to check, and it
      turns a permanent silent loss into a retry. */
-  const landed = bankAll().filter(b => b && b.src === "claude").length;
+  const landed = bankAll().filter(b => b && b.src === "claude" && b.he).length;
   if (n > 0 && !landed) {
     contentNote("banked-but-vanished", { fileVersion: data.version, reported: n });
     return 0;
@@ -26761,6 +26860,72 @@ T("campBuild quotas: eleven of fourteen cards stay the node's own", () => {
   assertEq(CAMP_SOLO_CARDS, 2,
            "the extra length is all sentences — isolated recall is the drill that failed him");
 });
+/* AND THE ARITHMETIC ABOVE IS NOT THE TEST, which is how the defect below shipped green.
+   Slice 3 filtered `!x.carry && serves && x.hits > 0` while slice 3b filtered `!x.carry &&
+   serves`; the pool filter already guaranteed `x.hits > 0`, so the two selected identical
+   items and CAMP_WIDER_CARDS bounded nothing. Constants that sum to fourteen say nothing
+   about that. This drives the real campBuild and counts what comes out.
+
+   Every store it reads is a plain function declaration, swapped and restored in the
+   finally — the same handle the syncPull and geminiSend tests use. Nothing here touches
+   George's real library, bank, campaign or level store. */
+T("campBuild: wider material is bounded, and a sentence with no node word is refused", () => {
+  const r = { lib: libAll, srs: srsAll, camp: campAll, bank: bankAll,
+              rec: recencyAll, lvlA: levelAll, lvlS: levelSave,
+              voice: hasHeVoice, notes: noteTargets };
+  try {
+    const strong = srsBandRecord("strong");
+    /* The node's own five, all strong, so nothing is stuck and slice 2 stays empty —
+       leaving the whole session to slices 3 and 3b, which is where the defect lived.
+       מטוס is the stretch word: units 21+, so campEnsureWords gives it no srs record and
+       wordReady is false. טוב is ordinary ready vocabulary that is not this node's. */
+    const own = ["בית", "גדול", "חדר", "מיטה", "חלון"];
+    const lib = {}; own.concat(["מטוס", "טוב"]).forEach(k => { lib[k] = { tr: k, en: k }; });
+    const srs = {}; own.concat(["טוב"]).forEach(k => { srs[k] = { prod: strong, recv: strong }; });
+    const node = { id: "n1", name: "Home", words: own, carry: [], stretch: ["מטוס"] };
+
+    /* `he` has to be real Hebrew: bankUsesRefresh recomputes `uses` from it and bankPrune
+       drops anything left with none. */
+    const mk = (id, ws) => ({ id: id, type: "sentence", he: ws.join(" "),
+                              tr: id, en: id, uses: ws, lvl: 1, seen: 0 });
+    const bank = [];
+    /* Plenty of pure consolidation, so an unbounded wider slice has something to beat. */
+    own.forEach((w, i) => { for (let j = 0; j < 3; j++) bank.push(mk("own" + i + "_" + j, [w, "גדול"])); });
+    /* Wider: a stretch word, each also carrying a node word, as the batch is written. */
+    for (let i = 0; i < 6; i++) bank.push(mk("str" + i, [own[i % own.length], "מטוס"]));
+    /* And the one that must never be served. It IS servable — מטוס is in the session's
+       carry set and טוב is ready — but it holds not one word of this node. This is the
+       case `x.hits > 0 || x.carry` admitted and `x.hits > 0` refuses. */
+    bank.push(mk("orphan", ["מטוס", "טוב"]));
+
+    libAll = () => JSON.parse(JSON.stringify(lib));
+    srsAll = () => JSON.parse(JSON.stringify(srs));
+    campAll = () => ({ chapters: [] });
+    bankAll = () => JSON.parse(JSON.stringify(bank));
+    recencyAll = () => ({});
+    /* levelBlank(), not {} — levelDecay walks st.lv and the store is { at, lv }. */
+    levelAll = () => levelBlank();
+    levelSave = () => {};
+    hasHeVoice = () => true;
+    noteTargets = () => [];
+
+    /* campBuild returns the card ARRAY, not a wrapper. */
+    const built = campBuild(node, CAMP_SESSION_CARDS);
+    assertTrue(!!built && built.length, "it builds a session at all");
+    const ids = built.map(c => (c.item && c.item.id) || "").filter(Boolean);
+
+    assertTrue(ids.indexOf("orphan") === -1,
+               "a sentence with nothing from this node in it never reaches the session");
+    assertTrue(ids.some(id => /^str/.test(id)),
+               "a stretch word IS servable — node.stretch is not decoration");
+    assertEq(ids.filter(id => /^str/.test(id)).length, CAMP_WIDER_CARDS,
+               "and wider material takes its reserved share, no more");
+  } finally {
+    libAll = r.lib; srsAll = r.srs; campAll = r.camp; bankAll = r.bank;
+    recencyAll = r.rec; levelAll = r.lvlA; levelSave = r.lvlS;
+    hasHeVoice = r.voice; noteTargets = r.notes;
+  }
+});
 T("bank sync: content that came from a public file does not ride the private repo", () => {
   const bank = [{ id: "c1", src: "claude", he: "אני הולך הביתה", tr: "ani holekh", en: "x",
                   uses: ["הולך"], lvl: 2, seen: 3 },
@@ -26782,6 +26947,40 @@ T("bank sync: content that came from a public file does not ride the private rep
   /* A device that has never fetched content/nodes.json receives only stubs. Those are not
      bank items — bankPrune would refuse them for lack of `he` — so they are not stored. */
   assertEq(MERGE_RULES["hvr_bank"]([], [{ id: "c9", src: "claude", seen: 0 }]).length, 0);
+});
+/* THE HALF THE TEST ABOVE COULD NOT SEE, and the reason it passed while every sync was
+   deleting the shelf. It hands mergeById a FULL local bank, which is the right answer —
+   but syncSnapshot was slimming before the merge ever ran, so in the live app `mine` was
+   stubs too and bankDropStubs removed the device's own 330 sentences. Testing the merge
+   in isolation cannot catch that; the invariant is about which snapshot goes where. */
+T("sync: the slimmed bank goes over the wire and never into local storage", () => {
+  const rGet = lsGet, rDev = syncDeviceId;
+  try {
+    const bank = [{ id: "c1", src: "claude", he: "אני הולך הביתה", tr: "t", en: "e",
+                    uses: ["הולך"], lvl: 2, seen: 3 },
+                  { id: "r1", src: "commission", he: "מה שלומך", tr: "t", en: "e",
+                    uses: ["מה"], lvl: 1, seen: 1 }];
+    lsGet = (k) => (k === BANK_KEY ? JSON.stringify(bank) : "");
+    syncDeviceId = () => "phone";
+
+    const local = syncSnapshot();
+    const localBank = JSON.parse(local.keys[BANK_KEY]);
+    assertEq(localBank[0].he, "אני הולך הביתה",
+             "the snapshot that merges and is written back keeps the words");
+
+    const wire = JSON.parse(syncSnapshotForPush(local).keys[BANK_KEY]);
+    assertEq(wire[0], { id: "c1", src: "claude", seen: 3 },
+             "and only the pushed copy is slimmed");
+    assertEq(wire[1].he, "מה שלומך", "a rescue sentence still travels whole");
+    assertEq(JSON.parse(local.keys[BANK_KEY])[0].he, "אני הולך הביתה",
+             "slimming for the push must not mutate the snapshot it was given");
+
+    /* The round trip: what this device stores after a sync with its own push must still
+       hold the sentence. This is the assertion that fails on the old code. */
+    const back = MERGE_RULES["hvr_bank"](JSON.parse(local.keys[BANK_KEY]), wire);
+    assertEq(back.filter(x => x.src === "claude" && x.he).length, 1,
+             "a sync against our own pushed blob does not empty the shelf");
+  } finally { lsGet = rGet; syncDeviceId = rDev; }
 });
 T("wordFamiliarity: new words arrive in Duolingo's order, and evidence still beats it", () => {
   const lib = { a: { src: "duo", duo: 3, added: todayISO() },
@@ -30001,6 +30200,83 @@ T("composeCredit: credits what he said, and can never record a miss", () => {
     assertTrue(got.indexOf(k2) === -1, "and it earns nothing rather than a miss");
   } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
               else lsSet(SRS_KEY, realSrs); }
+});
+T("composeCredit: a word the recogniser only ranked second still counts", () => {
+  /* THE FLAG THIS EXISTS FOR. He said the word he was given; the he-IL recogniser wrote
+     its homophone, because unvocalised Hebrew has plenty (iti is both slow and with me).
+     Nothing downstream could tell the difference, so the word was never credited, stayed
+     weakest, and composeObjectives handed it back every session. George: "The coach
+     should shuffle words between session it is clearly an issue with he recognision" —
+     which is the same bug seen from the other end.
+
+     A compose card has no expected sentence, so neither of the drill's ASR rescues can
+     run on it. The runners-up are the one piece of evidence that survives, and they were
+     being thrown away. */
+  const lib = libAll();
+  const gradable = Object.keys(lib).filter(k => srsGradable(k, lib));
+  const k1 = gradable[0], k2 = gradable[1], k3 = gradable[2];
+  assertTrue(!!k1 && !!k2 && !!k3, "needs three gradable library words to test with");
+  const realSrs = lsGet(SRS_KEY);
+  try {
+    const s = { strengthened: {}, back: {} };
+    const c = { kind: "compose", objectives: [k1], _said: k2,
+                _alts: [k2 + " " + k1, k2 + " " + k3] };
+    const got = composeCredit(s, c, { bad: [] });
+    assertTrue(got.indexOf(k1) !== -1, "the word only the runner-up heard is credited");
+    assertTrue(got.indexOf(k2) !== -1, "and the top transcript still counts as it did");
+    /* THE GUARD THAT KEEPS THIS NARROW. A runner-up is a guess, and crediting anything
+       it happens to contain would hand him words he never went near. Only the words
+       already on the table can be rescued this way — they are the ones he was trying to
+       say, which is what makes the guess evidence rather than noise. */
+    assertTrue(got.indexOf(k3) === -1, "a runner-up word he was never given earns nothing");
+  } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
+              else lsSet(SRS_KEY, realSrs); }
+});
+T("composeCredit: the coach's own verdict still outranks a runner-up", () => {
+  /* The rescue softens a MISHEARING, never a misuse. If the coach looked at the sentence
+     and said the word was used wrongly, a second transcript containing it is not new
+     evidence about anything. */
+  const lib = libAll();
+  const k1 = Object.keys(lib).filter(k => srsGradable(k, lib))[0];
+  const realSrs = lsGet(SRS_KEY);
+  try {
+    const c = { kind: "compose", objectives: [k1], _said: "", _alts: [k1] };
+    assertEq(composeCredit({ strengthened: {}, back: {} }, c, { bad: [k1] }), []);
+  } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
+              else lsSet(SRS_KEY, realSrs); }
+});
+T("composePrompt: the coach is told it is reading speech, and gets the runners-up", () => {
+  /* George, mid-session: "the price recognition pics up the words as the same since they
+     do sound identical which is a problem for a chat like this." He is SPEAKING. A
+     written difference he cannot hear is the recogniser's, and correcting him for one —
+     "you used ITI (with me) instead of ITI (slow)" — is both wrong and unanswerable. */
+  const p = composePrompt({
+    level: 3, objectives: ["\u05d0\u05d8\u05d9"], landed: [], outstanding: ["\u05d0\u05d8\u05d9"],
+    said: "\u05d0\u05e0\u05d9 \u05d0\u05d9\u05ea\u05d9", saidKeys: [],
+    alts: ["\u05d0\u05e0\u05d9 \u05d0\u05d8\u05d9"], history: "", theirLine: "",
+    lastTurn: false, pointed: false
+  });
+  assertTrue(p.indexOf("\u05d0\u05e0\u05d9 \u05d0\u05d8\u05d9") !== -1,
+             "the runner-up transcript is in front of the model");
+  assertTrue(/JUDGING SPEECH, NOT SPELLING/.test(p),
+             "and it is told which of the two it is grading");
+  /* A prompt with no runners-up must not invent a heading for an empty list. */
+  const bare = composePrompt({
+    level: 3, objectives: [], landed: [], outstanding: [], said: "x", saidKeys: [],
+    alts: [], history: "", theirLine: "", lastTurn: false, pointed: false });
+  assertTrue(bare.indexOf("other guesses") === -1, "no empty runners-up block");
+  assertTrue(/JUDGING SPEECH, NOT SPELLING/.test(bare), "but the rule still stands");
+});
+T("composePrompt: the why line has to be readable by someone who cannot read Hebrew", () => {
+  /* His words: "The feedback here isn't really useful since it's in Hebrew and I don't
+     know what the words mean ... If it said the anglecised Hebrew then in brackets the
+     translation that would be better." A correction he cannot read is worth nothing. */
+  const p = composePrompt({
+    level: 3, objectives: [], landed: [], outstanding: [], said: "x", saidKeys: [],
+    alts: [], history: "", theirLine: "", lastTurn: false, pointed: false });
+  const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
+  assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
+  assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
 });
 T("compose: the card carries no target for anything to align against", () => {
   const c = { kind: "compose", objectives: ["בית"], item: null };

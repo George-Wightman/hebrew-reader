@@ -1389,13 +1389,6 @@
   /* The app's existing "this needs your attention" colour, the same one Pending and
      unknown words use — a repair is exactly that, and reusing it means the colour
      keeps meaning one thing everywhere. */
-  /* The .lrepair* rules were removed with convoShowRepair: a beat that was not
-     covered is approached again by the next line now, so there is no separate
-     restatement panel to style. */
-  /* Where the grade buttons would be, on a silently-scored conversation turn — a
-     quiet marker that something is happening, not a control to press. */
-  .lconvocont { text-align: center; color: var(--faint); font-size: 1.3rem;
-                letter-spacing: .12em; padding: 8px 0 2px; }
   .lmeaning { font-size: .84rem; font-weight: 600; margin-top: 6px; text-align: center; }
   .lmeaning.good { color: #2e7d5b; }
   .lmeaning.partial { color: #a86a34; }
@@ -2745,12 +2738,6 @@
         <button class="btn secondary" id="newSentencesBtn">Run</button>
       </div>
       <div class="setrow setrow-danger">
-        <div class="setrow-text"><b>Bin the conversations <span class="setwarn">clears</span></b>
-          <p>Deletes every stored conversation, including the ones cached against nodes on the map. Fresh ones get written the next time you open a conversation.</p>
-          <details><summary>Why you might</summary><p>A conversation is written once and then kept — a node's is cached against that node and never rewritten. So conversations written before an improvement to how they work keep behaving the old way indefinitely. This is how you make them get rewritten. Your library, word strengths, node progress and gold are all untouched.</p></details></div>
-        <button class="btn secondary" id="newConvosBtn">Run</button>
-      </div>
-      <div class="setrow setrow-danger">
         <div class="setrow-text"><b>Reset drill schedule <span class="setwarn">clears</span></b>
           <p>Every word becomes due for review again, as if freshly added.</p>
           <details><summary>What survives</summary><p>This is the one that resets progress, not your words. Nothing is deleted — your library, marks and banked sentences are untouched.</p></details></div>
@@ -3391,7 +3378,6 @@ const MERGE_RULES = {
   "hvr_stats":      (a, b) => mergeStats(a, b),
   "hvr_archive":    (a, b) => mergeArchive(a, b),
   "hvr_bank":       (a, b) => mergeById(a, b, BANK_MAX),
-  "hvr_convo":      (a, b) => mergeById(a, b, CONVO_MAX),
   "hvr_pathscores": (a, b) => mergePathScores(a, b),
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
@@ -10711,10 +10697,6 @@ function flagContext(report) {
                  he: learnExpectedHe(card) || "",
                  tr: (card.item && card.item.tr) || "",
                  en: (card.item && card.item.en) || "" };
-      if (card.kind === "conversation" && card.convo) {
-        c.card.beats = convoBeatCount(card.convo);
-        c.card.covered = Object.keys(s.beatsHit || {}).length;
-      }
     }
     if (s) c.session = { at: s.i + 1, of: (s.cards || []).length, got: s.got };
     if (s && s.path) c.lesson = s.path.id + " · lesson " + s.path.lesson;
@@ -15631,7 +15613,7 @@ function campApplyPlan(plan) {
   campRestate(c);
   campSave(c);
   /* Nothing to enqueue: a node with no conversation written IS the queue — see
-     convoQNext. Nothing is written here either, deliberately. This runs inside
+     the node content queue. Nothing is written here either, deliberately. This runs inside
      campWarmNext's three-chapter loop, and eighteen conversations in one visit to the
      map is the whole day's Flash. */
   return c.chapters[n - 1];
@@ -15658,7 +15640,7 @@ function campApplyFallback() {
 }
 
 /* ---- the orchestrator -------------------------------------------------------
-   Fire-and-forget, exactly like convoTopUp: it runs while he is looking at the map,
+   Fire-and-forget: it runs while he is looking at the map,
    and if it fails he never learns that it was attempted. A background spend he did
    not ask for has no business surfacing an error. */
 let campPlanning = false, campPlanGaveUp = false;
@@ -16005,625 +15987,12 @@ function reviewStartDrill() {
   return true;
 }
 
-/* =====================  CONVERSATIONS  =====================
-   Kept in their own store rather than the sentence bank. A conversation has no single
-   `he`, so bankUses/bankServable/bankDifficulty would all need special cases, and the
-   session builder iterates the bank assuming every item is one card. A separate store
-   costs one function and leaves all of that untouched.
-
-   The exchange is SCRIPTED, generated in one call up front, and graded locally. That
-   is what makes it instant: no request sits between his answer and the next line. He
-   still gets adaptation, but on how well he did rather than on which words he chose —
-   which is the honest trade, and the one the app can actually deliver in zero time. */
-const CONVO_KEY = "hvr_convo", CONVO_SCENES_KEY = "hvr_convoscenes";
-const CONVO_MAX = 14, CONVO_TURNS = 6;
-
-/* A scene is a vocabulary selector before it's a story. Give the generator a setting
-   and one word has a reason to follow another — which is most of the cure for the
-   "a big wind" problem, where every word was individually valid and the sentence
-   meant nothing. Deliberately mundane and universal: no invented personalities, which
-   is where an AI writing "an Israeli shopkeeper" reliably drifts into caricature. */
-const CORE_SCENES = [
-  { id: "catchup", en: "Catching up",        hint: "how you've been, what you did today, family news" },
-  { id: "needing", en: "You need something", hint: "asking for a thing, how much, please and thank you" },
-  { id: "family",  en: "Meeting family",     hint: "who people are, how they are, polite small talk" },
-  { id: "plan",    en: "Making a plan",      hint: "when and where to meet, tomorrow, times of day" },
-  { id: "feeling", en: "How you're feeling", hint: "tired, hungry, well or unwell, hot or cold" }
-];
-function convoAll() {
-  try { const a = JSON.parse(lsGet(CONVO_KEY)); return Array.isArray(a) ? a : []; }
-  catch (e) { return []; }
-}
-function convoSave(v) { lsSet(CONVO_KEY, JSON.stringify(v.slice(-CONVO_MAX))); }
-/* Earned scenes join the rotation permanently. Without this an emergent scene is a
-   one-off, which quietly turns the whole feature into "invent a new setting every
-   time" — the option that was explicitly not chosen, because nothing ever repeats
-   and so nothing ever becomes automatic. */
-function convoScenes() {
-  let extra = [];
-  try { const a = JSON.parse(lsGet(CONVO_SCENES_KEY)); if (Array.isArray(a)) extra = a; }
-  catch (e) {}
-  return CORE_SCENES.concat(extra.filter(s => s && s.id && s.en));
-}
-/* convoAddScene() sat here, the writer for the store convoScenes() reads. Nothing ever
-   called it — the extra-scenes half of CONVO_SCENES_KEY has never been written by
-   anything — so the reader above is really just CORE_SCENES with a hook left in for
-   whatever was going to fill it. The hook stays; the unused writer does not. */
-/* ---- a turn read as a BEAT -----------------------------------------------------
-   A conversation is six beats — things the exchange needs to cover — and the scripted
-   lines stored alongside them are ONE realisation of those beats, the one used when
-   there is no network, no key, or no time to write a better one.
-
-   This is the reader that makes that true of data written before beats existed. Every
-   conversation already in storage has qhe/he/alts and no intent, and rather than
-   migrate them (a rewrite of a store that syncs between devices, to add a field that
-   can be derived) they are read as beats whose intent is unstated. A beat with no
-   intent is one the live turn cannot improve on, so it falls back to its scripted line
-   — which is precisely the behaviour those conversations already had.
-
-   `want` falls back to askEn because that is what askEn always was: the gist of what he
-   should convey. It was already the right field under the wrong name. */
-function convoBeat(t) {
-  if (!t) return null;
-  /* `intent` is what THEY are doing this turn. An old turn never stated it — but it
-     stated their line in English, and "they say: how are you" is a perfectly good thing
-     to steer the next line towards. Deriving it is what makes the live turn work on
-     conversations written before any of this existed. */
-  const intent = String(t.intent || "").trim() ||
-                 (t.qen ? "they say: " + String(t.qen).trim() : "");
-  const want = String(t.want || t.askEn || "").trim();
-  return {
-    intent: intent,
-    want: want,
-    must: Array.isArray(t.must) ? t.must.filter(Boolean) : [],
-    lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(t.lvl)) || LEVEL_DEFAULT)),
-    /* WHETHER THIS BEAT CAN BE REALISED LIVE, and the first version of this was wrong in
-       a way that switched the whole feature off. It asked for `intent` specifically —
-       a field only the new planning prompt writes — so every conversation already in
-       hvr_convo and every node conversation cached in hvr_pathcontent (which is written
-       ONCE per node and never regenerated) was permanently script-only. George, on the
-       shipped build: "its definitly not calling hte API after each time I call, its
-       falling back."
-       What the judge actually needs is to know what he was meant to convey, and an old
-       turn carries that in askEn. So the test is whether there is anything to aim at,
-       not whether a particular field name is present. */
-    live: !!(intent || want)
-  };
-}
-/* How many beats a conversation covers, for the gold gate — see the spec's note on why
-   this replaces `got / cards.length` once a conversation can run longer than its beats. */
-function convoBeatCount(c) {
-  return (c && Array.isArray(c.turns)) ? c.turns.length : 0;
-}
-
-/* ---- the live turn -------------------------------------------------------------
-   Six beats is a FLOOR, not a script. Between them the exchange may breathe — follow up
-   on something volunteered, answer a question asked back — and it ends when the beats
-   are covered or the cap is reached. George: "The 6 best point can be a good
-   conversation strucutre, like 6 minimum or like 6 things to hit on, but It doesnt
-   neciserily have to be 6 max or jsut super rigid."
-
-   The cap is the guard on the one real risk: a model that enjoys a tangent too much and
-   never lands the remaining beats. Every call is told how many beats are left against
-   how many turns have gone, and told to converge as that tightens — but instructions are
-   not a guarantee, so twelve is the hard stop. */
-const CONVO_TURN_CAP = 12;
-/* Short, deliberately. A slow answer here is worse than no answer: the scripted line is
-   sitting right there and the "…" is on screen while it waits. Past this the turn takes
-   the fallback and the conversation carries on rather than stalling mid-sentence. */
-const CONVO_LIVE_TIMEOUT_MS = 6000;
-
-/* Does the exchange keep going? Pure, because it is the termination condition and a
-   conversation that cannot end is worse than one that ends early. */
-function convoShouldContinue(beatsHit, beatsTotal, turnsUsed, cap) {
-  if (turnsUsed >= (cap || CONVO_TURN_CAP)) return false;   // the hard stop
-  return beatsHit < beatsTotal;
-}
-
-/* What the judge is allowed to say. Anything malformed falls back to null so the caller
-   uses the LOCAL score instead — a live turn that comes back nonsense must degrade to
-   today's behaviour, never to a wrong grade quietly applied. */
-function convoLiveNormalise(json, beatsTotal) {
-  if (!json || typeof json !== "object") return null;
-  const g = Math.round(Number(json.grade));
-  const out = {
-    grade: (g === 0 || g === 1 || g === 2) ? g : null,
-    lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(json.lvl)) || LEVEL_DEFAULT)),
-    beatHit: !!json.beatHit,
-    next: null
-  };
-  const n = json.next;
-  /* No `next` is how the model says the conversation is finished — a legitimate answer,
-     not a malformed one. */
-  if (!n || typeof n !== "object" || !n.qhe) return out;
-  /* Their line needs Hebrew; his model answer needs Hebrew AND a pronunciation, because
-     the hint ladder and the local fallback grader both read it. A next line we cannot
-     build a full card from is worse than no next line — it would render a turn with no
-     answer behind it. */
-  if (!n.he || !n.tr) return out;
-  out.next = {
-    beat: Math.max(0, Math.min((beatsTotal || 1) - 1, Math.round(Number(n.beat)) || 0)),
-    qhe: String(n.qhe), qtr: String(n.qtr || ""), qen: String(n.qen || ""),
-    want: String(n.want || ""),
-    he: String(n.he), tr: String(n.tr), en: String(n.en || ""),
-    alts: (Array.isArray(n.alts) ? n.alts : [])
-      .filter(a => a && a.he && a.tr).slice(0, 3)
-      .map(a => ({ he: String(a.he), tr: String(a.tr), en: String(a.en || "") }))
-  };
-  return out;
-}
-
-/* The thread so far, as the model needs to see it: who said what, in Hebrew. Capped
-   because the whole exchange goes out on every turn and a twelve-turn conversation
-   would otherwise send twelve turns of history on the twelfth call. */
-function convoLiveHistory(cards, upto) {
-  const out = [];
-  for (let i = 0; i < upto && i < cards.length; i++) {
-    const c = cards[i];
-    if (!c || c.kind !== "conversation") continue;
-    out.push("THEM: " + ((c.item && c.item.qhe) || ""));
-    if (c._said) out.push("HIM: " + c._said);
-  }
-  return out.slice(-10).join("\n");
-}
-
-function convoLivePrompt(ctx) {
-  const beat = ctx.beat || {};
-  const nextBeat = ctx.nextBeat || null;
-  return "You are the other person in a spoken Hebrew conversation with a learner. " +
-    "Reply the way a real person would, and judge how he just did.\n\n" +
-    "SETTING: " + (ctx.sceneEn || "a conversation") + "\n\n" +
-    (ctx.history ? "THE EXCHANGE SO FAR:\n" + ctx.history + "\n\n" : "") +
-    "YOUR LAST LINE: " + (ctx.theirLine || "") + "\n" +
-    "WHAT HE JUST SAID: " + (ctx.said || "(nothing was heard)") + "\n\n" +
-    "FIRST, JUDGE IT. This turn wanted him to: " + (beat.want || "reply naturally") + "\n" +
-    "grade 2 = he conveyed it. grade 1 = partly. grade 0 = he did not.\n" +
-    "JUDGE THE MEANING, NEVER THE PARTICULAR WORDS. A synonym is correct. A more " +
-    "advanced construction than you would have used is correct — and is worth a higher " +
-    "lvl, not a lower grade. Extra content he volunteered that you did not ask for is " +
-    "correct. He is being marked on whether he communicated, not on whether he matched " +
-    "a script. Only mark him down for something he genuinely failed to get across.\n" +
-    "lvl = how advanced what he ACTUALLY said was, 1-5, whatever this turn was aiming at.\n" +
-    "beatHit = did this turn's job get done, so the conversation can move on.\n\n" +
-    "THEN WRITE YOUR NEXT LINE.\n" +
-    "RESPOND TO WHAT HE ACTUALLY SAID FIRST. If he asked you something, answer it — " +
-    "walking past a question he asked you is the single worst thing you can do here. If " +
-    "he volunteered something, react to it like a person would before moving on.\n" +
-    (nextBeat
-      ? "Then steer towards the next thing to cover: " + (nextBeat.intent || "") + "\n"
-      : "The things this conversation set out to cover are done — bring it to a natural " +
-        "close and return no \"next\".\n") +
-    "You do not have to reach it this turn. Following up on what he said for one turn is " +
-    "good conversation. But " + ctx.beatsLeft + " thing(s) still need covering and you " +
-    "have used " + ctx.turnsUsed + " of " + ctx.cap + " turns — the tighter that gets, " +
-    "the more directly you should steer.\n\n" +
-    "HIS REPLY TO YOUR NEW LINE must be sayable with ONLY these words. This is a hard " +
-    "limit — a line he cannot answer is a wall, not a conversation:\n" + (ctx.vocab || "") + "\n\n" +
-    "Your own line may use a few common words outside that list if a real speaker would; " +
-    "list any such word in newWords.\n\n" +
-    "Reply with JSON only:\n" +
-    "{\"grade\":2,\"lvl\":2,\"beatHit\":true," +
-    "\"next\":{\"beat\":0,\"qhe\":\"your next line\",\"qtr\":\"english letters\"," +
-    "\"qen\":\"english\",\"want\":\"what he should convey in reply\"," +
-    "\"he\":\"a model reply from him\",\"tr\":\"english letters\",\"en\":\"english\"," +
-    "\"alts\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}," +
-    "\"newWords\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}\n\n" +
-    "Omit \"next\" entirely to end the conversation.";
-}
-
-/* Builds the card for a live line. Shaped exactly like a scripted turn so the hint
-   ladder, the reveal, convoBestMatch and the thread all work on it unchanged — the
-   whole point of the beat sheet is that a live turn and a scripted one are the same
-   kind of thing. */
-/* The call itself. Resolves to a normalised result or null — never throws, because every
-   caller's answer to a failure is the same: use the scripted line and the local score,
-   which is exactly what the app did before any of this existed. */
-async function convoLiveTurn(s, c) {
-  if (!geminiKeys().length) return null;
-  const convo = c.convo;
-  const beats = (convo && convo.turns) || [];
-  const beat = convoBeat(beats[c.beat || 0]);
-  if (!beat || !beat.live) return null;      // written before beats existed: script only
-  const hit = Object.keys(s.beatsHit || {}).length;
-  const nextIdx = Math.min(beats.length - 1, (c.beat || 0) + 1);
-  const lib = libAll(), srs = srsAll();
-  /* The same pool the conversation was planned from, so a live line cannot ask for
-     something he could not have been asked for on turn one. */
-  const pool = readyWords(lib, srs).concat(beat.must || []);
-  const vocab = pool.map(k => convoWordLine(k, lib)).filter(Boolean).slice(0, SCAFFOLD_MAX).join("\n");
-  const prompt = convoLivePrompt({
-    sceneEn: convo.sceneEn, beat: beat,
-    nextBeat: hit + 1 < beats.length ? convoBeat(beats[nextIdx]) : null,
-    history: convoLiveHistory(s.cards, s.i),
-    theirLine: (c.item && c.item.qhe) || "", said: c._said || "",
-    beatsLeft: Math.max(0, beats.length - hit), turnsUsed: s.i + 1, cap: CONVO_TURN_CAP,
-    vocab: vocab
-  });
-  let out = null;
-  try {
-    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
-                                          { timeoutMs: CONVO_LIVE_TIMEOUT_MS,
-                                            label: "Their next line" }));
-  } catch (e) { return null; }
-  if (out && Array.isArray(out.newWords) && out.newWords.length) {
-    try { padIngest({ words: out.newWords }); } catch (e) {}
-  }
-  return convoLiveNormalise(out, beats.length);
-}
-
-function convoLiveCard(convo, next, ti) {
-  return {
-    kind: "conversation", convo: convo, ti: ti, beat: next.beat, live: true,
-    item: { qhe: next.qhe, qtr: next.qtr, qen: next.qen,
-            askEn: next.want, want: next.want,
-            he: next.he, tr: next.tr, en: next.en, alts: next.alts,
-            rhe: "", rtr: "", ren: "",
-            uses: bankUses(next.he, libAll()) },
-    words: []
-  };
-}
-
-/* A card from a beat's SCRIPTED realisation — the opening line, and every fallback.
-   One builder, so a scripted card and a live one are indistinguishable to everything
-   downstream. */
-function convoScriptedCard(convo, idx, ti) {
-  const t = (convo.turns || [])[idx];
-  if (!t) return null;
-  return { kind: "conversation", convo: convo, ti: ti === undefined ? idx : ti,
-           beat: idx, live: false, item: t, words: t.uses || [] };
-}
-
-/* THE SCRIPT POINTER ONLY EVER MOVES FORWARD.
-
-   This was `the first beat not yet covered`, and it was a trap. A beat is only marked
-   covered on a CLEAN answer, so answering "Nearly" left the pointer where it was and the
-   fallback served the identical question again — and again, until the twelve-turn cap.
-   Measured on the shipped build: grading every turn "Nearly" asked Q0 twelve times in a
-   row. George: "if I dont say exactly what its expecting it not letting me through."
-
-   Approaching an uncovered beat again is the LIVE path's job, where the model rewords it
-   into something that moves — someone asking the same question a different way. A
-   scripted re-ask of the byte-identical line is not that; it is a wall. So the script
-   advances regardless of the grade, exactly as it did before any of this, and a beat he
-   fumbled simply goes uncovered and costs him the gold gate rather than the exit. */
-function convoScriptNext(s) {
-  /* Beat 0 was the opening card, so the script resumes at 1. */
-  if (typeof s.convoNext !== "number") s.convoNext = 1;
-  return s.convoNext;
-}
-
-/* WHAT COMES NEXT: a live line, the next scripted beat, or the end.
-
-   Pulled out as its own function because this is the decision that shipped broken, and
-   convoAdvance cannot be unit-tested — it runs the grade, which writes the schedule, the
-   stats and the level to real storage. The loop that asked George the same question
-   twelve times lived in three lines buried inside that. Here it can be driven
-   exhaustively against nothing at all. */
-function convoNextStep(s, beatsTotal, live, turnsUsed) {
-  const hit = Object.keys((s && s.beatsHit) || {}).length;
-  if (!convoShouldContinue(hit, beatsTotal, turnsUsed, CONVO_TURN_CAP)) return { kind: "end" };
-  if (live && live.next) return { kind: "live", beat: live.next.beat };
-  const next = convoScriptNext(s);
-  /* Note what is NOT consulted: whether this beat was covered. The script advances on a
-     miss exactly as it did before beats existed. */
-  if (next < beatsTotal) return { kind: "script", beat: next };
-  return { kind: "end" };
-}
-
-/* Everything that happens between his answer being scored and the next line appearing.
-   Both the live path and the fallback end here, which is what keeps them honest: the
-   only difference between them is where the next card came from. */
-function convoAdvance(s, c, live, gradeOverride) {
-  const convo = c.convo || {};
-  const beats = convo.turns || [];
-  const beatIdx = c.beat || 0;
-  /* A pressed grade button beats everything: it is George saying so directly. Then the
-     judge, then the local score. */
-  const grade = (gradeOverride !== undefined && gradeOverride !== null) ? gradeOverride
-    : (live && live.grade !== null && live.grade !== undefined) ? live.grade
-    : learnSuggested;
-  s.beatsHit = s.beatsHit || {};
-  /* Without a judge, a clean local score is the only evidence the beat landed. */
-  if (live ? live.beatHit : grade === 2) s.beatsHit[beatIdx] = true;
-
-  /* Phase 3, folded in here because this is the only place that knows what he actually
-     said AND how advanced it was. Conversation turns have never fed levelRecord — the
-     one surface where he is most likely to reach past what was asked was the one the
-     level never saw. The judge reports the level of HIS answer, not the beat's target. */
-  if (live && live.lvl) {
-    try {
-      const lvlStore = levelAll();
-      levelRecord(lvlStore, live.lvl, grade === 2);
-      levelSave(lvlStore);
-    } catch (e) { /* a level write must never cost him the turn */ }
-  }
-
-  const ti = s.i + 1;
-  const step = convoNextStep(s, beats.length, live, ti);
-  if (step.kind === "live") {
-    s.cards.push(convoLiveCard(convo, live.next, ti));
-    /* Keep the script pointer level with where the live exchange has actually reached,
-       so a fallback later resumes from there rather than re-asking what the live turns
-       already covered. Never backwards: the model lingering on a beat must not rewind
-       the script. */
-    s.convoNext = Math.max(convoScriptNext(s), step.beat + 1);
-  } else if (step.kind === "script") {
-    s.cards.push(convoScriptedCard(convo, step.beat, ti));
-    s.convoNext = step.beat + 1;
-  }
-  /* No card appended means the exchange is over: learnAdvance's own `s.i >=
-     s.cards.length` termination then fires exactly as it always has, with no
-     conversation-specific ending to keep in step with it. */
-  learnGrade(grade);
-}
-
-/* Same gate as sentences: every content word across every turn has to be one he has
-   actually trained, or the conversation is a wall rather than a drill. */
-function convoServable(c, lib, srs) {
-  if (!c || !Array.isArray(c.turns) || !c.turns.length) return false;
-  return c.turns.every(t => {
-    const uses = t.uses || [];
-    const content = uses.filter(u => lib[u] && !STOPLIST.has(u));
-    return content.length ? content.every(u => wordReady(u, srs)) : true;
-  });
-}
-function convoPick(lib, srs) {
-  const ok = convoAll().filter(c => convoServable(c, lib, srs));
-  if (!ok.length) return null;
-  return ok.sort((a, b) => ((a.seen || 0) - (b.seen || 0)) || ((a.ts || 0) - (b.ts || 0)))[0];
-}
-
-/* Which scene to write next: the one he's done least. Ties break towards the core
-   set, so an earned scene never crowds out the staples it was added alongside. */
-function convoNextScene() {
-  const done = {};
-  convoAll().forEach(c => { done[c.scene] = (done[c.scene] || 0) + 1; });
-  return convoScenes().slice().sort((a, b) => (done[a.id] || 0) - (done[b.id] || 0))[0];
-}
-
-/* ONE call writes the whole exchange. That is the entire latency story: nothing is
-   requested between his answer and the next line, so there is nothing to wait for.
-   Turns come back shaped exactly like a `reply` bank item (their line in q*, his
-   answer in he/tr/en) so the card, the mic, the hints and the grading all work
-   unchanged — a conversation turn IS a reply card with a thread above it. */
-/* One line of "what this word is" for the prompt, from the library or from DICT.
-   A node's words may not have reached the library yet — campEnsureWords only admits
-   what DICT knows — and telling the model a word with no meaning attached is worse
-   than not mentioning it, so a word we can say nothing true about is dropped. */
 function convoWordLine(k, lib) {
   const e = lib[k], d = DICT[k];
   const tr = (e && e.tr) || (d ? String(d[0]).split("/")[0].trim() : "");
   const en = (e && e.en) || (d ? d[1] : "");
   if (!tr && !en) return "";
   return tr + " = " + en + " (" + k + ")";
-}
-
-async function learnMakeConversation(sceneOverride, opts) {
-  const o = opts || {};
-  const lib = libAll(), srs = srsAll();
-  const ready = readyWords(lib, srs);
-  /* `must` is a node's own word list. It exempts the call from the general ready-pool
-     floor, because a node conversation is written from the node rather than from what
-     he happens to hold today — otherwise it could not be written until he was already
-     past needing the node, which is exactly the wrong way round. George: "its not like
-     a different non node conversation, so Its safer to use hte words in the node
-     despite them not being ready yet". */
-  const must = (o.must || []).filter(Boolean);
-  if (!must.length && ready.length < READY_MIN_FOR_SENTENCES) return null;
-  if (!geminiKeys().length) return null;
-  /* The Path supplies its own scene so a section's closing conversation is about that
-     section, rather than whatever happened to be next in the general rotation. */
-  const scene = sceneOverride || convoNextScene();
-  if (!scene) return null;
-
-  const pool = ready.slice();
-  must.concat(o.extra || []).forEach(k => { if (pool.indexOf(k) === -1) pool.push(k); });
-  const vocab = pool.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n");
-  if (!vocab) return null;
-  const mustLines = must.map(k => convoWordLine(k, lib)).filter(Boolean).join("\n");
-  const prompt =
-    "Write a short spoken Hebrew conversation for a NEAR-BEGINNER to practise out loud.\n\n" +
-    "SETTING: " + scene.en + " — " + (scene.hint || "") + "\n\n" +
-    /* Without this a node's graduation could be written entirely from his general
-       vocabulary and contain not one word the node taught — which is a conversation
-       he could have had before he started. */
-    (mustLines
-      ? "THE WORDS THIS CONVERSATION EXISTS TO PRACTISE. Every one of these must appear, " +
-        "doing real work in a line rather than tacked on the end of one:\n" + mustLines + "\n\n"
-      : "") +
-    "He can only use these words. This is a hard limit, not a preference:\n" + vocab + "\n\n" +
-    "Write exactly " + CONVO_TURNS + " turns. In each turn the OTHER PERSON speaks first, " +
-    "then he answers.\n\n" +
-    "THE MOST IMPORTANT RULE: every line must be something a real person would " +
-    "actually say, and the conversation must make sense read start to finish. A line " +
-    "that is grammatical but meaningless is worse than useless — it teaches confident " +
-    "nonsense. If the word list won't support a natural exchange, write fewer turns.\n\n" +
-    "BAD: \"Do you want the big water?\" / \"My family is a medium day.\"\n" +
-    "GOOD: \"How are you today?\" / \"Everything's fine, thanks.\"\n\n" +
-    "Their lines may use a few common words outside the list if a real speaker would " +
-    "— list any such word in newWords. HIS answers must use ONLY the listed words.\n\n" +
-    "Also give, for each turn, a REPAIR line: what they'd say if he answered badly. " +
-    "It should be shorter, simpler, and should feed him the key word he was missing — " +
-    "the way a real person helps a learner rather than moving on.\n\n" +
-    /* Without this, a conversation turn is graded against ONE fixed sentence — the
-       exact rigidity that makes it read as a translation drill instead of a real
-       exchange, where "how are you" has a dozen honest replies. alts gives real
-       choice while staying inside the same word list, so grading stays local and
-       instant (no extra call) but stops punishing a reasonable answer for not being
-       the one scripted answer. */
-    "REAL CONVERSATIONS HAVE MORE THAN ONE NATURAL REPLY. For each turn, also give " +
-    "2-3 ALTERNATIVE answers he could equally naturally give instead of \"he\" — " +
-    "genuinely different wording or content, not trivial rephrasings, still using " +
-    "ONLY the listed words, still exactly the kind of thing a real person would say here.\n\n" +
-    /* THE BEAT. The scripted lines above are one realisation of the conversation; this
-       is the conversation itself, described so a later call can realise it differently
-       against what he actually said. Asked for in the SAME request because the model is
-       already deciding all of this in order to write the lines — it just never had to
-       say it out loud, so nothing downstream could read it. */
-    "EACH TURN ALSO HAS A JOB — the thing that turn needs to cover, separate from the " +
-    "particular words you chose to cover it with. State it, because the app may realise " +
-    "the same turn with different wording later:\n" +
-    "- intent = what THEY are doing in this turn, in plain English (\"they ask whether " +
-    "he worked today\"). Not the line, the purpose.\n" +
-    "- want = what HE needs to convey to satisfy it (\"say whether he did, and where\").\n" +
-    "- must = which of the practice words above this turn is built around, copied " +
-    "exactly, or [] if none.\n" +
-    "- lvl = 1-5, how hard his answer to this turn should be.\n\n" +
-    "Reply with JSON only:\n" +
-    "{\"turns\":[{\"intent\":\"\",\"want\":\"\",\"must\":[],\"lvl\":2," +
-    "\"qhe\":\"their line\",\"qtr\":\"english letters\",\"qen\":\"english\"," +
-    "\"askEn\":\"the gist of what he should convey, in plain English\"," +
-    "\"he\":\"his model answer\",\"tr\":\"english letters\",\"en\":\"english\"," +
-    "\"alts\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]," +
-    "\"rhe\":\"repair line\",\"rtr\":\"english letters\",\"ren\":\"english\"}]," +
-    "\"newWords\":[{\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}\n\n" +
-    "Before answering, re-read every line — including every alt — and delete any you " +
-    "would not defend to a native speaker.";
-
-  /* Named after the node when there is one, which is what George asked to see:
-     "Writing the conversation for The Market". A background call he did not ask for is
-     worth naming precisely; a bare "Thinking…" is exactly what he already had. */
-  const out = extractJSON(await geminiRequest([{ text: prompt }], null,
-    { timeoutMs: GEN_TIMEOUT_MS,
-      label: "Writing the conversation" +
-             ((sceneOverride && sceneOverride.en) ? " for " + sceneOverride.en : "") }));
-  const turns = (out && Array.isArray(out.turns)) ? out.turns : [];
-  if (!turns.length) return null;
-  if (out && Array.isArray(out.newWords) && out.newWords.length) {
-    try { padIngest({ words: out.newWords }); } catch (e) {}
-  }
-  /* `uses` is derived here, never taken from the model — the app knows what's in the
-     library and a hallucinated list would poison the scheduler with no way to notice. */
-  /* `must` is filtered against the list actually sent, exactly as sentencePlan filters
-     its briefs' `for`: a beat built around a word nobody asked about would send the live
-     turn chasing vocabulary the node has nothing to do with. */
-  const mustSet = new Set(must);
-  const clean = turns.filter(t => t && t.qhe && t.he && t.tr)
-    .map(t => ({
-      /* The beat — what this turn is FOR. Absent on every conversation written before
-         this existed, which is exactly what convoBeat() below is for. */
-      intent: String(t.intent || "").trim(),
-      want: String(t.want || t.askEn || "").trim(),
-      must: (Array.isArray(t.must) ? t.must : [])
-        .map(k => String(k || "").trim()).filter(k => mustSet.has(k)),
-      lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX,
-             Math.round(Number(t.lvl)) || LEVEL_DEFAULT)),
-      qhe: t.qhe, qtr: t.qtr || "", qen: t.qen || "",
-      askEn: t.askEn || t.en || "", he: t.he, tr: t.tr, en: t.en || "",
-      /* Capped at 2 and validated the same as the primary answer — an alt that's
-         missing its Hebrew or transliteration is worse than not having it, since
-         grading would silently compare against blank text. */
-      alts: (Array.isArray(t.alts) ? t.alts : [])
-        .filter(a => a && a.he && a.tr).slice(0, 3)
-        .map(a => ({ he: a.he, tr: a.tr, en: a.en || "" })),
-      rhe: t.rhe || "", rtr: t.rtr || "", ren: t.ren || "",
-      uses: bankUses(t.he, lib)
-    }));
-  if (!clean.length) return null;
-  const convo = { id: "c" + Date.now(), scene: scene.id, sceneEn: scene.en,
-                  turns: clean, seen: 0, ts: Date.now() };
-  /* A node's graduation is not general practice. Left in this store it becomes
-     servable by convoPick the moment its words go ready — so the exchange he is
-     supposed to graduate on gets handed to him first as an ordinary Talk session.
-     The Path keeps its own copy in pathContentAll(). */
-  if (o.store !== false) { const all = convoAll(); all.push(convo); convoSave(all); }
-  return convo;
-}
-
-/* Fire-and-forget top-up. Runs while he's mid-session so the next conversation is
-   already written by the time he wants it — the wait happens where he isn't looking. */
-let convoMaking = false;
-async function convoTopUp() {
-  if (convoMaking) return;
-  const lib = libAll(), srs = srsAll();
-  const spare = convoAll().filter(c => !c.seen && convoServable(c, lib, srs)).length;
-  if (spare >= 2) return;
-  convoMaking = true;
-  try { await learnMakeConversation(); } catch (e) {} finally { convoMaking = false; }
-}
-
-/* ---- conversations written before they are wanted ------------------------------
-   George: "Convos should be pre generated after the nodes at emade. But locked behind
-   mastering words." The gate does not move — campNodeWordsReady still decides when the
-   button lights. What moves is WHEN the exchange gets written, from the moment he taps
-   to the moment the node is created.
-
-   That is only possible because a node's conversation is now written from the node's
-   own word list (see learnMakeConversation's `must`). While the vocabulary came from
-   readyWords, writing early meant writing from a smaller vocabulary than the one he
-   would have on arrival, and there was a real reason to wait.
-
-   Throttled, because eager is not free: campWarmNext plans up to three chapters in one
-   visit to the map, at four to six nodes each, so writing them all on the spot is up to
-   eighteen Flash calls against a daily allowance of twenty.
-
-   The queue is DERIVED, not stored: it is simply the nodes that have no conversation
-   written yet, in campNodes' own order. A stored list would need pushing on creation,
-   dropping on success, sweeping when a chapter is re-planned, and a migration for every
-   node that already exists — all to answer a question the two stores already answer
-   between them. */
-const CONVOQ_DAY_KEY = "hvr_convoqday";
-const CONVOQ_PER_DAY = 6, CONVOQ_FAIL_MAX = 3;
-
-/* Today's spend. Date-keyed rather than a rolling count so it resets on its own and
-   an unused day is never banked into a burst on the next one. */
-function convoQSpentToday(today) {
-  try {
-    const r = JSON.parse(lsGet(CONVOQ_DAY_KEY));
-    return (r && r.day === (today || todayISO())) ? (r.n || 0) : 0;
-  } catch (e) { return 0; }
-}
-function convoQSpend(today) {
-  const d = today || todayISO();
-  lsSet(CONVOQ_DAY_KEY, JSON.stringify({ day: d, n: convoQSpentToday(d) + 1 }));
-}
-/* The next node wanting one, nearest chapter first — campNodes walks chapter by
-   chapter, so the node he will reach next comes out ahead of one four chapters away
-   without needing to be sorted.
-
-   `convoFail` is what stops a node that CANNOT be written (nothing in DICT for its
-   words, so there is no honest vocabulary line to send) from taking the head of the
-   queue every day forever and starving everything behind it. */
-function convoQNext(campaign, content) {
-  const c = campaign || campAll(), store = content || pathContentAll();
-  const nodes = campNodes(c);
-  for (let i = 0; i < nodes.length; i++) {
-    const rec = store[nodes[i].id];
-    if (rec && rec.convo) continue;
-    if (rec && (rec.convoFail || 0) >= CONVOQ_FAIL_MAX) continue;
-    return nodes[i];
-  }
-  return null;
-}
-/* A node that produced nothing. Recorded so convoQNext can step past it, and kept in
-   the same store the conversation itself lives in rather than inventing a second one. */
-function convoQFailed(id) {
-  const st = pathContentAll();
-  st[id] = st[id] || {};
-  st[id].convoFail = (st[id].convoFail || 0) + 1;
-  pathContentSave(st);
-}
-/* Fire-and-forget and never concurrent with itself, the same shape as convoTopUp —
-   he should never learn that this was attempted, and a background spend he did not ask
-   for has no business surfacing an error. */
-let convoQRunning = false;
-async function convoQWork() {
-  if (convoQRunning) return;
-  if (!geminiKeys().length) return;
-  if (convoQSpentToday() >= CONVOQ_PER_DAY) return;
-  const node = convoQNext();
-  if (!node) return;
-  convoQRunning = true;
-  try {
-    /* Counted BEFORE the call: a request that fails still spent a request, and a
-       broken key must not be free to retry six times a tick. */
-    convoQSpend();
-    if (!await campNodeConversation(node)) convoQFailed(node.id);
-  } catch (e) {
-    /* A throw is a bad afternoon — a dead quota or no signal — not a node that cannot
-       be written, so it is NOT counted against convoFail. Today's attempt is spent and
-       the node is first in the queue again tomorrow. */
-  } finally { convoQRunning = false; }
 }
 
 /* =====================  RECENCY  =====================
@@ -18586,12 +17955,15 @@ function campOpenNode(id) {
      and holding a conversation. Never disabled by the node's state — it is optional and
      gates nothing, so the only thing that can stop it is having no words at all. */
   h += '<button class="btn secondary" id="campCompose">The coach</button>';
-  h += '<button class="btn' + (ready ? '' : ' secondary') + '" id="campConvo"' +
-       (ready ? '' : ' disabled') + '>' +
-       (graduated ? 'Conversation again' : 'The conversation') + '</button>';
   h += '</div>';
-  if (!ready) h += '<p class="pp-gate">The conversation opens once all ' + p.need +
-                   ' words are yours — that is what it is for.</p>';
+  /* What gold is still waiting on, said where he is deciding what to open. The coach
+     is never disabled — it gates nothing and it is how the words get said at all. */
+  if (!graduated) {
+    const L = coachLandedAll();
+    const left = (n.words || []).filter(k => !STOPLIST.has(k) && !L[k]);
+    if (left.length) h += '<p class="pp-gate">' + left.length + ' word' +
+      (left.length === 1 ? '' : 's') + ' still to say live with the coach for gold.</p>';
+  }
 
   panel.innerHTML = h;
   sheet.classList.add("open");
@@ -18603,8 +17975,6 @@ function campOpenNode(id) {
   document.getElementById("campMeet").onclick = () => campStartMeet(id);
   document.getElementById("campPractise").onclick = () => campStartPractise(id);
   document.getElementById("campCompose").onclick = () => campStartCompose(id);
-  const cv = document.getElementById("campConvo");
-  if (ready) cv.onclick = () => campStartConvo(id);
 }
 
 /* Path words join the library so the scheduler can see them at all. src:"path" keeps
@@ -18650,7 +18020,7 @@ function campStartMeet(id) {
 /* =====================  BUILDING SENTENCES WITH A COACH  =====================
    The first open-ended card in the app, and that is the whole of what makes it
    different. Every other kind has a target string — learnExpectedHe returns one,
-   alignSpoken aligns against it, convoContentCoverage scores against candidates. Here
+   alignSpoken aligns against it. Here
    the coach puts two words on the table and whatever he builds from them is the answer,
    so there is nothing to align and nothing to be graded against.
 
@@ -18684,8 +18054,8 @@ const COMPOSE_OPENING = 2;
 const COMPOSE_TURN_CAP = 8;
 /* He is sitting in front of this, so it is not GEN_TIMEOUT_MS — but there is no
    fallback line either, so failing fast buys nothing the way it does for a live
-   conversation turn (CONVO_LIVE_TIMEOUT_MS is 6s precisely because a scripted line is
-   already sitting there). Waiting a while beats "couldn't reach the coach". */
+   turn that had a scripted fallback sitting behind it. Nothing sits behind this one,
+   so waiting a while beats "couldn't reach the coach". */
 const COMPOSE_TIMEOUT_MS = 15000;
 /* THE COACH WRITES THE GRADUATION SLOT. It used to write lesson 3, its own; it writes
    99 now because 99 is what campAutoPass, campNodeAuto and campNodeEverGold read, and
@@ -18802,7 +18172,7 @@ function composePrompt(x) {
     "newWords — any Hebrew word he said that is NOT in the pool or the detected list.";
 }
 
-/* Defensive in the same way convoLiveNormalise is: a reply that is merely odd must
+/* Defensive: a reply that is merely odd must
    degrade to a no-op, never throw under him mid-session. */
 function composeNormalise(out) {
   if (!out || typeof out !== "object") return null;
@@ -19469,67 +18839,6 @@ async function campStartPractise(id) {
     campSay("Meet the words first — there is nothing to practise with yet.");
 }
 
-async function campStartConvo(id) {
-  const n = campNode(id);
-  if (!n) return;
-  /* The second guard, and the one that stops three sessions stacking. campNodeConversation
-     already de-duplicates the REQUEST; this stops three taps each arriving at campBegin
-     with the same answer and starting the conversation three times over. */
-  const btn = document.getElementById("campConvo");
-  if (btn) { if (btn.disabled) return; btn.disabled = true; }
-  campSay("Getting the conversation ready…");
-  try {
-    const c = await campNodeConversation(n);
-    if (!c) { campSay("Couldn't write the conversation — try again in a moment."); return; }
-    /* One card — see the note in learnBuild's conversation branch. */
-    const first = convoScriptedCard(c, 0, 0);
-    if (!first) { campSay("That conversation has no turns in it."); return; }
-    campBegin([first], id, CAMP_COACH_LESSON);
-  } catch (e) {
-    campSay(/limit/.test(e.message || "") ? "Daily AI limit reached — try tomorrow."
-                                          : "Couldn't reach the AI just now.");
-  } finally {
-    /* Re-enabled on every exit, including the throw — a button left reading "The
-       conversation" and refusing to open one is worse than the bug this fixes. The
-       sheet is torn down on success anyway, so this only ever matters on a failure. */
-    if (btn) btn.disabled = false;
-  }
-}
-
-/* Cached per node, so a graduation retried tomorrow is the same exchange rather than
-   a fresh spend.
-
-   `campConvoMaking` is the guard that actually matters. Without it every tap of the
-   button missed the cache and started its own request: George pressed it three times
-   waiting for the first, "and I was spammed with different convos when the response
-   came back" — three requests, three cache writes where the last one won, and three
-   sessions stacked on top of each other. Concurrent callers now SHARE one promise,
-   which holds however the second caller arrived — the queue below is one of them. */
-const campConvoMaking = {};
-function campNodeConversation(node) {
-  const store = pathContentAll();
-  const rec = store[node.id];
-  if (rec && rec.convo) return Promise.resolve(rec.convo);
-  if (campConvoMaking[node.id]) return campConvoMaking[node.id];
-  /* Whatever DICT knows of the node's words joins the library first, so the prompt can
-     say what they mean rather than listing bare Hebrew. */
-  try { campEnsureWords(node); } catch (e) {}
-  const run = Promise.resolve(learnMakeConversation(
-      { id: node.id, en: node.name, hint: node.situation || node.name },
-      { must: node.words || [], extra: node.carry || [], store: false }))
-    .then(c => {
-      if (!c) return null;
-      const st = pathContentAll();
-      st[node.id] = st[node.id] || {};
-      st[node.id].convo = c;
-      pathContentSave(st);
-      return c;
-    })
-    .finally(() => { delete campConvoMaking[node.id]; });
-  campConvoMaking[node.id] = run;
-  return run;
-}
-
 function campSay(msg) {
   const hint = document.getElementById("lStartHint");
   if (hint) hint.textContent = msg;
@@ -19809,11 +19118,7 @@ const SHAPE_KEY = "hvr_shape";
    it, which is also what quietly migrates anyone stored on a deleted shape. */
 const SHAPES = {
   balanced: { label: "Full",       cards: SESSION_CARDS, note: "Fifteen cards — the whole mix" },
-  quick:    { label: "Quick",      cards: 5,             note: "Five cards" },
-  /* Not a mix like the others — one scripted exchange, start to finish. `cards` is a
-     ceiling; the real length is however many turns the conversation has. */
-  conversation: { label: "Conversation", cards: CONVO_TURNS,
-                  note: "One conversation, start to finish" }
+  quick:    { label: "Quick",      cards: 5,             note: "Five cards" }
 };
 function learnShape() {
   const s = lsGet(SHAPE_KEY);
@@ -20003,27 +19308,6 @@ function learnBuild(opts) {
   const lvlStore = levelDecay(levelAll());
   const level = levelSettle(lvlStore);
   levelSave(lvlStore);
-
-  /* Conversation is a whole different shape of session: one scripted exchange rather
-     than a mix of drills, so it returns early with one card per turn. Cards-per-turn
-     (rather than one card for the lot) is what lets the progress bar, the grading and
-     the SRS writes all keep working exactly as they do everywhere else. */
-  if (shape === "conversation") {
-    const c = convoPick(lib, srsAll());
-    if (!c) return null;
-    /* Counted on the way out so the next session reaches for a different one, and
-       so an interrupted conversation isn't offered again ahead of everything else. */
-    const all = convoAll();
-    const rec = all.filter(x => x.id === c.id)[0];
-    if (rec) { rec.seen = (rec.seen || 0) + 1; convoSave(all); }
-    /* ONE card, not all six. The exchange grows a turn at a time now — convoAdvance
-       appends the next line, live or scripted, once he has answered this one. With no
-       key and no network that produces exactly the same six turns in the same order,
-       just built as it goes, so there is one code path rather than a live one and a
-       scripted one drifting apart. */
-    const first = convoScriptedCard(c, 0, 0);
-    return first ? [first] : null;
-  }
 
   const targets = learnTargets(SESSION_CARDS, only);
   if (!targets.length) return null;
@@ -21462,8 +20746,6 @@ const LEARN_KINDS = {
               ask: "Listen, then write what you think it means — I'll check it." },
   reply:    { glyph: "💬", label: "Answer them",             dir: "עב → עב", flow: "in",
               ask: "Say your answer out loud, in Hebrew." },
-  conversation: { glyph: "💬", label: "Have the conversation", dir: "עב → עב", flow: "in",
-              ask: "Speak every answer out loud." },
   /* The only kind with no right answer. Its `ask` is the whole instruction, because
      there is no prompt to read and no target to reveal — the words on the table are the
      card, and what he does with them is the answer. */
@@ -21487,8 +20769,7 @@ const LEARN_KINDS = {
 /* Which strength record a card feeds. Listening is receptive knowledge; everything
    else is production — including shadowing, where he is producing Hebrew. */
 const KIND_SIDE = { word: "prod", sentence: "prod", listen: "recv", reply: "prod",
-                    chunk: "prod", shadow: "prod", conversation: "prod", note: "recv",
-                    compose: "prod" };
+                    chunk: "prod", shadow: "prod", note: "recv", compose: "prod" };
 /* Kinds that play Hebrew at you and ask what it meant. `note` differs from `listen`
    only in where the audio comes from, so everything downstream treats them alike
    rather than growing a parallel set of branches. */
@@ -22027,10 +21308,10 @@ function learnRenderAct() {
   lab.textContent = sec ? "or just drill" : "Practise";
   box.append(lab);
   const quick = document.createElement("div"); quick.className = "lact-quick";
-  /* Conversation is here because the shape chips are no longer on screen. It stays a
-     choice until the campaign owns it properly — a node's closing conversation is
-     what it becomes, and until that exists, removing it would just delete a feature. */
-  [["quick", "5 cards"], ["balanced", "15 cards"], ["conversation", "Talk"]].forEach(([shape, label]) => {
+  /* Talk used to be a third chip here, held open "until the campaign owns it properly
+     — a node's closing conversation is what it becomes". The campaign owns it now: the
+     coach is the node's graduation, so the chip has nowhere to go. */
+  [["quick", "5 cards"], ["balanced", "15 cards"]].forEach(([shape, label]) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = label;
     b.onclick = () => { lsSet(SHAPE_KEY, shape); learnRenderShapes();
@@ -22129,11 +21410,6 @@ function learnRenderStart() {
   /* The review's two tiers, behind the planner so three requests never leave at once
      on a phone that has just opened the app. */
   setTimeout(() => { try { Promise.resolve(reviewTick()).catch(() => {}); } catch (e) {} }, 6000);
-  /* And one node's graduation conversation, last in the queue of background spends —
-     it is the least urgent of the three, because nothing is waiting on it until he has
-     mastered a node's words. Behind campWarmNext on purpose: the chapter it just
-     planned has queued its nodes by the time this runs. */
-  setTimeout(() => { try { Promise.resolve(convoQWork()).catch(() => {}); } catch (e) {} }, 9500);
   sessionResumeOffer();
   shellUpdateCheck();      // an update deferred mid-session surfaces here
 
@@ -22238,7 +21514,7 @@ function learnRenderShapes() {
       " a Hebrew voice this computer doesn't have.";
     box.append(warn);
   }
-  if (notesN && current !== "conversation") {
+  if (notesN) {
     const good = document.createElement("div");
     good.className = "lshapenote lshapeon";
     good.textContent = notesN === 1
@@ -22246,9 +21522,8 @@ function learnRenderShapes() {
       : notesN + " real voice notes in the mix — listening practice in the actual voice.";
     box.append(good);
   }
-  document.getElementById("lStartSub").textContent = current === "conversation"
-    ? SHAPES[current].cards + " turns. Say every answer out loud before you reveal it."
-    : SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
+  document.getElementById("lStartSub").textContent =
+    SHAPES[current].cards + " cards. Say every answer out loud before you reveal it.";
 }
 
 document.getElementById("migrateImport").onclick = () => {
@@ -22297,14 +21572,6 @@ document.getElementById("lStartBtn").onclick = async () => {
   const before = hint.textContent;
   try {
     hint.textContent = "Checking what you've got banked…";
-    /* A conversation is written in ONE call up front — that's the whole latency
-       story. Waiting a few seconds here, once, before anything starts is a completely
-       different thing from waiting between every line. */
-    if (learnShape() === "conversation" &&
-        !convoPick(libAll(), srsAll()) && geminiKeys().length) {
-      hint.textContent = "Writing you a conversation…";
-      await learnMakeConversation();
-    }
     /* Only when there is genuinely nothing servable to run on. Topping up used to be
        awaited here EVERY time, which is why Start could sit on "Getting ready…" for
        several seconds; now the ordinary case starts instantly and the writing happens
@@ -22325,27 +21592,21 @@ document.getElementById("lStartBtn").onclick = async () => {
   btn.disabled = false; btn.textContent = "Start session";
   const cards = learnBuild();
   if (!cards || !cards.length) {
-    hint.textContent = learnShape() === "conversation"
-      ? (geminiKeys().length
-          ? "No conversation ready yet — train a few more words and try again."
-          : "Conversations need a Gemini key — add one in Settings (it's free).")
-      : "Nothing to drill yet — add some words first.";
+    hint.textContent = "Nothing to drill yet — add some words first.";
     return;
   }
   sessionClear();          // a new draw replaces whatever was stashed
   learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
   statsBump({ sessions: 1 });
-  if (!/new practice|limit|Couldn't|conversation/.test(hint.textContent)) hint.textContent = before;
+  if (!/new practice|limit|Couldn't/.test(hint.textContent)) hint.textContent = before;
   learnShow("lRun");
   learnRenderCard();
-  /* Write the NEXT one while he's busy with this one, so the wait happens where he
-     isn't looking. Deliberately not awaited. */
-  setTimeout(() => { convoTopUp(); }, 1500);
-  /* Same trick, now for sentences too — the material for the NEXT session is written
-     during this one. Staggered behind the conversation top-up so two requests don't
-     leave at once on a phone that has just started playing audio, and swallowed
-     whole: a background spend he did not ask for has no business surfacing an error
-     over the card he is looking at. */
+  /* The material for the NEXT session is written during this one, so the wait happens
+     where he isn't looking. Deliberately not awaited, and swallowed whole: a background
+     spend he did not ask for has no business surfacing an error over the card he is
+     looking at. The delay used to stagger it behind a conversation top-up that ran at
+     1500ms; that top-up is gone and the delay is kept, because it is also what keeps a
+     request off a phone that has just started playing audio. */
   setTimeout(() => { try { Promise.resolve(learnTopUp(true)).catch(() => {}); } catch (e) {} }, 4000);
 };
 
@@ -22359,7 +21620,7 @@ function learnSpeakPrompt(slow) {
      because there is no setting for the other two. Unguarded here on purpose — this is
      also the deliberate replay path (the speak button, R), and a guard would swallow it.
      The auto-play guard lives at the render's call site instead. */
-  else if (c.kind === "reply" || c.kind === "conversation" || c.kind === "compose")
+  else if (c.kind === "reply" || c.kind === "compose")
     playHe(cardAudioKey(c, "prompt"), (c.item && (c.item.qhe || c.item.he)) || "", slow);
 }
 /* WHICH LINE HAS ALREADY BEEN SPOKEN ALOUD — page state, not card state, and for the
@@ -22389,54 +21650,6 @@ function convoBubble(who, he, tr) {
   if (tr) { const t = document.createElement("div"); t.className = "lbub-tr"; t.textContent = tr; b.append(t); }
   return b;
 }
-function convoThread(c, cards) {
-  const wrap = document.createElement("div"); wrap.className = "lthread";
-  const scene = document.createElement("div"); scene.className = "lscene";
-  scene.textContent = c.convo.sceneEn || "Conversation";
-  wrap.append(scene);
-  const list = document.createElement("div"); list.className = "lbubbles";
-  /* THE CARDS PLAYED, not the turns planned. This walked `c.convo.turns[i]` up to
-     `c.ti`, which held only while a card index was a turn index and there were exactly
-     six of them. Neither is true now: a conversation may run longer than its beats, so
-     `ti` can pass the end of `turns` and index undefined — and a live line does not
-     appear in `turns` AT ALL, so even in range it would have rendered a scripted line
-     that was never said. The thread is a record of what happened, so it has to be built
-     from what happened. */
-  const played = (cards || []).slice(0, c.ti).filter(x => x && x.kind === "conversation");
-  played.forEach((c2, i) => {
-    const t = c2.item || {};
-    list.append(convoBubble("them", t.qhe, t.qtr));
-    /* What he actually said, word for word, whenever the mic heard him. This used
-       to render `_matched` — the candidate the attempt was GRADED against — which is
-       a different sentence from the one he spoke and made the transcript fiction.
-
-       No transliteration with it, deliberately: none exists for speech the recogniser
-       returned, and pairing his Hebrew with the scripted line's `tr` would reprint
-       the exact mismatch this fixes. A mishearing therefore shows AS a mishearing —
-       that is the honest record of what the app heard, and the only way to find out
-       the recogniser is mishearing you.
-
-       Falls back to the matched candidate, then that card's own model answer, for turns
-       graded by hand where no mic attempt exists to quote. */
-    if (c2._said) list.append(convoBubble("you", c2._said, ""));
-    else { const said = c2._matched || t; list.append(convoBubble("you", said.he, said.tr)); }
-  });
-  /* THE BUG: the line he's actually replying to right now was never added here —
-     it only ever existed as audio and the English gloss below. He'd see the
-     conversation jump straight to his own reply with nothing in the thread to be
-     replying to. George: "Im replying to the voice note, but htere isnt a message
-     there in the chat." The current line joins the thread just like a real message
-     arriving; it's marked so it's visibly the live one, not history. */
-  list.append(convoBubble("them live", c.item.qhe, c.item.qtr));
-  wrap.append(list);
-  requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
-  return wrap;
-}
-
-/* The task strip. Same four slots in the same order on every card kind, so the eye
-   learns where to look instead of re-reading the card each time. Progress moved in
-   here and got quieter — it was sharing a line with the instruction, competing with
-   the one thing that actually needed to be loud. */
 /* ---- the stretch of road ------------------------------------------------------
    One waymark per card, in the map's own ink: worn and warm behind you, pale ahead, a
    ring where you are. The road is the world and the page below is what you are doing at
@@ -22508,10 +21721,7 @@ function learnRenderCard() {
      another every time he answered — a road that builds itself behind him, saying
      nothing about how far there is left to go. Beats covered answers the question the
      road is actually asked. */
-  if (c.kind === "conversation") {
-    const total = convoBeatCount(c.convo) || 1;
-    learnRenderRoad(Math.min(total - 1, Object.keys(s.beatsHit || {}).length), total);
-  } else if (c.kind === "compose") {
+  if (c.kind === "compose") {
     /* OBJECTIVES, for the same reason a conversation draws beats: the session is now one
        card that grows in place, so there is no card count to draw from at all — and even
        when there was, waymarks built themselves behind him and said nothing about how far
@@ -22573,7 +21783,6 @@ function learnRenderCard() {
 
   /* The thread goes above everything: a conversation you can't see the shape of is
      just a queue of reply cards. */
-  if (c.kind === "conversation") card.append(convoThread(c, s.cards));
 
   if (c.kind === "word") {
     const p = document.createElement("div"); p.className = "lprompt";
@@ -22603,7 +21812,7 @@ function learnRenderCard() {
     card.append(row);
     if (!hasHeVoice()) {
       const p = document.createElement("div"); p.className = "lprompt";
-      p.textContent = ((c.kind === "reply" || c.kind === "conversation")
+      p.textContent = ((c.kind === "reply")
                         ? c.item.qtr : c.item.tr) || "";
       const note = document.createElement("div"); note.className = "lask lquiet";
       note.textContent = "no Hebrew voice yet — reading it instead";
@@ -22787,7 +21996,7 @@ function learnRenderCompose(card, c, s) {
     if ((stage === "sending" || stage === "failed") && c._said)
       list.append(convoBubble("you", c._said, ""));
     wrap.append(list); card.append(wrap);
-    /* WHAT convoThread HAS DONE SINCE IT WAS WRITTEN AND THIS NEVER DID. .lbubbles is
+    /* WHAT THE OLD CONVERSATION THREAD DID AND THIS NEVER DID. .lbubbles is
        capped at 190px and scrolls, so without this every repaint showed the top of the
        thread — which on a session that now lives on one card is every single turn.
        George: "The conversation scrolls to the top when the page changes."
@@ -23294,46 +22503,6 @@ async function learnHearSpeakAttempt(btn, ta) {
    reasonable answer being marked wrong for not being the one the model happened to
    write first. Scored matched-then-near so a clean shorter answer beats a longer
    one with the same matched count but more near-misses. */
-function convoCandidates(item) {
-  const list = [{ he: item.he, tr: item.tr, en: item.en }];
-  (item.alts || []).forEach(a => { if (a && a.he && a.tr) list.push(a); });
-  return list;
-}
-/* Content coverage, not sequence alignment. George said "ken ani beseder toda ve
-   ata" — a genuinely correct, natural reply — and it read as wrong. The candidate
-   list can only ever hold 2-4 exact sentences; real speech adds words a scripted
-   line never anticipated ("ani", "ve ata" tacking on the reciprocal question), and
-   position-by-position alignment punishes every one of them as a miss. A real
-   listener doesn't grade a reply that way, they check whether the substance is
-   there. So: strip a candidate to its real content words (the same STOPLIST every
-   other content-word check in this app already uses) and ask whether those words
-   showed up anywhere in what he said — extra words around them cost nothing.
-   `libKeyFor` handles a said word arriving with a prefix, the same as it does for
-   bank sentences. A candidate that's ALL function words (rare, but a bare "כן" is
-   possible) is trivially satisfied rather than impossible to pass. */
-function convoContentCoverage(cand, saidWords, lib) {
-  const content = bankUses(cand.he, lib).filter(k => !STOPLIST.has(k));
-  if (!content.length) return 1;
-  const saidKeys = saidWords.map(w => libKeyFor(w, lib) || w);
-  const hits = content.filter(k => saidKeys.some(s => s === k || nearEnough(s, k))).length;
-  return hits / content.length;
-}
-function convoBestMatch(item, saidWords, lib) {
-  let best = null, bestAlign = null, bestCoverage = -1;
-  convoCandidates(item).forEach(cand => {
-    const coverage = convoContentCoverage(cand, saidWords, lib);
-    if (coverage > bestCoverage) {
-      bestCoverage = coverage; best = cand;
-      /* Still computed, for the reveal's per-word "what it heard" breakdown —
-         coverage decides the GRADE, alignment still explains it visually. */
-      bestAlign = alignSpoken(heWords(cand.he), saidWords);
-    }
-  });
-  return { cand: best, align: bestAlign, coverage: bestCoverage };
-}
-
-/* Fills learnSpoken for the reveal to consume. Kept separate from the reveal so it
-   can be tested without a microphone anywhere in the picture. */
 /* ---- the recogniser is not the judge -------------------------------------------
    "Not in the transcript" conflates two very different events: he did not say it, and
    the recogniser did not hear it. Speech recognition is materially worse on non-native
@@ -23362,7 +22531,7 @@ function micUnsure(conf) {
 function learnScoreSpoken(c, text, res) {
   const said = heWords(text);
   const lib = libAll();
-  let expected, a, convoCoverage = null;
+  let expected, a;
   /* NOTHING TO SCORE AGAINST, so nothing is scored. Everything below this point aligns
      his words against an expected list; a compose card has none, and alignSpoken against
      an empty expected would mark every word he said as "extra" and recommend a grade
@@ -23380,21 +22549,8 @@ function learnScoreSpoken(c, text, res) {
                     unsure: micUnsure(res && res.confidence), expected: [] };
     return;
   }
-  if (c.kind === "conversation") {
-    const m = convoBestMatch(c.item, said, lib);
-    c._matched = m.cand;         // which candidate this attempt is graded against
-    /* What he ACTUALLY said, kept for the thread. It was already here and thrown
-       away after grading, so the chat showed a plausible sentence he never uttered.
-       George: "it says what the conversation is modelled to expect, which is often
-       not at all what I said." */
-    c._said = String(text || "").trim();
-    convoCoverage = m.coverage;
-    expected = heWords(m.cand.he);
-    a = m.align;
-  } else {
-    expected = heWords(learnExpectedHe(c));
-    a = alignSpoken(expected, said);
-  }
+  expected = heWords(learnExpectedHe(c));
+  a = alignSpoken(expected, said);
   /* Layer one: the runners-up, applied before anything reads `status`, so the chips,
      the suggested grade and the adjudication below all see the softened version. */
   const alts = (res && res.alts) || [];
@@ -23416,7 +22572,7 @@ function learnScoreSpoken(c, text, res) {
      equal its transliteration's — this is the second, independent place that
      decision gets made, and the one that actually silences learnSuggested when it's
      wrong, which is what broke the whole silent-advance path the first time. */
-  const chips = c.kind === "conversation" ? null : learnTokens(c);
+  const chips = learnTokens(c);
   const toks = (c.kind === "word") ? [{ he: c.key, key: c.key }] : (chips || []);
   expected.forEach((w, i) => {
     if (a.status[i] !== "missed") return;
@@ -23434,13 +22590,7 @@ function learnScoreSpoken(c, text, res) {
   /* A suggested grade only makes sense where there are no chips to fill instead.
      Word and chunk cards grade as one unit, so the mic condenses the whole
      alignment into a single recommendation. */
-  if (c.kind === "conversation") {
-    /* Coverage, not sequence — see convoContentCoverage. A candidate whose content
-       words all showed up passes even with extra words around them; missing most
-       of the substance doesn't, however cleanly the words that WERE said happened
-       to align. */
-    learnSuggested = convoCoverage >= 0.8 ? 2 : convoCoverage >= 0.4 ? 1 : 0;
-  } else if (learnMicGrades(c) && !chips && a.status.length) {
+  if (learnMicGrades(c) && !chips && a.status.length) {
     const matched = a.status.filter(s => s === "matched").length;
     const near = a.status.filter(s => s === "near").length;
     learnSuggested = matched === a.status.length ? 2
@@ -23547,19 +22697,6 @@ function learnHintSteps(c) {
     if (fit.length) steps.push({ label: "Words you have that fit",
                                  text: fit.map(u => lib[u].tr || u).join(" · "),
                                  rtl: false, exposes: fit });
-  } else if (c.kind === "conversation") {
-    /* The slow replay comes first because "I didn't catch what they said" is a
-       different problem from "I can't produce a reply", and replaying costs
-       nothing. askEn — the English gist — is now the LAST rung rather than shown
-       unasked: you're meant to understand their line and attempt your own reply
-       first, the way an actual conversation works, with the answer only as a
-       last resort exactly like every other production card. */
-    steps.push({ label: "", text: "", slow: true, exposes: [] });
-    if (prime) steps.push(prime);
-    const sc = learnScaffold(c.item.he, lib, srs, side);
-    if (sc) steps.push({ label: "Fill in the gap", text: sc, rtl: true, exposes: hard });
-    if (c.item.tr) steps.push({ label: "How to say it", text: c.item.tr, rtl: false, exposes: "all" });
-    if (c.item.askEn) steps.push({ label: "What to say", text: c.item.askEn, rtl: false, exposes: "all" });
   }
   return steps;
 }
@@ -23702,13 +22839,6 @@ function learnReveal() {
   let he = "", tr = "", en = "";
   if (c.kind === "word") { const e = lib[c.key] || {}; he = c.key; tr = e.tr || ""; en = e.en || ""; }
   else if (c.kind === "chunk") { const p = chunkAll()[c.key] || []; he = c.key; tr = p[0] || ""; en = p[1] || ""; }
-  /* Whichever answer the attempt actually matched, not always the primary — if you
-     said one of the alternatives, that's what should be shown as correct, not the
-     scripted one you never attempted. Falls back to the primary when there's been
-     no mic attempt to match against (e.g. "Show me"). */
-  else if (c.kind === "conversation") {
-    const m = c._matched || c.item; he = m.he; tr = m.tr; en = m.en || c.item.en || "";
-  }
   else { he = c.item.he; tr = c.item.tr; en = c.item.en || ""; }
 
   /* The box graded, at last — this is the whole point of the round. Feeds
@@ -23819,7 +22949,7 @@ function learnReveal() {
      PRIMARY scripted answer regardless of which candidate was actually matched —
      wrong words highlighted for someone who used a valid alternative. Whole-turn
      scoring against the best match, below, replaces it. */
-  learnCardTokens = c.kind === "conversation" ? null : learnTokens(c);
+  learnCardTokens = learnTokens(c);
   if (learnCardTokens) {
     /* Tapping the word you fumbled is the whole point: grading the sentence as a
        block records four words you knew as failures alongside the one you didn't.
@@ -23884,7 +23014,7 @@ function learnReveal() {
   }
   /* For word and sentence cards the English WAS the prompt — repeating it back is
      noise. For listen, reply and shadow it's the answer, so it's the point. */
-  if ((isHearKind(c.kind) || c.kind === "reply" || c.kind === "shadow" || c.kind === "conversation") && en) {
+  if ((isHearKind(c.kind) || c.kind === "reply" || c.kind === "shadow") && en) {
     const enEl = document.createElement("div"); enEl.className = "len"; enEl.textContent = en;
     card.append(enEl);
   }
@@ -23903,32 +23033,6 @@ function learnReveal() {
        the chips on every multi-word card forever, and instruction you have read three
        hundred times is wallpaper. The chips carry it in their own title attribute. */
     card.append(act);
-  } else if (c.kind === "conversation" && learnSuggested !== null) {
-    /* Silent scoring: no button row, no wait for a click. You spoke, it's scored —
-       the conversation just continues, the way a real exchange doesn't stop for a
-       report card after every line.
-       George: "this feels like a string of the answer this sentence task put
-       together, not a natural conversation." */
-    /* THE "…" IS NOW HONEST. It used to render a typing indicator and then burn 1100ms
-       on a setTimeout doing nothing — the affordance for someone composing a reply, with
-       no one composing anything. The live turn goes in that slot: under ~1.1s it costs
-       nothing against what this already did, and slower just looks like someone typing,
-       which is what the dots were always pretending.
-
-       Both paths end in the same learnGrade call. A failed, slow or keyless turn takes
-       the local score and the next scripted beat, which is precisely the app as it was
-       before this existed — the fallback is not a degraded mode, it is the old
-       behaviour. */
-    const cont = document.createElement("div"); cont.className = "lconvocont";
-    cont.textContent = "…";
-    card.append(cont);
-    const at = s.i;
-    Promise.resolve(convoLiveTurn(s, c)).catch(() => null).then(live => {
-      /* The answer lands after an await, by which time quitting the session or any
-         other move may have replaced the card underneath it. */
-      if (!learnSession || learnSession !== s || s.i !== at || !learnRevealed) return;
-      convoAdvance(s, c, live);
-    });
   } else {
     /* The 1 / 2 / 3 key labels used to be printed inside these buttons. They are still
        the shortcuts, and #lRunHint still names them on a keyboard — but on the phone,
@@ -23944,16 +23048,7 @@ function learnReveal() {
       gradePaints.push(paint); paint();
       b.type = "button";
       b.textContent = g[0];
-      /* A CONVERSATION HAS TO GO THROUGH convoAdvance, whatever grade it is. Only
-         convoAdvance appends the next line, so a conversation graded by hand here — the
-         mic was unsure, or he worked down the hint ladder without speaking — called
-         learnGrade directly, appended nothing, and learnAdvance's `s.i >=
-         s.cards.length` ended the WHOLE conversation on that turn. Measured on the
-         shipped build: one grade press on turn 1 of a six-beat conversation finished it. */
-      b.onclick = () => {
-        if (c.kind === "conversation") convoAdvance(s, c, null, g[1]);
-        else learnGrade(g[1]);
-      };
+      b.onclick = () => learnGrade(g[1]);
       act.append(b);
     });
     /* So a late second opinion can move the recommendation without rebuilding the
@@ -23970,25 +23065,13 @@ function learnReveal() {
     card.append(why);
   }
 
-  /* NOT on conversation cards. The reveal used to speak the matched candidate — a
-     synthesised reading of the line you had just said yourself — and then the 1100ms
-     auto-advance below cut it off mid-word to start the next speaker. George: "for a
-     second it starts saying my answer back to me, then it cuts and says its real
-     responce."
-
-     Suppressed rather than given more time: a real exchange does not read your own
-     line back at you at all, so waiting for it would make the unwanted playback
-     longer, not better. Removing it also removes the cut-off outright instead of
-     hiding it. The replay buttons above still speak it on demand, and repair still
-     speaks when the other side re-explains — both are things someone ELSE says. */
-  if (c.kind !== "conversation") playHe(answerKey, he);
-  /* On touch every branch of this except "Continuing…" is naming a key. The Continue
+  playHe(answerKey, he);
+  /* On touch every branch of this is naming a key. The Continue
      button and the Missed / Nearly / Got it buttons are already on screen saying the
      same thing, so the line is pure noise there. */
   document.getElementById("lRunHint").textContent = isTouchPrimary()
-    ? (c.kind === "conversation" && learnSuggested !== null ? "Continuing…" : "")
+    ? ""
     : (learnCardTokens ? "Space to continue"
-        : c.kind === "conversation" && learnSuggested !== null ? "Continuing…"
         : learnSuggested !== null ? "Space accepts what it heard · 1 Missed · 2 Nearly · 3 Got it"
         : "1 Missed · 2 Nearly · 3 Got it") +
       (hasHeVoice() ? " · R replays · Shift+R slower" : "");
@@ -24195,8 +23278,7 @@ function learnGrade(grade) {
      transcript is the only honest evidence of what he produced. Falls back to the model
      answer's words when there is no transcript (hand-graded, or the mic heard nothing),
      which is the old behaviour and the best available in that case. */
-  const graded = (c.kind === "conversation" && c._said)
-    ? bankUses(c._said, lib) : (c.words || []);
+  const graded = c.words || [];
   graded.forEach(k => {
     if (!freeKey && !srsGradable(k, lib)) return;
     learnMark(s, srs, k);
@@ -24219,7 +23301,7 @@ function learnGrade(grade) {
      Under beats there is nothing to interrupt. A beat that was not covered is simply
      still uncovered, so the next line approaches it again — which is what a person does,
      and it can do it more than once without a flag counting the attempts, because
-     convoShouldContinue's turn cap is what stops it becoming a wall. The `rhe/rtr/ren`
+     A turn cap is what stops it becoming a wall. The `rhe/rtr/ren`
      fields stay in the stored format and are still written by the planning call; they
      are just no longer a branch in the grader. */
   learnAdvance(grade === 2);
@@ -24817,9 +23899,6 @@ function learnFinish() {
   /* A finished session is the single best moment to sync: the day’s grades are
      written, and nothing is on screen that a merge could pull out from under. */
   setTimeout(() => syncRun("session", { quiet: true }), 400);
-  /* The other good moment: he is reading the end screen, nothing is waiting on the
-     network, and a session is exactly when a node's last word tends to go ready. */
-  setTimeout(() => { try { Promise.resolve(convoQWork()).catch(() => {}); } catch (e) {} }, 3000);
   micRelease();
   statsSnapshotBands();
   learnRenderRoad(s.cards.length - 1, s.cards.length);
@@ -24869,15 +23948,6 @@ function learnFinish() {
     const kept = s.composeBanked || 0;
     if (kept) sub += " · " + kept + " sentence" + (kept === 1 ? "" : "s") + " kept to practise";
   }
-  if (s.cards.length && s.cards[0].kind === "conversation") {
-    const total = convoBeatCount(s.cards[0].convo);
-    const covered = Object.keys(s.beatsHit || {}).length;
-    const lib = libAll();
-    const toReview = Object.keys(s.back).slice(0, 4).map(k => (lib[k] && lib[k].tr) || k);
-    if (total) sub += " · " + covered + " of " + total + " covered";
-    if (s.cards.length > total) sub += " · " + s.cards.length + " turns";
-    if (toReview.length) sub += " · worth another look: " + toReview.join(", ");
-  }
   /* A path lesson only counts once it's actually been finished — walking out halfway
      leaves the section exactly where it was, which is the honest behaviour for
      something that gates what comes next. Records a real score now (not just "reached
@@ -24889,23 +23959,17 @@ function learnFinish() {
     /* THE SESSION SCORE. It no longer decides gold — the landed ledger does — so this is
        free to be an honest report of how the session went rather than a gate to clear.
 
-       Both special cases exist because `got / cards.length` assumes a card per answer,
-       and neither of these kinds has that. A conversation grows past its beats, so it
-       would score 50% for a twelve-turn exchange that covered all six. Compose is now a
-       SINGLE card that grows in place, so `s.got` counts turns against a denominator of
-       1 — which shipped this morning writing pct: 400 into the store on a three-turn
-       session. Objectives landed over objectives given is the thing that is actually
-       true about a coach session. */
+       The coach needs its own case because `got / cards.length` assumes a card per
+       answer and it has one card for the whole session, so `s.got` counted turns against
+       a denominator of 1 — which shipped this morning writing pct: 400 on a three-turn
+       session. Objectives landed over objectives given is what is actually true about a
+       coach session. */
     const first = s.cards.length ? s.cards[0] : null;
-    const isConvo = !!first && first.kind === "conversation";
     const isCoach = !!first && first.kind === "compose";
-    const beats = isConvo ? convoBeatCount(first.convo) : 0;
     const objs = isCoach ? (first.objectives || []).length : 0;
-    const pct = isConvo
-      ? (beats ? Math.round(100 * Object.keys(s.beatsHit || {}).length / beats) : 0)
-      : isCoach
-        ? (objs ? Math.round(100 * Object.keys(first.landed || {}).length / objs) : 0)
-        : (s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0);
+    const pct = isCoach
+      ? (objs ? Math.round(100 * Object.keys(first.landed || {}).length / objs) : 0)
+      : (s.cards.length ? Math.round(100 * s.got / s.cards.length) : 0);
     const store = pathScoresAll();
     store[s.path.id] = store[s.path.id] || {};
     store[s.path.id][lesson] = { pct: pct, ts: Date.now() };
@@ -24989,31 +24053,7 @@ document.getElementById("newSentencesBtn").onclick = settingsAction(() => {
   document.getElementById("settingsModal").style.display = "none";
 });
 
-/* A conversation is written once and kept — a node's is cached in hvr_pathcontent
-   against that node and never regenerated. So an improvement to how conversations WORK
-   does not reach the ones already written, which is exactly how the live-turn rework
-   landed looking like it had done nothing. This is the way to make them be rewritten.
-   Only the conversations: the node's own progress, its words and its gold all live
-   elsewhere in the same record and are left alone. */
-document.getElementById("newConvosBtn").onclick = settingsAction(() => {
-  const stored = convoAll().length;
-  const content = pathContentAll();
-  const cached = Object.keys(content).filter(id => content[id] && content[id].convo).length;
-  if (!stored && !cached) {
-    alert("There are no stored conversations right now — a fresh one gets written the next time you open one.");
-    return;
-  }
-  if (!confirm("Throw away " + stored + " stored conversation" + (stored === 1 ? "" : "s") +
-               " and " + cached + " cached against nodes on the map?\n\n" +
-               "Your library, word strengths, node progress and gold all stay exactly as " +
-               "they are. Fresh conversations get written the next time you open one.")) return;
-  localStorage.removeItem(CONVO_KEY);
-  Object.keys(content).forEach(id => { if (content[id]) delete content[id].convo; });
-  pathContentSave(content);
-  if (lsGet(VIEW_KEY) === "learn" && !learnSession) learnRenderStart();
-  document.getElementById("settingsModal").style.display = "none";
-  setLibStatus("Conversations cleared — the next one will be written fresh.");
-});
+
 
 /* The gentler alternative to binning everything: judge what's already banked
    instead of discarding it unread. George: "go htrough the existing library of
@@ -26647,205 +25687,7 @@ T("fetchWithTimeout: a real network failure keeps its own message", () => {
 });
 
 
-/* ---- a turn read as a beat ----
-   The whole live-conversation rework rests on one claim: every conversation ALREADY in
-   storage can be read as a beat sheet and still behave exactly as it does today. If that
-   is wrong, the rework needs a migration of a store that syncs between devices. These
-   are the tests that would catch it being wrong. */
-T("convoBeat: a turn written before beats existed round-trips", () => {
-  /* Exactly the shape learnMakeConversation produced before beats.
-
-     This test used to also assert `live === false` here, with a comment calling it the
-     design. It was the bug written down: that is the exact condition that made the live
-     turn unreachable for every conversation George already had. Whether an old turn can
-     go live is asserted properly above, in the three-holes block. */
-  const old = { qhe: "מה נשמע?", qtr: "ma nishma", qen: "how are you",
-                askEn: "say how you are", he: "אני בסדר", tr: "ani beseder",
-                en: "I'm fine", alts: [], rhe: "", uses: ["בסדר"] };
-  const b = convoBeat(old);
-  assertEq(b.want, "say how you are", "askEn was always the beat's `want` under another name");
-  assertEq(b.must, []);
-  assertEq(b.lvl, LEVEL_DEFAULT, "an ungraded turn reads as the modal band, like bankLevel");
-});
-T("convoBeat: a turn written WITH a beat is live and keeps its own fields", () => {
-  const b = convoBeat({ intent: "they ask whether he worked today",
-                        want: "say whether he did, and where",
-                        must: ["עובד"], lvl: 3, askEn: "ignored when want is set" });
-  assertEq(b.live, true);
-  assertEq(b.intent, "they ask whether he worked today");
-  assertEq(b.want, "say whether he did, and where", "`want` outranks the older askEn");
-  assertEq(b.must, ["עובד"]);
-  assertEq(b.lvl, 3);
-});
-T("convoBeat: a blank or whitespace intent is not live", () => {
-  /* The distinction the fallback rests on: "" and "   " must both mean "use the script".
-     A whitespace intent reaching the live writer would send it an empty instruction. */
-  assertEq(convoBeat({ intent: "" }).live, false);
-  assertEq(convoBeat({ intent: "   " }).live, false);
-  assertEq(convoBeat({ intent: "\n" }).live, false);
-});
-T("convoBeat: junk fields degrade rather than propagating", () => {
-  const b = convoBeat({ intent: "x", must: "עובד", lvl: 99 });
-  assertEq(b.must, [], "a string is not a word list — it would iterate as characters");
-  assertEq(b.lvl, LEVEL_MAX, "clamped, like every other level in the app");
-  assertEq(convoBeat({ intent: "x", lvl: -4 }).lvl, LEVEL_MIN);
-  assertNull(convoBeat(null));
-});
-T("convoBeatCount: the gold gate's denominator, however malformed the store is", () => {
-  assertEq(convoBeatCount({ turns: [{}, {}, {}] }), 3);
-  assertEq(convoBeatCount({ turns: [] }), 0);
-  assertEq(convoBeatCount({}), 0, "a conversation with no turns must not divide by undefined");
-  assertEq(convoBeatCount(null), 0);
-});
-
-/* ---- the live turn ----
-   The judge's reply is the only thing in the app that can move a grade without George
-   touching it, so what it is allowed to say is the thing worth pinning down. Every
-   malformed shape below must degrade to "no opinion" and let the LOCAL score stand —
-   never to a wrong grade quietly applied, and never to a card with no answer behind it. */
-T("convoLiveNormalise: a good reply passes through with its next line", () => {
-  const r = convoLiveNormalise({ grade: 2, lvl: 3, beatHit: true,
-    next: { beat: 1, qhe: "בבית? יופי. ואיך היה?", qtr: "babayit? yofi", qen: "at home? nice",
-            want: "say how it was", he: "היה טוב", tr: "haya tov", en: "it was good",
-            alts: [{ he: "בסדר", tr: "beseder", en: "fine" }] } }, 6);
-  assertEq(r.grade, 2);
-  assertEq(r.lvl, 3);
-  assertEq(r.beatHit, true);
-  assertEq(r.next.qhe, "בבית? יופי. ואיך היה?");
-  assertEq(r.next.alts.length, 1);
-});
-T("convoLiveNormalise: no `next` ends the conversation, and is not a failure", () => {
-  /* The model's way of saying "we're done" — it must survive as a real answer, or the
-     exchange could never end on its own terms. */
-  const r = convoLiveNormalise({ grade: 2, lvl: 2, beatHit: true }, 6);
-  assertTrue(!!r, "still a usable judgement");
-  assertEq(r.grade, 2);
-  assertNull(r.next);
-});
-T("convoLiveNormalise: a next line with no model answer is refused", () => {
-  /* The hint ladder reads item.he/item.tr and convoBestMatch grades against them. A
-     next line without them renders a turn with nothing behind it — worse than falling
-     back to the script. */
-  assertNull(convoLiveNormalise({ grade: 2, next: { qhe: "מה?" } }, 6).next,
-             "no model answer at all");
-  assertNull(convoLiveNormalise({ grade: 2, next: { qhe: "מה?", he: "כן" } }, 6).next,
-             "he without tr — the ladder would show a blank rung");
-  assertNull(convoLiveNormalise({ grade: 2, next: { he: "כן", tr: "ken" } }, 6).next,
-             "their line missing entirely");
-});
-T("convoLiveNormalise: a grade outside 0/1/2 becomes no opinion, not a guess", () => {
-  assertNull(convoLiveNormalise({ grade: 5 }, 6).grade, "out of range");
-  assertNull(convoLiveNormalise({ grade: "good" }, 6).grade, "not a number");
-  assertNull(convoLiveNormalise({}, 6).grade, "absent");
-  assertEq(convoLiveNormalise({ grade: 0 }, 6).grade, 0, "zero is a real grade, not absent");
-});
-T("convoLiveNormalise: junk in, nothing out", () => {
-  assertNull(convoLiveNormalise(null, 6));
-  assertNull(convoLiveNormalise("nope", 6));
-  assertEq(convoLiveNormalise({ grade: 1, lvl: 99 }, 6).lvl, LEVEL_MAX, "clamped");
-  assertEq(convoLiveNormalise({ grade: 1, beatHit: "yes" }, 6).beatHit, true, "coerced to bool");
-});
-T("convoLiveNormalise: a beat index outside the sheet is clamped into it", () => {
-  const mk = (beat) => convoLiveNormalise(
-    { grade: 2, next: { beat: beat, qhe: "a", he: "b", tr: "c" } }, 6).next.beat;
-  assertEq(mk(99), 5, "past the end would index undefined on the next fallback");
-  assertEq(mk(-3), 0);
-  assertEq(mk(2), 2);
-});
-
-T("convoShouldContinue: stops when the beats are covered", () => {
-  assertEq(convoShouldContinue(6, 6, 6, 12), false, "everything covered");
-  assertEq(convoShouldContinue(3, 6, 6, 12), true, "half covered, room to keep going");
-});
-T("convoShouldContinue: the turn cap is a hard stop whatever the beats say", () => {
-  /* The guard on the one real risk: a model that likes the tangent and never lands the
-     rest. Instructions are not a guarantee, so the cap has to be able to override them. */
-  assertEq(convoShouldContinue(0, 6, 12, 12), false, "nothing covered, but out of turns");
-  assertEq(convoShouldContinue(0, 6, 11, 12), true, "one turn left is still a turn");
-});
-
-/* ---- the three holes that shipped ----
-   All three had one root cause: appending a card became the only way forward, and two
-   paths did not append. Each test below fails against the build that went live. */
-T("convoBeat: a conversation written before beats existed CAN still go live", () => {
-  /* The hole that switched the whole feature off. Every conversation in hvr_convo, and
-     every node conversation in hvr_pathcontent (written once per node, never
-     regenerated), predates `intent` — so gating on that field alone meant the live turn
-     could never fire for anyone who had used the app before today. */
-  const old = { qhe: "מה נשמע?", qen: "how are you", askEn: "say how you are",
-                he: "אני בסדר", tr: "ani beseder" };
-  const b = convoBeat(old);
-  assertEq(b.live, true, "askEn says what he should convey — that is enough to judge");
-  assertEq(b.want, "say how you are");
-  assertEq(b.intent, "they say: how are you", "their line stands in for the steer");
-});
-T("convoBeat: with nothing to aim at at all, it stays script-only", () => {
-  assertEq(convoBeat({ qhe: "מה?" }).live, false, "no want, no english, nothing to judge");
-  assertEq(convoBeat({ qhe: "מה?", askEn: "reply" }).live, true);
-  assertEq(convoBeat({ qhe: "מה?", qen: "what" }).live, true);
-});
-T("convoScriptNext: the script pointer starts after the opening card", () => {
-  const s = {};
-  assertEq(convoScriptNext(s), 1, "beat 0 was already served as the opening line");
-  s.convoNext = 4;
-  assertEq(convoScriptNext(s), 4, "and is remembered once set");
-});
-T("convoNextStep: a fumbled beat still moves the script on", () => {
-  /* THE BUG THAT BROKE IT. Nothing covered, every turn imperfect — the shipped build
-     re-served beat 0 twelve times because the fallback looked for the first UNCOVERED
-     beat. It must walk 1,2,3,4,5 and then stop, exactly as the app did before beats. */
-  const s = { beatsHit: {} };
-  const asked = [];
-  for (let turn = 1; turn <= 12; turn++) {
-    const step = convoNextStep(s, 6, null, turn);
-    if (step.kind === "end") break;
-    asked.push(step.beat);
-    s.convoNext = step.beat + 1;
-  }
-  assertEq(asked, [1, 2, 3, 4, 5], "five more questions, all different, then done");
-});
-T("convoNextStep: covering everything ends it even with turns to spare", () => {
-  const s = { beatsHit: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 }, convoNext: 3 };
-  assertEq(convoNextStep(s, 6, null, 7).kind, "end");
-});
-T("convoNextStep: the turn cap ends it even with beats outstanding", () => {
-  const s = { beatsHit: {}, convoNext: 1 };
-  assertEq(convoNextStep(s, 6, null, CONVO_TURN_CAP).kind, "end");
-  assertEq(convoNextStep(s, 6, null, CONVO_TURN_CAP - 1).kind, "script");
-});
-T("convoNextStep: a live line outranks the script, and may linger on a beat", () => {
-  const s = { beatsHit: {}, convoNext: 3 };
-  const step = convoNextStep(s, 6, { next: { beat: 2 } }, 4);
-  assertEq(step.kind, "live");
-  assertEq(step.beat, 2, "the model may stay on a beat; the script pointer is not rewound");
-});
-T("convoNextStep: the script resumes after the live turns, not before them", () => {
-  /* A fallback partway through a live conversation must not re-ask what the live lines
-     already covered. */
-  const s = { beatsHit: { 0: 1, 1: 1, 2: 1 }, convoNext: 4 };
-  assertEq(convoNextStep(s, 6, null, 5), { kind: "script", beat: 4 });
-});
-
-T("convoScriptedCard: an opening card carries its beat, and is not live", () => {
-  const convo = { turns: [{ qhe: "מה נשמע?", he: "אני בסדר", tr: "ani beseder", uses: ["בסדר"] }] };
-  const card = convoScriptedCard(convo, 0, 0);
-  assertEq(card.kind, "conversation");
-  assertEq(card.beat, 0);
-  assertEq(card.live, false);
-  assertEq(card.words, ["בסדר"]);
-  assertNull(convoScriptedCard({ turns: [] }, 0, 0), "a conversation with no turns builds nothing");
-});
-T("convoLiveHistory: reads back as an exchange, and only what has happened", () => {
-  const cards = [
-    { kind: "conversation", item: { qhe: "מה נשמע?" }, _said: "אני טוב" },
-    { kind: "conversation", item: { qhe: "אתה עובד?" }, _said: "כן" },
-    { kind: "conversation", item: { qhe: "איפה?" } }
-  ];
-  assertEq(convoLiveHistory(cards, 2), "THEM: מה נשמע?\nHIM: אני טוב\nTHEM: אתה עובד?\nHIM: כן");
-  assertEq(convoLiveHistory(cards, 0), "", "nothing has been said yet");
-});
-
-/* ---- conversations written before they are wanted ---- */
+/* ---- the word line the coach prompt is built from ---- */
 T("convoWordLine: reaches DICT for a node word the library has not admitted yet", () => {
   assertEq(convoWordLine("בית", { "בית": { tr: "bait", en: "house" } }), "bait = house (בית)");
   assertTrue(convoWordLine("שלום", {}).indexOf("(שלום)") !== -1,
@@ -26854,38 +25696,6 @@ T("convoWordLine: reaches DICT for a node word the library has not admitted yet"
   assertEq(convoWordLine("זזזזזז", {}), "",
            "telling the model a word with no meaning attached is worse than omitting it");
 });
-T("convoQNext: nearest chapter first, and skips what is already written", () => {
-  const camp = { chapters: [{ nodes: [{ id: "a" }, { id: "b" }] }, { nodes: [{ id: "c" }] }] };
-  assertEq(convoQNext(camp, {}).id, "a", "the node he reaches first is worth writing first");
-  assertEq(convoQNext(camp, { a: { convo: {} } }).id, "b");
-  assertEq(convoQNext(camp, { a: { convo: {} }, b: { convo: {} } }).id, "c",
-           "a later chapter is still worth writing once the near ones are done");
-  assertNull(convoQNext(camp, { a: { convo: {} }, b: { convo: {} }, c: { convo: {} } }),
-             "nothing left to write, and nothing to spend on finding that out");
-});
-T("convoQNext: a node that cannot be written stops starving the ones behind it", () => {
-  const camp = { chapters: [{ nodes: [{ id: "a" }, { id: "b" }] }] };
-  assertEq(convoQNext(camp, { a: { convoFail: CONVOQ_FAIL_MAX - 1 } }).id, "a",
-           "a couple of failures is a bad afternoon, not a verdict");
-  assertEq(convoQNext(camp, { a: { convoFail: CONVOQ_FAIL_MAX } }).id, "b",
-           "otherwise it takes the head of the queue every day and nothing behind it " +
-           "is ever written");
-});
-T("convoQSpentToday: the cap resets on the date, and an unused day is not banked", () => {
-  const before = lsGet(CONVOQ_DAY_KEY);
-  try {
-    lsSet(CONVOQ_DAY_KEY, JSON.stringify({ day: "2026-08-26", n: 4 }));
-    assertEq(convoQSpentToday("2026-08-26"), 4);
-    assertEq(convoQSpentToday("2026-08-27"), 0, "yesterday's spend is not today's");
-    convoQSpend("2026-08-27");
-    assertEq(convoQSpentToday("2026-08-27"), 1,
-             "and today starts from one — an unused day must not bank into a burst");
-    assertEq(convoQSpentToday("2026-08-26"), 0, "the old day is gone, not kept alongside");
-  } finally {
-    if (before === null) localStorage.removeItem(CONVOQ_DAY_KEY); else lsSet(CONVOQ_DAY_KEY, before);
-  }
-});
-
 /* ---- which Learn screen is up ---- */
 T("learnStartVisible: an end screen is not a start screen", () => {
   const screens = which => id => ({ style: { display: id === which ? "block" : "none" } });
@@ -28179,7 +26989,7 @@ T("a note card feeds the receptive score, not the productive one", () => {
 T("every card kind the builder can emit has a label and a side", () => {
   /* A kind added to learnBuild without a LEARN_KINDS entry throws on render - the
      card strip reads meta.glyph straight off it. Cheap guard against the next one. */
-  ["word", "sentence", "listen", "reply", "conversation", "chunk", "shadow", "note"]
+  ["word", "sentence", "listen", "reply", "compose", "chunk", "shadow", "note"]
     .forEach(k => {
       assertTrue(!!LEARN_KINDS[k], k + " needs a LEARN_KINDS entry");
       assertTrue(!!LEARN_KINDS[k].label, k + " needs a label");
@@ -29433,8 +28243,11 @@ T("GEMINI_MAX_ATTEMPTS: depth shrank so breadth could be afforded", () => {
 T("GEN_TIMEOUT_MS: background writing gets longer than an interactive lookup", () => {
   assertTrue(GEN_TIMEOUT_MS > FETCH_TIMEOUT_MS,
              "nobody is watching a commission that lands for the NEXT session");
-  assertTrue(CONVO_LIVE_TIMEOUT_MS < FETCH_TIMEOUT_MS,
-             "and a live turn, which he IS sitting in front of, gets less");
+  assertTrue(COMPOSE_TIMEOUT_MS < GEN_TIMEOUT_MS,
+             "and a coach turn, which he IS sitting in front of, gets less than a " +
+             "background commission — but more than FETCH_TIMEOUT_MS, because unlike " +
+             "the conversation it once sat beside there is no scripted line to fall " +
+             "back to when it gives up");
 });
 
 /* ---- things to change ---- */
@@ -31281,7 +30094,8 @@ T("VIEW_ALIAS: a saved 'path' view lands on Learn, where the map now lives", () 
    learnShape() has always fallen back to `balanced` for a key it doesn't recognise —
    but that only holds while `balanced` remains a real key, so this pins it. */
 T("SHAPES: only the two real questions are asked", () => {
-  assertEq(Object.keys(SHAPES), ["balanced", "quick", "conversation"]);
+  assertEq(Object.keys(SHAPES), ["balanced", "quick"]);
+  assertTrue(!SHAPES.conversation, "the conversation is the coach now, and it lives on a node");
   assertTrue(!SHAPES.weak, "a mode that opted out of every improvement is not a choice");
   assertTrue(!SHAPES.speaking, "it removed comprehension rather than adding speaking");
 });

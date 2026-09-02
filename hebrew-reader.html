@@ -17059,6 +17059,10 @@ const FAM_SEED_BONUS = 1000;
    coming accross the same words over and over". Still a real early-look priority,
    just not a permanent one. */
 const FAM_BATCH_BONUS = 150;
+/* Unit 1 leads at the same height the batch bonus sits at, and the curve is gone by unit
+   31 — ten units past where he is, which is as far ahead as "he has probably met this"
+   can honestly reach. */
+const FAM_DUO_MAX = 150, FAM_DUO_STEP = 5;
 function wordFamiliarity(k, lib, srs, arch) {
   const e = lib[k] || {};
   const a = (arch && arch[k]) || null;
@@ -17067,6 +17071,18 @@ function wordFamiliarity(k, lib, srs, arch) {
      project — the only words in here he actually chose to learn rather than
      inherited from someone else's speech. George: "These are my strongest words". */
   if (e.src === "seed") score += FAM_SEED_BONUS;
+  /* A DUOLINGO WORD CARRIES ITS OWN PRIORITY, and it is better evidence than a flat
+     bonus. The comment above FAM_BATCH_BONUS records what a flat one did at ~120 words —
+     "a never-touched batch word would lead the queue forever" — and this import is twice
+     that size, so the same treatment would be twice as wrong.
+
+     The unit IS the ordering: unit 1 is the alphabet and unit 20 is where he is now, so
+     an earlier unit means longer ago, more repetitions, better held. Decayed to nothing
+     by unit 31 rather than clamped at a floor, because past that point the word is ahead
+     of him and has no claim on the front of the queue at all. Folded into familiarity
+     rather than bolted on as a second sort, so real exposure — a word grandad actually
+     says — still outranks it the moment there is any. */
+  else if (e.src === "duo" && e.duo) score += Math.max(0, FAM_DUO_MAX - (e.duo - 1) * FAM_DUO_STEP);
   else if (e.src === "batch") score += FAM_BATCH_BONUS;
   /* Real exposure in real messages, capped so one word grandad says constantly
      can't outrank a whole tier on repetition alone. */
@@ -22447,7 +22463,19 @@ const CONTENT_AMPLE_ITEMS = 12;
    rescue are different jobs and a node can be rich in one while starved of the other. */
 function campWarmNeeded(node, lib, srs, bank) {
   const b = bank || bankPrune(bankAll(), lib);
-  if (contentNodeStock(node, b, lib, srs) < CONTENT_AMPLE_ITEMS) return true;
+  /* THE BREADTH CLAUSE IS GONE, and this is the whole of what George flagged: "Why is
+     the API trying to write sentences? Thought you did that now?"
+
+     It used to read `stock < CONTENT_AMPLE_ITEMS -> commission`, which quietly means
+     "a node nobody has written for yet gets three Gemini calls every time it is opened".
+     After 2026-08-31 that is the wrong reading of a thin node: thin means CLAUDE HAS NOT
+     BEEN ASKED YET, and the answer is to say so on the start screen — contentThinNodes
+     already computes exactly that — not to spend the weakest model in the pool on the one
+     job it demonstrably cannot do. The commission he flagged banked nothing: "3 passed
+     the gate, 1 came back from review".
+
+     What remains is rescue, which genuinely cannot be pre-baked: a sentence for the word
+     he failed yesterday depends on state that did not exist when the batch was written. */
   const weak = campWeakWords(node, srs);
   if (!weak.length) return false;
   const carry = new Set(weak);
@@ -26508,6 +26536,28 @@ T("libAddDuoUnits: due dates are spread, not stacked on one day", () => {
                "never scheduled further out than the stability claims: " + k);
   });
 });
+T("wordFamiliarity: new words arrive in Duolingo's order, and evidence still beats it", () => {
+  const lib = { a: { src: "duo", duo: 3, added: todayISO() },
+                b: { src: "duo", duo: 19, added: todayISO() },
+                c: { src: "duo", duo: 40, added: todayISO() },
+                d: { src: "duo", duo: 19, added: todayISO() } };
+  const srs = { d: { prod: { n: 8, miss: 0, stab: 20, diff: 3 } } };
+  const f = k => wordFamiliarity(k, lib, srs, {});
+  assertTrue(f("a") > f("b"), "an earlier unit is the better-held word");
+  assertTrue(f("b") > f("c"), "and a unit far ahead of him has no claim on the queue");
+  assertEq(Math.max(0, FAM_DUO_MAX - (40 - 1) * FAM_DUO_STEP), 0,
+           "past unit 31 the bonus is gone entirely, not merely small");
+  /* The reason this is folded into familiarity rather than bolted on as a second sort:
+     a word grandad actually SAYS has to be able to overtake the syllabus. Calibrated the
+     same way FAM_BATCH_BONUS is — its comment is about exactly this, that real vocabulary
+     from real messages ("max ~220 from usage + age combined") must be able to outrank a
+     bulk bonus. Note the bar is real exposure, not a handful of answers: eight clean
+     recalls is 48, and does not and should not displace the start of the syllabus. */
+  const arch = { b: { seen: 20, first: "2026-01-01" } };
+  assertTrue(wordFamiliarity("b", lib, srs, arch) > f("a"),
+             "a word he keeps meeting outranks an earlier unit he has only been told about");
+  assertTrue(f("d") > f("b"), "and answering it still beats an identical word he has not");
+});
 T("duoFormsApply: an imported form is verified, or FORM_INDEX will not see it", () => {
   /* buildFormIndex skips anything not marked `verified`, so a form banked as "uncertain"
      is invisible to agreement checking and to the pad — which is the whole reason for
@@ -30060,8 +30110,15 @@ T("campWarmNeeded: stands down on a stocked node, never on an unrescued weak wor
   const easy = { name: "Home", words: ["בית"] };
   assertTrue(!campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, stock),
              "a stocked node with nothing stuck does not need three more calls");
-  assertTrue(campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, stock.slice(2)),
-             "below ample it still commissions");
+  /* THIN IS NO LONGER A REASON TO COMMISSION. It used to be, and that is exactly what
+     George flagged from the Who people are node — a node nobody had written content for
+     yet spent three calls on every open, and the one he watched banked nothing. Thin now
+     means "Claude has not been asked", which contentThinNodes reports on the start
+     screen. Breadth is written ahead of time or not at all. */
+  assertTrue(!campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, []),
+             "an EMPTY node with nothing stuck must not commission breadth");
+  assertTrue(!campWarmNeeded(easy, lib, { "בית": strong, "גדול": strong }, stock.slice(2)),
+             "and neither does one merely below the ample line");
   /* Stuck word, plenty of breadth, nothing written to rescue it: must still commission. */
   const stuck = { name: "Home", words: ["בית", "מיטה"] };
   const srsStuck = { "בית": strong, "גדול": strong, "מיטה": weakRec };

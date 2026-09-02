@@ -22250,8 +22250,28 @@ function learnSpeakPrompt(slow) {
   const c = s.cards[s.i];
   if (c.kind === "note") playNote(cardAudioKey(c, "prompt"), slow);
   else if (c.kind === "listen" || c.kind === "shadow") playHe(cardAudioKey(c, "prompt"), c.item.he, slow);
-  else if (c.kind === "reply" || c.kind === "conversation")
-    playHe(cardAudioKey(c, "prompt"), c.item.qhe || c.item.he, slow);
+  /* Compose joins reply and conversation rather than inventing anything: it is a line
+     the coach said to him, in the device's own voice, and there is no setting to add
+     because there is no setting for the other two. Unguarded here on purpose — this is
+     also the deliberate replay path (the speak button, R), and a guard would swallow it.
+     The auto-play guard lives at the render's call site instead. */
+  else if (c.kind === "reply" || c.kind === "conversation" || c.kind === "compose")
+    playHe(cardAudioKey(c, "prompt"), (c.item && (c.item.qhe || c.item.he)) || "", slow);
+}
+/* WHICH LINE HAS ALREADY BEEN SPOKEN ALOUD — page state, not card state, and for the
+   same reason composeInFlight is: it is a fact about this page load. Stashing it onto
+   the card would mean a session resumed tomorrow came back silent, and re-speaking on
+   resume is the friendlier of the two wrong answers.
+
+   It has to be a guard at all because learnRenderCard runs on repaint, resize and every
+   stage change. Without it the coach talks over himself each time the card is redrawn. */
+let composeSpoke = null;
+function composeSpeakNew(c) {
+  if (!c || !c.item || !c.item.qhe) return;
+  const turn = (c.turns || []).length;
+  if (composeSpoke && composeSpoke.card === c && composeSpoke.turn === turn) return;
+  composeSpoke = { card: c, turn: turn };
+  try { learnSpeakPrompt(); } catch (e) { /* a silent device must never cost him a turn */ }
 }
 
 /* The thread. A conversation you can't see the shape of is just a queue of reply
@@ -22663,6 +22683,11 @@ function learnRenderCompose(card, c, s) {
     if ((stage === "sending" || stage === "failed") && c._said)
       list.append(convoBubble("you", c._said, ""));
     wrap.append(list); card.append(wrap);
+    /* THE LINE convoThread HAS HAD SINCE IT WAS WRITTEN AND THIS NEVER DID. .lbubbles is
+       capped at 190px and scrolls, so without this every repaint showed the top of the
+       thread — which on a session that now lives on one card is every single turn.
+       George: "The conversation scrolls to the top when the page changes." */
+    requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
   }
   if (answering && c.item.qen && stage === "ask") {
     const en = document.createElement("div"); en.className = "lask lquiet";
@@ -22779,6 +22804,9 @@ function learnRenderCompose(card, c, s) {
       const en = document.createElement("div"); en.className = "lask lquiet";
       en.textContent = c.item.qen; card.append(en);
     }
+    /* Read out as it lands, which is what he asked for — "I would alos like the reponse
+       from coach ot be automatically read aloud". Once per turn, not once per render. */
+    composeSpeakNew(c);
   }
   speakControls();
 }
@@ -28761,6 +28789,27 @@ T("composeAdvance: a word ticks only when he used it CORRECTLY", () => {
     assertEq(composeOutstanding(c), [k2], "and it is still on the table");
   } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
               else lsSet(SRS_KEY, realSrs); }
+});
+T("composeSpeakNew: the coach reads its line once per turn, not once per repaint", () => {
+  /* learnRenderCard runs on repaint, resize and every stage change. Without the guard
+     the coach talks over himself every time the card is redrawn — which on a session
+     that lives on one growing card is constantly. */
+  const realSpeak = learnSpeakPrompt, realSession = learnSession;
+  let spoke = 0;
+  try {
+    learnSpeakPrompt = () => { spoke++; };
+    const c = composeCard(["בית"], ["בית"], 0);
+    learnSession = { cards: [c], i: 0 };
+    c.item = { qhe: "ואיפה?", qtr: "ve'eifo?", qen: "and where?" };
+    composeSpeakNew(c); composeSpeakNew(c); composeSpeakNew(c);
+    assertEq(spoke, 1, "three renders of the same turn is one reading");
+    c.turns = [{}];
+    composeSpeakNew(c);
+    assertEq(spoke, 2, "but the next turn's line does get read");
+    const bare = composeCard(["בית"], ["בית"], 0);
+    composeSpeakNew(bare);
+    assertEq(spoke, 2, "and the opening turn has no coach line to read");
+  } finally { learnSpeakPrompt = realSpeak; learnSession = realSession; composeSpoke = null; }
 });
 T("composeEnds: the session never ends on an unanswered question", () => {
   /* George: "the conversation abruptly ended when I went to press reply and moved to

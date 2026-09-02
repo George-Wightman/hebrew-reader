@@ -14080,9 +14080,31 @@ function srsR(rec, today, nowMs) {
    fortnight away from the app would inflate every schedule it touched. One constant
    stating the ceiling where it can be read and tested beats leaving it emergent. */
 const SRS_GAIN = 16, SRS_GAIN_MAX = 3.5;
-function srsGain(R, diff) {
+/* THE ONE THING THE MODEL CANNOT SEE, and the reason this exists at all.
+
+   `(1 - R)` is the retrieval-difficulty term, and R is predicted from ELAPSED TIME
+   alone. So the scheduler has no representation of cue strength whatsoever: producing a
+   word with nothing in front of you and producing the same word from an English prompt
+   are, to this function, identical events. That is not the model correctly equating
+   them — it is the model being blind to the difference.
+
+   The 2026-08-30 spec rejected an exercise-type multiplier, and was right about what it
+   was aimed at: a bonus asserted on top of a CORRECT model inflates stability without
+   evidence and leaves srsCalibration checking predictions against outcomes it inflated
+   itself. That argument does not cover a term the model has no way to express. So the
+   multiplier goes on `(1 - R)` specifically rather than on the result, because that
+   term is the claim being made — the retrieval was harder than elapsed time can say.
+
+   Modest, and honest about why: we believe this and have not yet measured it. George:
+   "I also think hteir should e some bonus 'leveling up' of each word for doing it in the
+   coach mode since its definetly harder that just a lesson." SRS_GAIN_MAX still caps it,
+   so it cannot run away, and srsCalibration can now be read for `kd: "compose"` alone —
+   which is what turns 1.3 from an argument into a number worth revising. */
+const SRS_CUE_UNPROMPTED = 1.3;
+function srsGain(R, diff, cue) {
   const byDiff = Math.max(0, 1 - (((diff || 5) - 1) * 0.075));
-  return Math.max(1, Math.min(SRS_GAIN_MAX, 1 + SRS_GAIN * (1 - R) * byDiff));
+  return Math.max(1, Math.min(SRS_GAIN_MAX,
+                              1 + SRS_GAIN * (1 - R) * byDiff * (cue || 1)));
 }
 
 /* See the recent-accuracy comment inside srsApply, where these are used. Module-level
@@ -14090,7 +14112,7 @@ function srsGain(R, diff) {
    a copy that could quietly drift from it. */
 const RECENT_DECAY = 0.85;
 
-function srsApply(srs, key, grade, side, todayOverride) {
+function srsApply(srs, key, grade, side, todayOverride, cue) {
   const r = srsSide(srs, key, side || "prod");
   const today = todayOverride || todayISO();
   const nowMs = srsNowMs(todayOverride);
@@ -14240,7 +14262,7 @@ function srsApply(srs, key, grade, side, todayOverride) {
        (2.6 - (diff-1)*0.12) had no way to say. srsGain reproduces that ladder exactly
        for an on-time answer, so this line is a strict widening of what it replaced.
        At baseline difficulty and on time the sequence still runs ~1 → 2 → 5 → 12 → 28. */
-    r.stab = Math.min(365, !r.stab ? 1 : r.stab * srsGain(R, r.diff));
+    r.stab = Math.min(365, !r.stab ? 1 : r.stab * srsGain(R, r.diff, cue));
   }
   /* ---- ONE place where `due` is written --------------------------------------
      There used to be three: a write inside the "nearly" branch, another inside the
@@ -14324,7 +14346,12 @@ function srsLogPush(key, side, grade, before, extra, todayOverride) {
 function srsAnswer(srs, key, grade, side, extra, todayOverride) {
   side = side || "prod";
   const before = Object.assign({}, srsSide(srs, key, side));
-  const r = srsApply(srs, key, grade, side, todayOverride);
+  /* DERIVED FROM THE LOG TAG, NOT PASSED ALONGSIDE IT. `kd` is what learnLogExtra
+     already writes onto every log entry, and it is what srsCalibration can be filtered
+     by — so reading the cue from the same field means the bonus and the receipt for it
+     describe exactly the same population of answers and can never drift apart. */
+  const cue = (extra && extra.kd === "compose") ? SRS_CUE_UNPROMPTED : 1;
+  const r = srsApply(srs, key, grade, side, todayOverride, cue);
   /* How long he took, as a decaying average rather than a lifetime one — the same
      reasoning that made `miss` stop being a running total. How fast he can produce it
      TODAY is the fluency signal; a slow fortnight in July should not hold the number
@@ -21077,6 +21104,31 @@ function learnRenderCalib() {
     (cal.bands.some(b => b.n < CALIB_MIN_BAND)
       ? " Faded rows have too few answers to trust yet." : "");
   box.append(note);
+
+  /* THE RECEIPT FOR SRS_CUE_UNPROMPTED. The coach's answers get a stability bonus on the
+     argument that unprompted production is a harder retrieval than the model can see —
+     which is a belief, not a measurement. This is the measurement: the same Brier score
+     over coach answers alone, against everything else.
+
+     Read, never acted on. A scheduler that tuned its own bonus from outcomes that bonus
+     inflated is precisely the failure the 2026-08-30 spec warned about; a person reading
+     two numbers and changing a constant is not. If the coach's score is much WORSE than
+     the rest, 1.3 is too high and the schedules it writes are running ahead of him. */
+  const log = srsLogAll();
+  const coach = srsCalibration(log.filter(e => e && e.kd === "compose"));
+  if (coach.n >= CALIB_MIN_BAND) {
+    const rest = srsCalibration(log.filter(e => e && e.kd !== "compose"));
+    const cue = document.createElement("div"); cue.className = "lstatnote";
+    cue.textContent = "The coach is scheduled " + SRS_CUE_UNPROMPTED + "× harder than " +
+      "everything else, because saying a word with nothing in front of you is a harder " +
+      "recall than the schedule can otherwise tell. Checking that: coach answers score " +
+      coach.brier.toFixed(3) + " over " + coach.n + ", everything else " +
+      (rest.n ? rest.brier.toFixed(3) + " over " + rest.n : "—") + ". " +
+      (rest.n && coach.brier > rest.brier + 0.05
+        ? "The coach is running ahead of you — that multiplier is too high."
+        : "Close enough that the bonus is not hurting the timing.");
+    box.append(cue);
+  }
 }
 function learnVoiceBanner() {
   document.getElementById("lVoiceBanner").style.display =
@@ -25534,6 +25586,41 @@ T("srsGain: late is worth more, early is worth less, and the boost is capped", (
   assertTrue(srsGain(0.97, 5) < srsGain(0.9, 5), "an early one is worth less");
   assertTrue(srsGain(0.97, 5) > 1, "but still worth something");
   assertEq(srsGain(0.1, 1), SRS_GAIN_MAX, "a long absence cannot hand a word a year");
+});
+T("srsGain: the unprompted cue lifts the retrieval term, and stays under the cap", () => {
+  /* The bonus rides on (1 - R) rather than on the result, because that term IS the
+     claim: the retrieval was harder than elapsed time can express. */
+  assertTrue(srsGain(0.9, 5, SRS_CUE_UNPROMPTED) > srsGain(0.9, 5),
+             "a word said with nothing in front of him is worth more");
+  assertEq(srsGain(0.9, 5, 1), srsGain(0.9, 5), "and a cue of 1 changes nothing");
+  assertEq(srsGain(0.9, 5), srsGain(0.9, 5, undefined), "as does no cue at all");
+  assertEq(srsGain(0.1, 1, SRS_CUE_UNPROMPTED), SRS_GAIN_MAX,
+           "SRS_GAIN_MAX still caps it — the bonus cannot run away");
+  assertEq(srsGain(1, 5, SRS_CUE_UNPROMPTED), 1,
+           "and a word answered dead on time still gains nothing, bonus or not");
+});
+T("srsAnswer: the bonus is read off the same tag the calibration split reads", () => {
+  /* If these ever came from different fields, the receipt would stop describing the
+     population the bonus was applied to. Same field, by construction. */
+  const mk = () => ({ "מילה": { prod: { n: 3, stab: 10, diff: 4, miss: 0, streak: 3,
+                                        last: "2026-08-20", due: "2026-08-30" } } });
+  const plain = mk(), coach = mk();
+  srsAnswer(plain, "מילה", 2, "prod", { kd: "sentence" }, "2026-09-02");
+  srsAnswer(coach, "מילה", 2, "prod", { kd: "compose" }, "2026-09-02");
+  assertTrue(coach["מילה"].prod.stab > plain["מילה"].prod.stab,
+             "the coach answer stretches the schedule further than the sentence card");
+  const noTag = mk();
+  srsAnswer(noTag, "מילה", 2, "prod", null, "2026-09-02");
+  assertEq(noTag["מילה"].prod.stab, plain["מילה"].prod.stab,
+           "and an answer with no tag is treated as prompted, never as a coach answer");
+});
+T("srsCalibration: the receipt can be read over coach answers alone", () => {
+  const log = [{ g: 2, r: 0.9, kd: "compose" }, { g: 0, r: 0.9, kd: "compose" },
+               { g: 2, r: 0.9, kd: "sentence" }];
+  assertEq(srsCalibration(log).n, 3, "everything, by default");
+  assertEq(srsCalibration(log.filter(e => e.kd === "compose")).n, 2,
+           "and the coach's own answers, which is what audits the bonus");
+  assertEq(srsCalibration(log.filter(e => e.kd !== "compose")).n, 1);
 });
 /* ---- the gap it actually had ----
    `last` is a date, so twenty minutes and nine hours were both t = 0 and both claimed

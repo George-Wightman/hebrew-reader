@@ -16842,30 +16842,45 @@ function campStampGold(c, srs) {
    told "You had this. Some of it has slipped", which he never had. */
 function campNodeStale(id, c, srs) {
   const n = campNode(id, c);
-  if (!n || !campConvoPassed(id) || campNodeWordsReady(n, srs)) return false;
-  /* Decay means it was gold once. Without this a node walked at 70% and never
-     finished claimed "You had this. Some of it has slipped" about words it never had. */
+  if (!n || campNodeWordsReady(n, srs)) return false;
+  /* Decay means it was gold once. Without this a node walked and never finished claimed
+     "You had this. Some of it has slipped" about words it never had.
+
+     This is also the only test that is still needed: the conversation-passed check that
+     used to sit alongside it was redundant even before the conversation went, because
+     `gold` is only ever stamped on a node that had already passed. */
   return campNodeEverGold(id);
 }
 /* ---- walked, and gold -------------------------------------------------------
-   George: "I dont want a situation where I have to just drill the same like 2 words 10
-   times to pass gold ... maybe to progress we dont need 100% but for gold we do."
+   PROGRESSION IS THE SCHEDULER AND NOTHING ELSE. Walked used to mean "the conversation
+   was passed plus 70% of the words held", and walked nodes are what open the next
+   chapter — so a mode he had quietly stopped using was deciding whether the campaign
+   moved. It was not hypothetical: three of Chapter 2's four nodes sat at FULL word
+   readiness with no conversation pass against them, which left the chapter reading as
+   incomplete and Chapter 3 unreachable. He had already voted on the conversation with
+   his behaviour; the code was still waiting for it.
 
-   Walked is the conversation passed plus most of the words held. It opens the next
-   chapter; it is not gold, and it does not claim to be. Gold still means all of it.
+   George: "the Gate should be that I am atleast 'progressing'/ not weak on al the words
+   ... So I can move up a chapter without the gld status, but hte gold status is like a
+   perfecting that module."
 
-   CAMP_WALKED_SHARE is the same 0.7 campThreshold uses on chapters, deliberately: one
-   number meaning one thing across the map beats two similar numbers meaning different
-   things. Debt left behind is not abandoned — campDebtWords feeds it back into later
-   nodes' sentences. */
-const CAMP_WALKED_SHARE = 0.7;
+   THIS SUPERSEDES AN EARLIER PREFERENCE and the earlier one is worth keeping visible,
+   because it was right about a real risk: "maybe to progress we dont need 100% but for
+   gold we do" — hence the old CAMP_WALKED_SHARE of 0.7, one stubborn word not holding a
+   node back. What makes the stricter bar safe now is that gold moved much further away
+   (every word produced live, unprompted), so the two bars are not competing for the same
+   ground any more, and that campChapterComplete is still 70% of NODES — one stubborn
+   word is absorbed there instead. Checked against his real campaign before changing it:
+   at the 70% bar CH1 and CH2 clear their thresholds, and at the all-words bar they still
+   do.
+
+   Debt left behind is not abandoned — campDebtWords feeds it back into later nodes'
+   sentences. */
 function campNodeWalked(id, c, srs) {
   const n = campNode(id, c);
-  if (!n || !campConvoPassed(id)) return false;
+  if (!n) return false;
   if (campNodeEverGold(id)) return false;      // it was gold; slipping from that is decay
-  const p = campNodeProgress(n, srs || srsAll());
-  if (!p.need) return false;
-  return p.have >= Math.ceil(p.need * CAMP_WALKED_SHARE);
+  return campNodeWordsReady(n, srs || srsAll());
 }
 /* Where a chapter stands, COMPUTED — behind the live one, the live one, or ahead of
    it. `ch.state` in the store is a cache of this and nothing more; read as the truth
@@ -19069,16 +19084,29 @@ function campDebtWords(node, c, srs) {
   const cc = c || campAll(), ss = srs || srsAll();
   const own = {}; ((node && node.words) || []).forEach(k => { own[k] = 1; });
   const out = [];
-  campNodes(cc).forEach(n => {
+  /* WHAT "LEFT BEHIND" MEANS NOW. This used to read walked-but-not-done, because walked
+     was 70% of the words and the missing 30% WAS the debt. Walked now means every word
+     is held, so that test can only ever return nothing — the mechanism would have died
+     silently the moment progression stopped waiting on the conversation.
+
+     Translated rather than dropped, because the thing it does is still wanted: George,
+     "I want those older words to naturally be integrating into sentences." The node that
+     is genuinely left behind is now the one the CHAPTER moved past without — chapters
+     complete at 70% of their nodes, so a node that never got walked in a chapter that
+     did is exactly the gap in the trail. */
+  (cc.chapters || []).forEach(ch => {
+    if (!campChapterComplete(ch, cc, ss)) return;
+    (ch.nodes || []).forEach(n => {
     if (!n || n.id === (node && node.id)) return;
-    /* Only from nodes he has actually walked, and never from one that is finished:
-       a gold node's words are held, and anything that slips out of them is the quick
-       sessions' job, not the campaign's. */
-    if (campNodeDone(n.id, cc, ss) || !campNodeWalked(n.id, cc, ss)) return;
+    /* Never from a node that is finished or fully held: a gold node's words are held,
+       and anything that slips out of them is the quick sessions' job, not the
+       campaign's. */
+    if (campNodeDone(n.id, cc, ss) || campNodeWalked(n.id, cc, ss)) return;
     (n.words || []).forEach(k => {
       if (own[k] || out.indexOf(k) !== -1) return;
       if (STOPLIST.has(k) || wordReady(k, ss)) return;
       out.push(k);
+    });
     });
   });
   const rank = { weak: 0, "new": 1 };
@@ -26966,13 +26994,15 @@ function campWalkStores(readyCount, total) {
   }
   return { c: { v: 1, chapters: [{ n: 1, nodes: [{ id: "nd", words: words }] }], log: [] }, srs: srs };
 }
-T("campNodeWalked: 70% of the words plus the conversation counts as walked", () => {
-  const st = campWalkStores(5, 6);                       // 5 of 6 = 83%
+T("campNodeWalked: 5 of 6 is no longer walked, record or no record", () => {
+  /* It was, at CAMP_WALKED_SHARE. The bar is now every word — his own: "the Gate should
+     be that I am atleast progressing / not weak on al the words". */
+  const st = campWalkStores(5, 6);
   const keep = pathScoresAll();
   try {
     pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
-    assertTrue(campNodeWalked("nd", st.c, st.srs));
-    assertTrue(!campNodeDone("nd", st.c, st.srs), "walked is not gold");
+    assertTrue(!campNodeWalked("nd", st.c, st.srs), "one word short is short");
+    assertTrue(!campNodeDone("nd", st.c, st.srs), "and certainly not gold");
   } finally { pathScoresSave(keep); }
 });
 T("campNodeWalked: below the share it has not been walked", () => {
@@ -26991,13 +27021,15 @@ T("campNodeWalked: all the words is gold, and gold is still gold", () => {
     assertTrue(campNodeDone("nd", st.c, st.srs), "100% plus the conversation is gold");
   } finally { pathScoresSave(keep); }
 });
-T("campNodeWalked: without the conversation it is neither", () => {
+T("campNodeWalked: without any lesson record it is still walked", () => {
+  /* THE CHAPTER 3 REGRESSION, at the node level. This used to require the conversation,
+     which is how three fully-ready nodes failed to open a chapter. */
   const st = campWalkStores(6, 6);
   const keep = pathScoresAll();
   try {
     pathScoresSave({});
-    assertTrue(!campNodeWalked("nd", st.c, st.srs), "the conversation is the graduation");
-    assertTrue(!campNodeDone("nd", st.c, st.srs));
+    assertTrue(campNodeWalked("nd", st.c, st.srs), "progression is the scheduler alone");
+    assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
   } finally { pathScoresSave(keep); }
 });
 T("campNodeStale: a node walked but never mastered is NOT decay", () => {
@@ -27008,25 +27040,49 @@ T("campNodeStale: a node walked but never mastered is NOT decay", () => {
   const keep = pathScoresAll();
   try {
     pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now() } } });
-    assertTrue(!campNodeStale("nd", st.c, st.srs));
-    assertEq(campNodeState("nd", st.c, st.srs), "walked");
+    assertTrue(!campNodeStale("nd", st.c, st.srs), "never gold, so nothing has slipped");
+    assertEq(campNodeState("nd", st.c, st.srs), "current",
+             "a node one word short is one he is still working on");
   } finally { pathScoresSave(keep); }
 });
 
 /* ---- nothing is left behind ---- */
-T("campDebtWords: a walked node's outstanding word follows him forward", () => {
-  const srs = { "החזק": { prod: { stab: 8, diff: 4, n: 3, miss: 0 }, recv: { n: 0 } },
-                "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
+T("campDebtWords: a word the chapter moved past follows him forward", () => {
+  /* THE MECHANISM NEARLY DIED SILENTLY. Debt used to be read off walked-but-not-done
+     nodes, because walked was 70% of the words and the missing 30% WAS the debt. Walked
+     now means every word is held, so that test could only ever return nothing. The node
+     genuinely left behind is the one the CHAPTER moved past without — chapters complete
+     at 70% of their NODES, so a chapter can finish with one node never walked. */
+  const ready = () => ({ prod: { stab: 8, diff: 4, n: 3, miss: 0 }, recv: { n: 0 } });
+  const srs = { "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
                 "חדש": { prod: { n: 0 }, recv: { n: 0 } } };
-  const c = { v: 1, log: [], chapters: [{ n: 1, nodes: [
-    { id: "old", words: ["החזק", "החזק2", "החזק3", "החזק4", "החזק5", "החוב"] },
-    { id: "now", words: ["חדש"] }] }] };
-  ["החזק2", "החזק3", "החזק4", "החזק5"].forEach(w => { srs[w] = { prod: { stab: 8, diff: 4, n: 3, miss: 0 }, recv: { n: 0 } }; });
+  ["w1", "w2", "w3"].forEach(w => { srs[w] = ready(); });
+  const c = { v: 1, log: [], chapters: [
+    { n: 1, nodes: [{ id: "a", words: ["w1"] }, { id: "b", words: ["w2"] },
+                    { id: "c", words: ["w3"] },
+                    /* never walked: its word never came good */
+                    { id: "left", words: ["החוב"] }] },
+    { n: 2, nodes: [{ id: "now", words: ["חדש"] }] }] };
   const keep = pathScoresAll();
   try {
-    pathScoresSave({ old: { 99: { pct: 100, ts: Date.now() } } });      // walked, 5 of 6
+    pathScoresSave({});
+    assertTrue(campChapterComplete(c.chapters[0], c, srs), "3 of 4 walked completes it");
     const debt = campDebtWords({ id: "now", words: ["חדש"] }, c, srs);
-    assertEq(debt, ["החוב"], "the one word that node never got to");
+    assertEq(debt, ["החוב"], "the word the chapter left behind");
+  } finally { pathScoresSave(keep); }
+});
+T("campDebtWords: a chapter still in progress owes nothing", () => {
+  /* The other half of the rule: a node he simply has not reached yet is not a debt. */
+  const srs = { "החוב": { prod: { stab: 3, diff: 7, n: 6, miss: 4 }, recv: { n: 0 } },
+                "חדש": { prod: { n: 0 }, recv: { n: 0 } } };
+  const c = { v: 1, log: [], chapters: [{ n: 1, nodes: [
+    { id: "a", words: ["החוב"] }, { id: "b", words: ["x"] },
+    { id: "c", words: ["y"] }, { id: "now", words: ["חדש"] }] }] };
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({});
+    assertTrue(!campChapterComplete(c.chapters[0], c, srs), "nothing walked yet");
+    assertEq(campDebtWords({ id: "now", words: ["חדש"] }, c, srs).length, 0);
   } finally { pathScoresSave(keep); }
 });
 T("campDebtWords: a node he never walked owes nothing yet", () => {
@@ -29879,6 +29935,48 @@ T("campCurrentNode: a chapter with nothing left to do offers nothing", () => {
 T("campThreshold: 60-75% across every chapter size", () => {
   assertEq([4, 5, 6].map(campThreshold), [3, 3, 4]);
   assertEq([4, 5, 6].map(n => Math.round(campThreshold(n) / n * 100)), [75, 60, 67]);
+});
+T("campNodeWalked: progression is the scheduler, with no lesson record at all", () => {
+  /* THE CHAPTER 3 CASE, from his real campaign. Three of Chapter 2's four nodes sat at
+     full word readiness with no conversation against them, so none counted as walked and
+     the chapter would not open. Progression must not wait on a mode he has stopped
+     using — or on any mode. */
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  withCamp(camp, campReadySrs(node), {}, () => {
+    assertTrue(campNodeWalked("c1-hello"), "every word ready is walked, record or no record");
+    assertEq(campNodeState("c1-hello"), "walked");
+  });
+});
+T("campNodeWalked: one word short is not walked", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  const short = campReadySrs(node);
+  delete short[node.words.filter(k => !STOPLIST.has(k))[0]];
+  withCamp(camp, short, {}, () => {
+    assertTrue(!campNodeWalked("c1-hello"),
+               "the bar is all of them — it supersedes the old 70% share");
+  });
+});
+T("campNodeWalked: a node that decayed from gold is repair, not progress", () => {
+  const camp = campOneChapter(), node = camp.chapters[0].nodes[0];
+  const weak = campReadySrs(node);
+  weak[node.words[0]] = { prod: srsBandRecord("weak"), recv: srsBlank() };
+  withCamp(camp, weak, { "c1-hello": { 99: { pct: 90, gold: true } } }, () => {
+    assertTrue(!campNodeWalked("c1-hello"), "everGold still means decay rather than walked");
+    assertTrue(campNodeStale("c1-hello"), "and it reads as stale");
+  });
+});
+T("campChapterComplete: words alone open the next chapter", () => {
+  /* The end-to-end shape of the bug: full readiness on the threshold number of nodes,
+     nothing in pathscores, chapter opens. */
+  const camp = campOneChapter();
+  const nodes = camp.chapters[0].nodes;
+  const srs = {};
+  nodes.slice(0, 3).forEach(n => Object.assign(srs, campReadySrs(n)));
+  withCamp(camp, srs, {}, () => {
+    assertEq(campChapterGold(camp.chapters[0]), 0, "none of them is gold");
+    assertTrue(campChapterComplete(camp.chapters[0]),
+               "but three walked is the threshold, and the chapter opens anyway");
+  });
 });
 T("campChapterComplete: opens on the threshold, not on every node", () => {
   const camp = campOneChapter();

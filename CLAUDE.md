@@ -91,6 +91,26 @@ Two things follow:
 `clips` IndexedDB store still exists but now holds only `note:` keys — the real
 voice-note recordings, which are untouched by any of this.
 
+## Transliteration: one scheme, and it is not negotiable
+
+He reads the transliteration — it is the line he actually produces from — so a second
+convention is not a cosmetic inconsistency, it teaches two spellings for one sound.
+`content/nodes.json` carried both until v4: items 0–76 used `ha-cheder` / `achshav` /
+`eich`, and 77–329 used `hakheder` / `akhshav` / `eikh`, split exactly at a batch
+boundary.
+
+**The scheme is:**
+
+- `kh` for ח and כ, never `ch` — `khaver`, not `chaver`.
+- The article and single-letter prepositions **join** the word: `harekhov`, `bakheder`,
+  `la'avoda`. No hyphen.
+- **Apostrophe before a vowel**, so the join stays readable: `ha'ir`, `ha'otobus`,
+  `la'ir` — never `hair`, which reads as the English word.
+- The conjunction ו is `ve-` as it is actually spoken, not the formal `u-`/`va-`:
+  `ve'ani`, `vegvina`. (The noun `uga`, cake, is not a conjunction — do not "fix" it.)
+
+Anything written for the app follows this, including sentences you hand him in chat.
+
 ## AI usage
 
 Gemini quota is `AI_POOL_CAPS = { strong: 20, fast: 500 }` per key per day.

@@ -22997,6 +22997,36 @@ async function contentIngest() {
                              items: data && data.items && data.items.length, have: had });
     return 0;
   }
+  /* WITHDRAWING A SENTENCE, WHICH THIS FILE COULD NOT DO UNTIL NOW. contentIngest has
+     only ever added, so a sentence shipped wrong stayed wrong on every device that had
+     already taken it — correcting the file would just bank a second copy alongside the
+     first. That is not hypothetical: eight items said לבית where a person says הביתה,
+     nine put the head-that-hurts in English word order, and all of them are sitting in
+     his bank being drilled.
+
+     Matched on exact `he`, never on id. Ids are generated per-device at ingest time
+     ("b" + Date.now() + random), so the same sentence has different ids on his phone and
+     his laptop and there is nothing stable to name it by from here.
+
+     Runs BEFORE the ingest below, so one version can retire the wrong form and bank the
+     right one in the same pass — which is what a correction actually is. Bank items he
+     wrote or that were commissioned are untouched by name alone: only `src: "claude"`
+     rows are eligible, because this file has no business withdrawing anything it did not
+     put there. */
+  let retired = 0;
+  try {
+    const kill = new Set((Array.isArray(data.retired) ? data.retired : [])
+      .map(x => String(x && x.he !== undefined ? x.he : x)).filter(Boolean));
+    if (kill.size) {
+      const before = bankAll();
+      const after = before.filter(b => !(b && b.src === "claude" && kill.has(b.he)));
+      retired = before.length - after.length;
+      if (retired) { bankSave(after); rebuildTrIndex(); }
+    }
+  } catch (e) {
+    contentNote("retire-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
+  }
+
   /* THE REVIEW THE SKILL COULD NOT RUN. generate-node-content says outright that
      learnReviewItems "is not available from a fixture browser" — the keys deliberately
      never sync (SYNC_NEVER_SET holds GEMINI_KEY) — and offers "either skip it, or ask
@@ -23065,13 +23095,17 @@ async function contentIngest() {
   /* NOTHING BANKED AND NOTHING HERE means it did not work, whatever learnIngest returned,
      so the version is deliberately left unstamped and the next check tries again. This is
      the exact stamp that stuck his phone on "read v1, zero items" for half a day. */
-  if (!n && !landed) {
+  /* `retired` counts as work: a version whose whole job is withdrawing bad sentences
+     banks nothing by design, and treating that as a failed read would re-run it on every
+     load forever. */
+  if (!n && !landed && !retired) {
     contentNote("nothing-landed", { fileVersion: data.version, items: data.items.length });
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
                             items: data.items.length, bank: bankAll().length,
-                            reviewed: reviewed, unreviewed: unreviewed });
+                            reviewed: reviewed, unreviewed: unreviewed,
+                            retired: retired });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -31295,6 +31329,57 @@ T("contentIngest: reviews what is new, never re-buys what it holds, never loses 
   } finally {
     window.fetch = realFetch;
     learnReviewItems = realReview; learnIngest = realIngest;
+    const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
+});
+T("contentIngest: a version can withdraw a sentence it shipped wrong", async () => {
+  /* Until v4 this file could only add, so a sentence shipped wrong stayed wrong on every
+     device that had taken it — correcting it would bank a second copy beside the first.
+     Eight items said לבית where a person says הביתה and nine had the head hurting in
+     English word order, all of them already in his bank. */
+  const realFetch = window.fetch, realLast = lsGet(CONTENT_LAST_KEY);
+  const realV = lsGet(CONTENT_V_KEY), realBank = lsGet(BANK_KEY);
+  const realReview = learnReviewItems;
+  try {
+    learnReviewItems = async d => d;                 // not what this test is about
+    /* The replacement has to survive learnIngest's own gates, which want at least one
+       library word and no unknowns — so it is built from his real library rather than
+       from invented Hebrew, and the test then says what it means whatever that holds. */
+    const lib = libAll();
+    const kn = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
+    const FIXED = kn[0] + " " + kn[1];
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([
+      { id: "b1", he: "הלכתי לבית", tr: "halakhti labayit", type: "sentence",
+        src: "claude", uses: [] },
+      { id: "b2", he: "כואב לי הראש", tr: "ko'ev li harosh", type: "sentence",
+        src: "claude", uses: [] },
+      /* Same words, HIS. A file has no business withdrawing something it did not put
+         there, and this is the row that proves it does not. */
+      { id: "b3", he: "הלכתי לבית", tr: "halakhti labayit", type: "sentence",
+        src: "", uses: [] }
+    ]));
+    window.fetch = () => Promise.resolve({ ok: true, status: 200, json: async () => ({
+      version: 4,
+      retired: [{ he: "הלכתי לבית" }],
+      items: [{ he: FIXED, tr: "halakhti habayta", en: "I went home",
+                type: "sentence" }]
+    }) });
+    await contentIngest();
+    const bank = bankAll();
+    assertTrue(!bank.some(b => b.he === "הלכתי לבית" && b.src === "claude"),
+               "the wrong form is gone");
+    assertTrue(bank.some(b => b.he === "הלכתי לבית" && b.src !== "claude"),
+               "and an identical sentence he owns is untouched");
+    assertTrue(bank.some(b => b.he === FIXED),
+               "the correction banked in the same pass — which is what a fix is");
+    assertTrue(bank.some(b => b.he === "כואב לי הראש"), "unrelated content is left alone");
+    assertEq(contentLast().retired, 1, "and the note says how many were withdrawn");
+    assertEq(lsGet(CONTENT_V_KEY), "4", "the version stamps, so it does not run again");
+  } finally {
+    window.fetch = realFetch; learnReviewItems = realReview;
     const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
     put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
     rebuildTrIndex();

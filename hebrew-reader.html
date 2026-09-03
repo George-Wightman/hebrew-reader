@@ -401,9 +401,29 @@
   .uh-ans { background: var(--accent-soft); border-left: 2px solid var(--accent);
             border-radius: 0 8px 8px 0; padding: 9px 11px; margin: 4px 0 12px; }
   .uh-ansq { font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
-  .uh-ansa { font-size: .86rem; line-height: 1.5; white-space: pre-wrap; }
-  .uh-ansa.bad { color: var(--bad); }
+  /* THE COACH'S OWN VOICE, and the same reasoning as .lcoach on the end screen: the
+     world's serif because this is a person talking, not the app reporting. That is the
+     coach's mark across the whole app now, and it is deliberately typographic rather
+     than a colour — style guide §3 has gold and teal spoken for, and a serif reads as
+     one voice on paper and in a panel alike. */
+  .uh-ansa { font-family: var(--display); font-size: .92rem; line-height: 1.55;
+             white-space: pre-wrap; }
+  .uh-ansa.bad { color: var(--bad); font-family: inherit; font-size: .86rem; }
   .uh-ans .uh-note { margin-top: 7px; }
+  /* AN EARLIER SITTING. Readable and copyable, never sent — George: "if it was a
+     conversation from a different thread it goes to a lighter/ faded colour". Faded
+     rather than hidden behind a toggle, because the whole reason he wanted them kept is
+     to read one and lift something out of it for a new question. */
+  .uh-ans.past { background: none; border-left-color: var(--hair); opacity: .58; }
+  .uh-ans.past .uh-ansa { font-size: .86rem; }
+  /* Where one sitting ends and the next begins. A rule with a word on it rather than a
+     heading: the transcript is one column and this is a seam in it, not a section. */
+  .uh-seam { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px;
+             font-size: .68rem; letter-spacing: .1em; text-transform: uppercase;
+             color: var(--faint); }
+  .uh-seam:before, .uh-seam:after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+  .uh-subj { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase;
+             color: var(--faint); margin-bottom: 4px; }
 
   .uh-search { width: 100%; padding: 8px 10px; font: inherit; font-size: .86rem;
                border: 1px solid var(--hair); border-radius: 8px; margin: 8px 0 2px; }
@@ -2142,13 +2162,19 @@
   <button class="navstar" id="aiStar" type="button" title="AI activity" aria-label="AI activity">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8c.62 5.2 4.98 9.56 10.2 10.2-5.22.62-9.58 4.98-10.2 10.2-.62-5.22-4.98-9.58-10.2-10.2 5.22-.64 9.58-5 10.2-10.2z"/></svg>
   </button>
-  <!-- Under the hood. A magnifier, not a bug: the panel's job is not only faults, it is
-       "why is the app behaving this way", which is most of what he wants it for. Third
-       in the same row as the flag and the star because those two are the features that
-       actually get used, and always-there-one-tap is the reason why. -->
-  <button class="navstar" id="uhBtn" type="button" title="Under the hood — why the app did that"
-          aria-label="Under the hood">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.4 2.4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm5.9 11.3 1.4-1.4 4.6 4.6a1 1 0 0 1-1.4 1.4l-4.6-4.6z"/></svg>
+  <!-- THE COACH. This was a magnifier and the panel behind it was called Under the hood;
+       the panel is unchanged and still the evidence, but the way in is now a conversation
+       you can keep having, so the control says who you are talking to rather than what
+       you are looking through. George: "the coach is always with me, without it meaning
+       nothing effect."
+
+       Third in the same row as the flag and the star, and those two deliberately stay:
+       the star is a LOG — did the call fire, did it fail — which is how the coach itself
+       gets diagnosed when the coach is the thing that is broken, and the flag goes to
+       Claude rather than to a model. Same shape, different jobs. -->
+  <button class="navstar" id="uhBtn" type="button" title="The coach — ask about what you're doing"
+          aria-label="The coach">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c5.3 0 9.6 3.5 9.6 7.9 0 4.3-4.3 7.8-9.6 7.8-.9 0-1.8-.1-2.6-.3l-5 2.9a.5.5 0 0 1-.8-.5l.9-4.2C2.9 14.8 2.4 12.8 2.4 10.5c0-4.4 4.3-7.9 9.6-7.9z"/></svg>
   </button>
   <button class="navgear" id="settingsBtn">⚙ Settings</button>
 </nav>
@@ -2901,7 +2927,7 @@
 <!-- Under the hood. Everything inside is built in JS from the inspector registry — the
      markup here is only the furniture that has to stay put while the body scrolls. -->
 <div class="modal-backdrop" id="uhModal" style="display:none">
-  <div class="modal uh" role="dialog" aria-modal="true" aria-label="Under the hood">
+  <div class="modal uh" role="dialog" aria-modal="true" aria-label="The coach">
     <div class="uh-head">
       <button class="uh-back" id="uhBack" type="button" aria-label="Back">‹</button>
       <div class="uh-crumbs" id="uhCrumbs"></div>
@@ -13485,8 +13511,8 @@ UH.root = function (id, st) {
   const counts = { "new": 0, weak: 0, progressing: 0, strong: 0 };
   Object.keys(lib).forEach(k => { counts[srsStrengthBoth(srs, k)]++; });
   return {
-    title: "Under the hood",
-    subtitle: "Why the app did that",
+    title: "The coach",
+    subtitle: "Ask about anything the app just did",
     search: true,
     sections: [{
       name: "Elsewhere", open: true, rows: [
@@ -13578,21 +13604,18 @@ function uhGo(kind, id) {
   const here = uhStack[uhStack.length - 1];
   if (here && here.kind === kind && here.id === id) return;
   uhStack.push({ kind: kind, id: id });
-  uhAnswer = null;
   uhPushHist();
   uhRender();
 }
 function uhBackOne() {
   if (uhStack.length <= 1) return false;
   uhStack.pop();
-  uhAnswer = null;
   uhRender();
   return true;
 }
 function uhJump(i) {
   if (i < 0 || i >= uhStack.length - 1) return;
   uhStack = uhStack.slice(0, i + 1);
-  uhAnswer = null;
   uhRender();
 }
 
@@ -13610,7 +13633,7 @@ function uhPushHist() {
 window.addEventListener("popstate", () => {
   if (!uhHistOn) return;
   uhHistOn = false;
-  if (uhStack.length > 1) { uhStack.pop(); uhAnswer = null; uhPushHist(); uhRender(); }
+  if (uhStack.length > 1) { uhStack.pop(); uhPushHist(); uhRender(); }
   else uhModalOpen(false);
 });
 
@@ -13638,7 +13661,6 @@ function uhModalOpen(on, at) {
     uhStack.push(start);
   }
   uhQuery = "";
-  uhAnswer = null;
   uhPushHist();
   uhRender();
 }
@@ -13798,7 +13820,8 @@ function uhRender() {
   /* After the heading, before the report — so the answer is the first thing read and the
      evidence it was given is the next, on the same screen. Slotted between the title and
      the subtitle first, which split the heading in half. */
-  if (uhAnswer) body.append(uhAnswerBlock());
+  const thread = uhThreadBlock();
+  if (thread) body.append(thread);
 
   if (rep.search) body.append(uhSearchBox(st));
 
@@ -13863,13 +13886,13 @@ function uhRender() {
   const q = document.createElement("input");
   q.type = "text";
   q.className = "uh-q";
-  q.placeholder = "Ask about this…";
-  q.disabled = !!(uhAnswer && uhAnswer.busy);
+  q.placeholder = "Ask the coach about this…";
+  q.disabled = !!coachBusy;
   const go = document.createElement("button");
   go.className = "btn secondary";
   go.type = "submit";
-  go.textContent = (uhAnswer && uhAnswer.busy) ? "Asking…" : "Ask";
-  go.disabled = !!(uhAnswer && uhAnswer.busy);
+  go.textContent = coachBusy ? "Asking…" : "Ask";
+  go.disabled = !!coachBusy;
   ask.onsubmit = (e) => {
     e.preventDefault();
     const text = q.value.trim();
@@ -13882,32 +13905,87 @@ function uhRender() {
 /* Above the report, never instead of it. Everything the answer claims is checkable
    against the numbers immediately below it, which is the only honest way to show a
    model's reading of a fragment. */
-function uhAnswerBlock() {
+function uhTurnBlock(turn, past) {
   const box = document.createElement("div");
-  box.className = "uh-ans";
+  box.className = "uh-ans" + (past ? " past" : "");
+  if (turn.subject) {
+    const s = document.createElement("div");
+    s.className = "uh-subj";
+    s.textContent = turn.subject;
+    box.append(s);
+  }
   const q = document.createElement("div");
   q.className = "uh-ansq";
-  q.textContent = uhAnswer.q;
+  q.textContent = turn.q;
   box.append(q);
   const a = document.createElement("div");
-  a.className = "uh-ansa" + (uhAnswer.err ? " bad" : "");
-  a.textContent = uhAnswer.busy ? "Reading the code that decided this…"
-                : uhAnswer.err ? "Could not ask: " + uhAnswer.err
-                : uhAnswer.a;
+  a.className = "uh-ansa" + (turn.err ? " bad" : "");
+  a.textContent = turn.busy ? "Reading the code that decided this…"
+                : turn.err ? "Could not ask: " + turn.err
+                : turn.a;
   box.append(a);
-  if (!uhAnswer.busy && !uhAnswer.err) {
+  return box;
+}
+/* The whole transcript, oldest first, with a seam where each earlier sitting ended. Past
+   sittings are faded rather than hidden: they are kept precisely so he can read one and
+   lift something out of it, which a collapsed toggle would make into two taps.
+
+   Windowed at COACH_RENDER_MAX for the same reason the drill's road windows past twelve —
+   a transcript longer than the panel is a scroll, not a feature. */
+function uhThreadBlock() {
+  const store = coachAll();
+  if (!store.live.length && !store.past.length && !coachBusy) return null;
+  const wrap = document.createElement("div");
+  let budget = COACH_RENDER_MAX;
+  const live = store.live.slice(-budget);
+  budget -= live.length;
+  const past = [];
+  for (let i = store.past.length - 1; i >= 0 && budget > 0; i--) {
+    const sit = store.past[i].slice(-budget);
+    if (sit.length) past.unshift(sit);
+    budget -= sit.length;
+  }
+  past.forEach(sit => {
+    const seam = document.createElement("div");
+    seam.className = "uh-seam";
+    seam.textContent = "earlier";
+    wrap.append(seam);
+    sit.forEach(t => wrap.append(uhTurnBlock(t, true)));
+  });
+  if (past.length && (live.length || coachBusy)) {
+    const seam = document.createElement("div");
+    seam.className = "uh-seam";
+    seam.textContent = "now";
+    wrap.append(seam);
+  }
+  live.forEach(t => wrap.append(uhTurnBlock(t, false)));
+  if (coachBusy) wrap.append(uhTurnBlock(
+    { q: coachBusy.q, subject: coachBusy.subject, a: "", err: "", busy: true }, false));
+  if (live.length && !coachBusy) {
     const warn = document.createElement("div");
     warn.className = "uh-note";
     warn.textContent = "Answered from this panel and the rules named on it — not the " +
                        "whole app. Check it against the numbers below.";
-    box.append(warn);
+    wrap.append(warn);
   }
-  return box;
+  return wrap;
 }
+/* Everything he can see, for the clipboard and for the flag. Past sittings included: they
+   are on the screen he is flagging from, so leaving them out would send me something
+   other than what he was looking at. */
 function uhAnswerText() {
-  if (!uhAnswer || uhAnswer.busy) return "";
-  const lines = ["", "", "## Asked in the panel", "Q: " + uhAnswer.q,
-                 "A: " + (uhAnswer.err ? "(failed: " + uhAnswer.err + ")" : uhAnswer.a)];
+  const store = coachAll();
+  const sits = store.past.concat(store.live.length ? [store.live] : []);
+  if (!sits.length) return "";
+  const lines = ["", "", "## Asked the coach"];
+  sits.forEach((sit, i) => {
+    if (i) lines.push("");
+    if (i < store.past.length) lines.push("(an earlier sitting)");
+    sit.forEach(t => {
+      lines.push((t.subject ? "[" + t.subject + "] " : "") + "Q: " + t.q);
+      lines.push("A: " + (t.err ? "(failed: " + t.err + ")" : t.a));
+    });
+  });
   return lines.join("\n");
 }
 
@@ -14016,7 +14094,136 @@ function uhRulesOn(rep) {
   }));
   return names;
 }
-async function uhAskParts(rep, question) {
+/* ---- the thread ---------------------------------------------------------------
+   George: "I would like 1 thread that follows, but more jsut for my viewing ... if it was
+   a conversation from a different thread it goes to a lighter/ faded colour, then after
+   the app is closed and opened it resets dont want a crazy long conversation. Maybe after
+   like 30 mins."
+
+   A SITTING is the unit. It ends two ways — the app being opened, and half an hour of
+   silence — and both are cheap, so both are implemented rather than choosing. Moving
+   between a card, a word and a node does NOT end one: that is the whole point, and it is
+   what makes "why that word and not this one" answerable, because the earlier turn is
+   still in the prompt when he asks it.
+
+   Persisted on every turn rather than at unload. A phone kills a backgrounded tab without
+   warning and beforeunload is not reliably delivered there, so anything written only on
+   the way out is a sitting he loses. */
+const COACH_KEY        = "hvr_coach";
+const COACH_IDLE_MS    = 30 * 60 * 1000;
+const COACH_TURN_MAX   = 24;   // backstop within one sitting
+const COACH_PAST_MAX   = 6;    // sittings kept
+const COACH_RENDER_MAX = 20;   // turns drawn, newest kept
+
+function coachBlank() { return { live: [], liveAt: 0, past: [] }; }
+function coachTidy(v) {
+  const out = coachBlank();
+  if (!v || typeof v !== "object") return out;
+  const turn = t => ({ q: String((t && t.q) || ""), a: String((t && t.a) || ""),
+                       err: String((t && t.err) || ""), subject: String((t && t.subject) || ""),
+                       ts: Number((t && t.ts) || 0) || 0 });
+  if (Array.isArray(v.live)) out.live = v.live.filter(Boolean).map(turn).slice(-COACH_TURN_MAX);
+  out.liveAt = Number(v.liveAt) || 0;
+  if (Array.isArray(v.past)) out.past = v.past.filter(a => Array.isArray(a) && a.length)
+    .map(a => a.filter(Boolean).map(turn)).slice(-COACH_PAST_MAX);
+  return out;
+}
+function coachAll() {
+  try { return coachTidy(JSON.parse(lsGet(COACH_KEY))); } catch (e) { return coachBlank(); }
+}
+function coachSave(v) { try { lsSet(COACH_KEY, JSON.stringify(coachTidy(v))); } catch (e) {} }
+
+/* Pure, so the two ways a sitting ends can be tested without a clock or a page load. */
+function coachArchive(store) {
+  const s = coachTidy(store);
+  if (!s.live.length) { s.liveAt = 0; return s; }
+  s.past = s.past.concat([s.live]).slice(-COACH_PAST_MAX);
+  s.live = [];
+  s.liveAt = 0;
+  return s;
+}
+function coachRollIdle(store, now) {
+  const s = coachTidy(store);
+  if (s.live.length && s.liveAt && (now - s.liveAt) > COACH_IDLE_MS) return coachArchive(s);
+  return s;
+}
+function coachAppend(store, turn, now) {
+  const s = coachRollIdle(store, now);
+  s.live = s.live.concat([turn]).slice(-COACH_TURN_MAX);
+  s.liveAt = now;
+  return s;
+}
+/* Called once at load, BEFORE anything renders. The in-memory thread is empty on a fresh
+   page anyway; this is what makes the persisted one behave the same way rather than
+   resuming yesterday's conversation as though no time had passed. */
+function coachBoot() {
+  try {
+    const s = coachAll();
+    if (s.live.length) coachSave(coachArchive(s));
+  } catch (e) {}
+}
+
+/* ---- the one guard on a cheap model ------------------------------------------
+   George: "I think we only use the cheap model for this ... use multiple calls to verify
+   it." The model choice is taken; the verification is not, and deliberately.
+
+   A second lite call grading the first is the exact shape
+   2026-09-03-the-judge-was-weaker-than-the-writer-design.md named as the bug — two models
+   of the same weight on the same fragment share their failure modes and agree confidently
+   when both are wrong. So the app checks the figures itself instead of asking again.
+
+   SUBSTRING, and high-precision by design. Small integers he might be counting with are in
+   the payload almost always, so this does not fire on "2 words left"; what it catches is a
+   distinctive invented figure — a threshold, a stability, a difficulty — which is the
+   failure that actually misleads him. Same principle as composeCredit: the app derives,
+   the model only points. */
+function coachUncited(answer, payload) {
+  const hay = String(payload || "");
+  const seen = {}, out = [];
+  String(answer || "").replace(/\d+(?:\.\d+)?/g, m => {
+    if (!seen[m] && hay.indexOf(m) === -1) { seen[m] = 1; out.push(m); }
+    return m;
+  });
+  return out;
+}
+
+/* What actually goes to the model. The CURRENT subject's report in full, and every earlier
+   turn in this sitting as its text only — so a sitting that walks six words is one report
+   plus twelve short exchanges, not six reports. Past sittings are not here at all. */
+function coachPrompt(rep, code, thread, subject, question, retryOn) {
+  const hist = (thread || []).filter(t => t && t.a && !t.err);
+  return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
+    "learning conversational Hebrew to talk with his partner's grandfather. He is using " +
+    "an app you built with him and is asking you about what it is doing.\n\n" +
+    "You are the SAME coach who runs his sentence-building sessions. One voice: warm, " +
+    "direct, never padded, never congratulatory about nothing.\n\n" +
+    /* KEPT VERBATIM ACROSS THE REWRITE, and a test holds it there. What follows is a
+       fragment of a much larger single-file app, and a model not told so will answer
+       about the app it imagines rather than the one he is holding. */
+    "What follows is a fragment of a much larger single-file Hebrew learning app: a " +
+    "diagnostic panel he is reading, and the source of the functions that produced it.\n\n" +
+    "Rules you must follow:\n" +
+    "- Answer from the panel and code below and NOTHING else. If what is shown cannot " +
+    "answer him, say so plainly and say what you would need. Never guess at code you " +
+    "cannot see.\n" +
+    "- Every number you state must appear in what you were given. Do not compute new " +
+    "figures, do not estimate, and do not round.\n" +
+    "- Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
+    "- Do not suggest edits to the app. Explain what it is doing and why.\n" +
+    (retryOn && retryOn.length
+      ? "\nYOUR LAST ANSWER USED FIGURES THAT ARE NOT IN THE MATERIAL: " +
+        retryOn.join(", ") + ". Answer again using only figures that are present.\n"
+      : "") +
+    (hist.length ? "\n=== EARLIER IN THIS CONVERSATION ===\n" + hist.map(t =>
+        (t.subject ? "(about " + t.subject + ")\n" : "") +
+        "He asked: " + t.q + "\nYou said: " + t.a).join("\n\n") + "\n" : "") +
+    "\n=== WHAT HE IS LOOKING AT NOW" + (subject ? " (" + subject + ")" : "") +
+    " ===\n" + uhText(rep) +
+    (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
+    "\n\n=== HIS QUESTION ===\n" + question;
+}
+
+async function uhAskParts(rep, question, thread, subject, retryOn) {
   const src = await uhSourceText();
   const rules = uhRulesOn(rep);
   const wanted = [];
@@ -14025,35 +14232,51 @@ async function uhAskParts(rep, question) {
     (UH_RULE_CONSTS[r] || []).forEach(c => { if (wanted.indexOf(c) === -1) wanted.push(c); });
   });
   const code = wanted.map(n => uhSourceOf(src, n)).filter(Boolean).join("\n\n");
-  return [{ text:
-    "You are looking at a fragment of a much larger single-file Hebrew learning app. " +
-    "Below is a diagnostic panel the user is reading, and the source of the functions " +
-    "that produced it. Answer his question from THIS CODE AND THIS STATE.\n\n" +
-    "Rules you must follow:\n" +
-    "- If what is shown is not enough to answer, say so plainly and say what you would " +
-    "need. Do not guess at code you cannot see.\n" +
-    "- Quote the actual numbers from the panel rather than describing them generally.\n" +
-    "- Be brief. He is reading this on a phone, mid-session.\n" +
-    "- Do not suggest edits to the app. Explain what it is doing and why.\n\n" +
-    "=== WHAT THE PANEL SHOWS ===\n" + uhText(rep) +
-    (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
-    "\n\n=== HIS QUESTION ===\n" + question }];
+  return [{ text: coachPrompt(rep, code, thread, subject, question, retryOn) }];
 }
-let uhAnswer = null;      // { q, a, err, busy } for the level on screen; cleared on navigation
+
+let coachBusy = null;     // { q, subject } while a call is in flight; the thread holds the rest
 async function uhAsk(rep, question) {
-  uhAnswer = { q: question, a: "", err: "", busy: true };
+  const here = uhStack[uhStack.length - 1] || { kind: "root", id: "" };
+  const subject = uhLabelFor(here.kind, here.id, uhState());
+  let store = coachRollIdle(coachAll(), Date.now());
+  coachSave(store);
+  coachBusy = { q: question, subject: subject };
   uhRender();
+  let a = "", err = "";
   try {
-    const parts = await uhAskParts(rep, question);
-    /* `null` models is the strong pool — this is reasoning about code, and the weaker
-       model would be a false economy against a cap of 20 a day that real use never
-       approaches. One interactive call, so the per-minute limit that actually bites is
-       not in play. Logged by geminiRequest like everything else, with no new bookkeeping. */
-    const out = await geminiRequest(parts, null, { label: "Under the hood — a question" });
-    uhAnswer = { q: question, a: String(out || "").trim(), err: "", busy: false };
+    /* GEMINI_MODELS_FAST, reversing the comment this call used to carry. That comment
+       argued the strong pool was worth it "against a cap of 20 a day that real use never
+       approaches" — true of a rare debug question, false the moment this becomes the
+       thing he asks all day. The fast pool is 500 and is lite-first with flash as its own
+       fallback, so a lite failure already escalates without new code. His call, and the
+       reasoning is in the spec so nobody restores it by accident. */
+    const parts = await uhAskParts(rep, question, store.live, subject, null);
+    let out = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
+                                         { label: "The coach — a question" }) || "").trim();
+    let bad = coachUncited(out, parts[0].text);
+    if (bad.length) {
+      /* ONE retry, naming what was wrong. Not a verify pass — the check is mechanical and
+         has already found the fault; this is giving him a second chance at the same
+         question, which is the only thing another call can honestly buy here. */
+      const again = await uhAskParts(rep, question, store.live, subject, bad);
+      const out2 = String(await geminiRequest(again, GEMINI_MODELS_FAST,
+                                              { label: "The coach — again, with the figures" }) || "").trim();
+      if (out2) { out = out2; bad = coachUncited(out2, again[0].text); }
+    }
+    a = out;
+    /* It still renders. The evidence is on the same screen underneath, which is this
+       panel's own argument for why showing a model's reading of a fragment is safe — so
+       a flagged figure is a caveat, never a swallowed answer. */
+    if (a && bad.length) a += "\n\n(Some figures here — " + bad.join(", ") +
+      " — are not in what the app gave me. Check them against the report below.)";
   } catch (e) {
-    uhAnswer = { q: question, a: "", err: (e && e.message) || String(e), busy: false };
+    err = (e && e.message) || String(e);
   }
+  store = coachAppend(coachAll(), { q: question, a: a, err: err,
+                                    subject: subject, ts: Date.now() }, Date.now());
+  coachSave(store);
+  coachBusy = null;
   uhRender();
 }
 
@@ -27527,6 +27750,11 @@ renderLibrary();
 renderHistory();
 archSetOpen(lsGet(ARCH_OPEN_KEY) === "1");   // closed unless explicitly opened
 learnBadge();
+/* A sitting with the coach ends when the app is opened. George: "after the app is closed
+   and opened it resets dont want a crazy long conversation." Before setView so nothing
+   can render yesterday's thread as though it were live, and before the sync so an
+   archived sitting is what gets merged. */
+coachBoot();
 setView(lsGet(VIEW_KEY) || "learn");
 /* Last, so a hint about an empty library is only shown once the library has actually
    been seeded and rendered. */
@@ -31581,24 +31809,95 @@ T("uhAskParts: a report naming no rules still asks, without empty code headings"
     assertTrue(parts[0].text.indexOf("what is this") !== -1, "the question still goes");
   } finally { uhSrcCache = saved; }
 });
-T("uhAnswerText: an answer rides the flag with its question attached", () => {
+T("uhAnswerText: the whole transcript rides the flag, past sittings included", () => {
   /* THE MITIGATION THAT MATTERS. A wrong answer he acts on is worse than no answer — but
      if I can see what he was told, I correct it in a line instead of arguing against a
-     prior I cannot see. */
-  const saved = uhAnswer;
+     prior I cannot see. Past sittings are on the screen he flags from, so leaving them
+     out would send me something other than what he was looking at. */
+  const saved = lsGet(COACH_KEY);
   try {
-    uhAnswer = null;
+    lsSet(COACH_KEY, JSON.stringify(coachBlank()));
     assertEq(uhAnswerText(), "", "nothing asked, nothing attached");
-    uhAnswer = { q: "why weak", a: "because the miss rate is 0.45", err: "", busy: false };
+    coachSave({ liveAt: 5, past: [[{ q: "old one", a: "an old answer", err: "", subject: "בית", ts: 1 }]],
+                live: [{ q: "why weak", a: "because the miss rate is 0.45", err: "", subject: "card 3", ts: 5 }] });
     const t = uhAnswerText();
     assertTrue(t.indexOf("why weak") !== -1, "the question rides along");
     assertTrue(t.indexOf("0.45") !== -1, "and so does what it was told");
-    uhAnswer = { q: "why weak", a: "", err: "no key configured", busy: false };
+    assertTrue(t.indexOf("card 3") !== -1, "with the subject it was asked about");
+    assertTrue(t.indexOf("old one") !== -1, "and an earlier sitting comes too");
+    coachSave({ liveAt: 5, past: [],
+                live: [{ q: "why weak", a: "", err: "no key configured", subject: "", ts: 5 }] });
     assertTrue(/failed: no key configured/.test(uhAnswerText()),
       "a failure is reported as one, not as silence");
-    uhAnswer = { q: "x", a: "", err: "", busy: true };
-    assertEq(uhAnswerText(), "", "a question still in flight attaches nothing");
-  } finally { uhAnswer = saved; }
+  } finally { lsSet(COACH_KEY, saved === null ? JSON.stringify(coachBlank()) : saved); }
+});
+T("coachUncited: catches an invented figure and not a counted one", () => {
+  /* THE ONLY GUARD ON A CHEAP MODEL, and deliberately not a second model grading the
+     first — that is the judge-weaker-than-the-writer trap. Substring, and high-precision
+     on purpose: it must not fire on "2 words left". */
+  const payload = "difficulty 6.5 · stability 21d · miss rate 0.40 · 2 of 6 words";
+  assertEq(coachUncited("it is weak because difficulty is 6.5, over the 0.40 line", payload), [],
+    "figures that are in the material pass");
+  assertEq(coachUncited("its stability is 8.3 days", payload), ["8.3"],
+    "one that is not is caught");
+  assertEq(coachUncited("you have 2 words left of 6", payload), [],
+    "counting with small integers present in the material does not fire");
+  assertEq(coachUncited("difficulty 6.5 and again 6.5 and also 9.9", payload), ["9.9"],
+    "each uncited figure is reported once");
+  assertEq(coachUncited("no numbers at all", payload), [], "prose alone is clean");
+  assertEq(coachUncited("", payload), [], "and so is nothing");
+});
+T("coach: a sitting ends on idle and on load, but not on navigation", () => {
+  /* George: "after the app is closed and opened it resets ... Maybe after like 30 mins."
+     Moving between subjects must NOT end one — that is what makes a follow-up about two
+     different words answerable at all. */
+  const now = 1000000000;
+  const one = { live: [{ q: "a", a: "1", err: "", subject: "card 1", ts: now }],
+                liveAt: now, past: [] };
+  const fresh = coachAppend(one, { q: "b", a: "2", err: "", subject: "בית", ts: now + 60000 }, now + 60000);
+  assertEq(fresh.live.length, 2, "a second question a minute later stays in the sitting");
+  assertEq(fresh.past.length, 0, "and nothing is archived");
+  const stale = coachAppend(one, { q: "b", a: "2", err: "", subject: "בית", ts: now + COACH_IDLE_MS + 1 },
+                            now + COACH_IDLE_MS + 1);
+  assertEq(stale.live.length, 1, "past the idle window the new turn opens a fresh sitting");
+  assertEq(stale.past.length, 1, "and the old one is kept");
+  assertEq(stale.past[0][0].q, "a", "intact");
+  const booted = coachArchive(one);
+  assertEq(booted.live.length, 0, "a load archives whatever was live regardless of age");
+  assertEq(booted.past.length, 1);
+  assertEq(coachArchive(coachBlank()).past.length, 0, "an empty live thread archives nothing");
+});
+T("coach: the sitting and the history are both bounded", () => {
+  let s = coachBlank();
+  for (let i = 0; i < COACH_TURN_MAX + 5; i++)
+    s = coachAppend(s, { q: "q" + i, a: "a" + i, err: "", subject: "", ts: 1 }, 1);
+  assertEq(s.live.length, COACH_TURN_MAX, "one sitting cannot grow forever");
+  assertEq(s.live[s.live.length - 1].q, "q" + (COACH_TURN_MAX + 4), "the newest turn is kept");
+  let t = coachBlank();
+  for (let i = 0; i < COACH_PAST_MAX + 3; i++)
+    t = coachArchive(coachAppend(t, { q: "q" + i, a: "a", err: "", subject: "", ts: 1 }, 1));
+  assertEq(t.past.length, COACH_PAST_MAX, "and neither can the history");
+});
+T("coachPrompt: sends the live thread and this subject's report, not past ones", () => {
+  /* The bound that keeps a long sitting cheap: one report, plus every earlier turn as
+     text. Six words walked is one report and twelve exchanges, not six reports. */
+  const rep = { title: "רכבת", subtitle: "train", sections: [
+    { name: "Say — production", rows: [{ label: "Stability", value: "4.2 days" }] }] };
+  const thread = [{ q: "why is this weak", a: "its miss rate is high", err: "", subject: "מטוס", ts: 1 },
+                  { q: "and this one", a: "", err: "no key", subject: "רכבת", ts: 2 }];
+  const p = coachPrompt(rep, "function wordReady() {}", thread, "רכבת", "why that one and not this", null);
+  assertTrue(p.indexOf("why is this weak") !== -1, "an earlier turn is in the prompt");
+  assertTrue(p.indexOf("its miss rate is high") !== -1, "with what was said back");
+  assertTrue(p.indexOf("about מטוס") !== -1, "and the subject it was about");
+  assertTrue(p.indexOf("and this one") === -1, "a turn that failed carries nothing forward");
+  assertTrue(p.indexOf("4.2 days") !== -1, "the current subject's report goes in full");
+  assertTrue(p.indexOf("function wordReady") !== -1, "and the code that produced it");
+  assertTrue(p.indexOf("why that one and not this") !== -1, "and the question");
+  const first = coachPrompt(rep, "", [], "רכבת", "why", null);
+  assertTrue(first.indexOf("EARLIER IN THIS CONVERSATION") === -1,
+    "an empty thread means no heading claiming there is one");
+  const retry = coachPrompt(rep, "", [], "רכבת", "why", ["8.3"]);
+  assertTrue(retry.indexOf("8.3") !== -1, "a retry names the figures it must not repeat");
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },

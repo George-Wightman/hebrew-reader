@@ -22467,12 +22467,23 @@ async function learnTopUp(quiet) {
    is attached to it. A separate call re-reads the items cold, with no memory of
    having written them, and is markedly more willing to throw things away.
 
-   Runs on Flash-Lite deliberately: judging "would a person say this" is far easier
-   than composing, and Lite's allowance is 500/day against Flash's 20 — George is
-   currently using 1 of those 500. The economics are lopsided in the right
-   direction: a bank item is generated once and then drilled for months, so a
-   second request that meaningfully improves twelve permanent items is among the
-   cheapest quality available anywhere in this app. */
+   RUNS ON THE STRONG MODEL, and used to run on Lite for a reason that reads well and
+   was wrong. The old note here argued that judging "would a person say this" is far
+   easier than composing, so the judge could be the cheaper model. Half of that is true:
+   judging GRAMMAR is easier than composing. Judging naturalness is the harder half —
+   knowing what a person would actually say is exactly the knowledge a smaller model has
+   least of — and naturalness is the only thing this call exists to decide.
+
+   Measured, on 2026-09-03, by a native speaker sitting next to him: `הראש שלי כואב` for
+   "my head hurts" (English word order — Hebrew is `כואב לי הראש`), `לבית` for "home"
+   eight times over where `הביתה` was already in his library, `הראש שלי מלא היום`. Every
+   one of those passed a Lite review, or bypassed review entirely.
+
+   The economics still favour spending here, just in the other direction. This call runs
+   once per batch of ~12 where the WRITER runs once per batch of 8, so a strong judge is
+   cheaper per item defended than a strong writer — and it defends material that is then
+   drilled for months. That is the whole trade in this spec: sentenceWriteOne gives up
+   Flash so this can have it. */
 async function learnReviewItems(data) {
   const items = (data && Array.isArray(data.items)) ? data.items : [];
   if (items.length < 2) return data;           // nothing worth a round trip
@@ -22489,6 +22500,27 @@ async function learnReviewItems(data) {
     "- The adjective doesn't naturally go with that noun\n" +
     "- The Hebrew is ungrammatical, or the gender/number don't agree\n" +
     "- The English translation doesn't match the Hebrew\n" +
+    /* CAUGHT BY A NATIVE SPEAKER, 2026-09-03, and that is why they are worth their
+       length. Every other example in this prompt was invented by a model imagining how
+       a model fails; these are the actual sentences his girlfriend heard and said no
+       one would say. They are also the two failure MODES that got furthest — English
+       word order wearing correct Hebrew words, and a real word used where a different
+       real word belongs — neither of which any vocabulary gate can see. */
+    "- IT IS ENGLISH WORD ORDER IN HEBREW WORDS. This is the most common fault in this " +
+    "material and the hardest to see, because every word is right. Hebrew puts the " +
+    "experiencer in the dative for sensation: it is \"כואב לי הראש\", never " +
+    "\"הראש שלי כואב\"; \"חם לי\", never \"אני מרגיש חם\". Reject the English shape " +
+    "even when it is comprehensible.\n" +
+    "- A REAL WORD IS STANDING WHERE A DIFFERENT REAL WORD BELONGS. \"לבית\" is \"to " +
+    "the house (of)\" and needs a possessor; \"home\" is \"הביתה\". Rain falls — " +
+    "\"יורד גשם\", not \"יש גשם\". You drink tea, you do not take it. A sentence can " +
+    "be built entirely from known words and still be wrong in exactly this way.\n" +
+    "- THE HEBREW MEANS SOMETHING ELSE THAN THE ENGLISH SAYS. He produces from the " +
+    "English, so this teaches him to say the wrong sentence confidently. " +
+    "\"הייתי שמח לראות אותך\" is \"I would be glad to see you\", not \"I was happy to " +
+    "see you\" (that is \"שמחתי לראות אותך\"). Check the two lines against each other, " +
+    "not just the Hebrew on its own.\n" +
+    "- The English is a question and the Hebrew has no question mark, or vice versa\n" +
     /* The old rule here was "reject it if it's past or future tense, or longer than
        about six words". That was right when every item was supposed to be a
        three-word present-tense sentence, and it is now exactly backwards: it would
@@ -22507,7 +22539,7 @@ async function learnReviewItems(data) {
     "happy to defend it as natural Hebrew. If most fail, keep few — that is the " +
     "correct outcome, not a problem.";
   try {
-    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS,
                                                 { waitOnRateLimit: true,   // see sentenceWriteOne
                                                   label: "Checking the new sentences" }));
     const keep = (out && Array.isArray(out.keep)) ? out.keep : null;
@@ -22674,6 +22706,13 @@ function learnIngest(data) {
    See docs/superpowers/specs/2026-08-31-prebaked-node-content-design.md. */
 const CONTENT_URL = "./content/nodes.json";
 const CONTENT_V_KEY = "hvr_content_v";
+/* What one ingest may spend on reviewing what it fetched — see contentIngest. Twelve
+   matches reviewExistingBank, which is the size a listing of he/tr/en stays readable at;
+   four batches is 48 items for 4 of the day's 20 strong requests, which covers any
+   ordinary top-up outright and caps a fresh install rather than letting it scale with
+   the file. */
+const CONTENT_REVIEW_BATCH = 12;
+const CONTENT_REVIEW_BATCHES = 4;
 function contentVersion() { return parseInt(lsGet(CONTENT_V_KEY), 10) || 0; }
 
 /* Purely an optimisation, and deliberately not the thing that makes this safe to run
@@ -22741,6 +22780,55 @@ async function contentIngest() {
                              items: data && data.items && data.items.length, have: had });
     return 0;
   }
+  /* THE REVIEW THE SKILL COULD NOT RUN. generate-node-content says outright that
+     learnReviewItems "is not available from a fixture browser" — the keys deliberately
+     never sync (SYNC_NEVER_SET holds GEMINI_KEY) — and offers "either skip it, or ask
+     George to run the batch past it on his own device". It was skipped, three times, for
+     330 sentences, and a native speaker found the damage on 2026-09-03.
+
+     His device is the one place the key exists, so the review happens here.
+
+     BOUNDED, because this runs at page load against a 20/day strong pool. Only items
+     this device does not already hold are worth a request — a re-ingest, a second
+     device, a cache clear all re-walk the same file — and even then the spend is capped
+     rather than proportional to the file. A normal top-up is one or two batches and
+     falls well inside it; a 330-item fresh install reviews what it can afford and takes
+     the rest on trust, which is the right trade against blocking his session or eating
+     the pool the coach is about to want.
+
+     The honest place to check a big batch is still authoring time, which the test
+     harness in tools/ now makes possible. This is the safety net under it, not a
+     replacement for it. */
+  let reviewed = 0, unreviewed = 0;
+  try {
+    const have = bankAll();
+    const held = new Set(have.map(b => (b && b.type ? b.type : "sentence") + " " + (b && b.he)));
+    const fresh = [], dupes = [];
+    data.items.forEach(it => {
+      const key = ((it && it.type) || "sentence") + " " + (it && it.he);
+      (held.has(key) ? dupes : fresh).push(it);
+    });
+    const budget = CONTENT_REVIEW_BATCHES * CONTENT_REVIEW_BATCH;
+    const checked = [];
+    for (let i = 0; i < fresh.length && i < budget; i += CONTENT_REVIEW_BATCH) {
+      const batch = fresh.slice(i, i + CONTENT_REVIEW_BATCH);
+      /* Returns its input unchanged on any failure — no key, a malformed reply, an
+         empty keep list. That fallback is deliberately "ingest unreviewed" and never
+         "lose the batch": a review that did not happen must not cost him content. */
+      const out = await learnReviewItems({ items: batch });
+      const kept = (out && Array.isArray(out.items)) ? out.items : batch;
+      reviewed += batch.length;
+      kept.forEach(it => checked.push(it));
+    }
+    const spare = fresh.slice(Math.min(fresh.length, budget));
+    unreviewed = spare.length;
+    data = Object.assign({}, data, { items: checked.concat(spare, dupes) });
+  } catch (e) {
+    /* The review is an improvement, never a dependency — same contract it has
+       everywhere else. Fall through to the unreviewed file rather than lose it. */
+    contentNote("review-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
+  }
+
   let n = 0;
   try {
     n = learnIngest({ items: data.items.map(it => Object.assign({}, it, { src: "claude" })) });
@@ -22765,7 +22853,8 @@ async function contentIngest() {
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
-                            items: data.items.length, bank: bankAll().length });
+                            items: data.items.length, bank: bankAll().length,
+                            reviewed: reviewed, unreviewed: unreviewed });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -30905,6 +30994,92 @@ T("contentIngest: every exit records why, and a lost write is not stamped", asyn
     } finally { learnIngest = realIngest; }
   } finally {
     window.fetch = realFetch;
+    const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
+    rebuildTrIndex();
+  }
+});
+T("contentIngest: reviews what is new, never re-buys what it holds, never loses a batch", async () => {
+  /* The hole this closes: 330 sentences reached his bank with no naturalness check at
+     all, because generate-node-content could not reach a key from a fixture browser and
+     said so. Reviewing here is the fix; the three things that could go wrong with it are
+     spending per LOAD instead of per NEW ITEM, losing content when the review fails, and
+     letting the spend scale with the file. */
+  const realFetch = window.fetch, realLast = lsGet(CONTENT_LAST_KEY), realV = lsGet(CONTENT_V_KEY);
+  const realBank = lsGet(BANK_KEY);
+  const realReview = learnReviewItems, realIngest = learnIngest;
+  const file = items => () => Promise.resolve({ ok: true, status: 200,
+    json: async () => ({ version: 99, items: items }) });
+  let seenByReview = [], got = null;
+  try {
+    /* Writes as well as counts. contentIngest deliberately distrusts a bare return value
+       — a claim of N banked with nothing in the store is "banked-but-vanished", the
+       guard that stopped his phone stamping a version over a failed write — so a stub
+       that only counts fails that guard rather than testing what this test is about. */
+    learnIngest = d => {
+      got = d.items.slice();
+      const bank = bankAll();
+      d.items.forEach((it, i) => bank.push({ id: "t" + Date.now() + i, he: it.he, tr: it.tr,
+                                             type: it.type || "sentence", src: "claude", uses: [] }));
+      lsSet(BANK_KEY, JSON.stringify(bank));
+      return d.items.length;
+    };
+
+    /* ONE: an item already banked is not sent to the reviewer. A re-ingest — a second
+       device, a cache clear, the resident-app re-check — must cost nothing. */
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([{ id: "b1", he: "יש לי זמן", tr: "yesh li zman",
+                                      type: "sentence", src: "claude", uses: [] }]));
+    learnReviewItems = async d => { seenByReview.push(d.items.length); return d; };
+    seenByReview = [];
+    window.fetch = file([{ he: "יש לי זמן", tr: "yesh li zman", type: "sentence" },
+                         { he: "כואב לי הראש", tr: "ko'ev li harosh", type: "sentence" }]);
+    await contentIngest();
+    assertEq(seenByReview.length, 1, "one batch, holding only the new item");
+    assertEq(seenByReview[0], 1, "the item it already holds was not paid for again");
+    assertEq(got.length, 2, "and the held item still reaches learnIngest");
+
+    /* TWO: a reviewer that rejects still drops what it rejected. */
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([]));
+    learnReviewItems = async d => ({ items: d.items.filter(it => it.he !== "הראש שלי מלא") });
+    window.fetch = file([{ he: "הראש שלי מלא", tr: "harosh sheli male", type: "sentence" },
+                         { he: "כואב לי הראש", tr: "ko'ev li harosh", type: "sentence" }]);
+    await contentIngest();
+    assertEq(got.length, 1, "the rejected item did not reach the bank");
+    assertEq(got[0].he, "כואב לי הראש");
+
+    /* THREE: a review that THROWS must ingest the file unreviewed, not lose it. The
+       whole contract of this call everywhere else is "an improvement, never a
+       dependency", and content arriving over the network is where breaking it hurts
+       most — a bad response would silently starve the shelf. */
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([]));
+    learnReviewItems = async () => { throw new Error("429 forever"); };
+    window.fetch = file([{ he: "כואב לי הראש", tr: "ko'ev li harosh", type: "sentence" },
+                         { he: "חם לי היום", tr: "kham li hayom", type: "sentence" }]);
+    await contentIngest();
+    assertEq(got.length, 2, "both items banked despite the review failing");
+    assertEq(contentLast().stage, "ingested", "and the ingest still counts as a success");
+
+    /* FOUR: the spend is capped, and everything past the cap is still banked. A fresh
+       install holding 330 items must not try to buy 28 strong requests at page load. */
+    localStorage.removeItem(CONTENT_V_KEY);
+    lsSet(BANK_KEY, JSON.stringify([]));
+    seenByReview = [];
+    learnReviewItems = async d => { seenByReview.push(d.items.length); return d; };
+    const many = [];
+    for (let i = 0; i < CONTENT_REVIEW_BATCH * CONTENT_REVIEW_BATCHES + 9; i++) {
+      many.push({ he: "משפט מספר " + i, tr: "mishpat mispar " + i, type: "sentence" });
+    }
+    window.fetch = file(many);
+    await contentIngest();
+    assertEq(seenByReview.length, CONTENT_REVIEW_BATCHES, "it stops at the batch budget");
+    assertEq(got.length, many.length, "and the overflow is banked rather than dropped");
+    assertEq(contentLast().unreviewed, 9, "the note says how many went unchecked");
+  } finally {
+    window.fetch = realFetch;
+    learnReviewItems = realReview; learnIngest = realIngest;
     const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
     put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
     rebuildTrIndex();

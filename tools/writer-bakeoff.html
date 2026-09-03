@@ -28,6 +28,19 @@
   was free and the strong pool stays with the judge. If it does not, sentenceWriteOne goes
   back to Flash and the reserve gets re-cut.
 
+  RUN ONE, 2026-09-03: A 8/8 real, B 8/8 real, C lost to a 503 this harness mishandled.
+  His girlfriend — a native speaker, the same person who found the original problem —
+  marked all sixteen. Two things follow. Flash Lite wrote eight natural sentences out of
+  eight UNDER THE NEW PROMPT, which is real evidence that the prompt was the fault rather
+  than the model. And both arms hitting the ceiling means this instrument could not
+  separate them: eight briefs were too easy to discriminate with.
+
+  Hence THE GATE TEST below, which is the better measurement and needs no generation at
+  all. The bake-off asks "can this model write well". The gate test asks the question that
+  actually decides whether any of this worked: given the sentences a native speaker
+  already rejected, does the reviewer catch them — and how much good material does it
+  destroy in the process?
+
   MARKED BLIND. Every sentence is shuffled into one list with no arm attached, because a
   grader who can see the label marks the label. Nothing reveals which arm produced what
   until every item has a verdict.
@@ -86,15 +99,18 @@
 <body>
 <main>
   <h1>Writer bake-off</h1>
-  <p class="sub">Same eight briefs, three pipelines, marked blind. Tells us whether a cheap
-  writer with a strong judge really matches a strong writer.</p>
+  <p class="sub">Two measurements. <b>The bake-off</b> writes the same eight briefs three
+  ways and asks you to mark them blind. <b>The gate test</b> is the stronger one: it feeds
+  the reviewer 37 sentences already known to be bad and 15 known to be good, and reports
+  what it catches and what it wrongly kills.</p>
 
   <div class="panel">
     <label for="key">Google AI Studio API key</label>
     <input id="key" type="password" autocomplete="off" spellcheck="false"
            placeholder="paste it here — used from this tab only, never stored">
     <div class="marks">
-      <button class="go" id="run">Run all three</button>
+      <button class="go" id="run">Run the bake-off</button>
+      <button class="go" id="gate">Test the gate on known-bad</button>
       <button id="again" disabled>Start over</button>
     </div>
     <div id="log"></div>
@@ -106,10 +122,12 @@
 
 <script>
 /* The three arms. Model ids match hebrew-reader.html's GEMINI_MODELS / _FAST. */
+const FLASH = ["gemini-flash-latest", "gemini-flash-lite-latest"];       // GEMINI_MODELS
+const LITE  = ["gemini-flash-lite-latest", "gemini-flash-latest"];      // GEMINI_MODELS_FAST
 const ARMS = [
-  { id: "A", label: "Flash, one pass",              write: "gemini-flash-latest",      review: null },
-  { id: "B", label: "Flash Lite, one pass",         write: "gemini-flash-lite-latest", review: null },
-  { id: "C", label: "Flash Lite + Flash review",    write: "gemini-flash-lite-latest", review: "gemini-flash-latest" }
+  { id: "A", label: "Flash, one pass",           write: FLASH, review: null  },
+  { id: "B", label: "Flash Lite, one pass",      write: LITE,  review: null  },
+  { id: "C", label: "Flash Lite + Flash review", write: LITE,  review: FLASH }
 ];
 
 /* His actual working vocabulary, the 120 commonest words across content/nodes.json.
@@ -143,17 +161,38 @@ const BRIEFS = [
 const $ = s => document.querySelector(s);
 const log = m => { const l = $("#log"); l.textContent += m + "\n"; l.scrollTop = l.scrollHeight; };
 
-async function gemini(key, model, prompt) {
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
-              model + ":generateContent?key=" + encodeURIComponent(key);
-  const r = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-  });
-  if (!r.ok) throw new Error(model + " -> HTTP " + r.status + " " + (await r.text()).slice(0, 180));
-  const j = await r.json();
-  const t = (((j.candidates || [])[0] || {}).content || {}).parts;
-  return (t && t[0] && t[0].text) || "";
+/* WALKS THE MODEL LIST, because the app does and the first version of this did not.
+   On 2026-09-03 arm C hit a 503 on gemini-flash — "This model is currently experiencing
+   high demand" — and this harness reported the whole arm as failed. hebrew-reader.html
+   would not have: geminiSend treats a 5xx as THIS MODEL being busy and walks to the next
+   one, which is a rule it learned from the identical 503 on 2026-08-30. A harness that
+   is less robust than the thing it measures produces a result about the harness. */
+async function gemini(key, models, prompt) {
+  const list = [].concat(models);
+  let last = "";
+  for (const model of list) {
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+                model + ":generateContent?key=" + encodeURIComponent(key);
+    let r;
+    try {
+      r = await fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+    } catch (e) { last = model + " -> " + e.message; continue; }
+    if (r.ok) {
+      const j = await r.json();
+      const t = (((j.candidates || [])[0] || {}).content || {}).parts;
+      return { text: (t && t[0] && t[0].text) || "", model: model };
+    }
+    last = model + " -> HTTP " + r.status + " " + (await r.text()).slice(0, 140);
+    /* 5xx is the server faltering and 429 is this model being throttled: both are
+       answered by a different model, never by the same one again. A 400 is a request we
+       got wrong and walking on cannot fix it. */
+    if (r.status !== 429 && !(r.status >= 500 && r.status < 600)) break;
+    log("    " + model + " unavailable (" + r.status + "), walking on");
+  }
+  throw new Error(last || "no model answered");
 }
 function extractJSON(raw) {
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
@@ -214,19 +253,29 @@ function reviewPrompt(items) {
 }
 
 async function runArm(key, arm) {
-  log("[" + arm.id + "] writing on " + arm.write + " …");
-  const out = extractJSON(await gemini(key, arm.write, writePrompt()));
+  log("[" + arm.id + "] writing …");
+  const w = await gemini(key, arm.write, writePrompt());
+  const out = extractJSON(w.text);
   let items = (out.items || []).filter(it => it && it.he && it.tr);
-  log("[" + arm.id + "] " + items.length + " written");
+  log("[" + arm.id + "] " + items.length + " written on " + w.model);
   if (arm.review && items.length) {
-    log("[" + arm.id + "] reviewing on " + arm.review + " …");
-    const rv = extractJSON(await gemini(key, arm.review, reviewPrompt(items)));
-    const keep = Array.isArray(rv.keep) ? rv.keep.map(Number) : null;
-    if (keep && keep.length) {
-      const before = items.length;
-      items = keep.map(i => items[i]).filter(Boolean);
-      log("[" + arm.id + "] reviewer kept " + items.length + " of " + before);
-    } else { log("[" + arm.id + "] reviewer returned nothing usable — kept all"); }
+    /* THE REVIEW IS ALLOWED TO FAIL WITHOUT COSTING THE ARM. First version threw here,
+       which discarded eight already-written sentences and reported arm C as 0/0/0 — the
+       measurement lost to the instrument. What a failed review means is "this arm did not
+       get its second opinion", which is worth SAYING and worth still grading. */
+    try {
+      log("[" + arm.id + "] reviewing …");
+      const rv = extractJSON((await gemini(key, arm.review, reviewPrompt(items))).text);
+      const keep = Array.isArray(rv.keep) ? rv.keep.map(Number) : null;
+      if (keep && keep.length) {
+        const before = items.length;
+        items = keep.map(i => items[i]).filter(Boolean);
+        log("[" + arm.id + "] reviewer kept " + items.length + " of " + before);
+      } else { log("[" + arm.id + "] reviewer returned nothing usable — kept all"); }
+    } catch (e) {
+      log("[" + arm.id + "] REVIEW FAILED (" + e.message.slice(0, 60) + ") — grading unreviewed");
+      arm.reviewFailed = true;
+    }
   }
   return items.map(it => Object.assign({}, it, { arm: arm.id }));
 }
@@ -329,11 +378,357 @@ $("#run").onclick = async () => {
     $("#again").disabled = false;
   } catch (e) { log("ERROR: " + e.message); $("#run").disabled = false; }
 };
+
+/* ============================ THE GATE TEST ================================
+   The bake-off asks a weaker question than it looks. On 2026-09-03 it came back A 8/8,
+   B 8/8 — both arms at the ceiling, which cannot discriminate between them; all it
+   established was that eight briefs were too easy to tell Flash from Lite apart.
+
+   This is the better instrument, and it needs no fresh generation at all. Thirty-seven
+   sentences in content/nodes.json's `retired` array are known bad — a native speaker
+   rejected them, and they are the reason any of this work happened. Feeding them to the
+   reviewer measures the thing that actually matters: does the gate catch what she caught?
+
+   THE CONTROLS ARE THE POINT. A reviewer that rejects everything scores 100% on
+   known-bad and is worthless — it would empty the bank on every batch. So fifteen
+   sentences from v4 that are genuinely natural go in alongside, shuffled together, and
+   the number that matters is both figures at once: caught, and falsely killed. */
+const KNOWN_BAD = [
+ {
+  "he": "איפה המיטה שלך",
+  "tr": "eifo ha-mita shelcha",
+  "en": "where is your bed?"
+ },
+ {
+  "he": "אני מרגיש חם, אני חולה",
+  "tr": "ani margish kham, ani khole",
+  "en": "I feel hot, I'm ill"
+ },
+ {
+  "he": "אני נוסע כי יש גשם",
+  "tr": "ani nosea ki yesh geshem",
+  "en": "I drive because it's raining"
+ },
+ {
+  "he": "אני עייף ורוצה מיטה",
+  "tr": "ani ayeif ve-rotze mita",
+  "en": "I am tired and want a bed"
+ },
+ {
+  "he": "אני שותה קצת תה",
+  "tr": "ani shote ktzat te",
+  "en": "I am drinking a little tea"
+ },
+ {
+  "he": "אתמול טסתי לבית",
+  "tr": "etmol tasti labayit",
+  "en": "Yesterday I flew home"
+ },
+ {
+  "he": "בסדר, אני מרגיש נעים",
+  "tr": "beseder, ani margish na'im",
+  "en": "Okay, I feel pleasant"
+ },
+ {
+  "he": "האוטובוס אטי היום",
+  "tr": "ha-otobus iti hayom",
+  "en": "the bus is slow today"
+ },
+ {
+  "he": "האוטובוס בא בעוד דקות",
+  "tr": "ha'otobus ba be'od dakot",
+  "en": "The bus is coming in a few minutes"
+ },
+ {
+  "he": "הבטן כואבת",
+  "tr": "ha-beten ko'evet",
+  "en": "my stomach hurts"
+ },
+ {
+  "he": "הבטן כואבת אבל הראש בסדר",
+  "tr": "ha-beten ko'evet aval ha-rosh beseder",
+  "en": "my stomach hurts but my head is fine"
+ },
+ {
+  "he": "הבטן שלי כואבת מאוד",
+  "tr": "ha-beten sheli ko'evet me'od",
+  "en": "my stomach hurts a lot"
+ },
+ {
+  "he": "הגעתי בלילה לבית",
+  "tr": "higati balayla labayit",
+  "en": "I arrived home at night"
+ },
+ {
+  "he": "הגעתי לבית בערב",
+  "tr": "higati labayit ba'erev",
+  "en": "I arrived home in the evening"
+ },
+ {
+  "he": "הגעתי עם סבא לבית",
+  "tr": "higati im saba labayit",
+  "en": "I arrived home with grandpa"
+ },
+ {
+  "he": "היום אני מרגיש חדש",
+  "tr": "hayom ani margish khadash",
+  "en": "Today I feel new"
+ },
+ {
+  "he": "הייתי שמח לראות אותך",
+  "tr": "hayiti sameakh lir'ot otkha",
+  "en": "I was happy to see you"
+ },
+ {
+  "he": "המיטה בחדר הקטן",
+  "tr": "ha-mita ba-cheder ha-katan",
+  "en": "the bed is in the small room"
+ },
+ {
+  "he": "הראש כואב",
+  "tr": "ha-rosh ko'ev",
+  "en": "my head hurts"
+ },
+ {
+  "he": "הראש כואב ואני עייף מאוד",
+  "tr": "ha-rosh ko'ev va-ani ayeif me'od",
+  "en": "my head hurts and I am very tired"
+ },
+ {
+  "he": "הראש כואב כי אני עייף",
+  "tr": "ha-rosh ko'ev ki ani ayeif",
+  "en": "my head hurts because I am tired"
+ },
+ {
+  "he": "הראש שלי כואב",
+  "tr": "ha-rosh sheli ko'ev",
+  "en": "my head is hurting"
+ },
+ {
+  "he": "הראש שלי כואב בבוקר",
+  "tr": "harosh sheli ko'ev baboker",
+  "en": "My head hurts in the morning"
+ },
+ {
+  "he": "הראש שלי כואב מאוד היום",
+  "tr": "ha-rosh sheli ko'ev me'od hayom",
+  "en": "my head hurts a lot today"
+ },
+ {
+  "he": "הראש שלי מלא היום",
+  "tr": "harosh sheli male hayom",
+  "en": "My head is full today"
+ },
+ {
+  "he": "חזרתי בבוקר לבית",
+  "tr": "khazarti baboker labayit",
+  "en": "I came home in the morning"
+ },
+ {
+  "he": "חזרתי לבית בערב",
+  "tr": "khazarti labayit ba'erev",
+  "en": "I came home in the evening"
+ },
+ {
+  "he": "טסתי שבוע באביב",
+  "tr": "tasti shavua ba'aviv",
+  "en": "I flew for a week in spring"
+ },
+ {
+  "he": "למה הדלת קטנה",
+  "tr": "lama ha-delet ktana",
+  "en": "why is the door small?"
+ },
+ {
+  "he": "לקחתי את הספר לבית",
+  "tr": "lakakhti et hasefer labayit",
+  "en": "I took the book home"
+ },
+ {
+  "he": "לקחתי ונתתי, זה בסדר",
+  "tr": "lakakhti venatati, ze beseder",
+  "en": "I took and gave, it's fine"
+ },
+ {
+  "he": "לקחתי תה חם בבוקר",
+  "tr": "lakakhti te kham baboker",
+  "en": "I took hot tea in the morning"
+ },
+ {
+  "he": "נסעתי שבוע בחורף",
+  "tr": "nasati shavua bakhoref",
+  "en": "I travelled for a week in winter"
+ },
+ {
+  "he": "נתתי הרבה ולקחתי קצת",
+  "tr": "natati harbe velakakhti ktzat",
+  "en": "I gave a lot and took a little"
+ },
+ {
+  "he": "סבא שלי אוהב לספר",
+  "tr": "saba sheli ohev lesaper",
+  "en": "My grandpa loves to tell stories"
+ },
+ {
+  "he": "עבדתי ואז הלכתי לבית",
+  "tr": "avadeti ve'az halakhti labayit",
+  "en": "I worked and then went home"
+ },
+ {
+  "he": "קניתי ושילמתי היום",
+  "tr": "kaniti veshilamti hayom",
+  "en": "I bought and paid today"
+ }
+];
+
+const KNOWN_GOOD = [
+ {
+  "he": "חבל שלא באת",
+  "tr": "khaval shelo bata",
+  "en": "It's a shame you didn't come"
+ },
+ {
+  "he": "כמה זמן נוסעים לעיר?",
+  "tr": "kama zman nos'im la'ir?",
+  "en": "How long does it take to get to the city?"
+ },
+ {
+  "he": "כואב לי הראש",
+  "tr": "ko'ev li harosh",
+  "en": "my head hurts"
+ },
+ {
+  "he": "כיף לדבר עברית",
+  "tr": "keif ledaber ivrit",
+  "en": "It's fun to speak Hebrew"
+ },
+ {
+  "he": "אני צריך ללכת עכשיו, סליחה",
+  "tr": "ani tzarikh lalekhet akhshav, slikha",
+  "en": "I need to go now, sorry"
+ },
+ {
+  "he": "יש לך קצת מים קרים?",
+  "tr": "yesh lekha ktzat mayim karim?",
+  "en": "Do you have some cold water?"
+ },
+ {
+  "he": "אין לי זמן היום",
+  "tr": "ein li zman hayom",
+  "en": "I have no time today"
+ },
+ {
+  "he": "היה נהדר לראות אותך",
+  "tr": "haya nehedar lir'ot otkha",
+  "en": "It was wonderful to see you"
+ },
+ {
+  "he": "אמא שלי קוראת ספר",
+  "tr": "ima sheli koret sefer",
+  "en": "My mom is reading a book"
+ },
+ {
+  "he": "הגעתי הביתה בערב",
+  "tr": "higati habayta ba'erev",
+  "en": "I arrived home in the evening"
+ },
+ {
+  "he": "סליחה, אני לא שומע",
+  "tr": "slikha, ani lo shome'a",
+  "en": "Sorry, I can't hear"
+ },
+ {
+  "he": "תודה על הקפה",
+  "tr": "toda al hakafe",
+  "en": "Thanks for the coffee"
+ },
+ {
+  "he": "קניתי לחם בבוקר",
+  "tr": "kaniti lekhem baboker",
+  "en": "I bought bread in the morning"
+ },
+ {
+  "he": "העיר מדהימה באביב",
+  "tr": "ha'ir madhima ba'aviv",
+  "en": "The city is amazing in spring"
+ },
+ {
+  "he": "שמחתי לראות אותך",
+  "tr": "samakhti lir'ot otkha",
+  "en": "I was happy to see you"
+ }
+];
+
+async function runGate(key) {
+  const all = KNOWN_BAD.map(x => Object.assign({}, x, { truth: "bad" }))
+    .concat(KNOWN_GOOD.map(x => Object.assign({}, x, { truth: "good" })));
+  shuffle(all);
+  /* Batched at 12, the size reviewExistingBank uses and the size a he/tr/en listing stays
+     readable at. Also means one bad response costs one batch rather than the run. */
+  const verdict = new Map();
+  for (let i = 0; i < all.length; i += 12) {
+    const batch = all.slice(i, i + 12);
+    log("reviewing " + (i + 1) + "-" + (i + batch.length) + " of " + all.length + " …");
+    try {
+      const rv = extractJSON((await gemini(key, FLASH, reviewPrompt(batch))).text);
+      const keep = new Set((Array.isArray(rv.keep) ? rv.keep : []).map(Number));
+      batch.forEach((it, j) => verdict.set(it, keep.has(j) ? "kept" : "rejected"));
+    } catch (e) {
+      log("  batch failed (" + e.message.slice(0, 60) + ") — not counted");
+      batch.forEach(it => verdict.set(it, null));
+    }
+  }
+  const judged = all.filter(it => verdict.get(it));
+  const bad = judged.filter(it => it.truth === "bad");
+  const good = judged.filter(it => it.truth === "good");
+  const caught = bad.filter(it => verdict.get(it) === "rejected");
+  const killed = good.filter(it => verdict.get(it) === "rejected");
+  const missed = bad.filter(it => verdict.get(it) === "kept");
+
+  const pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
+  const list = (title, arr, cls) => arr.length ? "<p class='hint' style='margin-top:16px'><b>" +
+    title + "</b></p>" + arr.map(it =>
+      "<div style='margin:7px 0'><span class='he' style='font-size:1.15rem'>" +
+      esc(it.he) + "</span> <span class='count'>— " + esc(it.en) + "</span></div>").join("") : "";
+
+  document.getElementById("result").style.display = "";
+  document.getElementById("result").innerHTML =
+    "<h2 style='font-size:1.1rem;margin:0 0 12px'>Gate test</h2>" +
+    "<table>" +
+    "<tr><th>Measure</th><th>Score</th><th>Reading</th></tr>" +
+    "<tr><td>Known-bad caught</td><td><b>" + caught.length + " / " + bad.length +
+      "</b> " + pct(caught.length, bad.length) + "</td>" +
+      "<td class='count'>what the gate would now stop</td></tr>" +
+    "<tr><td>Known-good wrongly killed</td><td><b>" + killed.length + " / " + good.length +
+      "</b> " + pct(killed.length, good.length) + "</td>" +
+      "<td class='count'>the cost — a gate that kills good material starves the bank</td></tr>" +
+    "</table>" +
+    list("Missed — she rejected these and the gate would keep them:", missed) +
+    list("Wrongly killed — these are fine and the gate threw them out:", killed) +
+    "<p class='hint'>Paste back: GATE caught " + caught.length + "/" + bad.length +
+    ", false-kill " + killed.length + "/" + good.length + "</p>";
+  log("\ndone — caught " + caught.length + "/" + bad.length +
+      ", false-kill " + killed.length + "/" + good.length);
+}
+function esc(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+
+document.getElementById("gate").onclick = async () => {
+  const key = document.getElementById("key").value.trim();
+  if (!key) { log("Paste your API key first."); return; }
+  document.getElementById("gate").disabled = true;
+  document.getElementById("run").disabled = true;
+  document.getElementById("log").textContent = "";
+  document.getElementById("stage").innerHTML = "";
+  try { await runGate(key); } catch (e) { log("ERROR: " + e.message); }
+  document.getElementById("again").disabled = false;
+};
+
 $("#again").onclick = () => {
   POOL = []; MARKS = {};
   $("#stage").innerHTML = ""; $("#result").style.display = "none";
   document.body.classList.remove("revealed");
-  $("#run").disabled = false; $("#again").disabled = true; $("#log").textContent = "";
+  $("#run").disabled = false; $("#gate").disabled = false;
+  $("#again").disabled = true; $("#log").textContent = "";
 };
 </script>
 </body>

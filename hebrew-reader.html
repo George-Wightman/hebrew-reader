@@ -25211,9 +25211,16 @@ async function learnSpeakAttempt(btn, c) {
   const card2 = document.getElementById("lCard");
   if (learnSpoken.unsure) learnMicUnsure(card2);
   /* Fired AFTER the reveal, deliberately not awaited. The card is already on screen
-     and gradeable; this catches up with it or it doesn't. */
+     and gradeable; this catches up with it or it doesn't.
+
+     Grace runs AFTER the adjudicator rather than beside it, and the order is the whole
+     of the cost control: the adjudicator answers the cheaper question, and every mark it
+     rescues is one grace no longer has to be asked about. On a card it clears entirely,
+     learnGraceWanted finds nothing still missed and the second call never happens. */
   const spoken = learnSpoken;
-  learnAdjudicate(c, spoken, askedAt).catch(() => {});
+  learnAdjudicate(c, spoken, askedAt)
+    .then(() => learnGrace(c, spoken, askedAt))
+    .catch(() => {});
 }
 
 /* Said out loud rather than left for him to notice. A card that quietly declines to
@@ -25328,6 +25335,122 @@ async function learnAdjudicate(c, spoken, askedAt) {
     learnSuggested = 1;
     if (learnSuggestPaint) learnSuggestPaint();
   }
+}
+
+/* ---- grace on a fair answer ------------------------------------------------------
+   The layer above asks whether he SAID the word. This one asks something sound cannot
+   reach: whether what he said instead is a fair rendering of the English he was shown.
+
+   On נוסעים לעיר בבוקר — "We travel to the city in the morning" — he said anachnu
+   holchim. Nothing was misheard and nothing was mispronounced; he produced a different,
+   defensible Hebrew sentence for an English gloss that never named which verb it wanted.
+   He was graded 0, and נוסע's difficulty went 5.5 → 7.1 in a day.
+
+   The obvious fix is to make the glosses precise, and George rejected it outright:
+   "there isnt a 100% translation, its fluid, so their needs to be some grace in that".
+   Three words in his library are glossed "nice"; six are glossed "to wear". The English
+   is never going to name the word, so the grading has to stop assuming it did.
+
+   NEARLY IS THE CEILING, same as every other layer here, and for a sharper reason than
+   usual: he did not practise the word the card was drilling. A synonym that scored full
+   marks would quietly retire נוסע without him ever having said it. "This counted, but
+   not cleanly" is the honest verdict, and the note is where the actual teaching goes. */
+const GRACE_MIN_WORDS = { sentence: 2, word: 1, chunk: 1 };
+/* The whole gate, as a pure predicate, so every refusal is testable without a network.
+   Returns the indexes grace would be asked about — empty means do not ask at all. */
+function learnGraceWanted(c, spoken) {
+  if (!c || !spoken) return [];
+  /* listen tests comprehension, not production, and compose has its own coach. Grace on
+     either would be answering a question the card never asked. */
+  const need = GRACE_MIN_WORDS[c.kind];
+  if (!need) return [];
+  if (!learnGraceEnglish(c)) return [];        // nothing to have been fair TO
+  if (heWords(spoken.text || "").length < need) return [];   // he did not attempt it
+  const want = [];
+  (spoken.status || []).forEach((st, i) => {
+    if (st === "missed" && spoken.expected && spoken.expected[i]) want.push(i);
+  });
+  return want;
+}
+/* The English he was actually shown — the same three sources learnRenderCard prompts
+   from, because grace has to judge against what was on screen, not against the item. */
+function learnGraceEnglish(c) {
+  if (!c) return "";
+  if (c.kind === "sentence") return (c.item && c.item.en) || "";
+  if (c.kind === "word") return ((libAll()[c.key] || {}).en) || "";
+  if (c.kind === "chunk") return (chunkAll()[c.key] || [])[1] || "";
+  return "";
+}
+function learnGracePrompt(c, spoken, want, en, lib) {
+  const trOf = w => { const t = trFormsOf(w, lib); return t.length ? " (" + t[0] + ")" : ""; };
+  return "An English speaker learning Hebrew was shown this English and asked to say it " +
+    "in Hebrew:\n  " + en + "\n\n" +
+    "The app had this sentence in mind:\n  " + (spoken.expected || []).join(" ") + "\n\n" +
+    "He said:\n  " + (spoken.text || "(nothing)") + "\n\n" +
+    "THERE IS RARELY ONE CORRECT TRANSLATION. Decide whether what he said is a fair way " +
+    "of saying that English in Hebrew — a reasonable synonym, a different but valid verb, " +
+    "a natural alternative phrasing. It does not have to be the sentence the app had in " +
+    "mind, and the English gloss is often looser than the Hebrew it was written for.\n\n" +
+    "It is NOT fair if he said something that means something else, left out the point of " +
+    "the sentence, or produced words that do not form a sentence.\n\n" +
+    "These words are still marked missing:\n" +
+    want.map(i => "  " + spoken.expected[i] + trOf(spoken.expected[i])).join("\n") + "\n\n" +
+    "Return JSON only, no markdown: {\"fair\": true, \"note\": \"...\"}\n" +
+    "Set fair to false if what he said does not convey that English.\n" +
+    "The note is for him to read, one sentence, under 25 words, and only when fair is " +
+    "true: say what he said works, then name what the wanted word means that his did " +
+    "not. No preamble and do not address him by name.";
+}
+async function learnGrace(c, spoken, askedAt) {
+  if (!spoken || !geminiKeys().length) return;
+  const want = learnGraceWanted(c, spoken);
+  if (!want.length) return;
+  const en = learnGraceEnglish(c);
+  try { statsBump({ graceCalls: 1 }); } catch (e) {}
+  let out;
+  try {
+    out = extractJSON(await geminiRequest(
+      [{ text: learnGracePrompt(c, spoken, want, en, libAll()) }], GEMINI_MODELS_FAST,
+      { label: "Was that a fair answer?" }));
+  } catch (e) {
+    try { statsBump({ graceErr: 1 }); } catch (e2) {}
+    return;
+  }
+  if (!out || out.fair !== true) return;      // declined, and an empty answer is a correct one
+  /* Same staleness rule as the adjudicator: rewriting a card he has already left is
+     worse than saying nothing. */
+  if (!learnSession || learnSession.i !== askedAt || learnSpoken !== spoken) {
+    try { statsBump({ graceStale: 1 }); } catch (e) {}
+    return;
+  }
+  let moved = 0, won = 0;
+  want.forEach(i => {
+    if (spoken.status[i] !== "missed") return;   // the adjudicator got there first
+    spoken.status[i] = "near";
+    won++;
+    if (learnMarks && learnMarks[i] === 1) { learnMarks[i] = 2; moved++; }
+  });
+  if (!won) return;
+  try { statsBump({ graceWon: won }); } catch (e) {}
+  if (moved && learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
+  if (!learnMarks && learnSuggested === 0 && learnMicGrades(c)) {
+    learnSuggested = 1;
+    if (learnSuggestPaint) learnSuggestPaint();
+  }
+  learnGraceNote(document.getElementById("lCard"), String(out.note || "").trim());
+}
+/* One advisory line on the card, and it REPLACES whatever weaker one is there rather
+   than stacking under it — the style guide's "one signal, not four weak ones", and the
+   grace note is strictly more use than "the mic wasn't confident" when both apply. Same
+   class, so this does not invent a second visual language for the same slot. */
+function learnGraceNote(card, msg) {
+  if (!card || !msg) return;
+  const old = card.querySelector(".lmicsoft"); if (old) old.remove();
+  const el = document.createElement("div"); el.className = "lmicsoft";
+  el.textContent = msg;
+  const act = card.querySelector(".lactions");
+  if (act) card.insertBefore(el, act); else card.append(el);
+  syncPadOffset();
 }
 
 function learnMicError(card, msg) {
@@ -29780,6 +29903,121 @@ T("learnAdjudicatePrompt: tells the model the homophone rule that made it declin
     { expected: ["אטי"], text: "איתי", alts: [] }, [0], SOUND_LIB);
   assertTrue(p.indexOf("SOUNDS THE SAME") !== -1, "the instruction that was missing");
   assertTrue(p.indexOf("(iti)") !== -1, "and the transliteration it needs to apply it");
+});
+
+/* ---- grace on a fair answer ----
+   The gate is a pure predicate on purpose: every one of these refusals is a call NOT
+   made, and a gate that can only be checked by watching the network is a gate nobody
+   checks. The card he was actually marked 0 on is the first case. */
+const GRACE_CARD = { kind: "sentence",
+                     item: { he: "נוסעים לעיר בבוקר", en: "We travel to the city in the morning" } };
+const GRACE_SPOKEN = { text: "אנחנו הולכים לעיר בבוקר",
+                       expected: ["נוסעים", "לעיר", "בבוקר"],
+                       status: ["missed", "matched", "matched"] };
+T("learnGraceWanted: the anachnu-holchim card is exactly what grace is for", () => {
+  assertEq(learnGraceWanted(GRACE_CARD, GRACE_SPOKEN), [0],
+           "one word still missed, and he plainly answered the English");
+});
+T("learnGraceWanted: nothing still missed means no call at all", () => {
+  const clean = Object.assign({}, GRACE_SPOKEN, { status: ["matched", "matched", "matched"] });
+  assertEq(learnGraceWanted(GRACE_CARD, clean), [],
+           "grace is only ever asked about a mark that is still standing");
+  const softened = Object.assign({}, GRACE_SPOKEN, { status: ["near", "matched", "matched"] });
+  assertEq(learnGraceWanted(GRACE_CARD, softened), [],
+           "and the adjudicator having got there first is the commonest way that happens");
+});
+T("learnGraceWanted: silence is not a fair answer, it is no answer", () => {
+  assertEq(learnGraceWanted(GRACE_CARD, Object.assign({}, GRACE_SPOKEN, { text: "" })), []);
+  assertEq(learnGraceWanted(GRACE_CARD, Object.assign({}, GRACE_SPOKEN, { text: "אנחנו" })), [],
+           "one word is not an attempt at a sentence");
+});
+T("learnGraceWanted: refuses the kinds that never asked him to translate", () => {
+  ["listen", "compose", "reply"].forEach(kind => {
+    assertEq(learnGraceWanted(Object.assign({}, GRACE_CARD, { kind: kind }), GRACE_SPOKEN), [],
+             kind + " does not grade production from an English prompt");
+  });
+});
+T("learnGraceWanted: no English on the card means there was nothing to be fair to", () => {
+  const bare = { kind: "sentence", item: { he: "נוסעים לעיר בבוקר", en: "" } };
+  assertEq(learnGraceWanted(bare, GRACE_SPOKEN), []);
+});
+T("learnGracePrompt: shows the English, both sentences, and refuses to grade generously", () => {
+  const p = learnGracePrompt(GRACE_CARD, GRACE_SPOKEN, [0],
+                             learnGraceEnglish(GRACE_CARD), SOUND_LIB);
+  assertTrue(p.indexOf("We travel to the city in the morning") !== -1, "the English he was shown");
+  assertTrue(p.indexOf("אנחנו הולכים לעיר בבוקר") !== -1, "what he actually said");
+  assertTrue(p.indexOf("ONE CORRECT TRANSLATION") !== -1, "the instruction that is the whole feature");
+  /* nosim, not nose'a: the wanted word is the PLURAL, which the fixture library does not
+     hold at all. It resolves through lookupBase to the built-in dictionary instead, which
+     is the fallback that has to work — his library stores lemmas and the cards drill
+     inflected forms, so the exact string being asked about is often not a library key. */
+  assertTrue(p.indexOf("(nosim)") !== -1, "and the wanted word, with how it sounds");
+  assertTrue(p.indexOf("NOT fair") !== -1, "grace still has to be refusable");
+});
+/* The gate tests above prove which calls are never made. These three prove what happens
+   to the card when one is, which is the half that actually touches his SRS.
+
+   Every global swapped here is a plain function declaration and every one is put back in
+   the finally, including statsBump — it writes to the real store, and a test that leaves
+   synthetic counters in his stats has corrupted the very numbers Phase 1 and 2 are
+   supposed to be measured by. */
+function graceHarness(reply, run) {
+  const real = { req: geminiRequest, keys: geminiKeys, bump: statsBump,
+                 sess: learnSession, spoken: learnSpoken,
+                 marks: learnMarks, sug: learnSuggested };
+  const spoken = { text: "אנחנו הולכים לעיר בבוקר",
+                   expected: ["נוסעים", "לעיר", "בבוקר"],
+                   status: ["missed", "matched", "matched"] };
+  geminiKeys = () => ["stub"];
+  statsBump = () => {};
+  geminiRequest = async () => JSON.stringify(reply);
+  learnSession = { i: 3 }; learnSpoken = spoken;
+  learnMarks = { 0: 1 };                 // his card shows one standing "missed" mark
+  learnSuggested = 0;
+  return Promise.resolve(run(spoken))
+    .then(r => r, e => { throw e; })
+    .finally(() => {
+      geminiRequest = real.req; geminiKeys = real.keys; statsBump = real.bump;
+      learnSession = real.sess; learnSpoken = real.spoken;
+      learnMarks = real.marks; learnSuggested = real.sug;
+    });
+}
+T("learnGrace: a fair answer softens the standing mark, and stops at nearly", async () => {
+  await graceHarness({ fair: true, note: "That works — נוסעים is travelling by vehicle." },
+    async spoken => {
+      await learnGrace(GRACE_CARD, spoken, 3);
+      /* "near" and not "matched" is the load-bearing half of this assertion: he did not
+         say נוסעים, and a synonym scoring full marks would retire the word he still
+         cannot produce. The matched neighbours pin that grace touched only what it was
+         asked about. */
+      assertEq(spoken.status, ["near", "matched", "matched"],
+               "the missed word softens to nearly — never to matched — and its neighbours stand");
+      assertEq(learnMarks[0], 2, "and the mark he can see moves with it");
+    });
+});
+T("learnGrace: an unfair answer changes nothing at all", async () => {
+  await graceHarness({ fair: false, note: "no" }, async spoken => {
+    await learnGrace(GRACE_CARD, spoken, 3);
+    assertEq(spoken.status, ["missed", "matched", "matched"]);
+    assertEq(learnMarks[0], 1, "his mark stands exactly as the alignment left it");
+  });
+});
+T("learnGrace: an answer that arrives after he has moved on is dropped", async () => {
+  await graceHarness({ fair: true, note: "..." }, async spoken => {
+    await learnGrace(GRACE_CARD, spoken, 99);   // asked on a card that is no longer up
+    assertEq(spoken.status, ["missed", "matched", "matched"],
+             "rewriting a card he has left is worse than saying nothing");
+  });
+});
+T("learnGraceEnglish: reads the same three prompts learnRenderCard shows", () => {
+  const real = libAll;
+  try {
+    libAll = () => ({ "נוסע": { en: "travel(s) (m)" } });
+    assertEq(learnGraceEnglish({ kind: "word", key: "נוסע" }), "travel(s) (m)");
+  } finally { libAll = real; }
+  assertEq(learnGraceEnglish(GRACE_CARD), "We travel to the city in the morning");
+  assertEq(learnGraceEnglish({ kind: "listen", item: { en: "x" } }), "",
+           "a listen card has an English, but grace must never read it");
 });
 T("micAltStrings: assembles per-segment runners-up into whole utterances", () => {
   const segs = [["אני", "אנחנו"], ["רוצה"]];

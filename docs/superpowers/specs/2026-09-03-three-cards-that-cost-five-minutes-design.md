@@ -160,6 +160,15 @@ Two tiers, deliberately unequal in confidence:
   of a false collision here is exactly one `nearly` on a word he was asked for and did not
   cleanly produce, against the cost the asymmetry above exists to prevent.
 
+**Tier 2's aggressiveness was measured, not assumed.** Consonant folds were tried against
+all 536 library entries, counting the word pairs each newly admits beyond what
+`nearEnough` already allows: `ט`≡`ת` alone admits 12; adding `כ`≡`ח` makes it 50; adding
+`א`≡`ע` makes it 91; and dropping the vowel letters as well — which is what the skeleton
+does — makes it 162, equating `חם` (hot) with `כמה` (a few) and `ערב` (evening) with `רעב`
+(hungry). That is the real reason Tier 2 is fenced behind "only when the heard word has no
+known transliteration" and a two-letter floor: unguarded, it is the loosest rule in the
+file. Tier 1 has no such problem, which is why it is asked first and its answer is final.
+
 The AI second opinion keeps its place as the backstop for what sound alone cannot explain —
 a swallowed prefix, a wrong declension — but its prompt is corrected on the point that made
 it decline today. It is told that a different word which *sounds the same* is strong

@@ -108,6 +108,13 @@
     <label for="key">Google AI Studio API key</label>
     <input id="key" type="password" autocomplete="off" spellcheck="false"
            placeholder="paste it here — used from this tab only, never stored">
+    <label for="judge" style="margin-top:14px">Which judge to test</label>
+    <select id="judge" style="width:100%;padding:9px 12px;background:#0e1116;
+            border:1px solid var(--line);border-radius:4px;color:var(--ink);font:inherit">
+      <option value="auto">Auto — ask Flash, fall back to Lite (what the app does)</option>
+      <option value="lite" selected>Flash Lite only — the realistic case, 500/day</option>
+      <option value="flash">Flash only — will fail once the 20/day is gone</option>
+    </select>
     <div class="marks">
       <button class="go" id="run">Run the bake-off</button>
       <button class="go" id="gate">Test the gate on known-bad</button>
@@ -677,6 +684,20 @@ const KNOWN_GOOD = [
    was wrong — a key that is invalid or restricted, a model name this API version does
    not serve, a region block — and every one of those is answered by a five-second ping
    with a one-word prompt, where a real run answers it by spending quota to fail. */
+/* Lite is the DEFAULT for the gate test, and that is a measurement decision rather than
+   a thrifty one. Flash is 20 requests a day and his own dashboard showed 44 against that
+   limit, so in practice the reviewer inside the app spends most of its life on Lite
+   whatever aiModelsFor asks for. Testing the judge he actually gets beats testing the one
+   the code names. "Flash only" exists so the comparison can be made deliberately on a
+   fresh day, and it fails loudly rather than falling back, because a silent fallback is
+   what made the 26/37 result unreadable. */
+function judgeModels() {
+  const v = (document.getElementById("judge") || {}).value || "auto";
+  return v === "lite" ? ["gemini-flash-lite-latest"]
+       : v === "flash" ? ["gemini-flash-latest"]
+       : FLASH;
+}
+
 async function probeModels(key) {
   const models = ["gemini-flash-latest", "gemini-flash-lite-latest"];
   const rows = [];
@@ -710,17 +731,30 @@ async function runGate(key) {
   /* Batched at 12, the size reviewExistingBank uses and the size a he/tr/en listing stays
      readable at. Also means one bad response costs one batch rather than the run. */
   const verdict = new Map();
+  const served = {};
   for (let i = 0; i < all.length; i += 12) {
     const batch = all.slice(i, i + 12);
     log("reviewing " + (i + 1) + "-" + (i + batch.length) + " of " + all.length + " …");
     try {
-      const rv = extractJSON((await gemini(key, FLASH, reviewPrompt(batch))).text);
+      /* WHICH MODEL ACTUALLY ANSWERED, recorded rather than assumed. gemini() walks the
+         list on a 503 or a 429, so asking for FLASH and getting Lite is normal and
+         silent — and on 2026-09-03 that is exactly what happened: his Flash quota was
+         at 44 against a limit of 20, so a run labelled "Flash review" was Flash Lite
+         throughout. A score whose model is unknown measures nothing. */
+      const r = await gemini(key, judgeModels(), reviewPrompt(batch));
+      const rv = extractJSON(r.text);
       const keep = new Set((Array.isArray(rv.keep) ? rv.keep : []).map(Number));
       batch.forEach((it, j) => verdict.set(it, keep.has(j) ? "kept" : "rejected"));
+      served[r.model] = (served[r.model] || 0) + batch.length;
+      log("  answered by " + r.model);
     } catch (e) {
       log("  batch NOT COUNTED — " + e.message);
       batch.forEach(it => verdict.set(it, null));
     }
+    /* The free tier limits requests per MINUTE as well as per day — Flash is 5/min and
+       his peak shows 7. Five batches back to back is exactly how that gets tripped, and
+       a throttled batch is a batch that measures nothing. */
+    if (i + 12 < all.length) await new Promise(r => setTimeout(r, 13000));
   }
   const judged = all.filter(it => verdict.get(it));
   const bad = judged.filter(it => it.truth === "bad");
@@ -738,6 +772,11 @@ async function runGate(key) {
   document.getElementById("result").style.display = "";
   document.getElementById("result").innerHTML =
     "<h2 style='font-size:1.1rem;margin:0 0 12px'>Gate test</h2>" +
+    "<p class='hint' style='margin:0 0 14px'>Reviewed by " +
+      (Object.keys(served).length
+        ? Object.keys(served).map(m => esc(m) + " (" + served[m] + " items)").join(", ")
+        : "nothing — every batch failed") +
+      ". A score is only about the model that produced it.</p>" +
     "<table>" +
     "<tr><th>Measure</th><th>Score</th><th>Reading</th></tr>" +
     "<tr><td>Known-bad caught</td><td><b>" + caught.length + " / " + bad.length +
@@ -750,7 +789,8 @@ async function runGate(key) {
     list("Missed — she rejected these and the gate would keep them:", missed) +
     list("Wrongly killed — these are fine and the gate threw them out:", killed) +
     "<p class='hint'>Paste back: GATE caught " + caught.length + "/" + bad.length +
-    ", false-kill " + killed.length + "/" + good.length + "</p>";
+    ", false-kill " + killed.length + "/" + good.length + " — on " +
+    (Object.keys(served).join(" + ") || "nothing") + "</p>";
   log("\ndone — caught " + caught.length + "/" + bad.length +
       ", false-kill " + killed.length + "/" + good.length);
 }

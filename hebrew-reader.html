@@ -25379,8 +25379,8 @@ function learnRenderCard() {
 
   /* Keyboard only. The "say it out loud first" half of this line is what .lask says
      directly above it, and on touch the whole thing was already empty. */
-  document.getElementById("lRunHint").textContent = isTouchPrimary() ? ""
-    : "Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : "");
+  learnHintSet(isTouchPrimary() ? ""
+    : "Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : ""));
   learnSpeakPrompt();
 }
 
@@ -26746,12 +26746,12 @@ function learnReveal() {
   /* On touch every branch of this is naming a key. The Continue
      button and the Missed / Nearly / Got it buttons are already on screen saying the
      same thing, so the line is pure noise there. */
-  document.getElementById("lRunHint").textContent = isTouchPrimary()
+  learnHintSet(isTouchPrimary()
     ? ""
     : (learnCardTokens ? "Space to continue"
         : learnSuggested !== null ? "Space accepts what it heard · 1 Missed · 2 Nearly · 3 Got it"
         : "1 Missed · 2 Nearly · 3 Got it") +
-      (hasHeVoice() ? " · R replays · Shift+R slower" : "");
+      (hasHeVoice() ? " · R replays · Shift+R slower" : ""));
 }
 
 /* ---- the tapped word --------------------------------------------------------
@@ -28010,6 +28010,76 @@ runFreshStart();
    card as you go, so the cards done so far are banked and only the current one is
    dropped. No confirm — leaving costs nothing, and a dialog guarding a harmless
    action is just friction. */
+/* ---- the coach, from the card he is actually on -----------------------------
+   The last of the coach's entry points and the only one that touches the drill card, so
+   it is deliberately A GESTURE AND NOT A CONTROL. Style guide §4 records that this card
+   lost a glyph, a label and a direction pill to "one signal, not four weak ones"; putting
+   a button back on it to reach something already one nav tap away would be re-adding
+   exactly what that argument removed. Holding the card adds nothing to look at.
+
+   Ignores anything that is already a control, and cancels on movement — the card carries
+   tappable words and a scroll, and a long-press that steals either would be worse than no
+   gesture at all. */
+const COACH_HINT_KEY = "hvr_coachhint";
+const COACH_PRESS_MS = 550;
+let coachPressT = null, coachPressAt = null, coachPressFired = false;
+function coachPressClear() {
+  if (coachPressT) { clearTimeout(coachPressT); coachPressT = null; }
+  coachPressAt = null;
+}
+/* Discoverable rather than permanent — §4 again: a line read three hundred times is
+   wallpaper. It says this once and never again after the gesture has been used. */
+function coachCardHint() {
+  return lsGet(COACH_HINT_KEY) === "1" ? "" : "Hold the card to ask the coach about it";
+}
+function learnHintSet(text) {
+  const el = document.getElementById("lRunHint");
+  if (!el) return;
+  el.textContent = [text, coachCardHint()].filter(Boolean).join(" · ");
+}
+(function coachWireCard() {
+  const card = document.getElementById("lCard");
+  if (!card) return;
+  card.addEventListener("pointerdown", (e) => {
+    if (e.button) return;
+    if (e.target && e.target.closest && e.target.closest("button, input, textarea, a, select")) return;
+    coachPressFired = false;
+    coachPressAt = { x: e.clientX, y: e.clientY };
+    coachPressT = setTimeout(() => {
+      coachPressT = null;
+      coachPressFired = true;
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) {}
+      /* Pointed at the card he is on. uhModalOpen puts the session above it in the trail,
+         so the way out of a card is its session rather than the top of the panel. */
+      let i = 0;
+      try { i = (typeof learnSession !== "undefined" && learnSession) ? learnSession.i : 0; } catch (err) {}
+      lsSet(COACH_HINT_KEY, "1");
+      /* The hint has done its job the moment the gesture works once. Taken off the line
+         now rather than at the next render, so it is gone when he closes the panel. */
+      const hintEl = document.getElementById("lRunHint");
+      if (hintEl) hintEl.textContent = hintEl.textContent
+        .replace(/\s*·?\s*Hold the card to ask the coach about it/, "").trim();
+      uhModalOpen(true, { kind: "card", id: String(i) });
+    }, COACH_PRESS_MS);
+  });
+  card.addEventListener("pointermove", (e) => {
+    if (!coachPressAt) return;
+    if (Math.abs(e.clientX - coachPressAt.x) > 10 || Math.abs(e.clientY - coachPressAt.y) > 10)
+      coachPressClear();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(ev =>
+    card.addEventListener(ev, coachPressClear));
+  /* The click and the context menu that follow a completed press belong to a gesture that
+     is already over — without this, holding a word both opens the coach and reveals the
+     word underneath it. */
+  card.addEventListener("click", (e) => {
+    if (!coachPressFired) return;
+    coachPressFired = false;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  card.addEventListener("contextmenu", (e) => { if (coachPressFired) e.preventDefault(); });
+})();
+
 document.getElementById("lQuitBtn").onclick = () => {
   statsCardEnd();          // don't bill the abandoned card's open time to anything
   micRelease();
@@ -30203,6 +30273,39 @@ T("campNodeWalked: without any lesson record it is still walked", () => {
     assertTrue(campNodeWalked("nd", st.c, st.srs), "progression is the scheduler alone");
     assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
   } finally { pathScoresSave(keep); }
+});
+T("coachCardHint: says it once and never again", () => {
+  /* Standing instructions become wallpaper — §4. This is the whole reason the gesture is
+     announced by a line that retires itself rather than by a control that cannot. */
+  const saved = lsGet(COACH_HINT_KEY);
+  try {
+    localStorage.removeItem(COACH_HINT_KEY);
+    assertTrue(/Hold the card/.test(coachCardHint()), "before it has ever been used");
+    lsSet(COACH_HINT_KEY, "1");
+    assertEq(coachCardHint(), "", "and nothing at all afterwards");
+  } finally { if (saved == null) localStorage.removeItem(COACH_HINT_KEY); else lsSet(COACH_HINT_KEY, saved); }
+});
+T("learnHintSet: the shortcuts and the hint share one line without a stray separator", () => {
+  const saved = lsGet(COACH_HINT_KEY);
+  const el = document.getElementById("lRunHint");
+  const keep = el.textContent;
+  try {
+    lsSet(COACH_HINT_KEY, "1");
+    learnHintSet("");
+    assertEq(el.textContent, "", "on touch, with the hint retired, the line is empty");
+    learnHintSet("Space to reveal");
+    assertEq(el.textContent, "Space to reveal", "and carries only the shortcuts");
+    localStorage.removeItem(COACH_HINT_KEY);
+    learnHintSet("");
+    assertEq(el.textContent, "Hold the card to ask the coach about it",
+      "an empty base does not leave a leading separator");
+    learnHintSet("Space to reveal");
+    assertEq(el.textContent, "Space to reveal · Hold the card to ask the coach about it",
+      "and both together are joined once");
+  } finally {
+    if (saved == null) localStorage.removeItem(COACH_HINT_KEY); else lsSet(COACH_HINT_KEY, saved);
+    el.textContent = keep;
+  }
 });
 T("forecastLine: says what is waiting, and names one node rather than a list", () => {
   /* A list of near-misses is a chore; one is a next move. And the wording has to survive

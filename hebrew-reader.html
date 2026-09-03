@@ -22686,8 +22686,43 @@ async function learnReviewItems(data, opts) {
        Length and tense are what the LEVEL records; they are no longer grounds for
        rejection. Only truth and naturalness are. */
     "Do NOT reject an item for being long, or for being past or future tense. Those " +
-    "are graded below, not faults. Be strict about naturalness — bad practice " +
-    "material teaches confident nonsense, and there is no cost to returning fewer.\n\n" +
+    "are graded below, not faults.\n\n" +
+    /* THE DEFAULT WAS KEEP, AND THAT IS WHY IT WAS PERMISSIVE. Measured on 2026-09-03
+       against 37 sentences a native speaker had rejected: this caught 26 and let 11
+       through, while wrongly killing only 1 of 15 good ones. A 70% catch at a 7%
+       false-kill is not a strict judge having bad luck, it is a LENIENT one — and the
+       shape of the prompt is why. Everything above is a checklist of named faults, so
+       an item tripping none of them is kept BY DEFAULT, whatever else is wrong with
+       it. The faults I could name are the ones already found; the point of a judge is
+       the ones nobody has found yet.
+
+       So the burden flips: the rules stay as things to LOOK for and stop being the
+       grounds. Affordable precisely BECAUSE the false-kill measured so low — there
+       are thirteen points of headroom, and a rejected item costs one request against
+       a 500/day pool while a kept bad one is drilled at him for months. */
+    "NOW THE TEST THAT DECIDES IT. The list above is what to look for, not the limit " +
+    "of what to reject. An item is not safe merely because it trips none of those " +
+    "rules.\n" +
+    "For each item, picture a REAL PERSON saying it to a REAL PERSON, and name who " +
+    "and when — a grandfather on a voice note, the grandson answering. If you cannot " +
+    "name the speaker and the moment, it is not a sentence people say, and it does " +
+    "not matter how correct it is. DROP IT.\n" +
+    "This is the fault the rules cannot catch: sentences that are perfectly " +
+    "grammatical, use real words correctly, and are still things nobody has ever " +
+    "uttered. Real ones this task shipped, every one of which passed a review like " +
+    "yours:\n" +
+    "  \"my head is full today\" — correct Hebrew, not an expression\n" +
+    "  \"today I feel new\" — means nothing in either language\n" +
+    "  \"I bought and paid today\" — buying includes paying\n" +
+    "  \"I took and gave, it is fine\" — grammatical, near-meaningless\n" +
+    "  \"I am drinking a little tea\" — a quantity nobody announces\n" +
+    "  \"why is the door small?\" — a question no one has ever asked\n" +
+    "A sentence assembled to USE ITS WORDS, rather than to say something someone " +
+    "wanted to say, is the commonest fault in this material. Reject it every time.\n\n" +
+    "WHEN YOU ARE UNSURE, DROP IT. Keeping a bad sentence teaches him confident " +
+    "nonsense for months; dropping a good one costs one sentence from a batch that " +
+    "is cheap to write again. Those are not close, so do not balance them — " +
+    "returning half the batch is a correct answer.\n\n" +
     "JOB TWO — give every surviving item a level 1-5 by this rubric:\n" + LEVEL_RUBRIC + "\n" +
     "Grade what the sentence IS, not what it was meant to be. Apply the rubric the " +
     "same way every time — these grades are compared across different batches.\n\n" +

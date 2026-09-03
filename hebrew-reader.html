@@ -1953,6 +1953,35 @@
   .pp-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .pp-acts .btn { flex: 1 1 130px; }
   .pp-gate { margin: 8px 0 0; font-size: .76rem; color: var(--muted); }
+  /* THE COACH SPEAKING UNASKED. Same mark he has everywhere else — the display serif and
+     a soft gold rule, exactly .lcoach's treatment on the end screen — because this is a
+     person telling him what is left, not the app reporting a state. Deliberately not a
+     new colour: style guide §3 has gold meaning "you did this" and teal "you can act on
+     this", and a box about work still outstanding is neither. */
+  .pp-gold { margin: 12px 0 0; padding: 10px 0 2px 12px;
+             border-left: 2px solid var(--gold-soft); }
+  .pp-goldh { font-size: .64rem; letter-spacing: .12em; text-transform: uppercase;
+              color: #a49b88; margin-bottom: 6px; }
+  .pp-goldsay { font-family: var(--display); font-size: .88rem; line-height: 1.5;
+                color: var(--ink); margin: 0 0 6px; }
+  .pp-goldsay b[dir="rtl"] { font-family: "David", "Times New Roman", serif;
+                             color: var(--hebrew); }
+  .pp-goldlist { margin: 4px 0 0; padding: 0; list-style: none; }
+  .pp-goldlist li { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+                    padding: 4px 0; border-top: 1px solid var(--hair); font-size: .78rem; }
+  .pp-goldlist b { font-family: "David", "Times New Roman", serif; font-size: 1.02rem;
+                   color: var(--hebrew); }
+  /* The four fixed band colours, reused rather than a fifth language for the same four
+     states — style guide §3. */
+  .pp-goldlist s { text-decoration: none; font-size: .62rem; letter-spacing: .09em;
+                   text-transform: uppercase; font-weight: 700; padding: 1px 7px;
+                   border-radius: 999px; }
+  .pp-goldlist s.tier-new { background: #dcd6ca; color: #6a6355; }
+  .pp-goldlist s.tier-weak { background: #e3b7b0; color: #7d3b32; }
+  .pp-goldlist s.tier-progressing { background: #e8cf9e; color: #7d5d1f; }
+  .pp-goldlist s.tier-strong { background: #b9d6b4; color: #3d6136; }
+  .pp-goldlist span { flex: 1 1 100%; color: var(--muted); font-size: .74rem;
+                      line-height: 1.45; }
   .pp-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .pp-head h3 { margin: 0; font-size: 1.05rem; }
   .pp-tier { font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
@@ -18557,6 +18586,53 @@ function campNodeDone(id, c, srs) {
   const n = campNode(id, c);
   return !!n && campNodeWordsReady(n, srs) && campCoachMastered(n);
 }
+
+/* ---- what actually stands between him and gold ------------------------------
+   George: "there should be a what do I need to do to get to gold. This should include
+   like, how much further on each word before I max this node out, be useful and
+   informative."
+
+   Gold is campNodeDone, which is two gates — campNodeWordsReady AND campCoachMastered —
+   and this mirrors both rather than re-deriving either. The node sheet used to say only
+   the second half ("N words still to say live with the coach"), which is right as far as
+   it goes and silent about the words that are not ready yet.
+
+   ONE HALF IS A TRUE COUNTDOWN AND THE OTHER IS NOT, and the difference is kept rather
+   than smoothed over. `toLand` is exact: a word is landed or it is not, and its length is
+   genuinely "two more to say". A band is not a tally — it comes out of stability,
+   difficulty and recent miss rate — so there is no honest "two more correct answers", and
+   style guide §4 is explicit that a metric must never contradict its own caption. What
+   CAN be said truthfully is already computed: whySrsStrength().next is a plain sentence
+   about what would actually move that word, so each not-ready word carries its own.
+
+   Pure, and takes its stores, so the sheet and the tests ask the same question. */
+function campGoldPlan(node, srs, landed) {
+  const all = (node && node.words) || [];
+  const words = all.filter(k => !STOPLIST.has(k));
+  const s = srs || srsAll();
+  const L = landed || coachLandedAll();
+  /* The auto pass granted the graduation outright because every word was already strong —
+     campAutoPass's own argument, and George's: "If hte words are strong already give me
+     the pass on that level". So nothing is owed to the coach on one, and asking for it
+     would take back something the app has already given him. */
+  const auto = !!(node && campNodeAuto(node.id));
+  const notReady = [], toLand = [];
+  words.forEach(k => {
+    if (!wordReady(k, s)) {
+      const why = whySrsStrength((s[k] || {}).prod);
+      notReady.push({ key: k, band: why.verdict, next: why.next });
+    }
+    if (!auto && !L[k]) toLand.push(k);
+  });
+  return {
+    /* Mirrors campNodeDone exactly, empty-word-list case included: campNodeWordsReady
+       returns false on a node with no words and campCoachMastered does too, so a node
+       that teaches nothing is not gold. */
+    gold: !!all.length && !notReady.length && (auto || !toLand.length),
+    auto: auto, need: words.length, ready: words.length - notReady.length,
+    landedN: words.length - toLand.length, notReady: notReady, toLand: toLand
+  };
+}
 /* ---- material he has already outgrown ---------------------------------------
    George: "The current nodes that are showing are using words that are already strong
    in my bank ... If hte words are strong already give me the pass on that level, dont
@@ -20320,13 +20396,40 @@ function campOpenNode(id) {
      gates nothing, so the only thing that can stop it is having no words at all. */
   h += '<button class="btn secondary" id="campCompose">The coach</button>';
   h += '</div>';
-  /* What gold is still waiting on, said where he is deciding what to open. The coach
-     is never disabled — it gates nothing and it is how the words get said at all. */
-  if (!graduated) {
-    const L = coachLandedAll();
-    const left = (n.words || []).filter(k => !STOPLIST.has(k) && !L[k]);
-    if (left.length) h += '<p class="pp-gate">' + left.length + ' word' +
-      (left.length === 1 ? '' : 's') + ' still to say live with the coach for gold.</p>';
+  /* WHAT STANDS BETWEEN HIM AND GOLD, said where he is deciding what to open. This
+     replaces a line that named only the coach half of the gate and was silent about the
+     words that are not ready — so a node could say "3 words still to say" while the real
+     reason it was not gold was two words sitting at weak.
+
+     The coach speaks here without being asked, which is the half of this George wanted
+     most: "I want the coach to be there, but I want him to have came to me with the
+     answer not me request it." No AI in it — every line is computed, so it is the same on
+     a plane and on a dead key. */
+  const plan = campGoldPlan(n, srs);
+  if (!plan.gold) {
+    h += '<div class="pp-gold">';
+    h += '<div class="pp-goldh">To make this one gold</div>';
+    if (plan.toLand.length) {
+      /* THE EXACT COUNT, and the only one on this box that is exact. */
+      h += '<p class="pp-goldsay"><b>' + plan.landedN + ' of ' + plan.need +
+           '</b> said live with the coach. Still to say: ' +
+           plan.toLand.map(k => '<b dir="rtl">' + campEscape(k) + '</b>').join(", ") +
+           '.</p>';
+    } else if (plan.need) {
+      h += '<p class="pp-goldsay">Every word said live with the coach.</p>';
+    }
+    if (plan.notReady.length) {
+      /* NOT A COUNTDOWN, deliberately. Each word carries whySrsStrength's own sentence
+         about what would move it, because a band is not an answer tally and a number here
+         would be a caption contradicting its metric. */
+      h += '<p class="pp-goldsay">' + plan.notReady.length + ' word' +
+           (plan.notReady.length === 1 ? ' is' : 's are') + ' not strong enough yet:</p>';
+      h += '<ul class="pp-goldlist">' + plan.notReady.map(w =>
+        '<li><b dir="rtl">' + campEscape(w.key) + '</b> <s class="tier-' + w.band + '">' +
+        campEscape(w.band) + '</s><span>' + campEscape(w.next) + '</span></li>').join("") +
+        '</ul>';
+    }
+    h += '</div>';
   }
 
   panel.innerHTML = h;
@@ -29857,6 +29960,71 @@ T("campNodeWalked: without any lesson record it is still walked", () => {
     pathScoresSave({});
     assertTrue(campNodeWalked("nd", st.c, st.srs), "progression is the scheduler alone");
     assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
+  } finally { pathScoresSave(keep); }
+});
+T("campGoldPlan: exact about landings, honest about bands", () => {
+  /* The distinction the box is built on. "Two left to say" is a real countdown because a
+     word is landed or it is not; "two more correct answers" would be a lie, because a
+     band comes out of stability and difficulty rather than a tally. So the not-ready half
+     carries whySrsStrength's own sentence instead of a number. */
+  const st = campWalkStores(4, 6);
+  const node = st.c.chapters[0].nodes[0];
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({});
+    const landed = {}; landed["w0"] = 1; landed["w1"] = 1; landed["w2"] = 1; landed["w3"] = 1;
+    const p = campGoldPlan(node, st.srs, landed);
+    assertEq(p.toLand, ["w4", "w5"], "exactly the words not yet said live");
+    assertEq(p.landedN, 4, "and the count matches the list");
+    assertEq(p.need, 6);
+    assertEq(p.notReady.map(w => w.key), ["w4", "w5"], "the two that are not ready");
+    assertEq(p.ready, 4);
+    assertTrue(!p.gold, "so it is not gold");
+    assertEq(p.notReady[0].band, "new", "each carries its own band");
+    assertTrue(p.notReady[0].next === whySrsStrength(st.srs["w4"].prod).next,
+      "and whySrsStrength's own sentence, not a fabricated countdown");
+    assertTrue(!/\d+ more/.test(p.notReady[0].next), "which is never phrased as a count");
+  } finally { pathScoresSave(keep); }
+});
+T("campGoldPlan: it agrees with campNodeDone, which is the gate it mirrors", () => {
+  /* Two figures describing one clearance must be one constant — style guide §5. These
+     are two functions describing one gate, so the test is what stops them drifting. */
+  const st = campWalkStores(6, 6);
+  const node = st.c.chapters[0].nodes[0];
+  const keep = pathScoresAll(), keepL = lsGet(COACH_LANDED_KEY);
+  try {
+    pathScoresSave({});
+    lsSet(COACH_LANDED_KEY, "{}");
+    const all = campLandWords(st.c.chapters[0].nodes);
+    assertEq(campGoldPlan(node, st.srs, {}).gold, campNodeDone("nd", st.c, st.srs),
+      "every word held but none said live: both say not gold");
+    coachLandedSave(all);
+    assertEq(campGoldPlan(node, st.srs, all).gold, campNodeDone("nd", st.c, st.srs),
+      "and both say gold once they have been");
+    assertTrue(campGoldPlan(node, st.srs, all).gold, "which is gold");
+    const short = campWalkStores(5, 6);
+    assertEq(campGoldPlan(short.c.chapters[0].nodes[0], short.srs, all).gold,
+             campNodeDone("nd", short.c, short.srs),
+      "one word short of ready is short for both");
+    assertEq(campGoldPlan({ id: "empty", words: [] }, st.srs, all).gold, false,
+      "and a node that teaches nothing is not gold, matching campCoachMastered");
+  } finally { pathScoresSave(keep);
+              if (keepL == null) localStorage.removeItem(COACH_LANDED_KEY); else lsSet(COACH_LANDED_KEY, keepL); }
+});
+T("campGoldPlan: an auto-passed node owes the coach nothing", () => {
+  /* campAutoPass granted the graduation because every word was already strong. Asking
+     him to then say them to a coach would take back something already given — George:
+     "If hte words are strong already give me the pass on that level". */
+  const st = campWalkStores(6, 6);
+  const node = st.c.chapters[0].nodes[0];
+  const keep = pathScoresAll();
+  try {
+    pathScoresSave({ nd: { 99: { pct: 100, ts: Date.now(), auto: true } } });
+    const p = campGoldPlan(node, st.srs, {});
+    assertTrue(p.auto, "the node knows it was granted");
+    assertEq(p.toLand, [], "so nothing is owed to the coach");
+    assertEq(p.landedN, 6, "and the count says so rather than reading zero");
+    assertTrue(p.gold, "and it is gold on the words alone");
   } finally { pathScoresSave(keep); }
 });
 T("campNodeStale: a node walked but never mastered is NOT decay", () => {

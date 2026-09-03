@@ -1169,6 +1169,23 @@
   .lfixen { font-size: .78rem; color: var(--ink); direction: ltr; text-align: right;
             margin-top: 2px; }
   .lfixwhy { font-size: .8rem; color: #8b7350; margin-top: 6px; text-align: right; }
+  /* A WITHDRAWN CORRECTION. The .lfix block keeps its warm gold — the style guide is
+     explicit that a correction is the lesson and not a mark against him, and that holds
+     just as much when the correction turns out to be the coach's mistake. So this is not
+     an error colour either. What changes is that the Hebrew it proposed is struck
+     through, because the one thing he must not do is go on believing it. */
+  .lfix-void .lfixhe, .lfix-void .lfixtr, .lfix-void .lfixen {
+    text-decoration: line-through; opacity: .55; }
+  .lfix-void .lfixwhy { text-decoration: line-through; opacity: .5; }
+  /* The coach's own voice, so the world's serif rather than the interface sans — the
+     same reasoning as .lcoach. It is the coach speaking, not the app reporting. */
+  .lretract { font-family: var(--display); font-size: .92rem; line-height: 1.5;
+              color: #6d5836; margin-top: 10px; padding-top: 9px; text-align: right;
+              border-top: 1px dashed rgba(176,137,74,.42); }
+  .lretractalone { width: 100%; margin: 0 0 12px; padding: 10px 12px; border-radius: 10px;
+                   background: rgba(176,137,74,.10); border: 1px solid rgba(176,137,74,.28);
+                   border-top: 1px solid rgba(176,137,74,.28); padding-top: 10px; }
+  .lretractback { font-size: .74rem; color: #8b7350; margin-top: 5px; }
   .lbuilt { font-size: .72rem; color: var(--muted); text-align: center; margin: 2px 0 10px; }
   /* The prompt takes the map's face. It is the thing on the card you actually read. */
   .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
@@ -20367,6 +20384,127 @@ function composeNormalise(out) {
    (levelRecord), and answers him. None of that outlives the session, and none of it
    needed to. */
 
+/* ===========  THE COACH CHECKING ITSELF, AFTER HE HAS ALREADY SEEN IT  ===========
+
+   The coach is the one producer of Hebrew in this app with no reviewer, and it is
+   where the sentences a native speaker rejected actually came from. Everything else
+   got gated; this got a better model and nothing else.
+
+   A reviewer IN FRONT of it was refused, correctly, on latency — a second round trip
+   before the reply appears is the one cost George named. His answer, and it is better
+   than mine: the turn proceeds exactly as it does now, best model, presented the
+   moment it lands; then a lite model checks it in the background, and if it finds the
+   coach was wrong the coach says so. "so the evaluation is under the bonnet nad not
+   impacting the latency of hte coach".
+
+   NARROW ON PURPOSE, and that is what decides whether this helps or hurts. A weaker
+   model second-guessing a stronger one will invent faults if asked an open question,
+   and a retraction that is itself wrong is worse than no check at all: it teaches him
+   to distrust the corrections, which is the whole value of the mode. So it is asked
+   ONE thing with a high bar, and silence is the stated default.
+
+   THE FALSE CORRECTION IS THE WORSE ERROR, not an odd reply. CLAUDE.md records the
+   coach "correcting" a word he had pronounced perfectly, four turns running, off a
+   homophone the recogniser guessed wrong. He cannot read the letters, so he has no way
+   to know it is wrong and every reason to believe it. That is what this is for. */
+const COMPOSE_AUDIT_TIMEOUT_MS = 20000;
+function composeAuditPrompt(x) {
+  return "A Hebrew coach has just replied to a learner. You are checking the COACH, " +
+    "not the learner. Your only job is to catch the coach being wrong.\n\n" +
+    "THE LEARNER SPOKE ALOUD. This is a MACHINE TRANSCRIPT of his speech:\n  " +
+    (x.said || "(nothing)") + "\n" +
+    (x.alts && x.alts.length
+      ? "The recogniser other guesses at the same audio:\n" +
+        x.alts.map(function (a) { return "  " + a; }).join("\n") + "\n" +
+        "Those are competing readings of ONE recording. Unvocalised Hebrew is full of " +
+        "homophones, so a written difference he could not HEAR is the machine mistake " +
+        "and never his.\n"
+      : "") +
+    "\nWHAT THE COACH RULED:\n" +
+    "  verdict: " + (x.ok || "?") + "\n" +
+    ((x.bad && x.bad.length) ? "  words it called WRONG: " + x.bad.join(", ") + "\n"
+                             : "  it faulted no words\n") +
+    (x.fix ? "  its corrected version: " + x.fix + "\n" : "") +
+    (x.why ? "  what it told him: " + x.why + "\n" : "") +
+    "\nTHE COACH OWN REPLY TO HIM:\n  " + (x.say || "(none)") + "\n\n" +
+    "TWO QUESTIONS, AND THE BAR IS HIGH ON BOTH. Answer no unless you are sure.\n\n" +
+    "1. DID THE COACH FAULT SOMETHING THAT WAS ACTUALLY RIGHT? This is the one that " +
+    "matters. He cannot read Hebrew letters, so a wrong correction is one he will " +
+    "believe and repeat. Say yes only if a word it called wrong was correct as he said " +
+    "it — including when the TRANSCRIPT is wrong and he plainly said the right word, " +
+    "or when the coach corrected one spelling of a homophone to another.\n\n" +
+    "2. IS THE COACH OWN HEBREW WRONG? Only in a way you can name: English word order " +
+    "where Hebrew wants the dative (\"כואב לי הראש\", never \"הראש שלי כואב\"), " +
+    "a real word standing where a different one belongs (\"הביתה\" for home, not " +
+    "\"לבית\"), or Hebrew that plainly does not mean what the coach thinks it " +
+    "means. Not could-be-phrased-better — WRONG.\n\n" +
+    "If both answers are no, say so. That is the expected outcome and it costs nothing. " +
+    "Do NOT hunt for something to report.\n\n" +
+    "Return ONLY JSON, no markdown:\n" +
+    '{"wrong":false,"what":"","say":"","restore":[""]}' + "\n\n" +
+    "wrong — true only if you are confident the coach erred.\n" +
+    "what — \"correction\" if it faulted something right, \"reply\" if its own " +
+    "Hebrew is wrong. Empty when wrong is false.\n" +
+    "say — ONE short line of ENGLISH, addressed to him, owning it plainly: " +
+    "\"Actually your sentence was fine, I misread it.\" Every Hebrew word in it " +
+    "must appear as transliteration with the English in brackets, NEVER in Hebrew " +
+    "letters — he cannot read the alphabet at all.\n" +
+    "restore — the words from the coach WRONG list that were actually correct, copied " +
+    "exactly. Empty unless what is correction.";
+}
+
+/* Fire-and-forget behind the rendered card. Never throws into the turn, never blocks
+   it, and takes the same staleness precaution learnAdjudicate does: he may have spoken
+   again by the time this lands, and rewriting a card he has already left is worse than
+   saying nothing. */
+async function composeAudit(s, c, out, at) {
+  if (!out || !geminiKeys().length) return null;
+  /* Nothing was corrected and nothing was said back: no question worth a request. */
+  if (!out.fix && !(out.bad || []).length && !(out.say && out.say.he)) return null;
+  var res = null;
+  try {
+    res = extractJSON(await geminiRequest([{ text: composeAuditPrompt({
+      said: c._said || "", alts: c._alts || [],
+      ok: out.ok, bad: out.bad || [], fix: out.fix || "", why: out.why || "",
+      say: (out.say && out.say.he) || ""
+    }) }], GEMINI_MODELS_FAST,
+      { timeoutMs: COMPOSE_AUDIT_TIMEOUT_MS, label: "Checking what the coach said" }));
+  } catch (e) { return null; }        // a second opinion that never arrives is fine
+  if (!res || res.wrong !== true) return null;
+  var line = String((res && res.say) || "").trim();
+  if (!line) return null;             // a retraction with nothing to say is not one
+  /* HE HAS MOVED ON. Same rule as learnAdjudicate: the card this is about is gone, so
+     silence beats an "oops" about a sentence two turns back. */
+  if (!learnSession || learnSession !== s || s.i !== at || c._out !== out) return null;
+
+  /* THE LEDGER, NOT JUST THE TEXT. composeCredit withholds credit for every word the
+     coach put in `bad`, so a retraction that only prints an apology leaves him docked
+     for a word he used correctly — and coachLandedAll is what gold reads. Restoring it
+     is the difference between the coach saying sorry and the coach being wrong.
+
+     Filtered against what the coach ACTUALLY faulted, so the auditor cannot credit a
+     word that was never in dispute. Same rule as composeCredit: the app derives the
+     keys, the model only judges them. */
+  var restore = (Array.isArray(res.restore) ? res.restore : [])
+    .map(String).filter(function (k) { return (out.bad || []).indexOf(k) !== -1; });
+  var credited = [];
+  if (restore.length && res.what === "correction") {
+    try {
+      var lib = libAll(), srs = srsAll();
+      credited = restore.filter(function (k) { return srsGradable(k, lib); });
+      credited.forEach(function (k) {
+        learnMark(s, srs, k);
+        srsAnswer(srs, k, 2, "prod", learnLogExtra(c));
+        s.strengthened[k] = true;
+        if (c.landed) c.landed[k] = true;
+      });
+      if (credited.length) { srsSave(srs); coachLandRecord(credited); }
+    } catch (e) { credited = []; }   // never cost him the turn
+  }
+  c._retract = { say: line, what: String(res.what || ""), restored: credited };
+  try { learnRenderCard(); } catch (e) {}
+  return c._retract;
+}
 async function composeTurn(s, c) {
   if (!geminiKeys().length) return null;
   const lib = libAll(), srs = srsAll();
@@ -24738,7 +24876,31 @@ function learnRenderCompose(card, c, s) {
     }
     if (out.why) { const w = document.createElement("div"); w.className = "lfixwhy";
                    w.textContent = out.why; fix.append(w); }
+    /* THE COACH TAKING IT BACK, inside the block it is taking back rather than as a new
+       message further down. A retraction that sits below the reply reads as a third
+       opinion; sitting on the correction, it reads as the correction being withdrawn,
+       which is what it is. The strike-through says the same thing without words. */
+    if (c._retract && c._retract.what === "correction") fix.classList.add("lfix-void");
+    if (c._retract) {
+      const r = document.createElement("div"); r.className = "lretract";
+      r.textContent = c._retract.say;
+      if ((c._retract.restored || []).length) {
+        const lib = libAll();
+        const back = document.createElement("div"); back.className = "lretractback";
+        back.textContent = "Credited after all: " +
+          c._retract.restored.map(k => (lib[k] && lib[k].tr) || k).join(", ");
+        r.append(back);
+      }
+      fix.append(r);
+    }
     card.append(fix);
+  }
+  /* The coach faulted nothing, so there is no .lfix block to hang this on — but its own
+     reply was wrong and it still has to say so. */
+  if (out && !out.fix && c._retract) {
+    const r = document.createElement("div"); r.className = "lretract lretractalone";
+    r.textContent = c._retract.say;
+    card.append(r);
   }
   if (out && out.lvl) {
     const b = document.createElement("div"); b.className = "lbuilt";
@@ -24784,6 +24946,11 @@ async function composeSend(s, c) {
      because there is nowhere for it to go: composeAdvance either re-renders this card
      with the coach's answer and the microphone on it, or ends the session. */
   composeAdvance(s, c, out);
+  /* AFTER the card is up, never before it. This is the whole shape of the thing: the
+     turn is rendered and he is already reading it by the time this request is made, so
+     the check costs him no waiting at all. Deliberately not awaited — a retraction that
+     never arrives must look exactly like a turn with nothing wrong in it. */
+  try { composeAudit(s, c, out, at); } catch (e) { /* never into the turn */ }
 }
 
 function learnStuckLabel(btn, c) {
@@ -25177,7 +25344,8 @@ function learnScoreSpoken(c, text, res) {
      now: they are the only evidence on this card that the top transcript might be one
      reading among several, which on a homophone is the whole question. */
   if (c.kind === "compose") {
-    c._said = String(text || "").trim();
+    c._retract = null;                 // last turn's apology is not about this sentence
+  c._said = String(text || "").trim();
     c._alts = (res && res.alts) || [];
     learnSpoken = { text: String(text || ""), status: [], extra: [], english: {},
                     alts: (res && res.alts) || [], conf: (res && res.confidence) || 0,
@@ -31097,6 +31265,80 @@ T("composeAdvance: a word ticks only when he used it CORRECTLY", () => {
     assertEq(composeOutstanding(c), [k2], "and it is still on the table");
   } finally { if (realSrs === null || realSrs === undefined) localStorage.removeItem(SRS_KEY);
               else lsSet(SRS_KEY, realSrs); }
+});
+T("composeAudit: stays silent unless it is sure, and never invents a word to credit", async () => {
+  /* The risk this whole design carries: a weaker model second-guessing a stronger one.
+     A retraction that is itself wrong is worse than no check at all — it teaches him to
+     distrust the corrections, which is the only thing the coach is for. So silence has to
+     be the reliable default, and the auditor must not be able to reach the scheduler with
+     a word the coach never faulted. */
+  const realSend = geminiRequest, realKeys = geminiKeys, realRender = learnRenderCard;
+  const realSrs = lsGet(SRS_KEY), realLanded = lsGet(COACH_LANDED_KEY);
+  try {
+    geminiKeys = () => ["k"];
+    learnRenderCard = () => {};
+    const lib = libAll();
+    const word = Object.keys(lib).filter(k => srsGradable(k, lib))[0];
+    const mk = () => {
+      const c = { kind: "compose", landed: {}, pool: [], objectives: [], turns: [],
+                  _said: "something", _alts: [] };
+      const s2 = { i: 3, strengthened: {} };
+      return { c: c, s: s2 };
+    };
+    const out = { ok: "minor", bad: [word], fix: "x", why: "y", say: { he: "z" } };
+
+    /* NOT WRONG is the expected outcome and must produce nothing at all. */
+    geminiRequest = async () => JSON.stringify({ wrong: false, what: "", say: "", restore: [] });
+    let t = mk(); t.c._out = out; learnSession = t.s;
+    assertNull(await composeAudit(t.s, t.c, out, 3), "a clean turn retracts nothing");
+    assertTrue(!t.c._retract, "and leaves no retraction on the card");
+
+    /* WRONG BUT SILENT: a retraction with no sentence in it is not a retraction. */
+    geminiRequest = async () => JSON.stringify({ wrong: true, what: "correction", say: "  ", restore: [word] });
+    t = mk(); t.c._out = out; learnSession = t.s;
+    assertNull(await composeAudit(t.s, t.c, out, 3), "nothing to say means nothing said");
+
+    /* A WORD THE COACH NEVER FAULTED cannot be credited by the auditor. The app derives
+       the keys and the model only judges them — same rule as composeCredit. */
+    lsSet(SRS_KEY, JSON.stringify({}));
+    geminiRequest = async () => JSON.stringify({ wrong: true, what: "correction",
+      say: "Actually that was fine.", restore: ["מילהשלאהייתה", word] });
+    t = mk(); t.c._out = out; learnSession = t.s;
+    const r = await composeAudit(t.s, t.c, out, 3);
+    assertTrue(!!r, "a confident retraction lands");
+    assertEq(r.restored.join(","), word, "only the word the coach actually faulted");
+    assertTrue(!!srsAll()[word], "and it reaches the scheduler");
+    assertTrue(t.c.landed[word] === true, "and the session ledger, which is what gold reads");
+
+    /* HE HAS MOVED ON. Same rule as learnAdjudicate — rewriting a card he has left is
+       worse than saying nothing. */
+    t = mk(); t.c._out = out; learnSession = t.s;
+    assertNull(await composeAudit(t.s, t.c, out, 99), "a stale turn is dropped");
+    assertTrue(!t.c._retract);
+    learnSession = null;
+    assertNull(await composeAudit(t.s, t.c, out, 3), "and so is a session that has ended");
+  } finally {
+    geminiRequest = realSend; geminiKeys = realKeys; learnRenderCard = realRender;
+    learnSession = null;
+    const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    put(SRS_KEY, realSrs); put(COACH_LANDED_KEY, realLanded);
+  }
+});
+T("composeAudit: a turn with nothing to check costs no request", async () => {
+  /* Most turns are clean. Spending a request to be told so, every turn, for eight turns
+     a session, is the kind of quiet waste that only shows up on a quota dashboard. */
+  const realSend = geminiRequest, realKeys = geminiKeys;
+  let calls = 0;
+  try {
+    geminiKeys = () => ["k"];
+    geminiRequest = async () => { calls++; return '{"wrong":false}'; };
+    const c = { landed: {}, _said: "x", _alts: [] };
+    const s2 = { i: 1, strengthened: {} };
+    await composeAudit(s2, c, { ok: "clean", bad: [], fix: "", say: { he: "" } }, 1);
+    assertEq(calls, 0, "no correction and no reply: nothing to audit");
+    await composeAudit(s2, c, { ok: "clean", bad: [], fix: "", say: { he: "shalom" } }, 1);
+    assertEq(calls, 1, "but a reply on its own is still worth checking");
+  } finally { geminiRequest = realSend; geminiKeys = realKeys; }
 });
 T("composeSpeakNew: the coach reads its line once per turn, not once per repaint", () => {
   /* learnRenderCard runs on repaint, resize and every stage change. Without the guard

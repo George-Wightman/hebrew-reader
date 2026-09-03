@@ -1338,6 +1338,7 @@
     min-height: 1.5em; color: var(--muted); }
   /* One row per round, one mark per phrase. Gold is "you did this" and nothing else,
      so an unbeaten round leaves its row plain rather than colouring it a failure. */
+  .lspeedouts { display: flex; gap: 18px; justify-content: center; margin-top: 12px; }
   .lspeedmarks { display: flex; flex-direction: column; gap: 6px; align-items: center;
     margin-top: 22px; }
   .lspeedrow { display: flex; gap: 7px; }
@@ -2416,7 +2417,13 @@
       <div class="lspeednote" id="lSpeedNote"></div>
       <div class="lactions">
         <button class="btn" id="lSpeedMic" type="button">Say it</button>
+      </div>
+      <!-- Both ways out, side by side, because that is what they are: one leaves this
+           round, one leaves the walk home. Kept off the .lactions row so the thing he
+           does every turn is not sitting in a line of things he does once. -->
+      <div class="lspeedouts">
         <button class="linkbtn" id="lSpeedSkip" type="button">Skip this one</button>
+        <button class="linkbtn" id="lSpeedDone" type="button">Finish here</button>
       </div>
       <!-- One mark per phrase per round: the tally IS the arrangement. -->
       <div class="lspeedmarks" id="lSpeedMarks"></div>
@@ -23750,6 +23757,7 @@ document.getElementById("lSpeedMic").onclick = function () { learnSpeedAttempt(t
 /* Skipping one is not failing it — there is nothing here to fail. learnSpeedNext clears
    the deadline on the way past, so a skip mid-run cannot fire into the round after it. */
 document.getElementById("lSpeedSkip").onclick = () => learnSpeedNext();
+document.getElementById("lSpeedDone").onclick = () => learnSpeedFinish();
 
 document.getElementById("lResumeDrop").onclick = () => {
   /* Dropped, not finished. The cards already answered kept their grades when they
@@ -26092,6 +26100,26 @@ function learnSpeedBarStop(bar) {
   bar.style.transition = "none";
   bar.style.transform = at;
 }
+/* A WAY OFF THIS SCREEN, which it did not have. "Skip this one" advances a single turn,
+   so the only exits were playing out all three rounds or tapping skip three times.
+   George: "it could record me just tgive me to option to end it too."
+
+   Deliberately NOT lQuitBtn's End session, which calls learnRenderStart() and puts him
+   back on the map. By the time the walk home is running the graded work is finished,
+   sessionClear() has already been called and the day's marks are written — there is
+   nothing left to abandon, and the end screen is the thing he is being kept from rather
+   than the thing he wants to escape.
+
+   learnSpeed is nulled BEFORE learnFinish, and that ordering is the whole of the
+   function. learnSpeedJudge leaves an 850ms advance timer behind it; without this, a
+   Finish tapped in that window would run learnSpeedNext over the end screen. */
+function learnSpeedFinish() {
+  const sp = learnSpeed;
+  if (!sp) return;
+  if (sp.timer) { clearTimeout(sp.timer); sp.timer = null; }
+  learnSpeed = null;
+  learnFinish();               // releases the microphone itself, on every path out
+}
 /* Asked in three places — the copy, the button label, and whether to start the mic —
    so it lives in one. A browser with no recogniser falls back to the thumb whatever the
    setting says, which is the same fallback learnRenderCompose makes. */
@@ -26149,7 +26177,12 @@ function learnSpeedAttempt(btn) {
      pocket mid-round leaves the walk home waiting for a tap that is never coming. */
   sp.timer = setTimeout(() => learnSpeedJudge(false), deadline);
   const listens = learnSpeedListens();
-  btn.textContent = listens ? "\u23f9 Stop" : "Said it";
+  /* No glyph, unlike the drill card's mic. Style guide \u00a72 keeps emoji out of the world
+     layer \u2014 they were taken off the drill cards for exactly that reason and these are
+     what is left, not a precedent. The red pulse and the word already say listening
+     twice; a third signal for one state would be the "one signal, not four weak ones"
+     mistake, on a screen that has never carried a glyph at all. */
+  btn.textContent = listens ? "Stop" : "Said it";
   if (listens) { btn.classList.add("listening"); learnSpeedListen(sp, it); }
 }
 /* Deliberately not awaited by its caller: the turn is already running and this either
@@ -28497,6 +28530,27 @@ T("speedMicOn: on unless he has turned it off", () => {
     assertTrue(speedMicOn());
   } finally { if (real === null || real === undefined) localStorage.removeItem(SPEED_MIC_KEY);
               else lsSet(SPEED_MIC_KEY, real); }
+});
+T("learnSpeedFinish: the walk home is gone before the end screen is drawn", () => {
+  /* The ordering IS the function. learnSpeedJudge leaves an 850ms timer behind that
+     calls learnSpeedNext, and learnSpeedNext's only guard is `if (!learnSpeed) return` —
+     so finishing while that timer is in flight has to leave nothing for it to find, or
+     the walk home advances a round on top of the end screen. */
+  const realFinish = learnFinish, realSpeed = learnSpeed;
+  let seen = "never called";
+  try {
+    learnFinish = () => { seen = learnSpeed; };
+    learnSpeed = { items: [{ he: "\u05d4\u05d1\u05d9\u05ea \u05d2\u05d3\u05d5\u05dc" }], pass: 1, i: 0,
+                   marks: {}, busy: false, timer: null, at: "" };
+    learnSpeedFinish();
+    assertNull(seen, "learnFinish must find no walk home still standing");
+    assertNull(learnSpeed, "and it is gone afterwards too");
+    /* Idempotent: a second tap on a screen already left does nothing rather than
+       drawing a second end screen. */
+    seen = "never called";
+    learnSpeedFinish();
+    assertEq(seen, "never called");
+  } finally { learnFinish = realFinish; learnSpeed = realSpeed; }
 });
 T("learnSpeedPick: the hardest thing he got clean, not the first thing he got clean", () => {
   /* The bug this replaces: items.slice(0, 3) took insertion order, which in a normal

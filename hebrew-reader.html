@@ -12306,6 +12306,37 @@ function aiQSave(q) { try { lsSet(AI_Q_KEY, JSON.stringify(q)); } catch (e) {} }
 function aiQNote(model, outcome) {
   try { aiQSave(aiQRecord(aiQAll(), todayISO(), model, outcome)); } catch (e) {}
 }
+/* ---- WHO GETS THE SCARCE POOL WHEN IT RUNS LOW ------------------------------
+   Twenty strong requests a day, and as of 2026-09-03 three callers want them: the
+   reviewer, the coach, and the writer. One coach session at COMPOSE_TURN_CAP is eight
+   of the twenty on its own, so "everybody asks for strong" is not a policy, it is a
+   race the last caller of the day loses.
+
+   The order falls out of what each one is protecting. The REVIEWER is last to degrade:
+   it is the only thing standing between a generated sentence and months of drilling,
+   and it runs once per batch of ~12 rather than once per item, so it is the cheapest
+   quality in the app per item defended. The COACH is next: it matters a great deal in
+   the moment and not at all afterwards, since it no longer banks anything. The WRITER
+   is now Lite by default — with a strong judge behind it, a weaker writer costs a
+   rejected item, and rejecting is free.
+
+   So the reserve is a floor the reviewer alone may draw below. Everyone else stops at
+   it and takes Lite, which geminiRequest already handles as an ordinary fallback. */
+const AI_STRONG_RESERVE = 6;
+function aiStrongLeft(q, today) {
+  q = aiQRoll(q || aiQAll(), today || todayISO());
+  /* Google's own refusal outranks the count — see aiQRecord. */
+  if (q.spent && q.spent.strong) return 0;
+  return Math.max(0, AI_POOL_CAPS.strong - (q.strong || 0));
+}
+/* `role` is "review" for the one caller that may spend the reserve. Anything else gets
+   strong only while there is headroom above it. Deliberately a function rather than a
+   constant read at load: a session that starts with room and runs long should degrade
+   partway through rather than hold a decision made an hour ago. */
+function aiModelsFor(role) {
+  if (role === "review") return GEMINI_MODELS;
+  return aiStrongLeft() > AI_STRONG_RESERVE ? GEMINI_MODELS : GEMINI_MODELS_FAST;
+}
 function aiQSummary(q, today) {
   q = aiQRoll(q, today);
   return ["strong", "fast"].map(pool =>
@@ -20353,7 +20384,7 @@ async function composeTurn(s, c) {
        is why Phase 4 puts a reserve under the reviewer and lets this degrade below it.
        geminiRequest already falls through to lite by itself when the pool is gone, so a
        heavy day costs quality here rather than the mode. */
-    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS,
+    out = extractJSON(await geminiRequest([{ text: prompt }], aiModelsFor("coach"),
                                           { timeoutMs: COMPOSE_TIMEOUT_MS,
                                             label: "Reading your sentence" }));
   } catch (e) { return null; }
@@ -22170,7 +22201,21 @@ async function sentenceWriteOne(spec, briefs) {
      back into gemini-flash's 5-a-minute limit, the throttle is read as "this model is
      gone", and the heaviest call in the app runs on gemini-flash-lite instead. George saw
      the symptom and named the cause: "should we pause before resending?" */
-  const out = extractJSON(await geminiRequest([{ text: prompt }], null,
+  /* LITE FIRST, WHICH IS THE INVERSION THIS WHOLE CHANGE TURNS ON. `null` here meant
+     GEMINI_MODELS — the writer took the scarce pool and the judge got the cheap model.
+     That is backwards. The judge sees the finished sentence and can simply say no; it
+     runs once per batch of ~12 where this runs once per 8; and it defends material that
+     is then drilled for months. A weaker writer costs a rejected item, and rejecting is
+     free against a 500/day pool.
+
+     It is also the only way the arithmetic closes at all: AI_POOL_CAPS.strong is 20 and
+     one coach session is 8 of them.
+
+     The trade this makes is real and is the thing the harness in tools/ exists to
+     measure — whether Lite plus a mandatory review actually matches Flash plus an
+     optional one. Until that comes back, the review below is required rather than
+     best-effort, which is the conservative side of the unknown. */
+  const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
     { timeoutMs: GEN_TIMEOUT_MS, waitOnRateLimit: true,
       label: "Writing practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const items = (out && Array.isArray(out.items)) ? out.items : [];
@@ -22296,7 +22341,7 @@ async function sentenceCommission(spec) {
                           drafted.length + " written, " + drafted.length + " rejected: " +
                           drafted.slice(0, 3).map(it => it && it.he).filter(Boolean).join(" / "));
   }
-  const kept = await learnReviewItems({ items: clean });
+  const kept = await learnReviewItems({ items: clean }, { required: true });
   const n = learnIngest(kept);
   /* Passing the gate and still banking nothing is its own distinct failure — the
      reviewer binned them, or learnIngest's own duplicate/near-duplicate/unknown-word
@@ -22544,7 +22589,7 @@ async function learnTopUp(quiet) {
     const drafted = extractJSON(await geminiRequest([{ text: prompt }], null,
                                                     { timeoutMs: GEN_TIMEOUT_MS,
                                                       label: "Writing more practice" }));
-    return made + learnIngest(await learnReviewItems(drafted));
+    return made + learnIngest(await learnReviewItems(drafted, { required: true }));
   } finally { if (!quiet) busy(false); }
 }
 
@@ -22570,10 +22615,23 @@ async function learnTopUp(quiet) {
    cheaper per item defended than a strong writer — and it defends material that is then
    drilled for months. That is the whole trade in this spec: sentenceWriteOne gives up
    Flash so this can have it. */
-async function learnReviewItems(data) {
+/* `opts.required` is the OTHER HALF OF MAKING THE WRITER CHEAP. Everywhere this call is
+   optional it must degrade to "ingest unreviewed" — losing a batch to a malformed reply
+   would be worse than the reply. But once the writer runs on Lite by default, an
+   unreviewed Lite batch is precisely the material this whole change exists to stop, and
+   the lenient fallback silently becomes the failure mode. So the commission path asks
+   for it required: retry once, then bank nothing.
+
+   Banking nothing is genuinely cheap here and that is what makes this affordable. The
+   fast pool is 500/day against a handful spent, campWarm is fire-and-forget, and
+   commissionResult already has language for a batch that produced nothing. The next
+   session simply writes again. */
+async function learnReviewItems(data, opts) {
   const items = (data && Array.isArray(data.items)) ? data.items : [];
+  const required = !!(opts && opts.required);
+  const give = () => required ? Object.assign({}, data, { items: [] }) : data;
   if (items.length < 2) return data;           // nothing worth a round trip
-  if (!geminiKeys().length) return data;
+  if (!geminiKeys().length) return give();
   const listing = items.map((it, i) =>
     i + ". [" + (it.type || "sentence") + "] " + (it.he || "") +
     "  |  " + (it.tr || "") + "  |  " + (it.en || "")).join("\n");
@@ -22625,14 +22683,35 @@ async function learnReviewItems(data) {
     "happy to defend it as natural Hebrew. If most fail, keep few — that is the " +
     "correct outcome, not a problem.";
   try {
-    const out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS,
-                                                { waitOnRateLimit: true,   // see sentenceWriteOne
-                                                  label: "Checking the new sentences" }));
-    const keep = (out && Array.isArray(out.keep)) ? out.keep : null;
+    /* aiModelsFor("review") rather than GEMINI_MODELS directly: this is the one caller
+       allowed to spend below AI_STRONG_RESERVE, and routing it through the same picker
+       everyone else uses is what makes that privilege visible rather than implicit.
+
+       The parse lives INSIDE the attempt deliberately. extractJSON throws on a reply it
+       cannot find braces in, which is the commonest way a malformed answer arrives — so
+       a retry that only covered "keep was missing" would miss the case it was written
+       for and fall straight to the catch. From this caller's side "did not parse" and
+       "had no keep" are the same failure and take the same second chance. */
+    const ask = async () => {
+      try {
+        const out = extractJSON(await geminiRequest([{ text: prompt }], aiModelsFor("review"),
+                                                    { waitOnRateLimit: true,   // see sentenceWriteOne
+                                                      label: "Checking the new sentences" }));
+        return (out && Array.isArray(out.keep) && out.keep.length) ? out.keep : null;
+      } catch (e) { return null; }
+    };
+    /* ONE RETRY, AND ONLY WHERE THE ANSWER IS LOAD-BEARING. A required review that came
+       back malformed is about to cost the whole batch, which is worth a second request
+       against a 500/day pool. An optional one falls straight through to its old
+       behaviour and costs nothing. */
+    let keep = await ask();
+    if (required && !keep) keep = await ask();
     /* A reviewer that rejects everything is far more likely to be a malformed reply
        than twelve genuinely broken items — fall back rather than silently starve
-       the bank on one bad response. */
-    if (!keep || !keep.length) return data;
+       the bank on one bad response. Where the review was REQUIRED there is no safe
+       fallback to take: banking a Lite batch nobody checked is the thing this exists
+       to prevent, so it banks nothing and the next session writes again. */
+    if (!keep || !keep.length) return give();
     /* Accepts BOTH shapes: the {i, lvl} objects asked for above, and the bare
        integers the old prompt asked for. A model that ignores half the instruction
        and returns [0,2,5] must still get its items kept — losing a whole batch over
@@ -22648,10 +22727,10 @@ async function learnReviewItems(data) {
         ? Object.assign({}, it, { lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, lvl)) })
         : it);
     });
-    if (!kept.length) return data;
+    if (!kept.length) return give();
     return Object.assign({}, data, { items: kept });
   } catch (e) {
-    return data;        // review is an improvement, never a dependency
+    return give();      // an improvement where optional; a gate where required
   }
 }
 
@@ -31383,6 +31462,84 @@ T("sentencePlanPrompt: the planner is told which words he actually has", () => {
 /* The two composeBank tests were deleted with the function on 2026-09-03. The coach
    no longer writes permanent material, so there is no banking behaviour here left to
    assert — see the note above composeTurn for why deleting beat gating it. */
+T("aiModelsFor: the reviewer outlives everyone else in the pool", () => {
+  /* Twenty strong requests and three callers, one of which spends eight in a session.
+     The order is the design: the reviewer is the last thing to degrade because it is the
+     only thing standing between a generated sentence and months of drilling. */
+  const real = lsGet(AI_Q_KEY);
+  try {
+    const day = todayISO();
+    const set = n => lsSet(AI_Q_KEY, JSON.stringify({ day: day, strong: n, fast: 0, spent: {} }));
+    set(0);
+    assertEq(aiModelsFor("coach"), GEMINI_MODELS, "plenty left: the coach gets Flash");
+    set(AI_POOL_CAPS.strong - AI_STRONG_RESERVE - 1);
+    assertEq(aiModelsFor("coach"), GEMINI_MODELS, "still above the reserve");
+    set(AI_POOL_CAPS.strong - AI_STRONG_RESERVE);
+    assertEq(aiModelsFor("coach"), GEMINI_MODELS_FAST, "at the reserve the coach steps aside");
+    assertEq(aiModelsFor("review"), GEMINI_MODELS, "and the reviewer does not");
+    set(AI_POOL_CAPS.strong);
+    assertEq(aiModelsFor("review"), GEMINI_MODELS,
+             "the reviewer still ASKS when the count is spent — geminiRequest owns the fallback");
+    /* Google's own refusal outranks this browser's count, which is the one number that
+       is definitely true. */
+    lsSet(AI_Q_KEY, JSON.stringify({ day: day, strong: 0, fast: 0, spent: { strong: true } }));
+    assertEq(aiStrongLeft(), 0, "a refusal means none left, whatever the tally says");
+    assertEq(aiModelsFor("coach"), GEMINI_MODELS_FAST);
+  } finally {
+    if (real == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, real);
+  }
+});
+T("learnReviewItems: required means it banks nothing rather than banking unchecked", async () => {
+  /* The other half of making the writer cheap. Everywhere this call is optional it must
+     degrade to "ingest unreviewed" — but once the writer runs Lite by default, that
+     lenient fallback silently becomes the exact failure this change exists to stop. */
+  const realSend = geminiRequest, realKeys = geminiKeys;
+  let calls = 0;
+  try {
+    geminiKeys = () => ["k"];
+    const two = { items: [{ he: "א", tr: "a", en: "one" }, { he: "ב", tr: "b", en: "two" }] };
+
+    geminiRequest = async () => { calls++; throw new Error("dead"); };
+    calls = 0;
+    assertEq((await learnReviewItems(two)).items.length, 2,
+             "optional: a failed review must never cost him content");
+    calls = 0;
+    assertEq((await learnReviewItems(two, { required: true })).items.length, 0,
+             "required: nothing reaches the bank unchecked");
+
+    /* A malformed reply is worth one more request when the answer is load-bearing, and
+       is not when it is free to ignore. */
+    geminiRequest = async () => { calls++; return "{\"nope\":1}"; };
+    calls = 0;
+    await learnReviewItems(two);
+    assertEq(calls, 1, "optional: asked once, fell through");
+    calls = 0;
+    await learnReviewItems(two, { required: true });
+    assertEq(calls, 2, "required: retried once before giving up");
+
+    /* And a retry that succeeds is honoured rather than discarded. */
+    calls = 0;
+    geminiRequest = async () => (++calls === 1) ? "rubbish" : "{\"keep\":[{\"i\":1,\"lvl\":3}]}";
+    const out = await learnReviewItems(two, { required: true });
+    assertEq(out.items.length, 1, "the second answer counts");
+    assertEq(out.items[0].en, "two");
+    /* No key is the same shape of problem: required cannot proceed, optional can. */
+    geminiKeys = () => [];
+    assertEq((await learnReviewItems(two, { required: true })).items.length, 0);
+    assertEq((await learnReviewItems(two)).items.length, 2);
+  } finally { geminiRequest = realSend; geminiKeys = realKeys; }
+});
+T("sentenceWriteOne and learnReviewItems: the judge is not the cheaper model", () => {
+  /* The inversion, asserted as a pair because it only makes sense as one. If someone
+     later moves the writer back to Flash without moving the judge, the reasoning in
+     both comments has quietly stopped being true. */
+  const src = String(sentenceWriteOne);
+  assertTrue(/GEMINI_MODELS_FAST/.test(src), "the writer asks for Lite first");
+  assertTrue(!/geminiRequest\(\[\{ text: prompt \}\], null,/.test(src),
+             "and no longer takes the strong pool by defaulting to it");
+  assertTrue(/aiModelsFor\("review"\)/.test(String(learnReviewItems)),
+             "the judge routes through the picker that lets it spend the reserve");
+});
 T("GEMINI_MAX_ATTEMPTS: depth shrank so breadth could be afforded", () => {
   /* Three attempts against GEN_TIMEOUT_MS is ~137s per model; now that geminiSend walks
      on rather than throwing, that would be nine minutes across two models and two keys.

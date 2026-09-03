@@ -1608,6 +1608,26 @@
   .lact-quick button:active { background: var(--accent-soft); }
   .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
   .lact .lhint:empty { display: none; }
+  /* THE COACH, ON THE FRONT DOOR. The same mark he wears everywhere else — the display
+     serif and a soft gold rule, exactly .lcoach's treatment — because the thing that
+     makes this the coach speaking rather than the app reporting is the voice, and a voice
+     survives being on paper in a way a panel colour does not.
+
+     George asked for a blue box. Deliberately not: style guide §3 gives gold "you did
+     this" and teal "you can act on this", and a note about work still ahead is neither —
+     it would be a third colour competing with two that already mean something exact. */
+  .lfc { margin: 10px 0 0; padding: 9px 0 2px 11px; text-align: left;
+         border-left: 2px solid var(--gold-soft); }
+  .lfc:empty { display: none; }
+  .lfc-h { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
+           color: #a49b88; margin-bottom: 5px; }
+  .lfc-line { font-family: var(--display); font-size: .86rem; line-height: 1.5;
+              color: var(--ink); margin: 0 0 4px; }
+  /* What the coach adds on top. Slightly quieter than the computed lines on purpose: they
+     are measured and this one is written, and the ranking should be visible. */
+  .lfc-say { font-family: var(--display); font-size: .84rem; line-height: 1.5;
+             color: #6d5836; margin: 6px 0 0; }
+  .lfc-more { font-size: .7rem; margin-top: 6px; padding: 0; }
 
   /* Centred on the board, not pinned to the top — at the top it landed on the streak
      bar, and more to the point this is a question that wants answering before you do
@@ -2428,6 +2448,10 @@
 
       <div class="lact" id="lAct">
         <div id="lActBody"></div>
+        <!-- What is ahead, said before he starts rather than reported after. A CHILD of
+             the card and not of its body, for the same reason #lStartHint is:
+             learnRenderAct rebuilds the body on every draw. -->
+        <div class="lfc" id="lFc"></div>
         <!-- A CHILD of the card but not of its body: learnRenderAct rebuilds the body
              on every draw, and everything the session flow says ("Daily AI limit
              reached", "Wrote 6 new practice items") is written here by id. -->
@@ -24635,6 +24659,132 @@ function learnRenderAct() {
   box.append(quick);
 }
 
+/* ---- the coach, before you start --------------------------------------------
+   George: "there should be a blue box that tells me the forecast/ whats to come ... I also
+   want him to be useful where it is needed wothit me asking."
+
+   COMPUTED FIRST, COACH SECOND. Every line below comes out of forecastFacts, so the box
+   is complete on a plane, on a dead key, and on the first paint before any call returns.
+   The coach's sentence is a layer over it that fills in or does not — the same split
+   learnRenderFacts and learnCoachNote already use on the end screen, and the reason that
+   screen is never broken by a failed request.
+
+   Pure so the wording can be tested without a call, and so the coach can be handed the
+   same lines rather than a second description of the same state. */
+function forecastLine(F) {
+  const out = [];
+  const waiting = F.due + F.fresh;
+  if (waiting) {
+    const parts = [];
+    if (F.due) parts.push(F.due + " due");
+    if (F.fresh) parts.push(F.fresh + " you have never drilled");
+    out.push(parts.join(" and ") + " — that is what the next session draws from.");
+  } else if (F.targets.length) {
+    out.push("Nothing overdue. The next session works ahead of the schedule.");
+  } else {
+    out.push("Nothing queued right now.");
+  }
+  /* THE MOST ACTIONABLE THING THE APP KNOWS, and until the forecast existed nothing said
+     it anywhere. One node named, not a list: a list of near-misses is a chore, one is a
+     next move. */
+  if (F.close.length) {
+    const n = F.close[0];
+    out.push(n.name + " is " + (n.left === 1 ? "one thing" : n.left + " things") +
+             " from gold.");
+  }
+  if (F.node && !F.close.some(c => c.id === F.node.id) && F.node.plan.toLand.length)
+    out.push(F.node.plan.landedN + " of " + F.node.plan.need + " words in " + F.node.name +
+             " said live with the coach.");
+  return out;
+}
+/* The facts the coach's sentence actually depends on. Time practised today is deliberately
+   a yes/no rather than a number of seconds: it moves every card, and a hash that moves
+   every card is a call every card. */
+function forecastHash(F) {
+  return [F.due, F.fresh, F.servable, F.todaySec ? 1 : 0, F.streak,
+          F.node ? F.node.id + ":" + F.node.plan.landedN + ":" + F.node.plan.notReady.length : "-",
+          F.close.map(c => c.id + ":" + c.left).join("|"),
+          F.thin.join("|")].join("/");
+}
+function forecastCoachPrompt(F, lines, level) {
+  return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
+    "learning conversational Hebrew to talk with his partner's grandfather. He has just " +
+    "opened the app and has not started practising yet.\n\n" +
+    (level ? "HIS LEVEL IS " + level + " OF 5.\n\n" : "") +
+    "THESE ARE THE ONLY FACTS YOU HAVE. Every one was measured by the app. Do not invent " +
+    "any others, do not guess at effort or mood, and do not describe anything not listed " +
+    "here.\n\n" +
+    lines.map(l => "  " + l).join("\n") + "\n" +
+    (F.targets.length ? "\nWORDS THE NEXT SESSION WOULD PICK:\n  " +
+      F.targets.slice(0, 8).map(t => (t.tr || t.key) + " (" + t.band + ")").join(", ") + "\n" : "") +
+    (F.streak ? "\nHE HAS PRACTISED " + F.streak + " DAY(S) IN A ROW.\n" : "") +
+    (F.todaySec ? "\nHE HAS ALREADY PRACTISED TODAY.\n" : "") +
+    "\nWrite ONE short sentence to him, second person, no heading and no list. Say the " +
+    "most useful thing about what is ahead of him — what is waiting, or what is within " +
+    "reach. Do not congratulate him for something not in the facts above, do not tell him " +
+    "to try hard, and do not repeat a number that is already on the screen unless it is " +
+    "the point of the sentence.";
+}
+let forecastSaying = false;
+const FORECAST_SAY_KEY = "hvr_coachsay";
+/* Cached against the facts, not the clock. Ten app opens in an evening is one call, and
+   the line does not develop a new personality between two glances at the same state —
+   which would read as the coach being unreliable rather than as variety. */
+async function forecastCoachNote(F) {
+  const box = document.getElementById("lFcSay");
+  if (!box) return null;
+  const hash = forecastHash(F);
+  let cached = null;
+  try { cached = JSON.parse(lsGet(FORECAST_SAY_KEY)); } catch (e) {}
+  if (cached && cached.hash === hash && cached.text) {
+    box.textContent = cached.text; box.style.display = ""; return cached.text;
+  }
+  box.textContent = ""; box.style.display = "none";
+  if (forecastSaying || !geminiKeys().length || !navigator.onLine) return null;
+  forecastSaying = true;
+  try {
+    const txt = String(await geminiRequest(
+      [{ text: forecastCoachPrompt(F, forecastLine(F), levelSettle(levelAll())) }],
+      GEMINI_MODELS_FAST,
+      { label: "The coach — what's coming", timeoutMs: FETCH_TIMEOUT_MS }) || "").trim();
+    if (!txt) return null;
+    try { lsSet(FORECAST_SAY_KEY, JSON.stringify({ hash: hash, text: txt })); } catch (e) {}
+    const b = document.getElementById("lFcSay");
+    if (b) { b.textContent = txt; b.style.display = ""; }
+    return txt;
+  } catch (e) { return null; }
+  finally { forecastSaying = false; }
+}
+function learnRenderForecast() {
+  const box = document.getElementById("lFc");
+  if (!box) return;
+  const F = forecastFacts();
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "lfc-h";
+  head.textContent = "What's coming";
+  box.append(head);
+  forecastLine(F).forEach(l => {
+    const p = document.createElement("p");
+    p.className = "lfc-line";
+    p.textContent = l;
+    box.append(p);
+  });
+  /* Filled in by forecastCoachNote when it arrives, and absent otherwise — the lines above
+     are already a complete answer without it. */
+  const say = document.createElement("p");
+  say.className = "lfc-say"; say.id = "lFcSay"; say.style.display = "none";
+  box.append(say);
+  /* The report behind the box. Opens the coach pointed at the forecast, so "what else is
+     coming" is one tap from the sentence that raised the question. */
+  const more = document.createElement("button");
+  more.type = "button"; more.className = "linkbtn lfc-more";
+  more.textContent = "See it all";
+  more.onclick = () => uhModalOpen(true, { kind: "forecast", id: "" });
+  box.append(more);
+  setTimeout(() => { try { Promise.resolve(forecastCoachNote(F)).catch(() => {}); } catch (e) {} }, 900);
+}
+
 function learnStatsOpen(on) {
   const pane = document.getElementById("lStatsPane");
   if (!pane) return;
@@ -24714,6 +24864,7 @@ function learnRenderStart() {
   pathWirePinch();
   pathFocusCurrent();
   learnRenderAct();
+  learnRenderForecast();
   /* Writes the next chapter while he is looking at this one, so the wait happens
      where he is not. Deliberately not awaited, and it swallows its own failures —
      a background spend he did not ask for has no business surfacing an error over the
@@ -30052,6 +30203,50 @@ T("campNodeWalked: without any lesson record it is still walked", () => {
     assertTrue(campNodeWalked("nd", st.c, st.srs), "progression is the scheduler alone");
     assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
   } finally { pathScoresSave(keep); }
+});
+T("forecastLine: says what is waiting, and names one node rather than a list", () => {
+  /* A list of near-misses is a chore; one is a next move. And the wording has to survive
+     every count being zero, which is the state a fresh device opens in. */
+  const F = { due: 12, fresh: 3, servable: 4, streak: 2, todaySec: 0, targets: [{ key: "x" }],
+              close: [{ id: "a", name: "Who people are", left: 1 },
+                      { id: "b", name: "Your day", left: 2 }],
+              node: { id: "a", name: "Who people are", plan: { landedN: 4, need: 6, toLand: ["x", "y"] } },
+              thin: [] };
+  const lines = forecastLine(F);
+  assertTrue(/12 due and 3 you have never drilled/.test(lines[0]), "both counts, said plainly");
+  assertTrue(/Who people are is one thing from gold/.test(lines[1]), "the nearest node");
+  assertEq(lines.filter(l => /Your day/.test(l)).length, 0, "and only that one");
+  assertEq(lines.filter(l => /said live with the coach/.test(l)).length, 0,
+    "no second line about the node already named");
+
+  const quiet = forecastLine({ due: 0, fresh: 0, servable: 0, streak: 0, todaySec: 0,
+                               targets: [{ key: "x" }], close: [], node: null, thin: [] });
+  assertTrue(/works ahead of the schedule/.test(quiet[0]),
+    "nothing overdue is said as a fact, not as an empty state");
+  const empty = forecastLine({ due: 0, fresh: 0, servable: 0, streak: 0, todaySec: 0,
+                               targets: [], close: [], node: null, thin: [] });
+  assertEq(empty.length, 1, "and an app with nothing queued still says one thing");
+
+  const only = forecastLine({ due: 5, fresh: 0, servable: 0, streak: 0, todaySec: 0,
+                              targets: [], close: [], node: null, thin: [] });
+  assertTrue(/^5 due — /.test(only[0]), "one count alone reads without a dangling 'and'");
+});
+T("forecastHash: moves on the facts and not on the clock", () => {
+  /* The whole reason the coach's line is cached against this: a hash that moved every
+     card would be a call every card, and the per-minute limit is the one that bites. */
+  const base = { due: 3, fresh: 1, servable: 2, streak: 4, todaySec: 60,
+                 node: { id: "a", plan: { landedN: 2, notReady: [1] } },
+                 close: [{ id: "b", left: 1 }], thin: ["x"] };
+  const later = Object.assign({}, base, { todaySec: 900 });
+  assertEq(forecastHash(base), forecastHash(later),
+    "more minutes on the same day is not new news");
+  const moved = Object.assign({}, base, { due: 4 });
+  assertTrue(forecastHash(base) !== forecastHash(moved), "a word coming due is");
+  const landed = Object.assign({}, base, { node: { id: "a", plan: { landedN: 3, notReady: [1] } } });
+  assertTrue(forecastHash(base) !== forecastHash(landed), "and so is landing one");
+  const cold = Object.assign({}, base, { todaySec: 0 });
+  assertTrue(forecastHash(base) !== forecastHash(cold),
+    "but having practised at all today is a different day to describe");
 });
 T("forecastFacts: an empty app forecasts rather than throwing", () => {
   /* The one thing this must never do. It runs on the front door before anything else is

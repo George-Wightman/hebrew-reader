@@ -15819,6 +15819,84 @@ function nearEnough(a, b) {
   return len <= 4 ? d === 1 : d <= Math.max(1, Math.floor(len * 0.2));
 }
 
+/* ---- two words that sound the same ----------------------------------------------
+   nearEnough compares LETTERS, and the failure it cannot see is the one that costs
+   the most: אטי (slow) and איתי (with me) are two edits apart on the page and
+   identical in the mouth. The recogniser hears the commoner spelling, the alignment
+   finds nothing, and he is told he was wrong about a word he said perfectly. That
+   card took him three minutes on 2026-09-03, and it was the second time.
+
+   THE MECHANISM IS ALREADY IN THE FILE. Every word carries a transliteration, under
+   a scheme CLAUDE.md calls non-negotiable, and אטי, איטי and איתי all carry the same
+   one: "iti". Two words that sound alike already collide on a field maintained for
+   every word in the library. Nothing had to be authored for this; it only had to be
+   read.
+
+   Tier 2 exists because Tier 1 cannot speak about a word outside his vocabulary at
+   all, and the recogniser is under no obligation to return one. It is deliberately
+   permissive — see heSkeleton — and it is only ever consulted when the exact
+   evidence is unavailable. */
+/* NOT trNorm, and the near-miss is worth a line. `trNorm` already exists at the top of
+   the file and belongs to the sentence pad's reverse index, where it has thirteen
+   callers; defining a second one here silently replaced it for all of them, because
+   function declarations hoist and the later wins. The two normalise in OPPOSITE
+   directions on ch/kh, and the pad's also folds q→k and tz→z, which this one must not:
+   an index built to unify "tzohorayim" and "zohorayim" quietly stopped doing it. Same
+   idea, different contract — so a different name. */
+function trSoundNorm(s) {
+  return String(s || "").toLowerCase()
+    .replace(/[’'`׳\-\s.]/g, "")
+    .replace(/ch/g, "kh")              // the house scheme, applied to old entries too
+    .replace(/([a-z])\1+/g, "$1");     // doubling is spelling, not sound
+}
+/* Every transliteration this word is known by — plural because the dictionary stores
+   gender pairs in one string ("yafe/yafa"), and either form is a real pronunciation. */
+function trFormsOf(word, lib) {
+  const out = [];
+  const push = t => String(t || "").split("/").forEach(p => {
+    const n = trSoundNorm(p); if (n && out.indexOf(n) === -1) out.push(n);
+  });
+  const e = lib && lib[word];
+  if (e) push(e.tr);
+  try { const d = lookupBase(word); if (d) push(d.tr); } catch (err) {}
+  return out;
+}
+/* What is left of a word when everything an English speaker gets wrong is taken out:
+   the vowel letters, which are ambiguous in unpointed Hebrew and are exactly what a
+   non-native mouth blurs, and the consonant pairs modern Israeli Hebrew pronounces
+   identically.
+
+   THIS OVER-COLLIDES ON PURPOSE. בית and בת both reduce to בת, and they do not sound
+   the same. That is accepted, because of the asymmetry this whole area is built on:
+   a false collision costs one `nearly` on a word he was asked for and did not
+   cleanly produce, and the miss it replaces costs the word's difficulty, its
+   interval and his trust. Two guards keep it from running loose — a skeleton under
+   two letters is thrown away as too little to be evidence, and heSoundAlike refuses
+   to consult it at all when both words have real transliterations to compare. */
+const SOUND_SILENT = { "א": 1, "ה": 1, "ו": 1, "י": 1, "ע": 1 };
+const SOUND_FOLD = { "ט": "ת", "ח": "כ", "ק": "כ" };
+function heSkeleton(word) {
+  let out = "";
+  for (const ch of normHe(word)) {
+    if (SOUND_SILENT[ch]) continue;
+    out += SOUND_FOLD[ch] || ch;
+  }
+  return out;
+}
+function heSoundAlike(a, b, lib) {
+  a = normHe(a); b = normHe(b);
+  if (!a || !b || a === b) return false;
+  const ta = trFormsOf(a, lib), tb = trFormsOf(b, lib);
+  /* BOTH KNOWN IS A VERDICT, not a first attempt. If the app holds a transliteration
+     for each of them and they differ, it has just been told in its own notation that
+     these sound different — falling through to the skeleton would let the permissive
+     tier overrule the exact one, which is how בית and בת would start rescuing each
+     other despite the file knowing full well they are "bayit" and "bat". */
+  if (ta.length && tb.length) return ta.some(x => tb.indexOf(x) !== -1);
+  const sa = heSkeleton(a);
+  return sa.length >= 2 && sa === heSkeleton(b);
+}
+
 /* Sequence alignment, not set membership: "does each word appear somewhere" would
    score a sentence said backwards as flawless, and word order is part of the answer
    on a Build-the-sentence card. */
@@ -25164,7 +25242,12 @@ function learnAdjudicateWanted(spoken) {
   });
   return out;
 }
-function learnAdjudicatePrompt(spoken, want) {
+function learnAdjudicatePrompt(spoken, want, lib) {
+  /* The transliteration goes in because the question is about SOUND and the model is
+     being shown spelling. It is the same field heSoundAlike reads, and handing it over
+     is what lets the model reason about אטי and איתי as "iti" and "iti" rather than as
+     two strings that differ by two letters. */
+  const trOf = w => { const t = trFormsOf(w, lib); return t.length ? " (" + t[0] + ")" : ""; };
   return "A learner of Hebrew was asked to say this out loud:\n  " +
     (spoken.expected || []).join(" ") + "\n\n" +
     "A speech recogniser heard:\n  " + (spoken.text || "(nothing)") + "\n" +
@@ -25173,13 +25256,17 @@ function learnAdjudicatePrompt(spoken, want) {
     "\nSpeech recognition is markedly less accurate on non-native speech, so a word " +
     "missing from the transcript may well have been SAID and misheard — a swallowed " +
     "prefix, an unfamiliar vowel, a consonant an English speaker substitutes.\n\n" +
+    "A DIFFERENT WORD THAT SOUNDS THE SAME is strong evidence he DID say it. Hebrew is " +
+    "full of homophones, and a recogniser hearing one will print whichever spelling is " +
+    "commoner — it heard איתי (\"iti\", with me) for אטי (\"iti\", slow). Treat a " +
+    "same-sounding word at that point as a yes.\n\n" +
     "For each numbered word, decide whether what the recogniser produced is consistent " +
     "with him having said it:\n" +
-    want.map(i => i + ". " + spoken.expected[i]).join("\n") + "\n\n" +
+    want.map(i => i + ". " + spoken.expected[i] + trOf(spoken.expected[i])).join("\n") + "\n\n" +
     "Return JSON only, no markdown: {\"said\":[0,2]} — the indexes he PROBABLY did say. " +
-    "Be conservative. If the transcript shows something genuinely different at that " +
-    "point, or shows nothing at all, leave the index out. Returning an empty list is a " +
-    "correct answer.";
+    "Be conservative about words that sound genuinely DIFFERENT: if the transcript shows " +
+    "something that does not sound like it, or shows nothing at all, leave the index " +
+    "out. Returning an empty list is a correct answer.";
 }
 async function learnAdjudicate(c, spoken, askedAt) {
   if (!spoken || !geminiKeys().length) return;
@@ -25191,7 +25278,7 @@ async function learnAdjudicate(c, spoken, askedAt) {
   let said;
   try {
     const out = extractJSON(await geminiRequest(
-      [{ text: learnAdjudicatePrompt(spoken, want) }], GEMINI_MODELS_FAST,
+      [{ text: learnAdjudicatePrompt(spoken, want, libAll()) }], GEMINI_MODELS_FAST,
       { label: "Checking your answer" }));
     said = (out && Array.isArray(out.said)) ? out.said : null;
   } catch (e) {
@@ -25361,6 +25448,24 @@ function learnScoreSpoken(c, text, res) {
     a.status = a.status.map((st, i) =>
       (st === "missed" && micHeardIn(expected[i], alts)) ? "near" : st);
   }
+  /* Layer one and a half: SOUND. Runs here, in front of the screen rather than behind
+     it, which is the whole point of it being local — the adjudicator below can only
+     correct a wrong mark after he has already seen it, and on the אטי card he spent
+     three minutes on the version he saw. This one arrives with the card.
+
+     Everything the recogniser was willing to consider is fair evidence, so the
+     runners-up are searched alongside the transcript, same as micHeardIn does. */
+  const heardAll = said.concat(alts.reduce((acc, s) => acc.concat(heWords(s)), []));
+  let soundWon = 0;
+  a.status = a.status.map((st, i) => {
+    if (st !== "missed") return st;
+    if (!heardAll.some(w => heSoundAlike(expected[i], w, lib))) return st;
+    soundWon++;
+    return "near";
+  });
+  /* Counted so Phase 1's effect is measurable against the adjudicator's own record
+     rather than asserted — 21 calls and 6 rescues over the three days before this. */
+  if (soundWon) { try { statsBump({ soundWon: soundWon }); } catch (e) {} }
   learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {},
                   alts: alts, conf: (res && res.confidence) || 0,
                   unsure: micUnsure(res && res.confidence), expected: expected };
@@ -29587,6 +29692,75 @@ T("bankUnknowns: two spellings of the same unmet word are one gap, not two", () 
 /* ---- the recogniser is not the judge ----
    Every one of these is a softening. If any of them ever learns to mark a word WRONG,
    the asymmetry the whole layer rests on has been broken. */
+/* ---- sound, not spelling ----
+   The case that cost three minutes twice. A plain object stands in for the library so
+   the test says exactly which transliterations it is relying on, rather than passing
+   whatever his real vocabulary happens to hold today. */
+const SOUND_LIB = {
+  "אטי":  { tr: "iti" },      // slow
+  "איטי": { tr: "iti" },      // slow, the fuller spelling
+  "איתי": { tr: "iti" },      // with me — a real word, and a homophone
+  "נוסע": { tr: "nose'a" },
+  "הולך": { tr: "holekh" },
+  "בית":  { tr: "bayit" },
+  "בת":   { tr: "bat" },
+  "יפה":  { tr: "yafe/yafa" }
+};
+T("heSoundAlike: the recogniser's איתי rescues the אטי he actually said", () => {
+  assertTrue(heSoundAlike("אטי", "איתי", SOUND_LIB),
+             "identical transliterations are the app telling itself these sound the same");
+  assertTrue(heSoundAlike("אטי", "איטי", SOUND_LIB), "two spellings of the one word");
+});
+T("heSoundAlike: a different word that sounds different is still wrong", () => {
+  assertTrue(!heSoundAlike("נוסע", "הולך", SOUND_LIB),
+             "he said 'we go' for 'we travel' — a fair answer, but not this rescue's job");
+});
+T("heSoundAlike: two known words are never handed to the permissive tier", () => {
+  /* Both reduce to the skeleton בת, and both have real transliterations saying they do
+     not sound alike. The exact evidence has to win, or the skeleton starts overruling
+     the file's own notation. */
+  assertEq(heSkeleton("בית"), heSkeleton("בת"), "the skeleton does collide here");
+  assertTrue(!heSoundAlike("בית", "בת", SOUND_LIB),
+             "and it must not be consulted, because bayit and bat are both known");
+});
+T("heSoundAlike: the skeleton only speaks when a word is unknown to the app", () => {
+  /* איתי dropped from the library entirely — the recogniser is under no obligation to
+     return a word he has met. Tier 2 is what is left, and it must still catch this. */
+  const partial = { "אטי": { tr: "iti" } };
+  assertTrue(heSoundAlike("אטי", "איתי", partial));
+});
+T("heSoundAlike: a one-letter skeleton is too little to be evidence", () => {
+  /* Both reduce to a single consonant once the vowel letters go. On a pool this small
+     everything collides with everything, so the floor throws it away. */
+  assertTrue(!heSoundAlike("אי", "יה", {}));
+});
+T("heSoundAlike: a word never sounds alike to itself, which is not a rescue", () => {
+  assertTrue(!heSoundAlike("אטי", "אטי", SOUND_LIB), "already matched; nothing to soften");
+});
+T("trSoundNorm: the house scheme, applied to entries written before it", () => {
+  assertEq(trSoundNorm("ha-cheder"), "hakheder", "ch folds to kh and the hyphen is spelling");
+  assertEq(trSoundNorm("Yafe'"), "yafe");
+});
+/* The collision that nearly shipped. These two normalisers do different jobs and must
+   stay distinct: the pad's unifies spellings so a typed pronunciation finds its Hebrew,
+   and folds q and tz on the way; this one compares SOUNDS and must not. If a future
+   edit merges them, this fails rather than the sentence pad quietly getting worse. */
+T("trSoundNorm is not the pad's trNorm, and both still do their own job", () => {
+  assertEq(trNorm("tzohorayim"), trNorm("zohorayim"), "the pad folds tz→z to find the word");
+  assertTrue(trSoundNorm("tzohorayim") !== trSoundNorm("zohorayim"),
+             "sound comparison must not, or two different words start rescuing each other");
+  assertEq(trNorm("kh"), "ch", "the pad folds toward ch");
+  assertEq(trSoundNorm("ch"), "kh", "and the sound key toward kh — opposite directions");
+});
+T("trFormsOf: a gender pair is two pronunciations, not one string", () => {
+  assertEq(trFormsOf("יפה", SOUND_LIB).join(","), "yafe,yafa");
+});
+T("learnAdjudicatePrompt: tells the model the homophone rule that made it decline", () => {
+  const p = learnAdjudicatePrompt(
+    { expected: ["אטי"], text: "איתי", alts: [] }, [0], SOUND_LIB);
+  assertTrue(p.indexOf("SOUNDS THE SAME") !== -1, "the instruction that was missing");
+  assertTrue(p.indexOf("(iti)") !== -1, "and the transliteration it needs to apply it");
+});
 T("micAltStrings: assembles per-segment runners-up into whole utterances", () => {
   const segs = [["אני", "אנחנו"], ["רוצה"]];
   /* Second segment offered nothing else, so it falls back to its own top guess rather

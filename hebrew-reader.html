@@ -1978,6 +1978,14 @@
      person telling him what is left, not the app reporting a state. Deliberately not a
      new colour: style guide §3 has gold meaning "you did this" and teal "you can act on
      this", and a box about work still outstanding is neither. */
+  /* A HEBREW WORD INSIDE AN ENGLISH SENTENCE MUST BE ITS OWN BIDI RUN. Without this the
+     browser merges a run of RTL words with the commas and the full stop between them, and
+     "Still to say: א, ב, ג." renders with the stop on the left and the list reversed —
+     which is what it did on his phone. Isolation makes each word atomic, so the English
+     punctuation around it stays where it was written. Applies to every such word in the
+     sheet, not just the new box: .pp-carry has had the same latent fault all along. */
+  .pp-words b[dir="rtl"], .pp-carry b[dir="rtl"],
+  .pp-goldsay b[dir="rtl"], .pp-goldlist b[dir="rtl"] { unicode-bidi: isolate; }
   .pp-gold { margin: 12px 0 0; padding: 10px 0 2px 12px;
              border-left: 2px solid var(--gold-soft); }
   .pp-goldh { font-size: .64rem; letter-spacing: .12em; text-transform: uppercase;
@@ -18702,6 +18710,20 @@ function campNodeDone(id, c, srs) {
   return !!n && campNodeWordsReady(n, srs) && campCoachMastered(n);
 }
 
+/* ONE ROW PER PIECE OF ADVICE, not one per word. Three new words produced three copies of
+   "One answer, either way, starts its record" — the same failure as the forecast box
+   stacking three lines about one moment, and the same rule against it (§4). The words
+   differ; what he has to DO about them does not, and the row is about the doing. */
+function goldAdvice(notReady) {
+  const groups = [];
+  (notReady || []).forEach(w => {
+    const g = groups.filter(x => x.next === w.next && x.band === w.band)[0];
+    if (g) g.keys.push(w.key);
+    else groups.push({ keys: [w.key], band: w.band, next: w.next });
+  });
+  return groups;
+}
+
 /* ---- what actually stands between him and gold ------------------------------
    George: "there should be a what do I need to do to get to gold. This should include
    like, how much further on each word before I max this node out, be useful and
@@ -20534,15 +20556,13 @@ function campOpenNode(id) {
       h += '<p class="pp-goldsay">Every word said live with the coach.</p>';
     }
     if (plan.notReady.length) {
-      /* NOT A COUNTDOWN, deliberately. Each word carries whySrsStrength's own sentence
-         about what would move it, because a band is not an answer tally and a number here
-         would be a caption contradicting its metric. */
-      h += '<p class="pp-goldsay">' + plan.notReady.length + ' word' +
-           (plan.notReady.length === 1 ? ' is' : 's are') + ' not strong enough yet:</p>';
-      h += '<ul class="pp-goldlist">' + plan.notReady.map(w =>
-        '<li><b dir="rtl">' + campEscape(w.key) + '</b> <s class="tier-' + w.band + '">' +
-        campEscape(w.band) + '</s><span>' + campEscape(w.next) + '</span></li>').join("") +
-        '</ul>';
+      /* NOT A COUNTDOWN, deliberately. Each row carries whySrsStrength's own sentence
+         about what would move those words, because a band is not an answer tally and a
+         number here would be a caption contradicting its metric. */
+      h += '<ul class="pp-goldlist">' + goldAdvice(plan.notReady).map(g =>
+        '<li>' + g.keys.map(k => '<b dir="rtl">' + campEscape(k) + '</b>').join(", ") +
+        ' <s class="tier-' + g.band + '">' + campEscape(g.band) + '</s>' +
+        '<span>' + campEscape(g.next) + '</span></li>').join("") + '</ul>';
     }
     h += '</div>';
   }
@@ -24671,59 +24691,89 @@ function learnRenderAct() {
 
    Pure so the wording can be tested without a call, and so the coach can be handed the
    same lines rather than a second description of the same state. */
+/* ONE LINE. This returned three and the box became the loudest thing on the front door,
+   which is what George saw first: "the coach on the daily is too much". Three lines about
+   one moment is style guide §4's "one signal, not four weak ones" — and the third of them
+   ("0 of 5 words in Your day said live with the coach") sat directly under the card's own
+   "0 of 5 words yours", which reads as the same fact stuttering even though it is not.
+
+   The count of words he has NEVER DRILLED is gone from here too. It was 112 on his phone —
+   the whole unlearned library — and calling that "waiting for you" turns vocabulary he
+   simply has not reached yet into a backlog he is behind on. It is still in the full
+   report, where a number that size is context rather than a nag. */
 function forecastLine(F) {
-  const out = [];
-  const waiting = F.due + F.fresh;
-  if (waiting) {
-    const parts = [];
-    if (F.due) parts.push(F.due + " due");
-    if (F.fresh) parts.push(F.fresh + " you have never drilled");
-    out.push(parts.join(" and ") + " — that is what the next session draws from.");
-  } else if (F.targets.length) {
-    out.push("Nothing overdue. The next session works ahead of the schedule.");
-  } else {
-    out.push("Nothing queued right now.");
-  }
   /* THE MOST ACTIONABLE THING THE APP KNOWS, and until the forecast existed nothing said
-     it anywhere. One node named, not a list: a list of near-misses is a chore, one is a
-     next move. */
+     it anywhere. One node named, never a list: a list of near-misses is a chore, one is a
+     next move — and it outranks the due count because it is a thing he could finish
+     tonight. */
   if (F.close.length) {
     const n = F.close[0];
-    out.push(n.name + " is " + (n.left === 1 ? "one thing" : n.left + " things") +
-             " from gold.");
+    return n.name + " is " + (n.left === 1 ? "one thing" : n.left + " things") + " from gold.";
   }
-  if (F.node && !F.close.some(c => c.id === F.node.id) && F.node.plan.toLand.length)
-    out.push(F.node.plan.landedN + " of " + F.node.plan.need + " words in " + F.node.name +
-             " said live with the coach.");
-  return out;
+  /* Said as what the session IS rather than as the size of the pile behind it. "127 due"
+     alone is a number he can do nothing about in one sitting; "the next session takes 15
+     of them" is the same fact with a handle on it. */
+  if (F.due) {
+    let take = SESSION_CARDS;
+    try { take = (SHAPES[learnShape()] || {}).cards || SESSION_CARDS; } catch (e) {}
+    /* The two cases read as opposite promises and must not share a sentence. "11 due — the
+       next session takes 15" says it takes fifteen of eleven; the honest version of a pile
+       smaller than the session is that the session finishes it. Overdue words are picked
+       first by learnTargets, so "covers them" is a claim the builder actually keeps. */
+    return F.due > take
+      ? F.due + " due for review — the next session takes " + take + " of them."
+      : F.due + " due for review — this session covers them.";
+  }
+  if (F.targets.length) return "Nothing overdue. The next session works ahead of the schedule.";
+  return "Nothing queued right now.";
 }
-/* The facts the coach's sentence actually depends on. Time practised today is deliberately
-   a yes/no rather than a number of seconds: it moves every card, and a hash that moves
-   every card is a call every card. */
+/* WHETHER THE COACH HAS ANYTHING TO ADD, which is a different question from whether he
+   could produce a sentence. Handed one fact, a model will pad it back to three clauses —
+   on his phone it turned "127 due" into "you have 127 due items and 112 fresh ones waiting
+   for you whenever you are ready to tackle them", and invented a daily goal the app does
+   not have while it was there.
+
+   So he speaks only when there is something the computed line cannot carry: a node within
+   reach, or material running short. Exactly the rule learnCoachNote already follows on the
+   end screen, where it returns null rather than narrating a session in which nothing
+   moved. Silence is the correct output most days. */
+function forecastWorthSaying(F) {
+  return !!(F && (F.close.length || F.thin.length));
+}
+/* EXACTLY THE FACTS THE SENTENCE IS BUILT FROM, and nothing else. It used to carry the
+   streak and the minutes practised today, which the prompt no longer offers at all — so
+   every one of those was a regeneration buying a sentence that could not differ. The rule
+   is that this hash and forecastCoachPrompt read the same fields, or the cache spends
+   calls on news the coach was never told. */
 function forecastHash(F) {
-  return [F.due, F.fresh, F.servable, F.todaySec ? 1 : 0, F.streak,
-          F.node ? F.node.id + ":" + F.node.plan.landedN + ":" + F.node.plan.notReady.length : "-",
-          F.close.map(c => c.id + ":" + c.left).join("|"),
-          F.thin.join("|")].join("/");
+  return [F.close.map(c => c.id + ":" + c.left).join("|"),
+          F.thin.join("|"),
+          F.due,
+          F.targets.slice(0, 8).map(t => t.key).join("|")].join("/");
 }
-function forecastCoachPrompt(F, lines, level) {
+function forecastCoachPrompt(F, line, level) {
+  const bit = (head, body) => body ? head + "\n  " + body + "\n\n" : "";
   return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
     "learning conversational Hebrew to talk with his partner's grandfather. He has just " +
     "opened the app and has not started practising yet.\n\n" +
     (level ? "HIS LEVEL IS " + level + " OF 5.\n\n" : "") +
     "THESE ARE THE ONLY FACTS YOU HAVE. Every one was measured by the app. Do not invent " +
-    "any others, do not guess at effort or mood, and do not describe anything not listed " +
-    "here.\n\n" +
-    lines.map(l => "  " + l).join("\n") + "\n" +
-    (F.targets.length ? "\nWORDS THE NEXT SESSION WOULD PICK:\n  " +
-      F.targets.slice(0, 8).map(t => (t.tr || t.key) + " (" + t.band + ")").join(", ") + "\n" : "") +
-    (F.streak ? "\nHE HAS PRACTISED " + F.streak + " DAY(S) IN A ROW.\n" : "") +
-    (F.todaySec ? "\nHE HAS ALREADY PRACTISED TODAY.\n" : "") +
-    "\nWrite ONE short sentence to him, second person, no heading and no list. Say the " +
-    "most useful thing about what is ahead of him — what is waiting, or what is within " +
-    "reach. Do not congratulate him for something not in the facts above, do not tell him " +
-    "to try hard, and do not repeat a number that is already on the screen unless it is " +
-    "the point of the sentence.";
+    "any others. In particular this app has NO daily goal, NO target number of minutes " +
+    "and NO points — do not refer to anything of the kind.\n\n" +
+    bit("ALREADY ON SCREEN, DIRECTLY ABOVE YOUR SENTENCE:", line) +
+    bit("PLACES ONE OR TWO THINGS SHORT OF GOLD:",
+        F.close.map(n => n.name + " — " + (n.plan.notReady.length
+          ? n.plan.notReady.map(w => w.key).join(", ") + " not strong enough yet"
+          : "needs " + n.plan.toLand.join(", ") + " said out loud to the coach")).join("\n  ")) +
+    bit("RUNNING SHORT OF WRITTEN PRACTICE:", F.thin.join(", ")) +
+    bit("WORDS THE NEXT SESSION WOULD PICK:",
+        F.targets.slice(0, 8).map(t => (t.tr || t.key) + " (" + t.band + ")").join(", ")) +
+    /* THE INSTRUCTION THAT WAS MISSING, and its absence is what produced a sentence that
+       restated the line above it back to him in more words. */
+    "Write ONE sentence, at most 20 words, second person, no heading and no list. It must " +
+    "add something the line already on screen does not say — name the place and what it " +
+    "needs, or what has run short. Never restate a number he can already see. Do not " +
+    "congratulate him, do not tell him to try hard, and do not describe his streak.";
 }
 let forecastSaying = false;
 const FORECAST_SAY_KEY = "hvr_coachsay";
@@ -24740,6 +24790,10 @@ async function forecastCoachNote(F) {
     box.textContent = cached.text; box.style.display = ""; return cached.text;
   }
   box.textContent = ""; box.style.display = "none";
+  /* Most days there is nothing here worth a sentence, and on those days he gets one line
+     rather than a paraphrase of it. Checked before the key and the network so the common
+     case costs nothing at all. */
+  if (!forecastWorthSaying(F)) return null;
   if (forecastSaying || !geminiKeys().length || !navigator.onLine) return null;
   forecastSaying = true;
   try {
@@ -24764,12 +24818,10 @@ function learnRenderForecast() {
   head.className = "lfc-h";
   head.textContent = "What's coming";
   box.append(head);
-  forecastLine(F).forEach(l => {
-    const p = document.createElement("p");
-    p.className = "lfc-line";
-    p.textContent = l;
-    box.append(p);
-  });
+  const p = document.createElement("p");
+  p.className = "lfc-line";
+  p.textContent = forecastLine(F);
+  box.append(p);
   /* Filled in by forecastCoachNote when it arrives, and absent otherwise — the lines above
      are already a complete answer without it. */
   const say = document.createElement("p");
@@ -30307,49 +30359,85 @@ T("learnHintSet: the shortcuts and the hint share one line without a stray separ
     el.textContent = keep;
   }
 });
-T("forecastLine: says what is waiting, and names one node rather than a list", () => {
-  /* A list of near-misses is a chore; one is a next move. And the wording has to survive
-     every count being zero, which is the state a fresh device opens in. */
-  const F = { due: 12, fresh: 3, servable: 4, streak: 2, todaySec: 0, targets: [{ key: "x" }],
+T("forecastLine: one line, and never the size of the pile", () => {
+  /* It returned three and the box became the loudest thing on the front door — George:
+     "the coach on the daily is too much". One line, and the never-drilled count stays out
+     of it: his was 112, the whole unlearned library, and calling that "waiting for you"
+     turns vocabulary he has not reached into a backlog he is behind on. */
+  const F = { due: 127, fresh: 112, servable: 4, streak: 15, todaySec: 0, targets: [{ key: "x" }],
               close: [{ id: "a", name: "Who people are", left: 1 },
                       { id: "b", name: "Your day", left: 2 }],
               node: { id: "a", name: "Who people are", plan: { landedN: 4, need: 6, toLand: ["x", "y"] } },
               thin: [] };
-  const lines = forecastLine(F);
-  assertTrue(/12 due and 3 you have never drilled/.test(lines[0]), "both counts, said plainly");
-  assertTrue(/Who people are is one thing from gold/.test(lines[1]), "the nearest node");
-  assertEq(lines.filter(l => /Your day/.test(l)).length, 0, "and only that one");
-  assertEq(lines.filter(l => /said live with the coach/.test(l)).length, 0,
-    "no second line about the node already named");
+  const line = forecastLine(F);
+  assertTrue(typeof line === "string", "one string, not a list of them");
+  assertEq(line, "Who people are is one thing from gold.",
+    "a place within reach outranks a due count — it is the thing he could finish tonight");
+  assertTrue(!/Your day/.test(line), "and only the nearest one is named");
 
-  const quiet = forecastLine({ due: 0, fresh: 0, servable: 0, streak: 0, todaySec: 0,
-                               targets: [{ key: "x" }], close: [], node: null, thin: [] });
-  assertTrue(/works ahead of the schedule/.test(quiet[0]),
-    "nothing overdue is said as a fact, not as an empty state");
-  const empty = forecastLine({ due: 0, fresh: 0, servable: 0, streak: 0, todaySec: 0,
-                               targets: [], close: [], node: null, thin: [] });
-  assertEq(empty.length, 1, "and an app with nothing queued still says one thing");
+  const due = forecastLine(Object.assign({}, F, { close: [] }));
+  assertTrue(/127 due for review/.test(due), "otherwise the due count");
+  assertTrue(/the next session takes 15 of them/.test(due), "said with a handle on it");
+  assertTrue(!/112/.test(due), "and never the never-drilled pile");
+  /* A pile smaller than the session is the opposite promise and cannot share the wording:
+     "11 due — the next session takes 15" reads as fifteen of eleven. */
+  const few = forecastLine(Object.assign({}, F, { close: [], due: 11 }));
+  assertEq(few, "11 due for review — this session covers them.",
+    "fewer due than the session takes means the session finishes them");
 
-  const only = forecastLine({ due: 5, fresh: 0, servable: 0, streak: 0, todaySec: 0,
-                              targets: [], close: [], node: null, thin: [] });
-  assertTrue(/^5 due — /.test(only[0]), "one count alone reads without a dangling 'and'");
+  assertTrue(/works ahead of the schedule/.test(
+    forecastLine({ due: 0, fresh: 40, targets: [{ key: "x" }], close: [], node: null, thin: [] })),
+    "nothing overdue is a fact, not an empty state");
+  assertEq(forecastLine({ due: 0, fresh: 0, targets: [], close: [], node: null, thin: [] }),
+    "Nothing queued right now.", "and an empty app still says one thing");
 });
-T("forecastHash: moves on the facts and not on the clock", () => {
-  /* The whole reason the coach's line is cached against this: a hash that moved every
-     card would be a call every card, and the per-minute limit is the one that bites. */
+T("forecastWorthSaying: the coach stays quiet when he would only paraphrase", () => {
+  /* What actually went wrong on his phone: handed one fact, the model padded it back into
+     three clauses and invented a daily goal on the way. Same rule learnCoachNote already
+     follows on the end screen — say nothing rather than narrate nothing. */
+  const plain = { due: 127, fresh: 112, close: [], thin: [], targets: [{ key: "x" }] };
+  assertTrue(!forecastWorthSaying(plain),
+    "a due count is already said in full by the line above him");
+  assertTrue(forecastWorthSaying(Object.assign({}, plain, { close: [{ id: "a", left: 1 }] })),
+    "a place within reach is worth naming");
+  assertTrue(forecastWorthSaying(Object.assign({}, plain, { thin: ["Your day"] })),
+    "and so is material running short");
+  assertTrue(!forecastWorthSaying(null), "and nothing at all is not");
+});
+T("forecastCoachPrompt: told what is already on screen, and what this app has no concept of", () => {
+  /* The two instructions whose absence produced the sentence he photographed. */
+  const F = { due: 127, fresh: 112, streak: 15, todaySec: 0, targets: [{ key: "x", tr: "bayit", band: "weak" }],
+              close: [{ id: "a", name: "Who people are", left: 1,
+                        plan: { notReady: [{ key: "בית" }], toLand: [] } }],
+              thin: ["Your day"] };
+  const p = forecastCoachPrompt(F, "Who people are is one thing from gold.", 2);
+  assertTrue(/ALREADY ON SCREEN/.test(p), "it is shown the line it must not restate");
+  assertTrue(/Who people are is one thing from gold\./.test(p), "verbatim");
+  assertTrue(/NO daily goal/.test(p), "and told the app has no goal to invent");
+  assertTrue(/at most 20 words/.test(p), "with a hard length");
+  assertTrue(/Never restate a number he can already see/.test(p), "and the actual failure named");
+  assertTrue(!/streak/i.test(p.split("Write ONE sentence")[0]),
+    "the streak is not offered as material — it is what it padded with");
+});
+T("forecastHash: only the facts the coach is actually told", () => {
+  /* The cache exists so ten app opens is one call. It is wrong in BOTH directions: a hash
+     that moves on something the prompt never sees buys a sentence that cannot differ, and
+     one that misses something the prompt does see serves a stale line. So this hash and
+     forecastCoachPrompt have to read the same fields. */
   const base = { due: 3, fresh: 1, servable: 2, streak: 4, todaySec: 60,
                  node: { id: "a", plan: { landedN: 2, notReady: [1] } },
-                 close: [{ id: "b", left: 1 }], thin: ["x"] };
-  const later = Object.assign({}, base, { todaySec: 900 });
-  assertEq(forecastHash(base), forecastHash(later),
-    "more minutes on the same day is not new news");
-  const moved = Object.assign({}, base, { due: 4 });
-  assertTrue(forecastHash(base) !== forecastHash(moved), "a word coming due is");
-  const landed = Object.assign({}, base, { node: { id: "a", plan: { landedN: 3, notReady: [1] } } });
-  assertTrue(forecastHash(base) !== forecastHash(landed), "and so is landing one");
-  const cold = Object.assign({}, base, { todaySec: 0 });
-  assertTrue(forecastHash(base) !== forecastHash(cold),
-    "but having practised at all today is a different day to describe");
+                 close: [{ id: "b", name: "N", left: 1 }], thin: ["x"],
+                 targets: [{ key: "בית" }] };
+  const H = f => forecastHash(Object.assign({}, base, f));
+  assertEq(H({ todaySec: 900 }), forecastHash(base), "minutes on the same day are not news");
+  assertEq(H({ streak: 9 }), forecastHash(base), "and neither is the streak — he is not told it");
+  assertEq(H({ fresh: 90 }), forecastHash(base), "nor the never-drilled pile, which is not in the line");
+  assertTrue(H({ due: 4 }) !== forecastHash(base), "a word coming due is");
+  assertTrue(H({ close: [{ id: "b", name: "N", left: 2 }] }) !== forecastHash(base),
+    "and a place moving nearer to gold is");
+  assertTrue(H({ thin: ["x", "y"] }) !== forecastHash(base), "and so is material running short");
+  assertTrue(H({ targets: [{ key: "רכבת" }] }) !== forecastHash(base),
+    "and so is a different set of words coming up");
 });
 T("forecastFacts: an empty app forecasts rather than throwing", () => {
   /* The one thing this must never do. It runs on the front door before anything else is
@@ -30376,6 +30464,29 @@ T("UH.forecast: the words it names are the ones the session would actually pick"
   const sec = (rep.sections || []).filter(x => /would pick/.test(x.name))[0];
   assertTrue(!!sec, "and they are on the report");
   if (real.length) assertEq(sec.rows.map(r => r.label), real, "all of them, in order");
+});
+T("goldAdvice: one row per thing to do, not one per word", () => {
+  /* Three new words printed "One answer, either way, starts its record" three times on his
+     phone. The words differ; the instruction does not, and the row is about the
+     instruction. */
+  const rows = goldAdvice([
+    { key: "עייף", band: "weak", next: "Right answers pull difficulty down." },
+    { key: "תודה", band: "new", next: "One answer, either way, starts its record." },
+    { key: "סליחה", band: "new", next: "One answer, either way, starts its record." }
+  ]);
+  assertEq(rows.length, 2, "the two new words share a row");
+  assertEq(rows[0].keys, ["עייף"]);
+  assertEq(rows[1].keys, ["תודה", "סליחה"], "in the order they came");
+  assertEq(rows[1].next, "One answer, either way, starts its record.", "said once");
+  /* Same band, different advice, must NOT merge — whySrsStrength gives weak three
+     different sentences and which one fired is the whole information. */
+  const split = goldAdvice([
+    { key: "a", band: "weak", next: "Right answers pull difficulty down." },
+    { key: "b", band: "weak", next: "Its miss rate has to come back under 0.40." }
+  ]);
+  assertEq(split.length, 2, "one band, two different things to do, two rows");
+  assertEq(goldAdvice([]), [], "and nothing outstanding is no rows");
+  assertEq(goldAdvice(null), [], "including when there is no list at all");
 });
 T("campGoldPlan: exact about landings, honest about bands", () => {
   /* The distinction the box is built on. "Two left to say" is a real countdown because a

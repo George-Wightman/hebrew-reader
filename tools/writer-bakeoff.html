@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writer bake-off</title>
+<!--
+  WHAT THIS IS FOR, and why it is not in hebrew-reader.html.
+
+  Phase 4 of docs/superpowers/specs/2026-09-03-the-judge-was-weaker-than-the-writer-design.md
+  inverted which model does what: the WRITER dropped to Flash Lite so the JUDGE could have
+  Flash. The reasoning is sound — the judge sees the finished sentence and can simply say
+  no, it runs once per batch of ~12 rather than once per 8, and AI_POOL_CAPS.strong is 20
+  a day against a coach session that spends 8 of them.
+
+  But it is reasoning, not measurement, and George said so first: "maybe 2 prompts one
+  build one review, maybe it survives with the one prompt as with the stronger model We
+  might need to do a ttest, perhaps programme a session like ive done before give it to me
+  as a test and ill run it htrouh the api to give you some real data".
+
+  So this runs the same eight briefs three ways and asks him which sentences are real.
+
+    A  Flash, one pass          — what the writer used to be
+    B  Flash Lite, one pass     — the cheap writer with no judge behind it
+    C  Flash Lite, then reviewed by Flash — what ships today
+
+  The result sets one decision: whether C actually matches A. If it does, the inversion
+  was free and the strong pool stays with the judge. If it does not, sentenceWriteOne goes
+  back to Flash and the reserve gets re-cut.
+
+  MARKED BLIND. Every sentence is shuffled into one list with no arm attached, because a
+  grader who can see the label marks the label. Nothing reveals which arm produced what
+  until every item has a verdict.
+
+  The key is typed here, used from the browser, and never stored — no localStorage, no
+  network except Google's own endpoint. Close the tab and it is gone.
+-->
+<style>
+  :root{
+    --bg:#12151a; --panel:#1a1e25; --line:#2b323b; --ink:#e8ebee; --dim:#98a2ae;
+    --accent:#6fb3c0; --real:#7cc294; --odd:#d8b45f; --wrong:#e08b78;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 ui-sans-serif,system-ui,"Segoe UI",sans-serif;padding:28px 20px 80px}
+  main{max-width:760px;margin:0 auto}
+  h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--dim);margin:0 0 26px;font-size:.94rem}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+         padding:18px 20px;margin-bottom:18px}
+  label{display:block;font-size:.8rem;color:var(--dim);margin-bottom:6px;
+        text-transform:uppercase;letter-spacing:.07em}
+  input[type=password],input[type=text]{
+    width:100%;padding:10px 12px;background:#0e1116;border:1px solid var(--line);
+    border-radius:4px;color:var(--ink);font:inherit}
+  button{font:inherit;cursor:pointer;border-radius:4px;border:1px solid var(--line);
+         background:#232a33;color:var(--ink);padding:9px 16px}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.45;cursor:default}
+  button.go{background:var(--accent);color:#0e1116;border-color:var(--accent);font-weight:600}
+  #log{font:12.5px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dim);
+       white-space:pre-wrap;margin-top:14px;max-height:190px;overflow:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+        padding:18px 20px;margin-bottom:12px}
+  .card.done{opacity:.5}
+  .he{font-size:1.5rem;direction:rtl;unicode-bidi:isolate;line-height:1.5;
+      font-family:"Frank Ruhl Libre","Times New Roman",serif}
+  .tr{font:12.5px ui-monospace,monospace;color:var(--dim);margin-top:5px}
+  .en{color:var(--dim);margin-top:5px;font-size:.92rem}
+  .marks{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .marks button[data-v=real].on{background:var(--real);color:#0e1116;border-color:var(--real)}
+  .marks button[data-v=odd].on{background:var(--odd);color:#0e1116;border-color:var(--odd)}
+  .marks button[data-v=wrong].on{background:var(--wrong);color:#0e1116;border-color:var(--wrong)}
+  .arm{font:11px ui-monospace,monospace;color:var(--dim);margin-top:10px;display:none}
+  .revealed .arm{display:block}
+  table{border-collapse:collapse;width:100%;margin-top:8px}
+  th,td{text-align:left;padding:9px 12px 9px 0;border-bottom:1px solid var(--line);
+        font-variant-numeric:tabular-nums}
+  th{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+  .bar{height:7px;border-radius:3px;background:#0e1116;overflow:hidden;display:flex;min-width:120px}
+  .bar i{display:block;height:100%}
+  .count{color:var(--dim);font-size:.88rem}
+  .hint{color:var(--dim);font-size:.86rem;margin-top:12px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Writer bake-off</h1>
+  <p class="sub">Same eight briefs, three pipelines, marked blind. Tells us whether a cheap
+  writer with a strong judge really matches a strong writer.</p>
+
+  <div class="panel">
+    <label for="key">Google AI Studio API key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false"
+           placeholder="paste it here — used from this tab only, never stored">
+    <div class="marks">
+      <button class="go" id="run">Run all three</button>
+      <button id="again" disabled>Start over</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <div id="stage"></div>
+  <div class="panel" id="result" style="display:none"></div>
+</main>
+
+<script>
+/* The three arms. Model ids match hebrew-reader.html's GEMINI_MODELS / _FAST. */
+const ARMS = [
+  { id: "A", label: "Flash, one pass",              write: "gemini-flash-latest",      review: null },
+  { id: "B", label: "Flash Lite, one pass",         write: "gemini-flash-lite-latest", review: null },
+  { id: "C", label: "Flash Lite + Flash review",    write: "gemini-flash-lite-latest", review: "gemini-flash-latest" }
+];
+
+/* His actual working vocabulary, the 120 commonest words across content/nodes.json.
+   Using the real list rather than a toy one is the point: the whole question is how each
+   pipeline behaves under the constraint it actually runs under. */
+const SCAFFOLD = ["אני","שלי","מאוד","לעיר","אתמול","היום","את","יש","קצת","בבוקר","היה","טוב",
+"סבא","עם","מרגיש","עייף","אתה","זה","חולה","אמא","קניתי","נוסע","לי","רוצה","אוהב","האוטובוס",
+"נסעתי","קפה","הרבה","הראש","לא","נחמד","תה","הלכתי","המשפחה","בעיר","הגעתי","חזרתי","יפה",
+"כואב","הייתי","ראיתי","על","תודה","טסתי","הרחוב","כי","קטן","בסדר","עכשיו","החדר","עבדתי",
+"לקחתי","נתתי","אבל","בריא","מים","הדלת","בחדר","חבר","כל","באביב","ברחוב","השבוע","שילמתי",
+"כיף","נהדר","העיר","חדש","נעים","הבטן","סבתא","בבקשה","שבוע","קטנה","שולחן","מיטה","צריך",
+"האוכל","שלום","סליחה","הזה","אותך","עברית","לעבודה","אמרתי","מדהים","חבל","למה","כואבת","קר",
+"שותה","בדירה","אין","אבא","בא","בבית","כאן","לך","בלילה","בחורף","במסעדה","באוטובוס","איפה",
+"אותו","גדול","הילדים","הדירה","של","איך","שומע","שמח","לראות","הביתה"];
+
+/* Eight briefs, fixed, so all three arms answer the same jobs. Deliberately spread across
+   the functions and levels the real planner uses, and deliberately including two that the
+   scaffold does NOT comfortably cover — those are where the old gate forced bad Hebrew,
+   so they are the interesting ones. */
+const BRIEFS = [
+  { lvl: 2, en: "say how you are feeling this morning" },
+  { lvl: 3, en: "ask grandad whether he slept well" },
+  { lvl: 3, en: "tell someone you got home late last night" },
+  { lvl: 4, en: "explain you cannot come today because you are unwell" },
+  { lvl: 3, en: "say what the weather is doing right now" },
+  { lvl: 4, en: "thank someone for a meal and say what you liked" },
+  { lvl: 2, en: "ask how much something costs" },
+  { lvl: 5, en: "say you would love to visit but it is a long way" }
+];
+
+const $ = s => document.querySelector(s);
+const log = m => { const l = $("#log"); l.textContent += m + "\n"; l.scrollTop = l.scrollHeight; };
+
+async function gemini(key, model, prompt) {
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+              model + ":generateContent?key=" + encodeURIComponent(key);
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+  });
+  if (!r.ok) throw new Error(model + " -> HTTP " + r.status + " " + (await r.text()).slice(0, 180));
+  const j = await r.json();
+  const t = (((j.candidates || [])[0] || {}).content || {}).parts;
+  return (t && t[0] && t[0].text) || "";
+}
+function extractJSON(raw) {
+  const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
+  if (a === -1 || b === -1) throw new Error("no JSON in reply");
+  return JSON.parse(raw.slice(a, b + 1));
+}
+
+/* The writer prompt, cut down to the parts that decide QUALITY. The level spread, the
+   rescue list and the gloss format are all omitted deliberately — they shape what gets
+   written but not whether it is Hebrew a person would say, and every line kept here is a
+   line all three arms get identically. */
+function writePrompt() {
+  return "You are writing spoken-Hebrew practice for an English speaker learning " +
+    "conversational Hebrew. He replies to WhatsApp voice notes from his partner's " +
+    "grandad, so keep everything warm, everyday and spoken — not textbook.\n\n" +
+    "WRITE ONE ITEM FOR EACH BRIEF BELOW. Same index, same order:\n" +
+    BRIEFS.map((b, i) => i + ". [level " + b.lvl + "] " + b.en).join("\n") + "\n\n" +
+    "WRITE NATURAL HEBREW FIRST. If the sentence a real person would say needs a word " +
+    "that is not on the list below, USE THAT WORD. A stilted sentence built only from " +
+    "permitted words is worse than a real one that teaches him something.\n\n" +
+    "PREFER THESE WORDS — the ones he holds solidly — plus basic grammar words:\n" +
+    SCAFFOLD.join(", ") + "\n" +
+    "You may go outside that list for at most 2 words per sentence.\n" +
+    "INFLECT THEM FREELY. Agree for gender, number and tense as real Hebrew requires.\n\n" +
+    "THE MOST IMPORTANT RULE — EVERY ITEM MUST BE SOMETHING A REAL PERSON WOULD " +
+    "ACTUALLY SAY. A grammatical sentence that no one would utter is worse than " +
+    "useless: it teaches him to produce nonsense confidently. Would a real Israeli say " +
+    "this to their grandson, or their grandson say it back?\n\n" +
+    "Return JSON only, no markdown: {\"items\":[{\"i\":0,\"he\":\"\",\"tr\":\"\",\"en\":\"\"}]}\n" +
+    "tr is plain English letters the way he would type them. Hebrew without nikud.\n" +
+    "BEFORE YOU ANSWER: re-read each item aloud as a native speaker. Delete any you " +
+    "would not say yourself.";
+}
+
+/* The reviewer prompt as it now stands in the app, including the failures a native
+   speaker caught on 2026-09-03. Arm C stands or falls on this. */
+function reviewPrompt(items) {
+  return "You are a native Hebrew speaker checking spoken-Hebrew practice sentences " +
+    "written for a learner. Throw out the ones that are wrong or that no real person " +
+    "would say.\n\n" +
+    "Reject an item if ANY of these are true:\n" +
+    "- No Israeli would actually say it (\"there is a big wind\", \"this is a medium end\")\n" +
+    "- The adjective doesn't naturally go with that noun\n" +
+    "- The Hebrew is ungrammatical, or the gender/number don't agree\n" +
+    "- The English translation doesn't match the Hebrew\n" +
+    "- IT IS ENGLISH WORD ORDER IN HEBREW WORDS. Hebrew puts the experiencer in the " +
+    "dative for sensation: \"כואב לי הראש\", never \"הראש שלי כואב\"; \"חם לי\", never " +
+    "\"אני מרגיש חם\".\n" +
+    "- A REAL WORD IS STANDING WHERE A DIFFERENT REAL WORD BELONGS. \"לבית\" is \"to " +
+    "the house (of)\"; \"home\" is \"הביתה\". Rain falls — \"יורד גשם\", not \"יש גשם\".\n" +
+    "- THE HEBREW MEANS SOMETHING ELSE THAN THE ENGLISH SAYS. \"הייתי שמח לראות אותך\" " +
+    "is \"I would be glad to see you\", not \"I was happy to see you\".\n\n" +
+    "Do NOT reject an item for being long, or for being past or future tense.\n\n" +
+    "ITEMS:\n" +
+    items.map((it, i) => i + ". " + it.he + "  |  " + it.tr + "  |  " + it.en).join("\n") + "\n\n" +
+    "Return JSON only: {\"keep\":[0,2]} — the indexes worth keeping. Include an item ONLY " +
+    "if you are happy to defend it as natural Hebrew.";
+}
+
+async function runArm(key, arm) {
+  log("[" + arm.id + "] writing on " + arm.write + " …");
+  const out = extractJSON(await gemini(key, arm.write, writePrompt()));
+  let items = (out.items || []).filter(it => it && it.he && it.tr);
+  log("[" + arm.id + "] " + items.length + " written");
+  if (arm.review && items.length) {
+    log("[" + arm.id + "] reviewing on " + arm.review + " …");
+    const rv = extractJSON(await gemini(key, arm.review, reviewPrompt(items)));
+    const keep = Array.isArray(rv.keep) ? rv.keep.map(Number) : null;
+    if (keep && keep.length) {
+      const before = items.length;
+      items = keep.map(i => items[i]).filter(Boolean);
+      log("[" + arm.id + "] reviewer kept " + items.length + " of " + before);
+    } else { log("[" + arm.id + "] reviewer returned nothing usable — kept all"); }
+  }
+  return items.map(it => Object.assign({}, it, { arm: arm.id }));
+}
+
+let POOL = [], MARKS = {};
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function render() {
+  const stage = $("#stage");
+  stage.innerHTML = "";
+  POOL.forEach((it, i) => {
+    const c = document.createElement("div");
+    c.className = "card" + (MARKS[i] ? " done" : "");
+    c.innerHTML =
+      '<div class="he"></div><div class="tr"></div><div class="en"></div>' +
+      '<div class="marks">' +
+      ['real', 'odd', 'wrong'].map(v =>
+        '<button data-v="' + v + '"' + (MARKS[i] === v ? ' class="on"' : '') + '>' +
+        ({ real: "A person would say this", odd: "Grammatical but odd",
+           wrong: "Wrong" })[v] + '</button>').join("") +
+      '</div><div class="arm"></div>';
+    /* textContent, not innerHTML — the Hebrew comes back from a model and is never
+       trusted as markup. */
+    c.querySelector(".he").textContent = it.he;
+    c.querySelector(".tr").textContent = it.tr || "";
+    c.querySelector(".en").textContent = it.en || "";
+    c.querySelector(".arm").textContent = "arm " + it.arm + " · " +
+      (ARMS.find(a => a.id === it.arm) || {}).label;
+    c.querySelectorAll("[data-v]").forEach(b => b.onclick = () => {
+      MARKS[i] = b.dataset.v; render(); tally();
+    });
+    stage.appendChild(c);
+  });
+}
+
+function tally() {
+  const done = POOL.filter((_, i) => MARKS[i]).length;
+  const box = $("#result");
+  box.style.display = "";
+  if (done < POOL.length) {
+    box.innerHTML = '<div class="count">' + done + " of " + POOL.length +
+      " marked. Results appear once every sentence has a verdict — " +
+      "seeing the arms early would mark the label, not the Hebrew.</div>";
+    document.body.classList.remove("revealed");
+    return;
+  }
+  document.body.classList.add("revealed");
+  const rows = ARMS.map(a => {
+    const mine = POOL.map((it, i) => [it, MARKS[i]]).filter(p => p[0].arm === a.id);
+    const n = v => mine.filter(p => p[1] === v).length;
+    return { arm: a, n: mine.length, real: n("real"), odd: n("odd"), wrong: n("wrong") };
+  });
+  box.innerHTML =
+    "<h2 style='font-size:1.1rem;margin:0 0 10px'>Results</h2>" +
+    "<table><tr><th>Pipeline</th><th>Real</th><th>Odd</th><th>Wrong</th><th style='width:40%'></th></tr>" +
+    rows.map(r => {
+      const pct = x => r.n ? (x / r.n * 100).toFixed(0) + "%" : "—";
+      const w = x => r.n ? (x / r.n * 100) : 0;
+      return "<tr><td>" + r.arm.label + "</td><td>" + r.real + " <span class='count'>" +
+        pct(r.real) + "</span></td><td>" + r.odd + "</td><td>" + r.wrong + "</td>" +
+        "<td><span class='bar'>" +
+        "<i style='width:" + w(r.real) + "%;background:var(--real)'></i>" +
+        "<i style='width:" + w(r.odd) + "%;background:var(--odd)'></i>" +
+        "<i style='width:" + w(r.wrong) + "%;background:var(--wrong)'></i></span></td></tr>";
+    }).join("") + "</table>" +
+    "<p class='hint'>What settles it: does C reach A? If it does, the cheap writer is free " +
+    "and the strong pool stays with the judge. If C trails A badly, sentenceWriteOne goes " +
+    "back to Flash. B is the control — it shows how much of C's score is the reviewer " +
+    "rather than the writer.</p>" +
+    "<p class='hint'>Paste this back into the chat: " +
+    rows.map(r => r.arm.id + " " + r.real + "/" + r.odd + "/" + r.wrong).join(" · ") +
+    " (real/odd/wrong)</p>";
+}
+
+$("#run").onclick = async () => {
+  const key = $("#key").value.trim();
+  if (!key) { log("Paste your API key first."); return; }
+  $("#run").disabled = true;
+  $("#log").textContent = "";
+  POOL = []; MARKS = {};
+  try {
+    for (const arm of ARMS) {
+      /* Sequential, never parallel — three concurrent writes would put three requests
+         into gemini-flash's 5-a-minute window at once, which is the throttle that
+         demoted the real writer to Lite in the first place. */
+      try { POOL = POOL.concat(await runArm(key, arm)); }
+      catch (e) { log("[" + arm.id + "] FAILED: " + e.message); }
+    }
+    if (!POOL.length) { log("Nothing came back from any arm."); $("#run").disabled = false; return; }
+    shuffle(POOL);
+    log("\n" + POOL.length + " sentences, shuffled. Mark every one.");
+    render(); tally();
+    $("#again").disabled = false;
+  } catch (e) { log("ERROR: " + e.message); $("#run").disabled = false; }
+};
+$("#again").onclick = () => {
+  POOL = []; MARKS = {};
+  $("#stage").innerHTML = ""; $("#result").style.display = "none";
+  document.body.classList.remove("revealed");
+  $("#run").disabled = false; $("#again").disabled = true; $("#log").textContent = "";
+};
+</script>
+</body>
+</html>

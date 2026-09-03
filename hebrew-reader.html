@@ -1323,6 +1323,10 @@
   /* The deadline. Drains by transform rather than width so the card is not relaid out
      sixty times a second on a phone while the recogniser is running. Teal because it
      is the thing he is acting against; gold only once he has beaten it. */
+  /* The same red pulse the drill's own mic uses. Listening is listening, and a second
+     visual language for it would be a second thing to learn. */
+  .lspeed .btn.listening { background: #b3403a; border-color: #b3403a;
+                           animation: lmicpulse 1.1s infinite; }
   .lspeedtrack { width: min(22rem, 78%); height: 3px; margin: 20px auto 0;
     background: var(--border); border-radius: 2px; overflow: hidden; }
   .lspeedbar { display: block; width: 100%; height: 100%; transform-origin: left center;
@@ -2403,8 +2407,7 @@
   <div id="lSpeed" style="display:none">
     <div class="lspeed">
       <div class="lspeedlab">The walk home</div>
-      <div class="lspeedask">One you got right, three times over, each round a little
-        quicker. Say it out loud and tap before the bar runs out. Nothing here is marked.</div>
+      <div class="lspeedask" id="lSpeedAsk"></div>
       <div class="lspeedhe" id="lSpeedHe"></div>
       <div class="lspeedtr" id="lSpeedTr"></div>
       <!-- The deadline, and the only thing that states it. A bar draining does not
@@ -2732,6 +2735,12 @@
 
     <div class="setgroup" data-group="Practice and scheduling">
       <h3 class="setgroup-title">Practice and scheduling<span class="setgroup-sub">What you get asked, and when it comes back.</span></h3>
+      <div class="setrow">
+        <div class="setrow-text"><b>Listen on the walk home</b>
+          <p>Turns the microphone on for the three fluency rounds at the end of a session, so a round lands the moment it hears you say the phrase.</p>
+          <details><summary>What it can and can&rsquo;t do</summary><p>It can only ever land a round <em>early</em>. It can never mark one missed — running out of time stays the only way to lose a round, and your thumb still ends one whenever you want. That matters because this screen gets used on a noisy street: an earlier version let the recogniser fail you on what it thought it heard rather than on how fast you spoke, which is why the microphone came off in the first place. With the rule above it cannot do that again — a bus going past simply does nothing.</p></details></div>
+        <button class="btn secondary" id="speedMicBtn"></button>
+      </div>
       <div class="setrow">
         <div class="setrow-text"><b>Correct inflated review dates</b>
           <p id="deflateDesc">Pulls any review interval longer than two months back to two months, measured from when you last actually answered that word.</p>
@@ -6316,6 +6325,18 @@ const FORMS_AUTO_THRESHOLD = 10;
 const FORMS_AUTO_KEY = "hvr_forms_auto";
 function formsAutoOn() { return lsGet(FORMS_AUTO_KEY) === "1"; }
 
+/* DEFAULT ON, which is why this reads !== "0" rather than === "1" like the one above.
+   The recogniser on the walk home can only ever land a round early (see
+   learnSpeedListen), so leaving it on costs him nothing he can lose. It is a setting at
+   all because a microphone running in a pocket on the way home is a real cost even when
+   it is only ever helping — and because he asked for it as one: "it would be fine to
+   have it as a mic setting so it does detect my words".
+
+   An hvr_ key, so exportKeys() carries it to the phone with everything else. */
+const SPEED_MIC_KEY = "hvr_speedmic";
+function speedMicOn() { return lsGet(SPEED_MIC_KEY) !== "0"; }
+function speedMicSet(on) { lsSet(SPEED_MIC_KEY, on ? "1" : "0"); }
+
 const FORMS_Q_KEY = "hvr_forms_q";
 function formsQAll() {
   try { return JSON.parse(lsGet(FORMS_Q_KEY)) || { day: "", calls: 0, tries: {} }; }
@@ -7858,6 +7879,7 @@ function openSettings() {
   paintSpeakerBtn();
   syncPaintSettings();
   paintFormsAutoBtn();
+  paintSpeedMicBtn();
   paintUndoRebaseRow();
   /* Opened fresh every time. A panel that reopens still filtered looks like settings
      have gone missing. */
@@ -8021,6 +8043,15 @@ document.getElementById("speakerBtn").onclick = settingsAction(() => {
   /* The lens renders agreeing forms off this, so the grid has to repaint or the
      change looks like it did nothing. */
   renderLibrary();
+});
+
+function paintSpeedMicBtn() {
+  const b = document.getElementById("speedMicBtn");
+  if (b) b.textContent = speedMicOn() ? "On" : "Off";
+}
+document.getElementById("speedMicBtn").onclick = settingsAction(() => {
+  speedMicSet(!speedMicOn());
+  paintSpeedMicBtn();
 });
 
 function paintFormsAutoBtn() {
@@ -25989,6 +26020,18 @@ function learnSpeedRender() {
   document.getElementById("lSpeedNote").textContent = "";
   const mic = document.getElementById("lSpeedMic");
   mic.textContent = "Say it"; mic.disabled = false;
+  mic.classList.remove("listening");
+  /* THE INSTRUCTION HAS TO MATCH THE MECHANIC. "tap before the bar runs out" was true of
+     every version of this screen until now; with the recogniser on, the tap is the
+     fallback rather than the move. Written from the setting each render rather than
+     baked into the markup, because the setting can change between one session and the
+     next. */
+  document.getElementById("lSpeedAsk").textContent = learnSpeedListens()
+    ? "One you got right, three times over, each round a little quicker. Say it out " +
+      "loud before the bar runs out \u2014 it's listening, and your thumb still works. " +
+      "Nothing here is marked."
+    : "One you got right, three times over, each round a little quicker. Say it out " +
+      "loud and tap before the bar runs out. Nothing here is marked.";
   const bar = document.getElementById("lSpeedBar");
   bar.className = "lspeedbar";
   bar.style.transition = "none";
@@ -26016,6 +26059,23 @@ function learnSpeedMarks() {
     box.append(row);
   }
 }
+/* HAS HE SAID IT? Pure, so the suite can drive it without a microphone or a screen.
+
+   Reuses the drill's own comparison rather than inventing a second way to compare
+   Hebrew: heWords to tokenise, alignSpoken to align, and a phrase counts as heard when
+   no expected word is still `missed`. A `near` counts — nearEnough exists for precisely
+   the vowel-level differences a recogniser invents on non-native speech, and this
+   decision cannot produce a miss, so there is nothing to be strict in defence of.
+
+   `alts` is the runners-up, which only the FINAL result carries; interim callbacks pass
+   nothing here and the parameter is simply empty then. */
+function learnSpeedHeard(he, text, alts) {
+  const exp = heWords(he || "");
+  const said = heWords(text || "");
+  if (!exp.length || !said.length) return false;
+  const a = alignSpoken(exp, said);
+  return exp.every((w, i) => a.status[i] !== "missed" || micHeardIn(w, alts || []));
+}
 /* Drains by transform, not width: a width transition relays out the card sixty times a
    second on a phone, which is the one thing this screen cannot afford while the
    recogniser is running. */
@@ -26032,6 +26092,10 @@ function learnSpeedBarStop(bar) {
   bar.style.transition = "none";
   bar.style.transform = at;
 }
+/* Asked in three places — the copy, the button label, and whether to start the mic —
+   so it lives in one. A browser with no recogniser falls back to the thumb whatever the
+   setting says, which is the same fallback learnRenderCompose makes. */
+function learnSpeedListens() { return speedMicOn() && speechSupported(); }
 /* Advances through the round, then through the rounds, then hands over to the end
    screen once the road runs out. */
 function learnSpeedNext() {
@@ -26042,38 +26106,82 @@ function learnSpeedNext() {
      screen it no longer belongs to is its own bug. */
   if (sp.timer) { clearTimeout(sp.timer); sp.timer = null; }
   sp.busy = false;
+  /* Skip is the one way out of a turn that does not go through learnSpeedJudge, so it
+     has to stop the recogniser itself — a mic left running across the boundary would
+     hear this round's phrase and land the next one with it. */
+  micStop();
   sp.i++;
   if (sp.i >= sp.items.length) { sp.i = 0; sp.pass++; }
   if (sp.pass >= SPEED_PASSES) { learnSpeed = null; learnFinish(); return; }
   learnSpeedRender();
 }
-/* NO RECOGNISER ON THIS SCREEN, and that is the fix rather than a simplification.
+/* THE RECOGNISER IS BACK, UNDER ONE RULE: IT CAN ONLY EVER END A TURN EARLY AND
+   SUCCESSFULLY. It cannot mark a miss. Running out of time stays the only way to lose a
+   round, exactly as when this screen had no microphone at all.
 
-   Accuracy has already been proven: being in `fluent` at all required a clean answer on
-   a graded card minutes ago. Fluency development asks exactly one question — was
-   retrieval automatic enough to finish inside the window — and a thumb answers that
-   precisely. A stopwatch reading needs a microphone; a deadline does not.
+   That rule is the whole design, and it is what makes this safe to reverse. The mic came
+   off because of "its just relying on the auto cut off for the mic if it's noisy it
+   doesn't work" — and because the version answering that report still let the recogniser
+   hand back a half-heard phrase and FAIL HIM ON THE TRANSCRIPTION RATHER THAN ON THE
+   SPEED. Under this rule that cannot happen: a bus going past, a garbled transcript,
+   silence, all do nothing at all, and the bar and his thumb settle the turn between them
+   just as they did yesterday. Same asymmetry the rest of the ASR path runs on.
 
-   It is also what finally kills the noisy street. George's original report was "its just
-   relying on the auto cut off for the mic if it's noisy it doesn't work"; the last
-   version answered that by letting him stop the mic himself, which left the recogniser
-   still able to hand back a half-heard phrase and fail him on the transcription rather
-   than on the speed. Now there is no mic to cut off and nothing to mis-hear. */
+   He asked for it back once the failure mode was gone: "it would be fine to have it as a
+   mic setting so it does detect my words and I can stop it just like other cards". */
 function learnSpeedAttempt(btn) {
   const sp = learnSpeed;
   if (!sp) return;
+  /* The second press means "I have said it" whether the button reads Said it or Stop.
+     One control, two labels, and the thumb wins whatever the microphone is doing. */
   if (sp.busy) { learnSpeedJudge(true); return; }
   const it = sp.items[sp.i];
   const bar = document.getElementById("lSpeedBar");
   sp.busy = true;
   sp.at = sp.pass + ":" + sp.i;
-  btn.textContent = "Said it";
   document.getElementById("lSpeedNote").textContent = "";
   const deadline = learnSpeedDeadline(it.he, sp.pass);
+  /* THE BAR STARTS ON THE TAP, ahead of anything asynchronous. The window is his to
+     speak in, and spending the first slice of a 2.75-second round waiting for a
+     recogniser to boot would be charging him for the microphone. */
   learnSpeedBarRun(bar, deadline);
   /* The bar running out judges the turn on its own. Without this a phone put in a
      pocket mid-round leaves the walk home waiting for a tap that is never coming. */
   sp.timer = setTimeout(() => learnSpeedJudge(false), deadline);
+  const listens = learnSpeedListens();
+  btn.textContent = listens ? "\u23f9 Stop" : "Said it";
+  if (listens) { btn.classList.add("listening"); learnSpeedListen(sp, it); }
+}
+/* Deliberately not awaited by its caller: the turn is already running and this either
+   catches up with it or it does not. Every early return is a turn that has moved on.
+
+   micAcquire is not called first, unlike learnSpeakAttempt. It only does anything on
+   file:, and an await in front of the recogniser here would eat the window it is
+   supposed to be measuring. The cost is that a local file: copy never lands a round by
+   voice — which, on a screen where the mic can only help, degrades to exactly the
+   thumb-and-bar screen this replaced. */
+async function learnSpeedListen(sp, it) {
+  const at = sp.at;
+  const live = () => learnSpeed === sp && sp.at === at && sp.busy;
+  let res = null;
+  try {
+    res = await micListen({ onInterim: t => {
+      /* JUDGED OFF THE INTERIM, not the final transcript, and that is not an
+         optimisation. The recogniser only settles once it decides he has stopped
+         talking, and that endpointing pause would eat most of a 2.2-second round — the
+         round would time out while the answer sat in the engine. The interim arrives as
+         he speaks, so the turn lands on the last word. */
+      if (live() && learnSpeedHeard(it.he, t, null)) learnSpeedJudge(true);
+    } });
+  } catch (e) { return; }
+  /* One more look at the final transcript, which carries the runners-up the interims
+     never do. Only if the turn somehow got here still open — it will not have if an
+     interim already landed it or the bar has run out, and "the bar ran out" is a
+     finished turn, not one to reopen. */
+  if (!live()) return;
+  if (res && res.ok && learnSpeedHeard(it.he, res.text, res.alts)) learnSpeedJudge(true);
+  /* And everything else is deliberately nothing at all. No error, no note, no mark: the
+     bar is still draining and his thumb still works. */
 }
 /* Both endings land here — his tap, or the deadline — so there is one place that decides
    what a turn was worth and one place that moves on from it. */
@@ -26082,9 +26190,12 @@ function learnSpeedJudge(landed) {
   if (!sp || !sp.busy) return;
   if (sp.timer) { clearTimeout(sp.timer); sp.timer = null; }
   sp.busy = false;
+  /* Whatever ended the turn ends the recording with it. Harmless when nothing is
+     listening, and the one place that has to be right when something is. */
+  micStop();
   const bar = document.getElementById("lSpeedBar");
   const btn = document.getElementById("lSpeedMic");
-  if (btn) btn.textContent = "Say it";
+  if (btn) { btn.textContent = "Say it"; btn.classList.remove("listening"); }
   learnSpeedBarStop(bar);
   sp.marks[sp.at] = landed;
   bar.classList.add(landed ? "landed" : "missed");
@@ -28343,6 +28454,49 @@ T("learnSpeedDeadline: the tuned pace, pinned so it cannot drift back", () => {
 T("learnSpeedDeadline: an out-of-range round is clamped, not indexed off the end", () => {
   assertEq(learnSpeedDeadline("שלום", 9), learnSpeedDeadline("שלום", SPEED_PASSES - 1));
   assertEq(learnSpeedDeadline("שלום", -1), learnSpeedDeadline("שלום", 0));
+});
+T("learnSpeedHeard: lands the phrase, and only the whole phrase", () => {
+  const he = "\u05d0\u05e0\u05d9 \u05e8\u05d5\u05e6\u05d4 \u05dc\u05dc\u05db\u05ea \u05d4\u05d1\u05d9\u05ea\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5";
+  assertTrue(learnSpeedHeard(he, he, null), "said exactly, so the round lands");
+  /* THE CASE THIS SCREEN LIVES OR DIES ON. An interim arrives word by word, and landing
+     on a prefix would end the round before he had finished the sentence. */
+  assertTrue(!learnSpeedHeard(he, "\u05d0\u05e0\u05d9 \u05e8\u05d5\u05e6\u05d4", null),
+             "two words of five is a round still in progress, not a round won");
+  assertTrue(!learnSpeedHeard(he, "", null), "and nothing heard is nothing");
+  assertTrue(!learnSpeedHeard(he, null, null));
+  assertTrue(!learnSpeedHeard("", "\u05d0\u05e0\u05d9", null), "no phrase, nothing to land");
+  /* A vowel the recogniser guessed differently is not a different sentence. nearEnough
+     is the drill's own tolerance and this reuses it rather than inventing a second. */
+  assertTrue(learnSpeedHeard("\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d7\u05d3\u05e9", "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d7\u05d3\u05e9\u05d4", null),
+             "one letter out on one word still counts as having said it");
+  /* Volunteering more than he was asked for is not a failure to say what he was asked. */
+  assertTrue(learnSpeedHeard("\u05d4\u05d1\u05d9\u05ea \u05d2\u05d3\u05d5\u05dc", "\u05d4\u05d1\u05d9\u05ea \u05d2\u05d3\u05d5\u05dc \u05de\u05d0\u05d5\u05d3", null));
+});
+T("learnSpeedHeard: a runner-up can land it, and cannot make it fail", () => {
+  /* Only the final result carries alternatives, and they can only ever help \u2014 the same
+     n-best rescue the drill cards get, on a screen where nothing can be marked wrong
+     anyway, so there is nothing to be careful in defence of. */
+  const he = "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d0\u05d8\u05d9";
+  assertTrue(!learnSpeedHeard(he, "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05e0\u05d7\u05de\u05d3", null),
+             "the top transcript alone says he said something else");
+  assertTrue(learnSpeedHeard(he, "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05e0\u05d7\u05de\u05d3", ["\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d0\u05d8\u05d9"]),
+             "but the runner-up heard the word, so the round lands");
+  assertTrue(!learnSpeedHeard(he, "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05e0\u05d7\u05de\u05d3", ["\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d9\u05e4\u05d4"]),
+             "a runner-up that also missed it rescues nothing, and still marks nothing");
+});
+T("speedMicOn: on unless he has turned it off", () => {
+  /* Default-on, so absent must read as on \u2014 the mistake formsAutoOn's === "1" shape
+     would have made here, on a key nothing had ever written. */
+  const real = lsGet(SPEED_MIC_KEY, null);
+  try {
+    localStorage.removeItem(SPEED_MIC_KEY);
+    assertTrue(speedMicOn(), "never set means on");
+    speedMicSet(false);
+    assertTrue(!speedMicOn(), "and off is a deliberate act");
+    speedMicSet(true);
+    assertTrue(speedMicOn());
+  } finally { if (real === null || real === undefined) localStorage.removeItem(SPEED_MIC_KEY);
+              else lsSet(SPEED_MIC_KEY, real); }
 });
 T("learnSpeedPick: the hardest thing he got clean, not the first thing he got clean", () => {
   /* The bug this replaces: items.slice(0, 3) took insertion order, which in a normal

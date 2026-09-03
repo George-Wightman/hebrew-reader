@@ -25912,10 +25912,20 @@ const SPEED_PHRASES = 1, SPEED_PASSES = 3;
    work and the floor never binds. */
 const SPEED_MIN_WORDS = 4;
 /* Seconds per word, tightening each round, and a floor underneath so a one-word phrase
-   is still winnable with the mic's own start-up inside the window. Guesses, and
-   deliberately so: they want tuning against a real walk home in a real street, not
-   deriving. */
-const SPEED_PER_WORD = [1.5, 1.2, 0.95], SPEED_FLOOR = [3.0, 2.5, 2.1];
+   is still winnable with the mic's own start-up inside the window.
+
+   TUNED AGAINST A REAL WALK HOME, 2026-09-03, which is what the previous note here asked
+   for and could not do from a desk. They were [1.5, 1.2, 0.95] over [3.0, 2.5, 2.1], and
+   he came back from a session with: "These times are too easy and it could record me",
+   then "the timings are too slow its easy". A five-word sentence had 7.5 seconds in the
+   first round, against roughly 2.5 to say it — not a fluency window, just a pause.
+
+   Forty per cent off, against a learner pace of about two words a second: round one is
+   comfortable-but-moving, round three wants automaticity. The floors still never bind at
+   four words or more, which SPEED_MIN_WORDS makes the only case that reaches this screen,
+   so the per-word budget is what decides every real turn and the floors are left as pure
+   insurance. */
+const SPEED_PER_WORD = [0.9, 0.7, 0.55], SPEED_FLOOR = [2.2, 1.8, 1.5];
 
 /* How long he has. Scaled by the phrase, because one word and an eight-word sentence
    cannot share a bar. */
@@ -28312,6 +28322,23 @@ T("learnSpeedDeadline: tightens each round, and never below the floor", () => {
            "one word times a per-word budget is under the mic's own start-up");
   assertTrue(learnSpeedDeadline(long, 0) > learnSpeedDeadline("שלום", 0),
              "one word and a five-word sentence cannot share a bar");
+});
+T("learnSpeedDeadline: the tuned pace, pinned so it cannot drift back", () => {
+  /* Every other test on this screen is relative — round 1 > round 2, floors do not bind —
+     and all of them passed on the old numbers, which he told us were too easy. So one
+     test asserts the actual pace. Five words is the shape learnSpeedPick usually lands on.
+
+     If this fails, someone has retuned the walk home: check it was on purpose, and that
+     a person actually walked home on it. */
+  const five = "אני רוצה ללכת הביתה עכשיו";
+  assertEq(heWords(five).length, 5);
+  assertEq(learnSpeedDeadline(five, 0), 4500);
+  assertEq(learnSpeedDeadline(five, 1), 3500);
+  assertEq(learnSpeedDeadline(five, 2), 2750);
+  /* And the shortest thing that can reach this screen is still a real window, not a
+     reflex test — the floor is not what is deciding it. */
+  const four = "א ב ג ד";
+  assertEq(learnSpeedDeadline(four, SPEED_PASSES - 1), 2200);
 });
 T("learnSpeedDeadline: an out-of-range round is clamped, not indexed off the end", () => {
   assertEq(learnSpeedDeadline("שלום", 9), learnSpeedDeadline("שלום", SPEED_PASSES - 1));

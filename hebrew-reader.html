@@ -20252,33 +20252,25 @@ function composeNormalise(out) {
   };
 }
 
-/* HIS OWN SENTENCES, BACK IN THE ROTATION. Every sentence in the bank today was written
-   by Gemini guessing at his level; one he composed and got right is by definition at his
-   level and about something he actually wanted to say.
+/* THE COACH NO LONGER WRITES PERMANENT MATERIAL, and composeBank is gone rather than
+   reviewed. It used to promote the corrected version of his own sentence into the bank,
+   on the reasoning that a sentence he composed is by definition at his level and about
+   something he wanted to say. That reasoning is still sound; the sentences were not.
 
-   The CORRECTED version, never the raw one — banking a sentence with an agreement error
-   in it would teach him the error every time it came round. Which makes the drill later
-   the corrected form of his own mistake, spaced, and that is better material than a
-   generated sentence precisely because it was his.
+   George, 2026-09-03, after a native speaker went through what the app produces: "I think
+   we drop the process of using hte sentences that it makes, they arent good and dont
+   compare to the ones you make. So lets drop that pipeline."
 
-   learnIngest does the rest and is reused rather than reimplemented: it drops a sentence
-   with no library word in it, drops one containing a word he has never met
-   (bankUnknowns — the spec's "every content word is in the library", already written),
-   and drops exact and near duplicates. Its return value is how many actually landed, so
-   nothing here has to guess whether a gate rejected it. */
-function composeBank(out) {
-  if (!out || out.ok === "wrong") return 0;
-  const best = out.best || {};
-  if (!best.he || !best.tr) return 0;
-  /* Not below the level he is already measured at. The bank is what later sessions are
-     built from, and filling it with sentences easier than he is would be the ratchet
-     pickByLevel exists to prevent. */
-  if (!out.lvl || out.lvl < learnerLevel()) return 0;
-  try {
-    return learnIngest({ items: [{ he: best.he, tr: best.tr, en: best.en || "",
-                                   type: "sentence", lvl: out.lvl }] });
-  } catch (e) { return 0; }
-}
+   Deleting beats gating it, and the alternative was considered. Reviewing `best.he`
+   means either a second round trip inside the turn — the latency he objected to, spent
+   on the least valuable thing in the reply — or an async call afterwards whose only
+   product is a sentence he has already judged not worth having. The pre-baked path fills
+   the same slot with better material at no per-turn cost.
+
+   What the coach still does is unchanged and is the point of the mode: it judges what he
+   said, credits the words he landed (composeCredit), records the level he built at
+   (levelRecord), and answers him. None of that outlives the session, and none of it
+   needed to. */
 
 async function composeTurn(s, c) {
   if (!geminiKeys().length) return null;
@@ -20311,7 +20303,21 @@ async function composeTurn(s, c) {
   });
   let out = null;
   try {
-    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
+    /* THE STRONG MODEL, AND STILL ONE CALL. This is the whole answer to the latency
+       question George raised — "My only slight concern would be latency when using it
+       for The Coach mode" — and the answer is that nothing is added to the round trip.
+       The existing call gets a better model; no reviewer sits behind it.
+
+       It earns the strong pool more than anything else in the app does. This is the one
+       place a model both issues him corrections and models Hebrew he will imitate on the
+       spot, in a conversation he cannot re-read later. Flash Lite was doing that, and it
+       is what "the coach speaks gibberish sometimes" was describing.
+
+       An 8-turn session at COMPOSE_TURN_CAP is 8 of the day's 20 strong requests, which
+       is why Phase 4 puts a reserve under the reviewer and lets this degrade below it.
+       geminiRequest already falls through to lite by itself when the pool is gone, so a
+       heavy day costs quality here rather than the mode. */
+    out = extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS,
                                           { timeoutMs: COMPOSE_TIMEOUT_MS,
                                             label: "Reading your sentence" }));
   } catch (e) { return null; }
@@ -20484,8 +20490,6 @@ function composeAdvance(s, c, out) {
       levelSave(lvlStore);
     } catch (e) { /* a level write must never cost him the round */ }
   }
-
-  s.composeBanked = (s.composeBanked || 0) + composeBank(out);
 
   /* The record the card list used to be. Kept because the thread has to be drawn from
      what actually happened — the coach's lines are generated, so there is no script to
@@ -26381,8 +26385,6 @@ function learnFinish() {
     }
     if (built) sub += " · you built at level " + built +
                       " · you're measured at " + learnerLevel();
-    const kept = s.composeBanked || 0;
-    if (kept) sub += " · " + kept + " sentence" + (kept === 1 ? "" : "s") + " kept to practise";
   }
   /* A path lesson only counts once it's actually been finished — walking out halfway
      leaves the section exactly where it was, which is the honest behaviour for
@@ -31244,62 +31246,9 @@ T("sentencePlanPrompt: the planner is told which words he actually has", () => {
   assertTrue(sentencePlanPrompt({ lib: lib, level: 2, scaffold: [], rescue: [] })
                .indexOf("ONLY WORDS HE HAS") === -1);
 });
-T("composeBank: keeps the corrected sentence, and only when it is worth keeping", () => {
-  const realBank = lsGet(BANK_KEY);
-  try {
-    const lib = libAll();
-    /* Two library words, so learnIngest's "drills none of his words" gate passes and
-       bankUnknowns finds nothing to object to. */
-    const ks = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
-    const he = ks[0] + " " + ks[1];
-    const good = { ok: "minor", lvl: LEVEL_MAX, bad: [],
-                   best: { he: he, tr: "corrected translit", en: "corrected english" } };
-    lsSet(BANK_KEY, JSON.stringify([]));
-    assertEq(composeBank(good), 1, "a corrected sentence at level is kept");
-    const it = bankAll()[0];
-    assertEq(it.he, he, "the corrected version, never the raw one");
-    assertEq(it.lvl, LEVEL_MAX, "and at the level he actually built at");
-    assertEq(it.type, "sentence");
-    /* Every rejection path, each against a fresh empty bank. */
-    const cases = [
-      ["wrong sentences are never banked", { ok: "wrong", lvl: LEVEL_MAX, best: good.best }],
-      ["nothing worth keeping", { ok: "clean", lvl: LEVEL_MAX, best: { he: "", tr: "" } }],
-      ["no transliteration means it cannot be drilled",
-       { ok: "clean", lvl: LEVEL_MAX, best: { he: he, tr: "" } }],
-      ["no level claimed", { ok: "clean", lvl: null, best: good.best }]
-    ];
-    cases.forEach(cse => {
-      lsSet(BANK_KEY, JSON.stringify([]));
-      assertEq(composeBank(cse[1]), 0, cse[0]);
-    });
-    /* And a duplicate is refused by learnIngest's own gates rather than by a second
-       copy of them living here. */
-    lsSet(BANK_KEY, JSON.stringify([]));
-    assertEq(composeBank(good), 1);
-    assertEq(composeBank(good), 0, "the same sentence twice is one sentence");
-  } finally {
-    if (realBank === null || realBank === undefined) localStorage.removeItem(BANK_KEY);
-    else lsSet(BANK_KEY, realBank);
-    rebuildTrIndex();
-  }
-});
-T("composeBank: a sentence easier than he is does not go in the bank", () => {
-  /* The bank is what later sessions are built from; filling it below his own level is
-     the ratchet pickByLevel exists to prevent. Uses a level strictly under whatever he
-     is measured at, so the test says what it means whatever that happens to be. */
-  const at = learnerLevel();
-  if (at <= LEVEL_MIN) { assertTrue(true, "no level below the floor to test with"); return; }
-  const realBank = lsGet(BANK_KEY);
-  try {
-    lsSet(BANK_KEY, JSON.stringify([]));
-    assertEq(composeBank({ ok: "clean", lvl: at - 1, bad: [],
-                           best: { he: "בית גדול", tr: "bayit gadol", en: "a big house" } }), 0);
-  } finally {
-    if (realBank === null || realBank === undefined) localStorage.removeItem(BANK_KEY);
-    else lsSet(BANK_KEY, realBank);
-    rebuildTrIndex();
-  }
-});
+/* The two composeBank tests were deleted with the function on 2026-09-03. The coach
+   no longer writes permanent material, so there is no banking behaviour here left to
+   assert — see the note above composeTurn for why deleting beat gating it. */
 T("GEMINI_MAX_ATTEMPTS: depth shrank so breadth could be afforded", () => {
   /* Three attempts against GEN_TIMEOUT_MS is ~137s per model; now that geminiSend walks
      on rather than throwing, that would be nine minutes across two models and two keys.

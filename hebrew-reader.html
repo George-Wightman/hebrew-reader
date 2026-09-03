@@ -13010,7 +13010,8 @@ const UH_BANK_BLOCKS = {
   toomany: "more not-ready words than a session may carry at once",
   notcarried: "its not-ready word is not one this session is carrying",
   twonew: "two words in it you have never met",
-  support: "a supporting word is not solid enough to hold a new one up"
+  support: "a supporting word is not solid enough to hold a new one up",
+  pending: "it introduces a word that is still waiting for you in Pending"
 };
 function whyBankServable(it, lib, srs, carry, opts) {
   const T = (test, actual, pass) => ({ test: test, actual: actual, pass: pass });
@@ -13018,6 +13019,19 @@ function whyBankServable(it, lib, srs, carry, opts) {
     rule: "bankServable", code: code, verdict: code ? "blocked" : "servable",
     because: because, next: next || (code ? UH_BANK_BLOCKS[code] : "")
   });
+  /* MUST MIRROR bankServable's FIRST CHECK, and the self-test that compares the two
+     caught it missing. An item may now carry a word it declared itself, waiting in
+     Pending for approval — bankContentWords cannot see that word, so without this the
+     explainer would call the item servable while the scheduler refused it, which is
+     precisely the divergence this pair of functions exists to prevent. */
+  const waiting = ((it && it.pend) || []).filter(w => !(lib || {})[w] &&
+                                                      !(lib || {})[bankPeel(String(w))]);
+  if (waiting.length) return mk("pending", [
+    T("its new words are in the library",
+      "still pending: " + waiting.join(", "), false)],
+    "It introduces " + waiting.join(", ") + ". Approve that in Pending and this becomes " +
+    "an ordinary sentence — it is early, not broken.");
+
   const content = bankContentWords(it || {}, lib || {});
   if (!content.length) return mk("filler", [
     T("has content words the library knows",

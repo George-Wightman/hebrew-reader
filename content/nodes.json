@@ -145,7 +145,15 @@
    "en": "the bus is going slowly today",
    "type": "sentence",
    "lvl": 1,
-   "for": ""
+   "for": "",
+   "gloss": [
+    {
+     "he": "לאט",
+     "tr": "le'at",
+     "en": "slowly",
+     "why": "The everyday adverb. The adjective אטי is literary — a person says נוסע לאט."
+    }
+   ]
   },
   {
    "he": "זה הרחוב שלי",
@@ -585,7 +593,15 @@
    "en": "Why is the door shut?",
    "type": "listen",
    "lvl": 3,
-   "for": ""
+   "for": "",
+   "gloss": [
+    {
+     "he": "סגורה",
+     "tr": "sgura",
+     "en": "shut (f)",
+     "why": "Feminine, agreeing with דלת which is feminine."
+    }
+   ]
   },
   {
    "he": "הילדים במיטה עכשיו",
@@ -1001,7 +1017,15 @@
    "en": "My grandpa loves to tell stories",
    "type": "sentence",
    "lvl": 3,
-   "for": ""
+   "for": "",
+   "gloss": [
+    {
+     "he": "סיפורים",
+     "tr": "sipurim",
+     "en": "stories",
+     "why": "Plural of סיפור. לספר needs its object — לספר סיפורים, not לספר alone."
+    }
+   ]
   },
   {
    "he": "יש לי משפחה יפה",
@@ -1473,7 +1497,15 @@
    "en": "I'm taking the bus because it's raining",
    "type": "sentence",
    "lvl": 4,
-   "for": ""
+   "for": "",
+   "gloss": [
+    {
+     "he": "יורד",
+     "tr": "yored",
+     "en": "comes down / falls",
+     "why": "Rain FALLS in Hebrew: יורד גשם. יש גשם is the English shape and is not said."
+    }
+   ]
   },
   {
    "he": "העיר קרה בחורף",
@@ -1785,7 +1817,15 @@
    "en": "I was happy to see you",
    "type": "sentence",
    "lvl": 4,
-   "for": "הייתי"
+   "for": "הייתי",
+   "gloss": [
+    {
+     "he": "שמחתי",
+     "tr": "samakhti",
+     "en": "I was glad",
+     "why": "Past tense of שמח. Note הייתי שמח means 'I WOULD be glad' — a conditional, not a past."
+    }
+   ]
   },
   {
    "he": "הייתי חולה שבוע",
@@ -1873,7 +1913,15 @@
    "en": "I worked and then went home",
    "type": "sentence",
    "lvl": 4,
-   "for": "עבדתי"
+   "for": "עבדתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "הייתי במסעדה ואכלתי דג",
@@ -1993,7 +2041,15 @@
    "en": "I took the book home",
    "type": "sentence",
    "lvl": 3,
-   "for": "לקחתי"
+   "for": "לקחתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "לקחתי קצת מים",
@@ -2097,7 +2153,15 @@
    "en": "I arrived home in the evening",
    "type": "sentence",
    "lvl": 3,
-   "for": "הגעתי"
+   "for": "הגעתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "הגעתי לעבודה בבוקר",
@@ -2129,7 +2193,15 @@
    "en": "I came home in the evening",
    "type": "sentence",
    "lvl": 3,
-   "for": "חזרתי"
+   "for": "חזרתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "חזרתי מהעבודה עייף",
@@ -2177,7 +2249,15 @@
    "en": "Yesterday I flew home",
    "type": "sentence",
    "lvl": 2,
-   "for": "טסתי"
+   "for": "טסתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "טסתי הרבה בעבודה",
@@ -2377,7 +2457,15 @@
    "en": "I went away for a week in winter",
    "type": "sentence",
    "lvl": 3,
-   "for": "נסעתי"
+   "for": "נסעתי",
+   "gloss": [
+    {
+     "he": "לשבוע",
+     "tr": "leshavua",
+     "en": "for a week",
+     "why": "ל- on a period of time means 'for that long'. Without it, נסעתי שבוע says you spent the week travelling."
+    }
+   ]
   },
   {
    "he": "הגעתי לעיר בערב",
@@ -2393,7 +2481,15 @@
    "en": "I arrived home at night",
    "type": "sentence",
    "lvl": 4,
-   "for": "הגעתי"
+   "for": "הגעתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "הגעתי הביתה עם סבא",
@@ -2401,7 +2497,15 @@
    "en": "I arrived home with grandpa",
    "type": "sentence",
    "lvl": 3,
-   "for": "הגעתי"
+   "for": "הגעתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "הגעתי בבוקר לעיר",
@@ -2441,7 +2545,15 @@
    "en": "I came home in the morning",
    "type": "sentence",
    "lvl": 3,
-   "for": "חזרתי"
+   "for": "חזרתי",
+   "gloss": [
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "(to) home",
+     "why": "The directional form of בית. Hebrew has a dedicated ending for 'homewards' — use הביתה for going home, and לבית only when a possessor follows it (לבית של סבא)."
+    }
+   ]
   },
   {
    "he": "טסתי בחורף לעיר",
@@ -2465,7 +2577,15 @@
    "en": "I flew off for a week in spring",
    "type": "sentence",
    "lvl": 3,
-   "for": "טסתי"
+   "for": "טסתי",
+   "gloss": [
+    {
+     "he": "לשבוע",
+     "tr": "leshavua",
+     "en": "for a week",
+     "why": "ל- on a period of time means 'for that long'. Without it, נסעתי שבוע says you spent the week travelling."
+    }
+   ]
   },
   {
    "he": "טסתי ואז חזרתי",
@@ -2529,7 +2649,15 @@
    "en": "I drank hot tea in the morning",
    "type": "sentence",
    "lvl": 3,
-   "for": "לקחתי"
+   "for": "לקחתי",
+   "gloss": [
+    {
+     "he": "שתיתי",
+     "tr": "shatiti",
+     "en": "I drank",
+     "why": "Past tense of שותה. You drink tea in Hebrew; לקחתי תה is the English 'had'."
+    }
+   ]
   },
   {
    "he": "נתתי לאמא עוגה",

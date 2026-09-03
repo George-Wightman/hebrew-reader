@@ -111,6 +111,7 @@
     <div class="marks">
       <button class="go" id="run">Run the bake-off</button>
       <button class="go" id="gate">Test the gate on known-bad</button>
+      <button id="probe">Check models</button>
       <button id="again" disabled>Start over</button>
     </div>
     <div id="log"></div>
@@ -185,7 +186,19 @@ async function gemini(key, models, prompt) {
       const t = (((j.candidates || [])[0] || {}).content || {}).parts;
       return { text: (t && t[0] && t[0].text) || "", model: model };
     }
-    last = model + " -> HTTP " + r.status + " " + (await r.text()).slice(0, 140);
+    /* THE FULL MESSAGE, because truncating it cost a whole diagnosis. On 2026-09-03
+       every gate batch died reporting sixty characters of HTTP 400 followed by the
+       opening brace of the error object — enough to say something was wrong and not
+       enough to say what, while the one field worth having (error.message, which Google
+       writes in plain English) sat just past the cut. An error report that omits the
+       error is not a report. */
+    const raw = await r.text();
+    let detail = raw.replace(/\s+/g, " ").slice(0, 300);
+    try {
+      const j = JSON.parse(raw);
+      if (j && j.error) detail = (j.error.status || r.status) + ": " + j.error.message;
+    } catch (e) { /* not JSON — the raw text is the best we have */ }
+    last = model + " -> HTTP " + r.status + " " + detail;
     /* 5xx is the server faltering and 429 is this model being throttled: both are
        answered by a different model, never by the same one again. A 400 is a request we
        got wrong and walking on cannot fix it. */
@@ -273,7 +286,7 @@ async function runArm(key, arm) {
         log("[" + arm.id + "] reviewer kept " + items.length + " of " + before);
       } else { log("[" + arm.id + "] reviewer returned nothing usable — kept all"); }
     } catch (e) {
-      log("[" + arm.id + "] REVIEW FAILED (" + e.message.slice(0, 60) + ") — grading unreviewed");
+      log("[" + arm.id + "] REVIEW FAILED — grading unreviewed\n    " + e.message);
       arm.reviewFailed = true;
     }
   }
@@ -659,6 +672,37 @@ const KNOWN_GOOD = [
  }
 ];
 
+/* ONE TRIVIAL CALL PER MODEL, because "every batch failed" is not a diagnosis and the
+   next step should not be another twelve-minute run. A 400 is the API saying the REQUEST
+   was wrong — a key that is invalid or restricted, a model name this API version does
+   not serve, a region block — and every one of those is answered by a five-second ping
+   with a one-word prompt, where a real run answers it by spending quota to fail. */
+async function probeModels(key) {
+  const models = ["gemini-flash-latest", "gemini-flash-lite-latest"];
+  const rows = [];
+  for (const m of models) {
+    log("pinging " + m + " …");
+    try {
+      const r = await gemini(key, [m], "Reply with the single word: ok");
+      rows.push([m, "OK", (r.text || "").trim().slice(0, 40)]);
+      log("  " + m + " OK");
+    } catch (e) {
+      rows.push([m, "FAILED", e.message.replace(/^[^ ]+ -> /, "")]);
+      log("  " + m + " FAILED — " + e.message);
+    }
+  }
+  const box = document.getElementById("result");
+  box.style.display = "";
+  box.innerHTML = "<h2 style='font-size:1.1rem;margin:0 0 10px'>Model check</h2><table>" +
+    "<tr><th>Model</th><th>Status</th><th>What came back</th></tr>" +
+    rows.map(r => "<tr><td>" + esc(r[0]) + "</td><td>" +
+      (r[1] === "OK" ? "<span style='color:var(--real)'>OK</span>"
+                     : "<span style='color:var(--wrong)'>FAILED</span>") +
+      "</td><td class='count'>" + esc(r[2]) + "</td></tr>").join("") + "</table>" +
+    "<p class='hint'>If both say FAILED with the same message, it is the key or the " +
+    "account, not this tool. Paste the message back.</p>";
+}
+
 async function runGate(key) {
   const all = KNOWN_BAD.map(x => Object.assign({}, x, { truth: "bad" }))
     .concat(KNOWN_GOOD.map(x => Object.assign({}, x, { truth: "good" })));
@@ -674,7 +718,7 @@ async function runGate(key) {
       const keep = new Set((Array.isArray(rv.keep) ? rv.keep : []).map(Number));
       batch.forEach((it, j) => verdict.set(it, keep.has(j) ? "kept" : "rejected"));
     } catch (e) {
-      log("  batch failed (" + e.message.slice(0, 60) + ") — not counted");
+      log("  batch NOT COUNTED — " + e.message);
       batch.forEach(it => verdict.set(it, null));
     }
   }
@@ -712,6 +756,12 @@ async function runGate(key) {
 }
 function esc(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
 
+document.getElementById("probe").onclick = async () => {
+  const key = document.getElementById("key").value.trim();
+  if (!key) { log("Paste your API key first."); return; }
+  document.getElementById("log").textContent = "";
+  try { await probeModels(key); } catch (e) { log("ERROR: " + e.message); }
+};
 document.getElementById("gate").onclick = async () => {
   const key = document.getElementById("key").value.trim();
   if (!key) { log("Paste your API key first."); return; }

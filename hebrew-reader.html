@@ -14093,9 +14093,23 @@ const GEMINI_THINKING = { thinkingConfig: { thinkingLevel: "minimal" } };
    text prompt and an audio call (text + inline_data) share everything below this.
 
    Returns the reply text, or throws with a message worth showing the user.
-   Keys outer, models inner: every model on a key is exhausted before the next
-   key is tried, so a backup account's quota isn't drawn down alongside the
-   primary's — it stays reserved for when the primary is truly dry. */
+
+   MODELS OUTER, KEYS INNER — swapped on 2026-09-03, and the swap is the point.
+
+   It used to be keys outer, to keep a backup account's quota reserved "for when the
+   primary is truly dry". That protects the wrong thing. Flash is 20 requests a day and
+   Lite is 500, so the scarce resource is not the KEY, it is the good MODEL — and the old
+   order spent key one's Flash, silently dropped to key one's Lite, and only reached key
+   two's Flash after Lite had also failed. George has two keys and 40 Flash requests a
+   day between them; the app was using 20 of them and running everything else on Lite.
+
+   His own words when asked which the second key was: "the secondary key is for use, its
+   not a backup its an extra supply."
+
+   So the walk is now Flash#1 -> Flash#2 -> Lite#1 -> Lite#2: hold the best model for as
+   long as ANY key can still serve it, and only then degrade. This is the single largest
+   quality change available to the coach, which is one call on the best model it can get
+   and has no reviewer behind it. */
 /* A 5xx is Google's server faltering, not a request we got wrong — worth
    retrying, unlike a 400 (which retrying can never fix) or a 429 (handled by
    falling through to the next model/key instead). Added after a live HTTP 503
@@ -14196,9 +14210,9 @@ async function geminiSend(parts, models, opts) {
      diagnosis had to be reasoned from the throw site instead of read off the evidence.
      Short strings, because this ends up in a log line he reads on a phone. */
   lastGeminiTried = [];
-  for (let ki = 0; ki < keys.length; ki++) {
-    const key = keys[ki];
-    for (const model of (models || GEMINI_MODELS)) {
+  for (const model of (models || GEMINI_MODELS)) {
+    for (let ki = 0; ki < keys.length; ki++) {
+      const key = keys[ki];
       lastGeminiTried.push(model.replace("gemini-", "").replace("-latest", "") +
                            (keys.length > 1 ? "#" + (ki + 1) : ""));
       /* Model APIs churn — a dated model name has already been retired underneath
@@ -14277,7 +14291,7 @@ async function geminiSend(parts, models, opts) {
         throw new Error("HTTP " + resp.status);      // not a quota problem — don't blame the key
       }
     }
-    // every model on this key returned 429 — move to the next key, if any
+    // this model is gone on EVERY key — only now drop to a weaker one
   }
   /* A short "retry in Ns" is Google throttling the last few seconds, not the day's
      quota running out. Saying "daily free limit reached — try again in about 1s"
@@ -30323,6 +30337,35 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
 /* Kept as one test to match the timeout case above, which it mirrors exactly. It no
    longer HAS to be: writing it as three is what proved the runner was starting async
    tests concurrently, and fixing that was the price of this test existing at all. */
+T("geminiSend: the good model is held across BOTH keys before anything degrades", async () => {
+  /* Swapped from keys-outer on 2026-09-03. The old order protected the second key's
+     quota and spent the thing that is actually scarce: Flash is 20/day, Lite is 500, so
+     key one's Flash going quiet used to drop the app to Lite while key two's Flash sat
+     untouched. George: "the secondary key is for use, its not a backup its an extra
+     supply." */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  const q = lsGet(AI_Q_KEY);
+  try {
+    geminiKeys = () => ["k1", "k2"];
+    const asked = [];
+    /* Every request refused with a daily-quota 429 (no "retry in Ns" hint), which is the
+       exhausted-pool case this ordering exists for. */
+    geminiFetchWithRetry = (url) => {
+      asked.push((/flash-lite/.test(url) ? "lite" : "flash") + "#" + (/k2/.test(url) ? 2 : 1));
+      return Promise.resolve({ ok: false, status: 429,
+        text: () => Promise.resolve('{"error":{"code":429,"message":"quota exceeded"}}') });
+    };
+    try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { /* expected */ }
+    /* Deduped: the config retry can ask the same model twice and that is not the
+       ordering question. */
+    const order = asked.filter((v, i) => asked.indexOf(v) === i);
+    assertEq(order.join(" "), "flash#1 flash#2 lite#1 lite#2",
+             "both keys' Flash before either key's Lite");
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    if (q == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, q);
+  }
+});
 T("geminiSend: a 503 is this model being busy, not the call failing", async () => {
   /* The identical bug, one status code along. `throw new Error("HTTP " + resp.status)`
      escaped the config, model AND key loops at once, so an overloaded gemini-flash killed

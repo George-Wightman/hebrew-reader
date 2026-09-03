@@ -16734,6 +16734,31 @@ function bankPeel(tok) {
   while (t.length > 2 && BANK_PREFIXES.indexOf(t[0]) !== -1) t = t.slice(1);
   return t;
 }
+/* AT MOST THIS MANY NEW WORDS IN ONE SENTENCE. The ingest gate used to permit zero,
+   which is what forced the writer into unnatural Hebrew — see the note in learnIngest.
+   Two, because one is the ordinary "carry" the scheduler already reasons about and two
+   is the most a sentence can introduce while still being a practice item rather than a
+   translation exercise. Both must be declared in the item's own gloss. */
+const COMMISSION_NEW_MAX = 2;
+
+/* WHICH WORDS AN ITEM EXPLAINED FOR ITSELF, keyed by the same peeled form bankUnknowns
+   reports, so a glossed בית answers for the הבית in the sentence.
+
+   This is the whole difference between a writer INTRODUCING a word and hallucinating
+   one. An unknown token the item also glosses is a deliberate teaching decision with a
+   translation attached; an unknown token with no gloss is invented or mis-spelled
+   Hebrew, and stays a hard reject. A gloss entry with no `en` explains nothing and is
+   therefore not a declaration — a word he cannot look up is not scaffolded by anything. */
+function glossDeclared(it) {
+  const out = {};
+  (Array.isArray(it && it.gloss) ? it.gloss : []).forEach(g => {
+    if (!g || !g.he || !String(g.en || "").trim()) return;
+    out[bankPeel(String(g.he))] = { he: String(g.he), tr: String(g.tr || ""),
+                                    en: String(g.en) };
+  });
+  return out;
+}
+
 function bankUnknowns(he, lib) {
   const out = [], seen = {};
   String(he || "").split(/[^֐-׿]+/).forEach(tok => {
@@ -16903,6 +16928,17 @@ function bankContentWords(it, lib) {
    hard card; two words he has never seen is the impossible one this gate was built to
    stop. */
 function bankServable(it, lib, srs, carry, opts) {
+  /* THE ONLY ADDITION THIS GATE TOOK when the INGEST gate was relaxed on 2026-09-03, and
+     it is a tightening rather than a relaxation. An item may now enter the bank carrying
+     a word he has never met, declared in its own gloss and sent to Pending for approval.
+     Until he approves it, that word is not in the library — bankContentWords would not
+     even see it, so the sentence would look perfectly reachable while resting on
+     vocabulary he does not have.
+
+     So the item names what it is waiting for and this refuses it until the wait is over.
+     The sentence is not lost, it is early; once the word is his it becomes an ordinary
+     content word and every rule below applies to it unchanged. */
+  if ((it && it.pend || []).some(w => !lib[w] && !lib[bankPeel(String(w))])) return false;
   const content = bankContentWords(it, lib);
   if (!content.length) return false;          // nothing but filler: not a drill
   const unready = content.filter(u => !wordReady(u, srs));
@@ -22043,9 +22079,32 @@ async function sentenceWriteOne(spec, briefs) {
         "requirement, and an odd sentence built round one is worse than not using it:\n" +
         spec.revisit.map(k => wordLine(k, lib)).join("\n") + "\n\n"
       : "") +
-    "EVERY OTHER WORD MUST COME FROM THIS LIST — words he holds solidly — plus basic " +
-    "grammar words (אני, אתה, זה, של, את, לא, כן, יש, ה):\n" +
+    /* THE CONSTRAINT THAT WAS WRITING THE BAD SENTENCES. This said "EVERY OTHER WORD
+       MUST COME FROM THIS LIST" and called itself a hard gate, and between it, the level
+       target and "returning nothing is not one of the options" there was no legal way to
+       decline a brief the vocabulary could not carry. So the model wrote the sentence it
+       could write, and a native speaker found the results on 2026-09-03.
+
+       George: "Take off the constraints I would rather have sentences that make sense
+       but contain some words Im not as familiar with (as long as Im scaffholded inthe
+       process) that are reviewed and make real sense than the alternative."
+
+       Naturalness is now the first constraint and vocabulary the second. The budget is
+       real and still enforced in code (commissionAcceptable), but it is a budget rather
+       than a wall, and spending it is explicitly allowed rather than grudged. */
+    "WRITE NATURAL HEBREW FIRST. If the sentence a real person would say needs a word " +
+    "that is not on the list below, USE THAT WORD and gloss it. A stilted sentence " +
+    "built only from permitted words is worse than a real one that teaches him " +
+    "something — he is learning to talk to his partner's grandfather, not to pass a " +
+    "vocabulary test.\n\n" +
+    "PREFER THESE WORDS — the ones he holds solidly — plus basic grammar words " +
+    "(אני, אתה, זה, של, את, לא, כן, יש, ה):\n" +
     scaffold.map(k => k + " (" + ((lib[k] || {}).tr || "") + ")").join(", ") + "\n" +
+    "You may go outside that list for at most " + COMMISSION_NEW_MAX + " words per " +
+    "sentence. EVERY such word must appear in that item's gloss with a real English " +
+    "meaning — a word you use without explaining is thrown away by the app, and so is " +
+    "the sentence around it. Reach for a new word because the sentence needs it, not to " +
+    "show range: most items should still sit inside the list.\n" +
     /* The single most valuable line in this prompt. Without it the model writes
        base-form-only Hebrew, because that is what "use these words" sounds like — and
        base-form-only Hebrew is UNGRAMMATICAL the moment a feminine noun meets an
@@ -22056,9 +22115,16 @@ async function sentenceWriteOne(spec, briefs) {
     "קטן may appear as קטנה, קטנים or קטנות, and a verb may agree with its subject. " +
     "That is not a new word and it will not be rejected. Writing קטן where קטנה " +
     "belongs is an ERROR, not obedience.\n" +
-    "This is not a style note, it is a hard gate: an item using a word outside that " +
-    "list and outside the rescue list will be thrown away by the app before he ever " +
-    "sees it. One unknown word per sentence, and it must be the rescue word.\n\n" +
+    /* The hard-gate paragraph, restated for the budget that replaced the wall. It still
+       has to be here — models do not always believe prompts, and commissionAcceptable
+       enforces this in code either way — but it now names the rule that is actually
+       enforced. The old text ("one unknown word, and it must be the rescue word")
+       contradicted everything above it as of 2026-09-03. */
+    "This is not a style note, it is a hard gate, checked in code: at most " +
+    COMMISSION_NEW_MAX + " words per sentence from outside the preferred list, and " +
+    "every one of them glossed with a real English meaning. An item that breaks either " +
+    "rule is thrown away before he ever sees it — so if a sentence needs three new " +
+    "words, write a different sentence rather than losing this one.\n\n" +
     "Return JSON only, no markdown:\n" +
     '{"items":[{"i":0,"type":"sentence","for":"","he":"","tr":"","en":"",' +
     '"gloss":[{"he":"","tr":"","en":"","why":""}]}]}\n\n' +
@@ -22140,14 +22206,30 @@ function commissionAcceptable(it, lib, scaffoldSet, rescueSet, maxCarried) {
       !he.split(/[^֐-׿]+/).filter(Boolean).some(t => libKeyFor(t, lib) === it.for)) return false;
   const toks = he.split(/[^֐-׿]+/).filter(Boolean);
   if (!toks.length) return false;
-  let carried = 0;
+  /* WHAT THE ITEM EXPLAINED FOR ITSELF. A word outside the allowed list is now
+     acceptable when the writer glossed it — see glossDeclared and the note in
+     learnIngest. Unglossed, it is still invented Hebrew and still fails here. */
+  const declared = glossDeclared(it);
+  let carried = 0, fresh = 0;
   for (let i = 0; i < toks.length; i++) {
     if (STOPLIST.has(toks[i])) continue;
     const k = libKeyFor(toks[i], lib);
-    if (!k) return false;                                  // untaught or invented
+    if (!k) {
+      /* Untaught. Permitted only if the item declared it, and only up to the same limit
+         learnIngest enforces — the two gates must agree or the writer is being told one
+         rule and marked against another, which is exactly the bind that produced
+         "10 written, 10 rejected". */
+      if (!declared[bankPeel(toks[i])]) return false;      // invented, or unexplained
+      if (++fresh > COMMISSION_NEW_MAX) return false;
+      continue;
+    }
     if (STOPLIST.has(k) || scaffoldSet.has(k)) continue;
     if (rescueSet.has(k)) { carried++; continue; }
-    return false;                                          // outside the allowed list
+    /* Known to him but outside this batch's list. Was a flat reject, which is what made
+       a natural sentence impossible whenever the good word happened to be off-list; it
+       counts against the same new-word budget instead, since from the sentence's point
+       of view it is one more thing not being scaffolded by this batch. */
+    if (++fresh > COMMISSION_NEW_MAX) return false;
   }
   /* One new thing by default. A node session passes 2, because inside a node the
      words being taught are the point and every one of them is not-ready by
@@ -22634,6 +22716,10 @@ function learnIngest(data) {
   const lib = libAll();
   const bank = bankAll();
   let n = 0, seen = 0, oov = 0;
+  /* Words the items themselves introduced, collected across the batch and flushed once
+     at the end — padIngest reads and rewrites the whole pending store, so calling it per
+     item would be the same work repeated for every sentence. */
+  const introduced = [];
   items.forEach(it => {
     if (!it || !it.he || !it.tr) return;
     const type = ["sentence", "listen", "reply"].indexOf(it.type) !== -1 ? it.type : "sentence";
@@ -22642,16 +22728,49 @@ function learnIngest(data) {
        production practice. Drop it rather than pad the session with it. */
     if (!uses.length) return;
     seen++;
-    /* A word he has never met, that the servable gate would never have seen — see
-       bankUnknowns. Strict rather than budgeted: the gate's whole character is
-       "absolute except for the one explicitly permitted carry", and an undeclared
-       unknown is by definition not the permitted one. Words the model deliberately
-       introduces still take their own road, through `newWords` into Pending, above.
+    /* AN UNKNOWN WORD IS NO LONGER AUTOMATICALLY A REJECTION, and this is the change
+       that lets the writer produce Hebrew a person would say.
 
-       Rejecting is cheap. AI_POOL_CAPS.fast is 500 a day and this app spends a
-       handful, so the correct response to a bad batch is another batch. */
+       The old rule was absolute: any word outside the library killed the item. It reads
+       as safety and it was the direct cause of the unnatural sentences a native speaker
+       found on 2026-09-03. The writer was told to use only known words, hit a level, and
+       never return an empty batch — so when the natural sentence needed a word he lacks,
+       every exit was closed and it wrote the sentence it COULD write. That is where
+       "the head is full today" comes from. George: "I would rather have sentences that
+       make sense but contain some words Im not as familiar with (as long as Im
+       scaffholded inthe process)."
+
+       Two things make relaxing it safe, and both matter:
+
+       DECLARED, not merely present. The item's own gloss is the declaration — a word the
+       writer used and explained. An unknown token with no gloss entry is invented or
+       mis-spelled Hebrew, which is the hole this gate was really built to close, and it
+       is still a hard reject. That is the difference between introducing a word and
+       hallucinating one.
+
+       AND IT STILL CANNOT BE SERVED YET. The word takes the ordinary road into Pending
+       for his approval (newWordsFromGloss, below), and `pend` on the item stops
+       bankServable offering it until that word is actually in the library. So the
+       sentence waits rather than being lost, which is the whole point: ingest relaxes,
+       serving does not. */
     const unknown = bankUnknowns(it.he, lib);
-    if (unknown.length) { oov++; return; }
+    let pend = [];
+    if (unknown.length) {
+      const declared = glossDeclared(it);
+      /* Invented Hebrew, or a word used without explaining it. Still cheap to refuse —
+         AI_POOL_CAPS.fast is 500 a day and this app spends a handful, so the correct
+         response to a bad batch is another batch. */
+      if (unknown.some(t => !declared[bankPeel(t)])) { oov++; return; }
+      /* One sentence may introduce at most COMMISSION_NEW_MAX. Past that it stops being
+         a practice item carrying a new word and becomes a reading comprehension puzzle,
+         which is the thing bankServable's carry rule has always existed to prevent. */
+      if (unknown.length > COMMISSION_NEW_MAX) return;
+      pend = unknown.slice();
+      unknown.forEach(t => {
+        const g = declared[bankPeel(t)];
+        introduced.push({ hebrew: g.he || t, translit: g.tr || "", english: g.en || "" });
+      });
+    }
     if (bank.some(b => b.he === it.he && b.type === type)) return;
     /* Checked against `bank` as it grows, so the guards apply WITHIN a batch too —
        a single generation call that returns "a big house" and "a new house" only
@@ -22679,12 +22798,27 @@ function learnIngest(data) {
          content actually outperforms the commissioned kind, and that cannot be answered
          at all if the two are indistinguishable in the bank. */
       src: it.src ? String(it.src) : "",
+      /* WORDS THIS ITEM INTRODUCED THAT ARE NOT IN THE LIBRARY YET. bankServable refuses
+         the item while any of them are still outstanding, which is what makes relaxing
+         the ingest gate safe: the sentence waits for its vocabulary instead of being
+         thrown away, and he is never shown a card built on a word he has not met.
+         Cleared naturally — once he approves the word in Pending it is a library word,
+         and this list is then satisfied. */
+      pend: pend,
       uses: uses, seen: 0, added: todayISO()
     });
     n++;
   });
+  /* Same road as `newWords` above: archived, then flagged in Pending for his approval.
+     Deliberately not a direct write into the library — a word arriving inside a sentence
+     is no more trusted than one the model asked for outright, and the approval step is
+     where he finds out the app wants to teach him something new. */
+  if (introduced.length) { try { padIngest({ words: introduced }); } catch (e) {} }
   bankSave(bank);
   rebuildTrIndex();
+  /* `oov` is now UNDECLARED unknowns only — invented or unexplained Hebrew. A declared
+     new word is compliance with the current prompt, not a miss, and counting it here
+     would read as a permanent regression in Token Miss Rate the moment this shipped. */
   if (seen) genStatAdd(seen, oov);
   return n;
 }
@@ -33359,6 +33493,86 @@ T("commissionAcceptable: invented Hebrew is thrown away rather than ignored", ()
      bankServable looking perfectly reachable. */
   assertTrue(!commissionAcceptable({ he: "אני גלופרניק היום", for: "היום" },
                                    c.lib, c.scaffold, c.rescue));
+});
+/* ---- the budget that replaced the wall, 2026-09-03 ---- */
+const GLOSS_NEW = [{ he: "מחר", tr: "makhar", en: "tomorrow" }];
+T("commissionAcceptable: a new word the writer explained is allowed in", () => {
+  /* The point of the whole change. The old gate permitted zero words outside the list,
+     which is what forced "the head is full today" — the natural sentence needed a word
+     he lacked and there was no legal way to say so. */
+  const c = commissionStores();
+  assertTrue(commissionAcceptable({ he: "אני עובד היום ומחר", for: "היום", gloss: GLOSS_NEW },
+                                  c.lib, c.scaffold, c.rescue),
+             "glossed, within budget, and doing real work");
+});
+T("commissionAcceptable: the same word unexplained is still invented Hebrew", () => {
+  const c = commissionStores();
+  assertTrue(!commissionAcceptable({ he: "אני עובד היום ומחר", for: "היום" },
+                                   c.lib, c.scaffold, c.rescue),
+             "a word used without a gloss is indistinguishable from a hallucinated one");
+  assertTrue(!commissionAcceptable({ he: "אני עובד היום ומחר", for: "היום",
+                                     gloss: [{ he: "מחר", tr: "makhar", en: "" }] },
+                                   c.lib, c.scaffold, c.rescue),
+             "and a gloss with no English explains nothing, so it is not a declaration");
+});
+T("commissionAcceptable: the new-word budget is a budget, not an open door", () => {
+  const c = commissionStores();
+  const gloss = [{ he: "מחר", tr: "makhar", en: "tomorrow" },
+                 { he: "אולי", tr: "ulai", en: "maybe" },
+                 { he: "כמעט", tr: "kim'at", en: "almost" }];
+  assertTrue(commissionAcceptable({ he: "אני עובד היום מחר אולי", for: "היום", gloss: gloss },
+                                  c.lib, c.scaffold, c.rescue), "two is the limit and two passes");
+  assertTrue(!commissionAcceptable({ he: "אני עובד היום מחר אולי כמעט", for: "היום", gloss: gloss },
+                                   c.lib, c.scaffold, c.rescue),
+             "three new words is a translation exercise, not a practice item");
+  assertEq(COMMISSION_NEW_MAX, 2, "and the two gates must agree on the number");
+});
+T("bankServable: an item waiting on a word he has not approved is not served yet", () => {
+  /* The guard that makes relaxing ingest safe. bankContentWords cannot see a word that
+     is not in the library, so without this the sentence looks perfectly reachable while
+     resting on vocabulary he does not have. */
+  const st = carryStores();
+  const it = { he: "עובד מחר", uses: ["עובד"], pend: ["מחר"] };
+  assertTrue(!bankServable(it, st.lib, st.srs), "held back while מחר is still in Pending");
+  const withWord = Object.assign({}, st.lib, { "מחר": { tr: "makhar", en: "tomorrow" } });
+  const served = { he: "עובד מחר", uses: ["עובד", "מחר"], pend: ["מחר"] };
+  assertTrue(bankServable(served, withWord, Object.assign({}, st.srs,
+               { "מחר": { prod: { n: 9, stab: 40, diff: 3, miss: 0 } } })),
+             "and released once the word is his, with no other change");
+});
+T("learnIngest: a declared new word is banked and enrolled; an undeclared one is not", async () => {
+  const realBank = lsGet(BANK_KEY), realGen = lsGet(GENSTAT_KEY);
+  const realPad = padIngest;
+  let sentToPending = [];
+  try {
+    padIngest = d => { sentToPending = sentToPending.concat(d.words || []); return {}; };
+    const lib = libAll();
+    const known = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
+    /* A token that cannot be in his library whatever it holds, so the test says what it
+       means against real data rather than a fixture. */
+    const invented = "גלופרניק";
+    lsSet(BANK_KEY, JSON.stringify([]));
+    const n = learnIngest({ items: [
+      { he: known[0] + " " + known[1] + " " + invented, tr: "a b c", en: "declared",
+        type: "sentence", gloss: [{ he: invented, tr: "gluprnik", en: "a made-up thing" }] },
+      { he: known[1] + " " + known[0] + " " + invented, tr: "b a c", en: "undeclared",
+        type: "sentence" }
+    ] });
+    assertEq(n, 1, "the declared one banks, the undeclared one does not");
+    const it = bankAll()[0];
+    assertEq(it.en, "declared");
+    assertEq((it.pend || []).length, 1, "and it records what it is waiting on");
+    assertEq(it.pend[0], invented);
+    assertTrue(sentToPending.some(w => w.hebrew === invented),
+               "the word takes the ordinary road into Pending for his approval");
+    assertTrue(!bankServable(it, libAll(), srsAll()), "and cannot be served until it lands");
+    assertTrue(genStat().oov > 0, "the undeclared one still counts against Token Miss Rate");
+  } finally {
+    padIngest = realPad;
+    const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    put(BANK_KEY, realBank); put(GENSTAT_KEY, realGen);
+    rebuildTrIndex();
+  }
 });
 T("commissionAcceptable: stoplist grammar is always allowed", () => {
   const c = commissionStores();

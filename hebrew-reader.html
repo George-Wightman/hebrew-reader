@@ -13049,6 +13049,94 @@ UH.word = function (key, st) {
   };
 };
 
+/* ---- what is coming ---------------------------------------------------------
+   George: "I want the coach to be there, but I want him to have came to me with the
+   answer not me request it ... there should be a blue box that tells me the forecast/
+   whats to come."
+
+   THE ONE SUBJECT IN THIS REGISTRY THAT LOOKS FORWARD. Every other inspector describes
+   current or past state — a card, a word, a node, the session that just ran — so "what
+   am I drilling today" had no report to be built from and the coach could not be asked
+   it at all.
+
+   Nothing here is generated and nothing here is new arithmetic: it is the same functions
+   the session builder itself uses, asked before the session rather than during it. That
+   is what makes it honest — the words named are the words learnTargets would actually
+   pick, not a plausible list. It follows that this is free, works offline, and is
+   complete with no key configured. The coach's sentence on the front door is a layer over
+   this, never a substitute for it. */
+function forecastFacts() {
+  const F = { due: 0, fresh: 0, targets: [], servable: 0, node: null, thin: [],
+              streak: 0, todaySec: 0, close: [] };
+  try {
+    const lib = libAll(), srs = srsAll(), c = campAll();
+    const counts = srsDueCount();
+    F.due = counts.due; F.fresh = counts.fresh;
+    /* The words the next session would actually choose, asked the same way it asks.
+       SESSION_CARDS rather than the selected shape: this describes what is waiting, and
+       a Quick session is him taking five of it rather than there being only five. */
+    F.targets = (learnTargets(SESSION_CARDS) || []).map(k => ({
+      key: k, tr: (lib[k] && lib[k].tr) || "", en: (lib[k] && lib[k].en) || "",
+      band: srsStrengthOf(srs, k, "prod")
+    }));
+    F.servable = bankPrune(bankAll(), lib).filter(it => bankServable(it, lib, srs)).length;
+    const n = campCurrentNode(c, srs);
+    if (n) {
+      const plan = campGoldPlan(n, srs);
+      F.node = { id: n.id, name: n.name, why: n.why || "", plan: plan };
+    }
+    /* Nodes within one word of gold, across the chapter he is actually in. The single
+       most actionable thing the app knows and nothing was saying it. */
+    const ch = campLiveChapter(c, srs);
+    (ch && ch.nodes || []).forEach(nd => {
+      const p = campGoldPlan(nd, srs);
+      if (p.gold) return;
+      const left = p.notReady.length + p.toLand.length;
+      if (left > 0 && left <= 2) F.close.push({ id: nd.id, name: nd.name, left: left, plan: p });
+    });
+    F.thin = contentThinNow();
+    F.streak = statsStreak();
+    F.todaySec = (statsRange(1)[0] || {}).sec || 0;
+  } catch (e) { /* a forecast that throws must degrade to a thin one, never to a blank page */ }
+  return F;
+}
+
+UH.forecast = function (id, st) {
+  const F = forecastFacts();
+  const rows = [];
+  rows.push({ label: "Due for review", value: F.due + " word" + (F.due === 1 ? "" : "s") });
+  rows.push({ label: "Never drilled", value: F.fresh + " word" + (F.fresh === 1 ? "" : "s") });
+  rows.push({ label: "Sentences unlocked", value: F.servable + "" });
+  rows.push({ label: "Practised today", value: F.todaySec ? fmtMins(F.todaySec) : "not yet" });
+  if (F.streak) rows.push({ label: "Streak", value: F.streak + (F.streak === 1 ? " day" : " days") });
+
+  const sections = [{ name: "Where you stand", open: true, rows: rows }];
+
+  sections.push({ name: "What the next session would pick", open: true,
+    rows: F.targets.length
+      ? F.targets.map(t => ({ label: t.key, value: [t.tr, t.en].filter(Boolean).join(" · ") || "—",
+                              band: t.band, to: { kind: "word", id: t.key } }))
+      : [{ note: "Nothing queued — the library is too thin or everything is ahead of its due date." }] });
+
+  if (F.node) sections.push({ name: "The node you are on", open: true, rows: [
+    { label: F.node.name, value: F.node.why || "—", to: { kind: "node", id: F.node.id } },
+    { label: "Said live", value: F.node.plan.landedN + " of " + F.node.plan.need },
+    { label: "Not ready yet", value: F.node.plan.notReady.length
+        ? F.node.plan.notReady.map(w => w.key).join(", ") : "none" }
+  ] });
+
+  if (F.close.length) sections.push({ name: "Within reach of gold", open: true,
+    rows: F.close.map(n => ({ label: n.name,
+      value: n.left === 1 ? "one thing left" : n.left + " things left",
+      to: { kind: "node", id: n.id } })) });
+
+  if (F.thin.length) sections.push({ name: "Running short of material", open: false,
+    rows: [{ note: F.thin.join(", ") + " — next time you are at a computer, ask Claude to " +
+                   "write some." }] });
+
+  return { title: "What's coming", subtitle: "Before you start, not after", sections: sections };
+};
+
 UH.rule = function (name) {
   const r = UH_RULES[name];
   if (!r) return { title: name, subtitle: "no description written for this rule yet",
@@ -13545,6 +13633,8 @@ UH.root = function (id, st) {
     search: true,
     sections: [{
       name: "Elsewhere", open: true, rows: [
+        { label: "What's coming", value: "what the next session would pick, and what is close",
+          to: { kind: "forecast", id: "" } },
         { label: "The campaign", value: "chapters, nodes, and what each can serve",
           to: { kind: "campaign", id: "" } },
         { label: "Written content", value: "what arrives from content/nodes.json",
@@ -13606,6 +13696,7 @@ function uhLabelFor(kind, id, st) {
      panel still calls itself Under the hood in its own title at that level. */
   if (kind === "root") return "Top";
   if (kind === "session") return "This session";
+  if (kind === "forecast") return "What's coming";
   if (kind === "card") {
     const s = st && st.session, i = parseInt(id, 10);
     const c = s && s.cards && s.cards[isNaN(i) ? s.i : i];
@@ -29961,6 +30052,32 @@ T("campNodeWalked: without any lesson record it is still walked", () => {
     assertTrue(campNodeWalked("nd", st.c, st.srs), "progression is the scheduler alone");
     assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
   } finally { pathScoresSave(keep); }
+});
+T("forecastFacts: an empty app forecasts rather than throwing", () => {
+  /* The one thing this must never do. It runs on the front door before anything else is
+     drawn, so a throw here is a blank screen on open — and it reads six stores, every one
+     of which can be empty on a fresh device. The whole body is wrapped for this reason
+     and the test is what proves the wrapper is doing something. */
+  const F = forecastFacts();
+  assertTrue(F && typeof F === "object", "always an object");
+  assertTrue(Array.isArray(F.targets), "targets is always a list");
+  assertTrue(Array.isArray(F.close) && Array.isArray(F.thin), "and so are the others");
+  assertTrue(typeof F.due === "number" && typeof F.fresh === "number", "counts are numbers");
+  const rep = UH.forecast("", uhState());
+  assertTrue(!!rep.title, "and the report has a title whatever the state");
+  assertTrue((rep.sections || []).length >= 2, "with its standing sections");
+});
+T("UH.forecast: the words it names are the ones the session would actually pick", () => {
+  /* The claim that makes this worth reading. If it named a plausible list rather than
+     learnTargets' own answer it would be a guess dressed as a forecast, and he would
+     find out by starting the session. */
+  const F = forecastFacts();
+  const real = (learnTargets(SESSION_CARDS) || []);
+  assertEq(F.targets.map(t => t.key), real, "same function, asked before rather than during");
+  const rep = UH.forecast("", uhState());
+  const sec = (rep.sections || []).filter(x => /would pick/.test(x.name))[0];
+  assertTrue(!!sec, "and they are on the report");
+  if (real.length) assertEq(sec.rows.map(r => r.label), real, "all of them, in order");
 });
 T("campGoldPlan: exact about landings, honest about bands", () => {
   /* The distinction the box is built on. "Two left to say" is a real countdown because a

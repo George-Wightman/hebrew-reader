@@ -20877,24 +20877,35 @@ async function campStartCompose(id) {
    campStartMeet builds its own card list by hand, and the conversation shape returns
    from learnBuild before a line of its logic runs. */
 
-/* Fourteen. It was ten, on the reasoning that "a node is a focused piece of work on six
-   words, not a second full session" — but node practice has since REPLACED daily
-   practice. George: "in my actual use the node practice is my main point of contact now,
-   and has seen in real usage a phase out of hte general daily practice". A session that
-   is the only session should not be sized as a supplement.
+/* Ten. It was ten, then fourteen for three days, and now ten again — and the round trip
+   is worth keeping because the reason for going up was sound and the reason for coming
+   back is different. Node practice HAS replaced daily practice. George: "in my actual use
+   the node practice is my main point of contact now, and has seen in real usage a phase
+   out of hte general daily practice", and a session that is the only session should not
+   be sized as a supplement. That argument still holds. What it did not survive is
+   contact: "They are reallylong ... Could do with being about 30% shorted tho."
 
-   The extra four are all sentence cards. Solo cards stay capped at two, because isolated
-   recall is the drill that already failed him — see slice 1 below.
+   Fourteen was not really the problem — the evening he flagged ran 9.4 minutes and 5.3 of
+   them went on three cards where the app wrongly disputed him, which is what Phases 1 and
+   2 are for. But he asked for thirty percent and thirty percent is what this is; the
+   grading fixes and the shorter session are cumulative, not alternatives.
 
-   AND THE NODE'S OWN SHARE IS NOW A FLOOR, not a remainder. Slice 3 used to take
-   everything left over, which is exactly where widened vocabulary lands: at ten cards
-   that was 2+5+3, at fourteen it would have been 2+5+7, so lengthening the session and
-   widening the node together would have handed half of it to words the node is not about.
-   George asked for the opposite — "as long as a node is themed arpund the node with the
-   added learning material supplementing". 4 of the 14 are consolidation on its own words
-   and only 3 are the wider material, so eleven of fourteen stay the node's. */
-const CAMP_SESSION_CARDS = 14;
-const CAMP_OWN_CARDS = 4, CAMP_WIDER_CARDS = 3;
+   Solo cards stay capped at two, because isolated recall is the drill that already failed
+   him — see slice 1 below — and he has looked at their near-absence and called it right:
+   "the complete lack of single owrds which for a node makes sense once Ive seen the words
+   thats fine".
+
+   THE NODE'S OWN SHARE IS A FLOOR, not a remainder, and the two ratios below are the
+   design rather than an accident of the arithmetic. Slice 3 used to take everything left
+   over, which is exactly where widened vocabulary lands: at ten cards that was 2+5+3, at
+   fourteen it would have been 2+5+7, so lengthening the session and widening the node
+   together would have handed half of it to words the node is not about. George asked for
+   the opposite — "as long as a node is themed arpund the node with the added learning
+   material supplementing". So both ratios are carried across the cut rather than
+   recomputed from it: eight of ten stay the node's own (was eleven of fourteen, 80% and
+   79%), and five of ten carry a stuck word (was seven of fourteen, 50% either way). */
+const CAMP_SESSION_CARDS = 10;
+const CAMP_OWN_CARDS = 3, CAMP_WIDER_CARDS = 2;
 /* The words a node session is FOR: its own words that he cannot yet say. Weakest
    first — the inverse of learnTargets, deliberately, and safe here for the reason it
    is dangerous there. Globally, weak-first is an unbounded pile that crowds out
@@ -21166,9 +21177,11 @@ function campBuild(node, size) {
 const CAMP_MAX_CARRIED = 2;
 const CAMP_SERVE = { maxCarried: CAMP_MAX_CARRIED, support: "ready" };
 const CAMP_SOLO_CARDS = 2;
-/* About half the session. The rest is consolidation, so a node still feels like
-   practice rather than an exam on the two words he cannot say. */
-const CAMP_CARRY_CARDS = 5;
+/* About half the session, WITH the solo cards counted in — that is the ratio being
+   held, not this number on its own. The rest is consolidation, so a node still feels
+   like practice rather than an exam on the two words he cannot say. Three plus the two
+   solo cards is five of ten, exactly as five plus two was seven of fourteen. */
+const CAMP_CARRY_CARDS = 3;
 /* George, after two node sessions back to back: "htey were hte same content in a
    different order ... I want at most 1 or 2 repeating." */
 const CAMP_MAX_REPEATS = 2;
@@ -27792,16 +27805,23 @@ T("campStretch: the next words are the course's next words, and each node gets i
                "a word he already has is not offered as new");
   } finally { duoUnit = rUnit; }
 });
-T("campBuild quotas: eleven of fourteen cards stay the node's own", () => {
+T("campBuild quotas: eight of ten cards stay the node's own, and five carry a stuck word", () => {
   /* The slices have to sum to the session, or the reserved shares are decoration and
      whichever one runs last silently absorbs the difference — which is precisely what
      the old unbounded consolidation slice did. */
   assertEq(CAMP_SOLO_CARDS + CAMP_CARRY_CARDS + CAMP_OWN_CARDS + CAMP_WIDER_CARDS,
            CAMP_SESSION_CARDS, "the quotas add up to the session");
-  assertEq(CAMP_SESSION_CARDS - CAMP_WIDER_CARDS, 11,
-           "and the wider material is the only part that is not about this node");
+  /* WRITTEN AS RATIOS, not as the counts they currently produce. This test asserted 11
+     and 2 against a fourteen-card session; when the session came back to ten it failed
+     on the literal rather than on anything being wrong, which is a test measuring the
+     constant instead of the design. Both shares survived the cut on purpose — see the
+     comment above CAMP_SESSION_CARDS — so both are what gets asserted. */
+  assertTrue((CAMP_SESSION_CARDS - CAMP_WIDER_CARDS) / CAMP_SESSION_CARDS >= 0.75,
+             "the wider material is the only part not about this node, and stays a minority");
+  assertEq((CAMP_SOLO_CARDS + CAMP_CARRY_CARDS) * 2, CAMP_SESSION_CARDS,
+           "and about half the session is still spent on the words he cannot yet say");
   assertEq(CAMP_SOLO_CARDS, 2,
-           "the extra length is all sentences — isolated recall is the drill that failed him");
+           "length is spent on sentences — isolated recall is the drill that failed him");
 });
 /* AND THE ARITHMETIC ABOVE IS NOT THE TEST, which is how the defect below shipped green.
    Slice 3 filtered `!x.carry && serves && x.hits > 0` while slice 3b filtered `!x.carry &&

@@ -15849,6 +15849,28 @@ function trSoundNorm(s) {
     .replace(/ch/g, "kh")              // the house scheme, applied to old entries too
     .replace(/([a-z])\1+/g, "$1");     // doubling is spelling, not sound
 }
+/* THE LOOKUP HAS TO UNDO normHe, or Tier 1 silently stops existing for a fifth of the
+   library. Every caller here has already been through normHe — heWords does it to the
+   transcript and to the expected sentence — and normHe rewrites a final letter to its
+   base form. Library keys, userDict and DICT are all keyed by real Hebrew, which spells
+   that letter final. So lib["קטנ"] misses where lib["קטן"] hits, and every word ending
+   in one of the five falls through to the permissive skeleton tier that heSoundAlike
+   only ever meant to reach for words it does not know.
+
+   Measured before the fix, on his own 442-word library: 97 words lost Tier 1 this way,
+   and the skeleton then declared 38 pairs of them homophones — חם with כמה, קפה with
+   כף, מלח with מלך, ישן with שנה. None of those sound alike, and each was one clean
+   "missed" away from being softened on his behalf.
+
+   Restoring the final is deterministic and needs no index: those five letters are only
+   ever written in final form at the end of a word, so if the exact key missed, the
+   last letter is the only thing normHe can have changed. */
+const FINAL_OF = { "כ": "ך", "מ": "ם", "נ": "ן", "פ": "ף", "צ": "ץ" };
+function heRefinal(w) {
+  w = String(w || "");
+  const last = w.slice(-1);
+  return FINAL_OF[last] ? w.slice(0, -1) + FINAL_OF[last] : w;
+}
 /* Every transliteration this word is known by — plural because the dictionary stores
    gender pairs in one string ("yafe/yafa"), and either form is a real pronunciation. */
 function trFormsOf(word, lib) {
@@ -15856,9 +15878,16 @@ function trFormsOf(word, lib) {
   const push = t => String(t || "").split("/").forEach(p => {
     const n = trSoundNorm(p); if (n && out.indexOf(n) === -1) out.push(n);
   });
-  const e = lib && lib[word];
-  if (e) push(e.tr);
-  try { const d = lookupBase(word); if (d) push(d.tr); } catch (err) {}
+  /* The word as given first, then the same word with its final letter put back. Both,
+     not either: callers pass raw library keys as well as normalised transcript words. */
+  const tries = [word];
+  const fin = heRefinal(word);
+  if (fin !== word) tries.push(fin);
+  tries.forEach(w => {
+    const e = lib && lib[w];
+    if (e) push(e.tr);
+    try { const d = lookupBase(w); if (d) push(d.tr); } catch (err) {}
+  });
   return out;
 }
 /* What is left of a word when everything an English speaker gets wrong is taken out:
@@ -16650,7 +16679,13 @@ function statsSave(v) {
    asked/won are WORDS; the rest are CALLS. */
 function statsBlank() {
   return { sec: 0, cards: 0, clean: 0, sessions: 0, spoken: 0, spokenOk: 0, hints: 0,
-           adjCalls: 0, adjAsked: 0, adjWon: 0, adjStale: 0, adjErr: 0 };
+           adjCalls: 0, adjAsked: 0, adjWon: 0, adjStale: 0, adjErr: 0,
+           /* The two layers added either side of the adjudicator. They belong in the
+              same buckets for the same reason it does — "should this exist at all" is
+              now a question about three things, and answering it for one of them while
+              the other two are invisible is how a layer survives on assertion. */
+           soundWon: 0,
+           graceCalls: 0, graceWon: 0, graceStale: 0, graceErr: 0 };
 }
 function statsDay(st, iso) {
   if (!st[iso]) st[iso] = statsBlank();
@@ -23804,11 +23839,15 @@ function learnRenderStats() {
    is discarded whatever it said, so a high stale share means the second opinion is
    losing a race rather than being wrong, and the fix is timing, not deletion. */
 function adjTotals(stats) {
-  const t = { calls: 0, asked: 0, won: 0, stale: 0, err: 0 };
+  const t = { calls: 0, asked: 0, won: 0, stale: 0, err: 0,
+              soundWon: 0, graceCalls: 0, graceWon: 0, graceStale: 0, graceErr: 0 };
   Object.keys(stats || {}).forEach(d => {
     const r = stats[d] || {};
     t.calls += r.adjCalls || 0; t.asked += r.adjAsked || 0;
     t.won += r.adjWon || 0; t.stale += r.adjStale || 0; t.err += r.adjErr || 0;
+    t.soundWon += r.soundWon || 0;
+    t.graceCalls += r.graceCalls || 0; t.graceWon += r.graceWon || 0;
+    t.graceStale += r.graceStale || 0; t.graceErr += r.graceErr || 0;
   });
   return t;
 }
@@ -23819,21 +23858,47 @@ function learnRenderAdj() {
   box.innerHTML = "";
   box.className = "lstatnote";
   const t = adjTotals(statsAll());
-  if (t.calls < ADJ_MIN_CALLS) {
-    box.textContent = t.calls
-      ? "Only " + t.calls + " check" + (t.calls === 1 ? "" : "s") + " so far. This needs " +
-        "about " + ADJ_MIN_CALLS + " before it means anything."
-      : "When the recogniser drops a word, the app asks the AI whether you probably said " +
-        "it anyway. Nothing recorded yet — this will say whether that was ever worth it.";
-    return;
+  const word = n => n + " word" + (n === 1 ? "" : "s");
+  /* THE FREE LAYER IS REPORTED FIRST AND IS NOT GATED, because it costs no call and so
+     the "wait for twenty" rule has nothing to say about it. It is also the layer most
+     likely to be doing the work — every homophone it catches locally is a call the two
+     paid layers are never asked to make, which shows up below as a smaller number and
+     would otherwise read as the AI getting worse. */
+  const lines = [];
+  if (t.soundWon) {
+    lines.push("Sound alone put " + word(t.soundWon) + " back, before any AI was asked.");
   }
-  const pct = n => Math.round(100 * n / t.calls) + "%";
-  box.textContent =
-    t.calls + " checks on " + t.asked + " words. " +
-    t.won + " word" + (t.won === 1 ? "" : "s") + " put back" +
-    (t.stale ? ", " + t.stale + " answers (" + pct(t.stale) + ") arrived after you had " +
-               "moved on" : "") +
-    (t.err ? ", " + t.err + " failed" : "") + ".";
+  if (t.calls < ADJ_MIN_CALLS) {
+    /* "Nothing recorded yet" cannot follow a sentence that just recorded something —
+       a metric must never contradict its own caption. With no calls AND no rescues
+       there is genuinely nothing, and the line explains what will appear. With no calls
+       but rescues behind it, the AI has simply not been needed, which is the good
+       outcome and has to read as one rather than as missing data. */
+    lines.push(t.calls
+      ? "Only " + t.calls + " AI check" + (t.calls === 1 ? "" : "s") + " so far. This needs " +
+        "about " + ADJ_MIN_CALLS + " before it means anything."
+      : t.soundWon
+      ? "The AI has not had to be asked at all yet."
+      : "When the recogniser drops a word, the app asks the AI whether you probably said " +
+        "it anyway. Nothing recorded yet — this will say whether that was ever worth it.");
+  } else {
+    const pct = n => Math.round(100 * n / t.calls) + "%";
+    lines.push(
+      t.calls + " checks on " + t.asked + " words. " +
+      word(t.won) + " put back" +
+      (t.stale ? ", " + t.stale + " answers (" + pct(t.stale) + ") arrived after you had " +
+                 "moved on" : "") +
+      (t.err ? ", " + t.err + " failed" : "") + ".");
+  }
+  /* Grace is a different question from the adjudicator's and gets its own sentence: not
+     "did he say it" but "was what he said fair anyway", which is the one where a low
+     number is genuinely reassuring rather than disappointing. */
+  if (t.graceCalls) {
+    lines.push("Fair-answer checks: " + t.graceCalls + ", " + word(t.graceWon) + " allowed" +
+               (t.graceStale ? ", " + t.graceStale + " too late" : "") +
+               (t.graceErr ? ", " + t.graceErr + " failed" : "") + ".");
+  }
+  box.textContent = lines.join(" ");
 }
 
 const CALIB_MIN_TOTAL = 25, CALIB_MIN_BAND = 8;
@@ -29898,6 +29963,29 @@ T("trSoundNorm is not the pad's trNorm, and both still do their own job", () => 
 T("trFormsOf: a gender pair is two pronunciations, not one string", () => {
   assertEq(trFormsOf("יפה", SOUND_LIB).join(","), "yafe,yafa");
 });
+/* The hole that made Tier 2 the default for a fifth of the library. Everything reaching
+   heSoundAlike has been through normHe, which rewrites the final letter; the stores are
+   all keyed by real Hebrew, which does not. Both spellings must resolve or the exact
+   tier quietly stops being consulted and the permissive one decides. */
+T("trFormsOf: a normalised word still finds itself, final letter and all", () => {
+  const lib = { "קטן": { tr: "katan" } };
+  assertEq(trFormsOf("קטן", lib), ["katan"], "the key as stored");
+  assertEq(trFormsOf(normHe("קטן"), lib), ["katan"], "and the key as every caller spells it");
+  assertEq(normHe("קטן"), "קטנ", "which is a different string — that is the whole problem");
+});
+T("heSoundAlike: words that merely share a consonant skeleton are not homophones", () => {
+  /* Every one of these was declared alike before the lookup was fixed, because both
+     sides lost Tier 1 and the skeleton was left to decide. They are measured cases from
+     his own library, not invented ones. */
+  const lib = { "חם": { tr: "cham" }, "כמה": { tr: "kama" },
+                "מלח": { tr: "melach" }, "מלך": { tr: "melech" },
+                "ישן": { tr: "yashan" }, "שנה": { tr: "shana" },
+                "קפה": { tr: "kafe" }, "כף": { tr: "kaf" } };
+  [["חם", "כמה"], ["מלח", "מלך"], ["ישן", "שנה"], ["קפה", "כף"]].forEach(([a, b]) => {
+    assertTrue(!heSoundAlike(normHe(a), normHe(b), lib),
+               a + " and " + b + " do not sound alike and must not rescue each other");
+  });
+});
 T("learnAdjudicatePrompt: tells the model the homophone rule that made it decline", () => {
   const p = learnAdjudicatePrompt(
     { expected: ["אטי"], text: "איתי", alts: [] }, [0], SOUND_LIB);
@@ -30206,11 +30294,25 @@ T("adjTotals: sums across days and tolerates buckets written before the fields e
   assertEq(adjTotals({}).calls, 0, "no data is not an error");
   assertEq(adjTotals(null).calls, 0);
 });
+T("adjTotals: the sound and grace layers are summed too, or they cannot be judged", () => {
+  /* Both were written to the store and read by nothing, which is how a layer gets to
+     survive on the strength of its own comment. Every day here predates them. */
+  const t = adjTotals({
+    "2026-09-04": { adjCalls: 2, soundWon: 3, graceCalls: 2, graceWon: 1 },
+    "2026-09-05": { adjCalls: 1, soundWon: 1, graceCalls: 1, graceStale: 1, graceErr: 1 },
+    "2026-08-29": { cards: 7 }
+  });
+  assertEq(t.soundWon, 4, "the free layer's whole case is this number");
+  assertEq(t.graceCalls, 3); assertEq(t.graceWon, 1);
+  assertEq(t.graceStale, 1); assertEq(t.graceErr, 1);
+});
 T("statsDay: backfills the adjudication fields so an old bucket cannot poison a sum", () => {
   const st = { "2026-08-01": { sec: 10, cards: 2 } };
   const d = statsDay(st, "2026-08-01");
   assertEq(d.adjCalls, 0, "an undefined here would make every total NaN");
   assertEq(d.adjStale, 0);
+  assertEq(d.soundWon, 0, "and the layers added later backfill the same way");
+  assertEq(d.graceCalls, 0);
   assertEq(d.cards, 2, "and what was already there is untouched");
 });
 T("learnAdjudicate: records the call, and tells a stale answer from a declined one", async () => {

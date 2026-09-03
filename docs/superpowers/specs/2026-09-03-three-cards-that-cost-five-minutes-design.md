@@ -154,11 +154,24 @@ Two tiers, deliberately unequal in confidence:
   אטי/איתי case today with no false positives available to it.
 - **Tier 2, consonant skeleton.** Only reached when the heard word has no known
   transliteration — a word outside his library, which Tier 1 cannot speak about at all.
-  Final forms fold to their base, genuinely identical modern Israeli sounds fold together
-  (ט≡ת, כ≡ח, א≡ע, ב≡ו), and the ambiguous vowel letters א ה ו י are dropped. This
-  over-collides — בית and בת both reduce to `bt` — and that is accepted, because the cost
-  of a false collision here is exactly one `nearly` on a word he was asked for and did not
-  cleanly produce, against the cost the asymmetry above exists to prevent.
+  Final forms fold to their base, the consonant pairs modern Israeli Hebrew pronounces
+  identically fold together (ט≡ת, and ח≡כ≡ק), and the vowel letters א ה ו י plus ע are
+  dropped. This over-collides — בית and בת both reduce to the same skeleton — and that is
+  accepted, because the cost of a false collision here is exactly one `nearly` on a word
+  he was asked for and did not cleanly produce, against the cost the asymmetry above
+  exists to prevent.
+
+  **Tier 1 must actually be reachable, or Tier 2 quietly becomes the rule.** Everything
+  arriving at `heSoundAlike` has been through `normHe`, which rewrites a final letter to
+  its base form; the library, the user dictionary and `DICT` are all keyed by real Hebrew,
+  which spells it final. So `lib["קטנ"]` misses where `lib["קטן"]` hits. Measured on his
+  own library, that cost **97 of 442 words their Tier 1 lookup**, and the skeleton then
+  declared **38 pairs of them homophones** — חם with כמה, קפה with כף, מלח with מלך, ישן
+  with שנה. `trFormsOf` therefore tries the word as given and then with its final letter
+  restored, which is deterministic because those five letters are only ever written final
+  at the end of a word. After the fix the skeleton decides **nothing** across his whole
+  library, and the only pairs `heSoundAlike` calls homophones are אטי/איטי/איתי and
+  ארבעה/ארבע.
 
 **Tier 2's aggressiveness was measured, not assumed.** Consonant folds were tried against
 all 536 library entries, counting the word pairs each newly admits beyond what
@@ -176,8 +189,13 @@ evidence he said it, because recognisers substitute the commoner spelling, and i
 the expected word's transliteration so it can compare sounds rather than letters. It keeps
 "be conservative" for text that genuinely sounds different.
 
-A new stat, `homoWon`, counts words rescued locally by sound, so Phase 1's effect is
-measurable against the 22% baseline rather than asserted.
+A new stat, `soundWon`, counts words rescued locally by sound, so Phase 1's effect is
+measurable against the 22% baseline rather than asserted. It is summed by `adjTotals` and
+shown by `learnRenderAdj` alongside the adjudicator's own numbers — a counter written to
+the store and read by nothing would let this layer survive on the strength of its comment.
+It is reported first and is not gated on `ADJ_MIN_CALLS`, because it costs no call: every
+homophone it catches is a call the paid layers never make, which shows up below as a
+smaller number and would otherwise read as the AI getting worse.
 
 ## Phase 2 — grace on a fair answer
 
@@ -203,7 +221,8 @@ On a fair answer it does two things:
   matters, to the one word it matters for, instead of rewriting 42 glosses against a
   precision the language does not have.
 
-Stats `graceCalls` and `graceWon`, for the same reason Phase 1 has one.
+Stats `graceCalls`, `graceWon`, `graceStale` and `graceErr`, for the same reason Phase 1
+has one, summed and reported through the same path.
 
 ## Phase 3 — a node session is ten cards
 

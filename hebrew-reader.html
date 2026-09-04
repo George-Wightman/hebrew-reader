@@ -1590,7 +1590,11 @@
           padding: 12px 14px 10px; box-shadow: 0 3px 16px rgba(34,48,60,.16); }
   .lact-kicker { font-size: .62rem; letter-spacing: .11em; text-transform: uppercase;
                  color: var(--muted); }
-  .lact-name { font-family: var(--display); font-size: 1.12rem; line-height: 1.2; margin: 1px 0 2px; }
+  /* The card's name, in the world's face. A hairline under it rather than more space:
+     it gives the card a head and a body for the price of one pixel, which is what "small
+     and non invasive but clearly there on purpose" actually costs. */
+  .lact-name { font-family: var(--display); font-size: 1.12rem; line-height: 1.2;
+               margin: 0 0 7px; padding-bottom: 7px; border-bottom: 1px solid var(--hair); }
   .lact-sub { font-size: .72rem; color: var(--muted); margin: 0 0 9px; }
   .lact .btn { width: 100%; padding: 9px 14px; font-size: .92rem; }
   /* Real buttons, not text links. Tried as links first and George circled all three
@@ -13123,10 +13127,17 @@ function forecastFacts() {
     /* The words the next session would actually choose, asked the same way it asks.
        SESSION_CARDS rather than the selected shape: this describes what is waiting, and
        a Quick session is him taking five of it rather than there being only five. */
-    F.targets = (learnTargets(SESSION_CARDS) || []).map(k => ({
-      key: k, tr: (lib[k] && lib[k].tr) || "", en: (lib[k] && lib[k].en) || "",
-      band: srsStrengthOf(srs, k, "prod")
-    }));
+    /* Falls back to DICT the same way UH.word does. The line names words in
+       transliteration, so a word whose library entry is missing one would silently drop
+       out of a forecast it belongs in. */
+    F.targets = (learnTargets(SESSION_CARDS) || []).map(k => {
+      const e = lib[k] || {};
+      const d = (typeof DICT !== "undefined" && DICT[k]) || null;
+      return { key: k,
+               tr: e.tr || (d ? String(d[0]).split("/")[0].trim() : ""),
+               en: e.en || (d ? d[1] : "") || "",
+               band: srsStrengthOf(srs, k, "prod") };
+    });
     F.servable = bankPrune(bankAll(), lib).filter(it => bankServable(it, lib, srs)).length;
     const n = campCurrentNode(c, srs);
     if (n) {
@@ -24673,9 +24684,23 @@ function learnRenderAct() {
   const box = document.getElementById("lActBody");
   if (!box) return;
   box.innerHTML = "";
-  const lab = document.createElement("div"); lab.className = "lact-label";
-  lab.textContent = "Daily practice";
-  box.append(lab);
+  /* IT NEEDS A NAME, IN THE WORLD'S VOICE. George: "it needs a slight reword to clearly be
+     an intentional Daily practice node that's there. Yes it should be small and non
+     invasive but clearly there on purpose."
+
+     What actually went wrong is diagnosable: the node block this card used to carry had
+     .lact-name in var(--display), and that serif line was the only thing here speaking in
+     the map's register. Taking the node out took the card's name with it and left nothing
+     but small-caps and buttons — which is precisely why it started reading as a blob
+     rather than a place.
+
+     So it gets its name back. Serif for the title, interface for the controls: exactly the
+     split the node sheet already runs on, where .pp-head h3 is a place and the buttons
+     underneath are teal. §1 stays intact — the world names it, the app operates it — and
+     it costs no height, being the line that was already there in a different face. */
+  const nm = document.createElement("div"); nm.className = "lact-name";
+  nm.textContent = "Daily practice";
+  box.append(nm);
   const quick = document.createElement("div"); quick.className = "lact-quick";
   /* Talk used to be a third chip here, held open "until the campaign owns it properly
      — a node's closing conversation is what it becomes". The campaign owns it now: the
@@ -24727,21 +24752,26 @@ function forecastLine(F) {
     const n = F.close[0];
     return n.name + " is " + (n.left === 1 ? "one thing" : n.left + " things") + " from gold.";
   }
-  /* Said as what the session IS rather than as the size of the pile behind it. "127 due"
-     alone is a number he can do nothing about in one sitting; "the next session takes 15
-     of them" is the same fact with a handle on it. */
-  if (F.due) {
-    let take = SESSION_CARDS;
-    try { take = (SHAPES[learnShape()] || {}).cards || SESSION_CARDS; } catch (e) {}
-    /* The two cases read as opposite promises and must not share a sentence. "11 due — the
-       next session takes 15" says it takes fifteen of eleven; the honest version of a pile
-       smaller than the session is that the session finishes it. Overdue words are picked
-       first by learnTargets, so "covers them" is a claim the builder actually keeps. */
-    return F.due > take
-      ? F.due + " due for review — the next session takes " + take + " of them."
-      : F.due + " due for review — this session covers them.";
+  /* NAME THE WORDS. This said "153 due for review — the next session takes 5 of them" and
+     George flagged it: "See how that's not useful from the coach? I was specifics."
+
+     He is right, and the fault was treating a count as information. 153 is not something he
+     can act on, and it is the same number tomorrow whatever he does tonight — where WHICH
+     WORDS are coming is the thing that makes him either press the button or not. The app
+     already knows: F.targets is learnTargets' own answer, so these are the words the
+     session will genuinely be built around rather than a plausible sample.
+
+     Transliteration, not Hebrew, and deliberately: he reads the transliteration — it is the
+     line he actually produces from — and it keeps a mixed-script sentence out of a plain
+     text node, where there are no elements to isolate and the bidi reversal this file has
+     already been bitten by would come straight back. */
+  const named = F.targets.map(t => t.tr || t.en).filter(Boolean);
+  if (named.length) {
+    const show = named.slice(0, 3);
+    const rest = named.length - show.length;
+    return "Coming up: " + show.join(", ") + (rest ? " and " + rest + " more." : ".");
   }
-  if (F.targets.length) return "Nothing overdue. The next session works ahead of the schedule.";
+  if (F.due) return F.due + " due for review.";
   return "Nothing queued right now.";
 }
 /* WHETHER THE COACH HAS ANYTHING TO ADD, which is a different question from whether he
@@ -30410,12 +30440,16 @@ T("learnHintSet: the shortcuts and the hint share one line without a stray separ
     el.textContent = keep;
   }
 });
-T("forecastLine: one line, and never the size of the pile", () => {
-  /* It returned three and the box became the loudest thing on the front door — George:
-     "the coach on the daily is too much". One line, and the never-drilled count stays out
-     of it: his was 112, the whole unlearned library, and calling that "waiting for you"
-     turns vocabulary he has not reached into a backlog he is behind on. */
-  const F = { due: 127, fresh: 112, servable: 4, streak: 15, todaySec: 0, targets: [{ key: "x" }],
+T("forecastLine: names the words, because a count is not information", () => {
+  /* George on "153 due for review — the next session takes 5 of them": "See how that's not
+     useful from the coach? I was specifics." A pile size is the same number tomorrow
+     whatever he does tonight; WHICH WORDS are coming is what decides whether he presses
+     the button. */
+  const T3 = [{ key: "רכבת", tr: "harakevet", en: "the train", band: "weak" },
+              { key: "מטוס", tr: "hamatos", en: "the plane", band: "new" },
+              { key: "עבודה", tr: "la'avoda", en: "to work", band: "weak" },
+              { key: "בית", tr: "habayit", en: "the house", band: "progressing" }];
+  const F = { due: 153, fresh: 112, servable: 4, streak: 15, todaySec: 0, targets: T3,
               close: [{ id: "a", name: "Who people are", left: 1 },
                       { id: "b", name: "Your day", left: 2 }],
               node: { id: "a", name: "Who people are", plan: { landedN: 4, need: 6, toLand: ["x", "y"] } },
@@ -30423,22 +30457,25 @@ T("forecastLine: one line, and never the size of the pile", () => {
   const line = forecastLine(F);
   assertTrue(typeof line === "string", "one string, not a list of them");
   assertEq(line, "Who people are is one thing from gold.",
-    "a place within reach outranks a due count — it is the thing he could finish tonight");
-  assertTrue(!/Your day/.test(line), "and only the nearest one is named");
+    "a place within reach still outranks it — that is the thing he could finish tonight");
 
-  const due = forecastLine(Object.assign({}, F, { close: [] }));
-  assertTrue(/127 due for review/.test(due), "otherwise the due count");
-  assertTrue(/the next session takes 15 of them/.test(due), "said with a handle on it");
-  assertTrue(!/112/.test(due), "and never the never-drilled pile");
-  /* A pile smaller than the session is the opposite promise and cannot share the wording:
-     "11 due — the next session takes 15" reads as fifteen of eleven. */
-  const few = forecastLine(Object.assign({}, F, { close: [], due: 11 }));
-  assertEq(few, "11 due for review — this session covers them.",
-    "fewer due than the session takes means the session finishes them");
+  const words = forecastLine(Object.assign({}, F, { close: [] }));
+  assertEq(words, "Coming up: harakevet, hamatos, la'avoda and 1 more.",
+    "otherwise the actual words, three of them, with the remainder counted");
+  assertTrue(!/153/.test(words), "and the pile size is gone from the front door entirely");
+  /* Transliteration, never the Hebrew: he reads the transliteration, and a plain text node
+     has no elements to isolate a mixed-script run with. */
+  assertTrue(!/[֐-׿]/.test(words), "no Hebrew in a plain text line");
 
-  assertTrue(/works ahead of the schedule/.test(
-    forecastLine({ due: 0, fresh: 40, targets: [{ key: "x" }], close: [], node: null, thin: [] })),
-    "nothing overdue is a fact, not an empty state");
+  assertEq(forecastLine(Object.assign({}, F, { close: [], targets: T3.slice(0, 2) })),
+    "Coming up: harakevet, hamatos.", "two words need no 'and N more'");
+  /* A word with no transliteration anywhere must not become an empty slot in the list. */
+  assertEq(forecastLine(Object.assign({}, F, { close: [],
+    targets: [{ key: "א", tr: "", en: "" }, { key: "ב", tr: "shalom", en: "" }] })),
+    "Coming up: shalom.", "a word with nothing sayable drops out rather than blanking");
+
+  assertEq(forecastLine({ due: 9, fresh: 0, targets: [], close: [], node: null, thin: [] }),
+    "9 due for review.", "with no targets at all the count is all there is");
   assertEq(forecastLine({ due: 0, fresh: 0, targets: [], close: [], node: null, thin: [] }),
     "Nothing queued right now.", "and an empty app still says one thing");
 });
@@ -30453,11 +30490,14 @@ T("the action card is a drill card, with no node on it", () => {
   try {
     lsSet(SHAPE_KEY, "balanced");
     learnRenderAct();
-    assertTrue(!box.querySelector(".lact-name"), "no node name");
     assertTrue(!box.querySelector(".lact-kicker"), "no chapter kicker");
+    assertTrue(!box.querySelector(".lact-sub"), "no node reason");
     assertTrue(!box.querySelector(".btn"), "and no Continue button into a node");
-    assertEq(box.querySelector(".lact-label").textContent, "Daily practice",
-      "it says what it is now, rather than 'or just drill'");
+    /* It keeps a NAME, and in the world's face. Losing the node took the card's only
+       serif line with it and it started reading as a blob — George: "clearly be an
+       intentional Daily practice node that's there". */
+    assertEq(box.querySelector(".lact-name").textContent, "Daily practice",
+      "the card names itself, rather than wearing a small-caps label");
     const btns = [...box.querySelectorAll(".lact-quick button")];
     assertEq(btns.map(b => b.textContent), ["5 cards", "15 cards"], "both sizes, in order");
     assertEq(btns.filter(b => b.className === "primary").map(b => b.textContent), ["15 cards"],

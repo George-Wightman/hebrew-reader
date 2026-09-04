@@ -12481,11 +12481,12 @@ const AI_POOL_LABELS = { strong: "Flash", fast: "Flash-Lite" };
    scarce one — guessing "500 left" about a model nobody has measured is the guess
    that misleads. */
 function aiPoolFor(model) { return /-lite-/.test(String(model || "")) ? "fast" : "strong"; }
-function aiQBlank() { return { day: "", strong: 0, fast: 0, spent: {} }; }
+function aiQBlank() { return { day: "", strong: 0, fast: 0, spent: {}, keys: {} }; }
 function aiQAll() {
   try { return aiQTidy(JSON.parse(lsGet(AI_Q_KEY))); }
   catch (e) { return aiQBlank(); }
 }
+function aiQKeyBlank() { return { strong: 0, fast: 0, spent: {}, last: {} }; }
 function aiQTidy(q) {
   const out = aiQBlank();
   if (!q || typeof q !== "object") return out;
@@ -12493,28 +12494,102 @@ function aiQTidy(q) {
   out.strong = Math.max(0, Number(q.strong) || 0);
   out.fast = Math.max(0, Number(q.fast) || 0);
   out.spent = (q.spent && typeof q.spent === "object") ? Object.assign({}, q.spent) : {};
+  /* A ledger written before per-key accounting existed simply has no `keys`. Filled here
+     rather than migrated: this store rolls itself every midnight, so the gap closes on its
+     own within a day and a migration would be code that runs once and lives forever. */
+  if (q.keys && typeof q.keys === "object") {
+    Object.keys(q.keys).forEach(id => {
+      const k = q.keys[id] || {}, o = aiQKeyBlank();
+      o.strong = Math.max(0, Number(k.strong) || 0);
+      o.fast = Math.max(0, Number(k.fast) || 0);
+      o.spent = (k.spent && typeof k.spent === "object") ? Object.assign({}, k.spent) : {};
+      o.last = (k.last && typeof k.last === "object") ? Object.assign({}, k.last) : {};
+      out.keys[String(id)] = o;
+    });
+  }
   return out;
 }
 function aiQRoll(q, today) {
   q = aiQTidy(q);
-  if (q.day !== today) { q.day = today; q.strong = 0; q.fast = 0; q.spent = {}; }
+  if (q.day !== today) { q.day = today; q.strong = 0; q.fast = 0; q.spent = {}; q.keys = {}; }
   return q;
 }
+
+/* ---- WHICH KEY, AND WHAT IT COST -------------------------------------------
+   George: "both keys areto be used or sure. Just make sure its recorded what key is used
+   when and for what so the usage is stored per key not global".
+
+   He is right that it was global, and it was worse than untidy. AI_POOL_CAPS is 20 strong
+   and 500 fast PER KEY, but aiStrongLeft subtracted one shared counter — so with two keys
+   configured the app degraded everything to Lite after twenty strong requests in total,
+   while the second key might not have been touched. Half the budget he already had, thrown
+   away because the ledger could not tell the keys apart.
+
+   THE ID IS NEVER THE KEY, NOR ANY PART OF IT. This store is hvr_-prefixed and therefore
+   syncs, and SYNC_NEVER_SET keeps the keys themselves off the wire — writing four
+   characters of one into a file that leaves the device would quietly undo that. The slot
+   says which key he means; the hash only has to change when the key does, so that replacing
+   a key in slot 1 starts its count again instead of inheriting the old one's. */
+function aiKeyHash(key) {
+  let h = 5381;
+  const s = String(key || "");
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36).slice(0, 6);
+}
+function aiKeyId(key, slot) {
+  return "k" + (slot + 1) + "-" + aiKeyHash(key);
+}
+function aiQKey(q, id) { return (q.keys && q.keys[id]) || aiQKeyBlank(); }
+/* Headroom in the pool this call will actually use. A key Google has refused for that pool
+   is at zero however few requests we counted — its own refusal outranks our arithmetic,
+   the same rule aiStrongLeft already followed globally. */
+function aiKeyLeft(q, id, pool) {
+  const k = aiQKey(q, id);
+  if (k.spent && k.spent[pool]) return 0;
+  return Math.max(0, AI_POOL_CAPS[pool] - (k[pool] || 0));
+}
+/* WHERE TO START, not where to stop. The fallback chain below is unchanged — on failure it
+   still walks every key and then every model — so this costs no extra request and adds no
+   latency, which was his condition: "if it introduces innefficiency in hte calling hten its
+   not needed". Emptiest first, ties broken by rotation so two equal keys alternate rather
+   than one of them taking everything. */
+let _aiKeyTurn = 0;
+function aiKeyPick(q, keys, pool, turn) {
+  if (!keys || keys.length < 2) return 0;
+  const left = keys.map((k, i) => aiKeyLeft(q, aiKeyId(k, i), pool));
+  const best = Math.max.apply(null, left);
+  const tied = [];
+  left.forEach((v, i) => { if (v === best) tied.push(i); });
+  return tied[(turn || 0) % tied.length];
+}
+
 /* outcome: "ok" for an answered request, "spent" for Google refusing the day. Both
    count — a refusal is still a request, and it is the one that proves the pool is
-   gone. A per-minute 429 is NOT passed here: it is throttling, not spending. */
-function aiQRecord(q, today, model, outcome) {
+   gone. A per-minute 429 is NOT passed here: it is throttling, not spending.
+
+   `label` is the "what for" he asked for — the name the call was made under, which is what
+   the AI log already shows him. One entry per key rather than a history: the log keeps
+   twenty full ones, and a second history would be a second place to look and a second thing
+   to keep in step. */
+function aiQRecord(q, today, model, outcome, keyId, label) {
   q = aiQRoll(q, today);
   const pool = aiPoolFor(model);
   q[pool] = (q[pool] || 0) + 1;
   if (outcome === "spent") q.spent[pool] = true;
+  if (keyId) {
+    const k = Object.assign(aiQKeyBlank(), q.keys[keyId] || {});
+    k[pool] = (k[pool] || 0) + 1;
+    if (outcome === "spent") k.spent = Object.assign({}, k.spent, { [pool]: true });
+    k.last = { at: Date.now(), label: String(label || ""), model: String(model || "") };
+    q.keys[keyId] = k;
+  }
   return q;
 }
 function aiQSave(q) { try { lsSet(AI_Q_KEY, JSON.stringify(q)); } catch (e) {} }
 /* Fire-and-forget from inside the request loop: a ledger that could throw would be a
    ledger that broke the feature it was measuring. */
-function aiQNote(model, outcome) {
-  try { aiQSave(aiQRecord(aiQAll(), todayISO(), model, outcome)); } catch (e) {}
+function aiQNote(model, outcome, keyId, label) {
+  try { aiQSave(aiQRecord(aiQAll(), todayISO(), model, outcome, keyId, label)); } catch (e) {}
 }
 /* ---- WHO GETS THE SCARCE POOL WHEN IT RUNS LOW ------------------------------
    Twenty strong requests a day, and as of 2026-09-03 three callers want them: the
@@ -12533,8 +12608,19 @@ function aiQNote(model, outcome) {
    So the reserve is a floor the reviewer alone may draw below. Everyone else stops at
    it and takes Lite, which geminiRequest already handles as an ordinary fallback. */
 const AI_STRONG_RESERVE = 6;
+/* THE BEST KEY, NOT THE SUM — and this line is the budget fix. It subtracted one global
+   counter from a cap that is per key, so two keys' worth of headroom read as one and
+   aiModelsFor sent everything to Lite at twenty requests when the second key was untouched.
+
+   Falls back to the old global arithmetic when only one key is configured, which is also
+   what a ledger written before per-key accounting looks like — so a device mid-rollover
+   degrades to the previous behaviour rather than to nonsense. */
 function aiStrongLeft(q, today) {
   q = aiQRoll(q || aiQAll(), today || todayISO());
+  const keys = geminiKeys();
+  if (keys.length > 1) {
+    return Math.max.apply(null, keys.map((k, i) => aiKeyLeft(q, aiKeyId(k, i), "strong")));
+  }
   /* Google's own refusal outranks the count — see aiQRecord. */
   if (q.spent && q.spent.strong) return 0;
   return Math.max(0, AI_POOL_CAPS.strong - (q.strong || 0));
@@ -12547,13 +12633,28 @@ function aiModelsFor(role) {
   if (role === "review") return GEMINI_MODELS;
   return aiStrongLeft() > AI_STRONG_RESERVE ? GEMINI_MODELS : GEMINI_MODELS_FAST;
 }
+/* PER KEY, because the caps are per key and a combined figure was telling him the wrong
+   thing about his own budget. Falls back to the old single line when only one key is
+   configured — with one key the totals ARE that key's, and two identical lines would be
+   the "four weak signals" the style guide warns about.
+
+   Says what each key was last used for. George: "Just make sure its recorded what key is
+   used when and for what". */
 function aiQSummary(q, today) {
   q = aiQRoll(q, today);
-  return ["strong", "fast"].map(pool =>
-    AI_POOL_LABELS[pool] + ": " + (q.spent[pool]
-      ? "used up for today (" + q[pool] + " of " + AI_POOL_CAPS[pool] + " counted here)"
-      : q[pool] + " of " + AI_POOL_CAPS[pool] + " used")
-  ).join(" · ");
+  const keys = geminiKeys();
+  const poolLine = (obj, spent) => ["strong", "fast"].map(pool =>
+    AI_POOL_LABELS[pool] + ": " + ((spent || {})[pool]
+      ? "used up for today (" + (obj[pool] || 0) + " of " + AI_POOL_CAPS[pool] + " counted here)"
+      : (obj[pool] || 0) + " of " + AI_POOL_CAPS[pool] + " used")).join(" · ");
+  if (keys.length < 2) return poolLine(q, q.spent);
+  return keys.map((k, i) => {
+    const id = aiKeyId(k, i), rec = aiQKey(q, id);
+    const last = rec.last && rec.last.at
+      ? " — last: " + (rec.last.label || "a call") + " " + syncAgo(new Date(rec.last.at).toISOString())
+      : " — not used today";
+    return "Key " + (i + 1) + " · " + poolLine(rec, rec.spent) + last;
+  }).join("\n");
 }
 
 /* =====================  WHAT THE AI IS DOING  =====================
@@ -14728,9 +14829,19 @@ async function geminiSend(parts, models, opts) {
      diagnosis had to be reasoned from the throw site instead of read off the evidence.
      Short strings, because this ends up in a log line he reads on a phone. */
   lastGeminiTried = [];
+  /* WHERE THE WALK STARTS. It always began at key 1, so key 2 was a fallback rather than a
+     peer and every request in a burst hit the same per-minute limit — the limit CLAUDE.md
+     says is the one that actually bites. Rotating the start spreads them across both keys
+     for free: the chain below is unchanged, so a failure still walks every key and then
+     every model, and nothing costs an extra request. */
+  const _q0 = aiQAll();
+  const _turn = (_aiKeyTurn = (_aiKeyTurn + 1) % 1000);
   for (const model of (models || GEMINI_MODELS)) {
-    for (let ki = 0; ki < keys.length; ki++) {
+    const start = aiKeyPick(_q0, keys, aiPoolFor(model), _turn);
+    for (let n = 0; n < keys.length; n++) {
+      const ki = (start + n) % keys.length;
       const key = keys[ki];
+      const keyId = aiKeyId(key, ki);
       lastGeminiTried.push(model.replace("gemini-", "").replace("-latest", "") +
                            (keys.length > 1 ? "#" + (ki + 1) : ""));
       /* Model APIs churn — a dated model name has already been retired underneath
@@ -14784,7 +14895,7 @@ async function geminiSend(parts, models, opts) {
           if (out) {
             lastGeminiTiming = { ms: Date.now() - started, model: model,
                                  thinking: !!cfg };
-            aiQNote(model, "ok");
+            aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
           throw new Error("empty reply");
@@ -14795,7 +14906,7 @@ async function geminiSend(parts, models, opts) {
         /* Recorded before moving on. "spent" is claimed only when the 429 carried no
            short retry hint: a throttled request was still a request and is counted,
            but it is not evidence that the day is gone. */
-        if (spent) { aiQNote(model, dayGone ? "spent" : "ok"); break; }
+        if (spent) { aiQNote(model, dayGone ? "spent" : "ok", keyId, opts.label || ""); break; }
         if (resp.status === 400 && cfg) continue;   // the config was the problem — retry plain
         /* A 5xx IS THIS MODEL FAILING, NOT THE CALL FAILING — the identical argument the
            timeout above makes, and the identical bug. `throw` here escaped the config,
@@ -31336,6 +31447,97 @@ const SOUND_LIB = {
   "בת":   { tr: "bat" },
   "יפה":  { tr: "yafe/yafa" }
 };
+T("aiKeyId: stable, slot-aware, and gives nothing of the key away", () => {
+  /* This store is hvr_-prefixed and therefore syncs. SYNC_NEVER_SET keeps the keys
+     themselves off the wire, and writing even four characters of one into the ledger would
+     quietly undo that. */
+  const KEY = "AIzaSyEXAMPLEKEYVALUE1234567890abcdefg";
+  assertEq(aiKeyId(KEY, 0), aiKeyId(KEY, 0), "the same key is the same id every time");
+  assertTrue(aiKeyId(KEY, 0) !== aiKeyId(KEY, 1), "the slot is part of it");
+  assertTrue(aiKeyId(KEY, 0) !== aiKeyId(KEY + "x", 0),
+    "and replacing the key in a slot starts a new count rather than inheriting one");
+  const id = aiKeyId(KEY, 0);
+  assertTrue(/^k1-/.test(id), "it says which key he means");
+  for (let n = 4; n <= 12; n++) {
+    assertTrue(id.indexOf(KEY.slice(-n)) === -1, "and carries no tail of the key");
+    assertTrue(id.indexOf(KEY.slice(0, n)) === -1, "nor any head of it");
+  }
+});
+T("aiQRecord: counts against the key AND the totals", () => {
+  const today = "2026-09-04";
+  let q = aiQRoll(aiQBlank(), today);
+  q = aiQRecord(q, today, "gemini-flash-latest", "ok", "k1-aaa", "Writing you practice");
+  q = aiQRecord(q, today, "gemini-flash-latest", "ok", "k2-bbb", "The coach");
+  q = aiQRecord(q, today, "gemini-flash-lite-latest", "ok", "k2-bbb", "The coach");
+  assertEq(q.strong, 2, "the totals still add up as they always did");
+  assertEq(q.fast, 1);
+  assertEq(q.keys["k1-aaa"].strong, 1, "and each key carries its own");
+  assertEq(q.keys["k2-bbb"].strong, 1);
+  assertEq(q.keys["k2-bbb"].fast, 1);
+  assertEq(q.keys["k1-aaa"].fast, 0, "a key that made no lite call is at zero, not absent");
+  assertEq(q.keys["k2-bbb"].last.label, "The coach", "with what it was last used for");
+  assertTrue(q.keys["k2-bbb"].last.at > 0, "and when");
+  /* Google's refusal is recorded against the key that was refused, not against both. */
+  q = aiQRecord(q, today, "gemini-flash-latest", "spent", "k1-aaa", "Writing");
+  assertEq(q.keys["k1-aaa"].spent.strong, true);
+  assertTrue(!q.keys["k2-bbb"].spent.strong, "the other key is not condemned with it");
+});
+T("aiStrongLeft: the best key, not the sum — the bug that halved his budget", () => {
+  /* AI_POOL_CAPS is per key, but this subtracted one shared counter, so aiModelsFor sent
+     everything to Lite at twenty strong requests while a second key sat untouched. */
+  const today = "2026-09-04";
+  const saved = [lsGet(GEMINI_KEY), lsGet(GEMINI_KEY2)];
+  try {
+    lsSet(GEMINI_KEY, "KEY-ONE"); lsSet(GEMINI_KEY2, "KEY-TWO");
+    const id1 = aiKeyId("KEY-ONE", 0), id2 = aiKeyId("KEY-TWO", 1);
+    let q = aiQRoll(aiQBlank(), today);
+    for (let i = 0; i < AI_POOL_CAPS.strong; i++)
+      q = aiQRecord(q, today, "gemini-flash-latest", "ok", id1, "x");
+    assertEq(aiKeyLeft(q, id1, "strong"), 0, "key 1 is exhausted");
+    assertEq(aiStrongLeft(q, today), AI_POOL_CAPS.strong,
+      "but there is a whole key left, which the old global sum could not see");
+    q = aiQRecord(q, today, "gemini-flash-latest", "spent", id2, "x");
+    assertEq(aiStrongLeft(q, today), 0, "both gone is genuinely gone");
+    /* One key configured must behave exactly as it did before any of this. */
+    lsSet(GEMINI_KEY2, "");
+    let q1 = aiQRoll(aiQBlank(), today);
+    q1.strong = 5;
+    assertEq(aiStrongLeft(q1, today), AI_POOL_CAPS.strong - 5,
+      "with a single key the old arithmetic still stands");
+  } finally {
+    [GEMINI_KEY, GEMINI_KEY2].forEach((k, i) => {
+      if (saved[i] === null) localStorage.removeItem(k); else lsSet(k, saved[i]);
+    });
+  }
+});
+T("aiKeyPick: the emptier key, and alternating when they are level", () => {
+  const today = "2026-09-04";
+  const keys = ["A", "B"];
+  const idA = aiKeyId("A", 0), idB = aiKeyId("B", 1);
+  let q = aiQRoll(aiQBlank(), today);
+  assertEq(aiKeyPick(q, keys, "strong", 0), 0, "level keys alternate rather than sticking");
+  assertEq(aiKeyPick(q, keys, "strong", 1), 1);
+  q = aiQRecord(q, today, "gemini-flash-latest", "ok", idA, "x");
+  assertEq(aiKeyPick(q, keys, "strong", 0), 1, "one call on A and B is emptier");
+  assertEq(aiKeyPick(q, keys, "strong", 1), 1, "regardless of whose turn it was");
+  /* A refused key is never chosen while the other has room, however few calls we counted. */
+  let r = aiQRoll(aiQBlank(), today);
+  r = aiQRecord(r, today, "gemini-flash-latest", "spent", idA, "x");
+  assertEq(aiKeyPick(r, keys, "strong", 0), 1, "Google's refusal outranks our arithmetic");
+  assertEq(aiKeyPick(q, ["A"], "strong", 3), 0, "one key is always key one");
+  assertEq(aiKeyPick(q, [], "strong", 0), 0, "and no keys does not throw");
+});
+T("aiQTidy: a ledger written before per-key accounting is survivable", () => {
+  /* No migration: the store rolls itself every midnight, so the gap closes within a day and
+     a migration would be code that runs once and lives forever. */
+  const old = { day: "2026-09-03", strong: 4, fast: 9, spent: {} };
+  const t = aiQTidy(old);
+  assertEq(t.keys, {}, "the missing field is filled, not thrown on");
+  assertEq(t.strong, 4, "and the totals it did have survive");
+  const rolled = aiQRoll(Object.assign({}, t, { keys: { "k1-x": { strong: 3 } } }), "2026-09-04");
+  assertEq(rolled.keys, {}, "a new day clears the per-key counts with the rest");
+  assertEq(aiQTidy(null).keys, {}, "and rubbish in is still a usable ledger out");
+});
 T("learnSuggestFrom: one rule, shared by the mic and by the amend control", () => {
   /* Extracted so the upgrade re-derives rather than nudging. Copying the formula was the
      alternative, and two thresholds describing one grade is the thing §5 forbids. */
@@ -32633,8 +32835,19 @@ T("geminiSend: the good model is held across BOTH keys before anything degrades"
     /* Deduped: the config retry can ask the same model twice and that is not the
        ordering question. */
     const order = asked.filter((v, i) => asked.indexOf(v) === i);
-    assertEq(order.join(" "), "flash#1 flash#2 lite#1 lite#2",
-             "both keys' Flash before either key's Lite");
+    /* THE INVARIANT, NOT THE SEQUENCE. Which key leads now rotates — aiKeyPick spreads a
+       burst across both rather than always starting at key 1 — so pinning the literal
+       order would fail on alternate runs while saying nothing about what matters. What
+       matters is that the scarce pool is exhausted on BOTH keys before anything degrades
+       to Lite, which is the whole point of the 2026-09-03 swap to keys-inner. */
+    assertEq(order.length, 4, "every key on every model, once each");
+    assertEq(order.slice(0, 2).map(x => x.split("#")[0]), ["flash", "flash"],
+             "both keys' Flash first");
+    assertEq(order.slice(2).map(x => x.split("#")[0]), ["lite", "lite"],
+             "and only then either key's Lite");
+    assertEq(order.slice(0, 2).map(x => x.split("#")[1]).sort(), ["1", "2"],
+             "and it really is both keys, not one of them twice");
+    assertEq(order.slice(2).map(x => x.split("#")[1]).sort(), ["1", "2"]);
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     if (q == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, q);
@@ -34414,7 +34627,7 @@ T("aiQRoll: the same day is left exactly as it was", () => {
 });
 T("aiQRoll: junk in is a usable blank out, not a crash", () => {
   const q = aiQRoll(null, "2026-08-21");
-  assertEq(q, { day: "2026-08-21", strong: 0, fast: 0, spent: {} });
+  assertEq(q, { day: "2026-08-21", strong: 0, fast: 0, spent: {}, keys: {} });
 });
 T("aiQRecord: counts against the pool the model belongs to", () => {
   let q = aiQRecord(null, "2026-08-21", "gemini-flash-latest", "ok");

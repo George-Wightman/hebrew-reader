@@ -54,7 +54,7 @@
   /* Two tabs and no more. Three plus a Settings control is what makes a 360px bar
      cramped, and two is what lets the same nav serve a phone unchanged. */
   .topnav {
-    display: flex; align-items: center; padding: 11px 20px;
+    display: flex; align-items: center; padding: 8px 20px;
     border-bottom: 1px solid var(--border); background: var(--panel);
   }
   .navbrand { font-family: "David", "Times New Roman", serif; color: var(--accent);
@@ -71,20 +71,12 @@
   .navsync { font-size: .74rem; color: var(--faint); display: flex; align-items: center; gap: 6px;
              white-space: nowrap; }
   .navsync i { width: 7px; height: 7px; border-radius: 50%; background: #b6bcc2; display: block; }
+  /* Every icon button on the right shares one flex group so they sit on a common
+     baseline with even spacing, instead of each carrying its own margin-left. */
+  .navicons { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
   .navgear { border: none; background: none; color: var(--muted); font: inherit; font-size: .8rem;
-             cursor: pointer; margin-left: 18px; padding: 6px 2px; white-space: nowrap; }
+             cursor: pointer; padding: 6px 2px; white-space: nowrap; }
   .navgear:hover { color: var(--accent); }
-  .navbadge {
-    display: inline-block; margin-left: 6px; background: #b3403a; color: #fff;
-    font-size: .68rem; font-weight: 700; padding: 1px 6px; border-radius: 9px; vertical-align: 2px;
-  }
-  /* Earned and unclaimed. A dot rather than a count — the same shape the home-screen
-     badge shows for the same state — and gold, which in this app means "you did this"
-     and nothing else. */
-  .navbadge.badgereward {
-    background: var(--gold); width: 8px; height: 8px; padding: 0;
-    border-radius: 50%; vertical-align: 3px;
-  }
   .viewboard { max-width: 100%; margin: 0; padding: 20px 18px 40px; }
   .boardhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
   .boardhead .libbar { margin-bottom: 0; }
@@ -264,7 +256,7 @@
      state. Red is STEADY and never pulses — a pulse means happening, and a fault is a
      standing condition. */
   .navstar {
-    border: none; background: none; padding: 6px 3px; margin-left: 16px; cursor: pointer;
+    border: none; background: none; padding: 6px 3px; cursor: pointer;
     color: var(--muted); line-height: 0;
   }
   .navstar svg { width: 15px; height: 15px; fill: currentColor; display: block; }
@@ -2091,13 +2083,15 @@
   }
 
   @media (max-width: 760px) {
-    .topnav { padding: 10px 14px; }
+    .topnav { padding: 8px 14px; }
     .navbrand { display: none; }
     .navbtn { margin-right: 16px; }
-    .navgear { margin-left: 12px; font-size: 0; }
+    .navicons { gap: 4px; margin-left: 8px; }
+    .navgear { font-size: 0; padding: 9px 7px; }
     /* A 15px glyph with 3px either side is a 21px tap target, and this is the surface
-       he reaches for one-handed on a phone when something has gone wrong. */
-    .navstar { margin-left: 8px; padding: 9px 7px; }
+       he reaches for one-handed on a phone when something has gone wrong. Gear gets the
+       same padding so every icon in the row sits on the same box. */
+    .navstar { padding: 9px 7px; }
     .navstar svg { width: 17px; height: 17px; }
     .navgear::after { content: "⚙"; font-size: 1rem; }
     .viewboard { padding: 14px 13px 30px; }
@@ -2221,12 +2215,15 @@
 
 <nav class="topnav">
   <span class="navbrand">שלום</span>
-  <button class="navbtn" id="navLearn">Learn<span id="learnBadge" class="navbadge" style="display:none"></span></button>
-  <button class="navbtn" id="navWords">Words<span id="navBadge" class="navbadge" style="display:none"></span></button>
+  <button class="navbtn" id="navLearn">Learn</button>
+  <button class="navbtn" id="navWords">Words</button>
   <span class="navsp"></span>
   <!-- Honest placeholder. Devices don't share anything yet, so it says so rather than
        claiming a sync that doesn't exist. This is the slot that reports it when they do. -->
   <span class="navsync" id="navSync" title="Your data lives in this browser only. Turn on sync in Settings."><i></i><span>on this device</span></span>
+  <!-- One flex group so the icon row spaces and aligns itself instead of each button
+       carrying its own margin. -->
+  <span class="navicons">
   <!-- The AI star. Its whole job is to make an invisible failure visible: a dead key and
        a node with nothing left to write produced identical symptoms before this existed. -->
   <!-- Things to change. Its own control rather than a gesture on the star, because the
@@ -2254,6 +2251,7 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c5.3 0 9.6 3.5 9.6 7.9 0 4.3-4.3 7.8-9.6 7.8-.9 0-1.8-.1-2.6-.3l-5 2.9a.5.5 0 0 1-.8-.5l.9-4.2C2.9 14.8 2.4 12.8 2.4 10.5c0-4.4 4.3-7.9 9.6-7.9z"/></svg>
   </button>
   <button class="navgear" id="settingsBtn">⚙ Settings</button>
+  </span>
 </nav>
 
 <!-- Words: the Translator and the Library are one pipeline, so they're one page.
@@ -11314,14 +11312,9 @@ function promoteFromArchive(key) {
   document.getElementById("archStatus").textContent = "“" + key + "” added to your Library.";
 }
 
-/* Visible from the Translator page too — "flagged to me first" means noticeable even
-   before you switch over, not just something waiting quietly inside the Library. */
+/* The count used to also mirror onto a red badge on the Words tab; that was dropped
+   from the nav, so this now only writes the inbox bar itself. */
 function updateLibraryNavBadge(count) {
-  const badge = document.getElementById("navBadge");
-  badge.textContent = count;
-  badge.style.display = count > 0 ? "inline-block" : "none";
-  /* The same number on the inbox bar, in words. The nav badge tells you across pages;
-     this tells you what the bar is for once you're on Words. */
   const ic = document.getElementById("inboxCount");
   if (ic) {
     ic.textContent = count + (count === 1 ? " word to review" : " words to review");
@@ -24610,18 +24603,12 @@ function badgePaint(st) {
     else if (navigator.clearAppBadge) navigator.clearAppBadge();
   } catch (e) {}
 }
+/* The nav used to mirror this as a dot/number badge on the Learn tab; that read as
+   clutter next to the streak card and was dropped. The home-screen app badge (below)
+   still carries the same signal where it doesn't compete for space. */
 function learnBadge() {
-  const el = document.getElementById("learnBadge");
-  if (Object.keys(libAll()).length < 10) { el.style.display = "none"; badgePaint({ kind: "due", n: 0 }); return; }
-  const st = badgeState();
-  /* A DOT for the reward and a number for the work — the same two shapes the home screen
-     shows, so one signal reads identically in both places. Gold, because that is what
-     gold means here. Deliberately not a star: the nav already carries the AI star, and
-     two glyphs one space apart would be two things to learn instead of one. */
-  el.textContent = st.kind === "reward" ? "" : st.n;
-  el.classList.toggle("badgereward", st.kind === "reward");
-  el.style.display = (st.kind === "reward" || st.n) ? "inline-block" : "none";
-  badgePaint(st);
+  if (Object.keys(libAll()).length < 10) { badgePaint({ kind: "due", n: 0 }); return; }
+  badgePaint(badgeState());
 }
 
 /* ---- the two numbers that live on the front door ----------------------------

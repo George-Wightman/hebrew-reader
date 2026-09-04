@@ -1978,6 +1978,10 @@
   .cw { display: inline-flex; align-items: center; gap: 6px; background: var(--panel);
         border: 1px solid var(--border); border-radius: 99px; padding: 4px 11px; font-size: .8rem; }
   .cw b { font-family: "David", "Times New Roman", serif; font-size: .95rem; font-weight: 400; }
+  /* Same treatment the reading cards already give a transliteration (.card .tr) — small,
+     italic, accent-teal — so this reads as the app's one existing convention for it,
+     not a new one. */
+  .cw .cwtr { direction: ltr; font-size: .74rem; color: var(--accent); font-style: italic; }
   .cw u { text-decoration: none; color: var(--muted); font-size: .74rem; }
   .pp-carry { margin: 8px 0 0; font-size: .76rem; color: var(--muted); }
   .pp-carry b { font-family: "David", "Times New Roman", serif; font-weight: 400; }
@@ -2022,6 +2026,10 @@
   .pp-goldlist s.tier-strong { background: #b9d6b4; color: #3d6136; }
   .pp-goldlist span { flex: 1 1 100%; color: var(--muted); font-size: .74rem;
                       line-height: 1.45; }
+  /* The gold box's own transliteration: parenthetical, muted, small — deliberately not
+     the pill's accent-teal treatment, since this text is the coach speaking rather than
+     a card being read. */
+  .trin { font-style: italic; color: var(--muted); font-size: .82em; margin-left: 2px; }
   .pp-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .pp-head h3 { margin: 0; font-size: 1.05rem; }
   .pp-tier { font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
@@ -20489,16 +20497,33 @@ function campPeek(id) {
                       'graduation' from that node, then the node turns gold."  */
 const CAMP_MEET_LESSON = 1, CAMP_PRACTISE_LESSON = 2;
 
+/* The library's own transliteration, falling back to the dictionary — the same fallback
+   already used one line below for the English gloss (e.en || DICT[k][1]). */
+function campTrFor(k, lib) {
+  const e = (lib && lib[k]) || {};
+  return e.tr || (DICT[k] ? DICT[k][0] : "") || "";
+}
+
 function campWordRow(k, lib, srs) {
   /* `b-`, not `s-`. The dots were being given a class that does not exist anywhere in
      the stylesheet, so every word in every node sheet has been showing the same bare
      circle regardless of how well he knows it. */
   const band = srsStrengthBoth(srs, k);
   const e = lib[k] || {};
+  const tr = campTrFor(k, lib);
   return '<span class="cw" title="' + campEscape(TIER_LABEL[band] || band) +
          '"><i class="sdot b-' + band + '"></i>' +
          '<b dir="rtl">' + campEscape(k) + '</b>' +
+         (tr ? '<span class="cwtr">' + campEscape(tr) + '</span>' : '') +
          '<u>' + campEscape(e.en || (DICT[k] ? DICT[k][1] : "")) + '</u></span>';
+}
+
+/* A Hebrew word plus its transliteration in small muted parens, for the gold box's
+   running prose — kept as one unit so a trailing comma never lands between them. */
+function campGoldWord(k, lib) {
+  const tr = campTrFor(k, lib);
+  return '<b dir="rtl">' + campEscape(k) + '</b>' +
+         (tr ? '<i class="trin">(' + campEscape(tr) + ')</i>' : '');
 }
 
 /* Which node sheet is open. Nothing needed this before — the sheet rebuilt itself from
@@ -20570,7 +20595,7 @@ function campOpenNode(id) {
       /* THE EXACT COUNT, and the only one on this box that is exact. */
       h += '<p class="pp-goldsay"><b>' + plan.landedN + ' of ' + plan.need +
            '</b> said live with the coach. Still to say: ' +
-           plan.toLand.map(k => '<b dir="rtl">' + campEscape(k) + '</b>').join(", ") +
+           plan.toLand.map(k => campGoldWord(k, lib)).join(", ") +
            '.</p>';
     } else if (plan.need) {
       h += '<p class="pp-goldsay">Every word said live with the coach.</p>';
@@ -20580,7 +20605,7 @@ function campOpenNode(id) {
          about what would move those words, because a band is not an answer tally and a
          number here would be a caption contradicting its metric. */
       h += '<ul class="pp-goldlist">' + goldAdvice(plan.notReady).map(g =>
-        '<li>' + g.keys.map(k => '<b dir="rtl">' + campEscape(k) + '</b>').join(", ") +
+        '<li>' + g.keys.map(k => campGoldWord(k, lib)).join(", ") +
         ' <s class="tier-' + g.band + '">' + campEscape(g.band) + '</s>' +
         '<span>' + campEscape(g.next) + '</span></li>').join("") + '</ul>';
     }
@@ -30628,6 +30653,24 @@ T("goldAdvice: one row per thing to do, not one per word", () => {
   assertEq(split.length, 2, "one band, two different things to do, two rows");
   assertEq(goldAdvice([]), [], "and nothing outstanding is no rows");
   assertEq(goldAdvice(null), [], "including when there is no list at all");
+});
+T("campTrFor: the library's own transliteration first", () => {
+  const lib = { "שלום": { tr: "shalom", en: "hello" } };
+  assertEq(campTrFor("שלום", lib), "shalom");
+});
+T("campTrFor: falls back to the dictionary when the word isn't in the library", () => {
+  assertEq(campTrFor("שלום", {}), "shalom", "DICT carries it even with an empty library");
+  assertEq(campTrFor("שלום", null), "shalom", "and with no library object at all");
+});
+T("campTrFor: neither source has it, so it says nothing rather than lying", () => {
+  assertEq(campTrFor("לגמרי בדוי", { "לגמרי בדוי": { en: "made up" } }), "");
+});
+T("campGoldWord: transliteration rides in the same unit as the word, so a trailing comma never splits them", () => {
+  const withTr = campGoldWord("שלום", { "שלום": { tr: "shalom" } });
+  assertTrue(withTr.indexOf('<b dir="rtl">שלום</b>') === 0, "the Hebrew stays first and isolated");
+  assertTrue(withTr.indexOf('<i class="trin">(shalom)</i>') > 0, "with the transliteration attached, not a separate list item");
+  const without = campGoldWord("לגמרי בדוי", {});
+  assertEq(without, '<b dir="rtl">לגמרי בדוי</b>', "no parens, no italics, when there is nothing to show");
 });
 T("campGoldPlan: exact about landings, honest about bands", () => {
   /* The distinction the box is built on. "Two left to say" is a real countdown because a

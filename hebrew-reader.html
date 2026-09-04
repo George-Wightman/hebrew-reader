@@ -1595,17 +1595,25 @@
   .lact .btn { width: 100%; padding: 9px 14px; font-size: .92rem; }
   /* Real buttons, not text links. Tried as links first and George circled all three
      on a screenshot: next to a filled primary they read as decoration rather than as
-     the other three things you could do. Outlined rather than filled keeps the
-     campaign the loudest thing on the card without demoting these to prose. */
+     the other three things you could do.
+
+     They were outlined to keep the campaign the loudest thing on the card. The campaign
+     block is gone from here — the map is where nodes are chosen — so these are now the
+     card's whole reason to exist and are sized as such. */
   .lact-label { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase;
-                color: var(--faint); margin: 9px 0 5px; }
-  .lact-quick { display: flex; gap: 6px; }
+                color: var(--faint); margin: 0 0 6px; }
+  .lact-quick { display: flex; gap: 7px; }
   .lact-quick button { flex: 1; background: var(--panel); border: 1px solid var(--border);
-                       border-radius: 9px; padding: 7px 4px; font-family: inherit;
-                       font-size: .78rem; color: var(--accent); cursor: pointer;
+                       border-radius: 9px; padding: 10px 4px; font-family: inherit;
+                       font-size: .88rem; color: var(--accent); cursor: pointer;
                        white-space: nowrap; }
   .lact-quick button:hover { border-color: var(--accent); background: var(--accent-soft); }
   .lact-quick button:active { background: var(--accent-soft); }
+  /* The size he usually does. Teal filled, because §3 gives teal "you can act on this" and
+     this is the thing on the front door he acts on most days. */
+  .lact-quick button.primary { background: var(--accent); border-color: var(--accent);
+                               color: #fff; font-weight: 600; }
+  .lact-quick button.primary:hover { background: var(--accent); filter: brightness(1.06); }
   .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
   .lact .lhint:empty { display: none; }
   /* THE COACH, ON THE FRONT DOOR. The same mark he wears everywhere else — the display
@@ -24642,45 +24650,46 @@ function learnRenderMapBar() {
   bar.append(tot);
 }
 
-/* The action card: what the campaign is offering, and a quick session if you would
-   rather just drill. Sits on the map so it is reachable however far you have
-   scrolled. */
+/* THE DAILY PRACTICE CARD, and nothing else. It used to lead with the campaign's current
+   node — chapter, name, reason, and a Continue button — with the drill sizes demoted
+   underneath as "or just drill".
+
+   George took that out: "Currently this is like encourcaging me to do a node, what I want
+   it for this to jsut be a daily cards, a perminant small 'just do a drill' card and the
+   Coaches information is what tells me is going to be in sed practice. If I want a node I
+   go and click on a node anyway."
+
+   He is right that it was a duplicate. The map IS the node interface — every node is on it,
+   the current one already carries the teal ring that style guide §3 reserves for "you can
+   act on this", and tapping it opens the sheet where the words and the three things to do
+   live. The card was a second, worse copy of that, sitting permanently in front of the
+   thing it was copying.
+
+   So the sizes become the card rather than its footnote, and what is IN the session is the
+   forecast's job directly below. Note this reverses the reasoning on .lact-quick's outlined
+   styling, which existed to keep the campaign the loudest thing on the card: there is no
+   campaign block left to be louder than. */
 function learnRenderAct() {
   const box = document.getElementById("lActBody");
   if (!box) return;
   box.innerHTML = "";
-  const camp = campRestate(campEnsure());
-  const sec = campCurrentNode(camp);
-  if (sec) {
-    const ch = campChapterOf(sec.id, camp) || {};
-    const p = campNodeProgress(sec);
-    const k = document.createElement("div"); k.className = "lact-kicker";
-    k.textContent = "Chapter " + (ch.n || 1) + " · " + (ch.theme || "Campaign");
-    const nm = document.createElement("div"); nm.className = "lact-name";
-    nm.textContent = sec.name;
-    const sub = document.createElement("p"); sub.className = "lact-sub";
-    /* The node's own reason, when the planner gave one — it is the thing that makes a
-       generated path read as authored. Falls back to the count when it did not. */
-    sub.textContent = sec.why || (p.have + " of " + p.need + " words yours");
-    const go = document.createElement("button"); go.className = "btn";
-    go.textContent = p.have ? "Continue" : "Start this";
-    /* Opens the node sheet rather than launching a lesson outright: the sheet is where
-       the words and the three things you can do live, and dropping him into a card he
-       did not choose is the mistake the resume offer already refuses to make. */
-    go.onclick = () => campOpenNode(sec.id);
-    box.append(k, nm, sub, go);
-  }
   const lab = document.createElement("div"); lab.className = "lact-label";
-  lab.textContent = sec ? "or just drill" : "Practise";
+  lab.textContent = "Daily practice";
   box.append(lab);
   const quick = document.createElement("div"); quick.className = "lact-quick";
   /* Talk used to be a third chip here, held open "until the campaign owns it properly
      — a node's closing conversation is what it becomes". The campaign owns it now: the
      coach is the node's graduation, so the chip has nowhere to go. */
-  [["quick", "5 cards"], ["balanced", "15 cards"]].forEach(([shape, label]) => {
+  const shape = learnShape();
+  [["quick", "5 cards"], ["balanced", "15 cards"]].forEach(([s, label]) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = label;
-    b.onclick = () => { lsSet(SHAPE_KEY, shape); learnRenderShapes();
+    /* The size he usually does is filled and the other outlined. Both start a session on
+       one tap — this is not a selected state to be confirmed — but with the node's primary
+       button gone there was nothing on the card to aim at, and "the one you normally
+       press" is a truer default than picking one arbitrarily. */
+    if (s === shape) b.className = "primary";
+    b.onclick = () => { lsSet(SHAPE_KEY, s); learnRenderShapes();
                         document.getElementById("lStartBtn").click(); };
     quick.append(b);
   });
@@ -30432,6 +30441,37 @@ T("forecastLine: one line, and never the size of the pile", () => {
     "nothing overdue is a fact, not an empty state");
   assertEq(forecastLine({ due: 0, fresh: 0, targets: [], close: [], node: null, thin: [] }),
     "Nothing queued right now.", "and an empty app still says one thing");
+});
+T("the action card is a drill card, with no node on it", () => {
+  /* George: "If I want a node I go and click on a node anyway." The map already carries
+     every node and rings the current one, so a copy of it here was a second, worse
+     interface sitting permanently in front of the first. This pins that it is gone —
+     it is the kind of thing a later "helpful" change would put back. */
+  const savedShape = lsGet(SHAPE_KEY);
+  const box = document.getElementById("lActBody");
+  const keep = box.innerHTML;
+  try {
+    lsSet(SHAPE_KEY, "balanced");
+    learnRenderAct();
+    assertTrue(!box.querySelector(".lact-name"), "no node name");
+    assertTrue(!box.querySelector(".lact-kicker"), "no chapter kicker");
+    assertTrue(!box.querySelector(".btn"), "and no Continue button into a node");
+    assertEq(box.querySelector(".lact-label").textContent, "Daily practice",
+      "it says what it is now, rather than 'or just drill'");
+    const btns = [...box.querySelectorAll(".lact-quick button")];
+    assertEq(btns.map(b => b.textContent), ["5 cards", "15 cards"], "both sizes, in order");
+    assertEq(btns.filter(b => b.className === "primary").map(b => b.textContent), ["15 cards"],
+      "the size he usually does is the filled one");
+
+    lsSet(SHAPE_KEY, "quick");
+    learnRenderAct();
+    assertEq([...box.querySelectorAll(".lact-quick button")]
+      .filter(b => b.className === "primary").map(b => b.textContent), ["5 cards"],
+      "and it follows what he last chose");
+  } finally {
+    if (savedShape == null) localStorage.removeItem(SHAPE_KEY); else lsSet(SHAPE_KEY, savedShape);
+    box.innerHTML = keep;
+  }
 });
 T("the forecast box is closed until he opens it, and remembers", () => {
   /* George: "This is just too much at the bottom of hte screen by defaut ... maybe it

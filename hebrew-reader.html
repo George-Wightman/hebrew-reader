@@ -1616,11 +1616,19 @@
      George asked for a blue box. Deliberately not: style guide §3 gives gold "you did
      this" and teal "you can act on this", and a note about work still ahead is neither —
      it would be a third colour competing with two that already mean something exact. */
-  .lfc { margin: 10px 0 0; padding: 9px 0 2px 11px; text-align: left;
-         border-left: 2px solid var(--gold-soft); }
+  .lfc { margin: 9px 0 0; text-align: left; }
   .lfc:empty { display: none; }
-  .lfc-h { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
-           color: #a49b88; margin-bottom: 5px; }
+  /* Closed, this is the whole box: one small-caps row that reads as a sibling of "OR JUST
+     DRILL" above it, so the card gains a section label rather than a widget. The gold rule
+     belongs to the body, not to the label — a rule beside a lone heading reads as a
+     quotation with nothing in it. */
+  .lfc-h { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 0;
+           background: none; border: 0; cursor: pointer; font: inherit;
+           font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
+           color: #a49b88; text-align: left; }
+  .lfc-h:hover { color: #8b7350; }
+  .lfc-caret { font-size: .7rem; letter-spacing: 0; line-height: 1; }
+  .lfc-b { padding: 6px 0 2px 11px; border-left: 2px solid var(--gold-soft); margin-top: 3px; }
   .lfc-line { font-family: var(--display); font-size: .86rem; line-height: 1.5;
               color: var(--ink); margin: 0 0 4px; }
   /* What the coach adds on top. Slightly quieter than the computed lines on purpose: they
@@ -24809,31 +24817,65 @@ async function forecastCoachNote(F) {
   } catch (e) { return null; }
   finally { forecastSaying = false; }
 }
+/* COLLAPSED UNLESS HE OPENS IT. George, on the standing box: "This is just too much at the
+   bottom of hte screen by defaut. I like the idea of it being htere but maybe it needs to
+   be togglable since it takes up too much screen. its okay on the nodes page since thats a
+   popup anyway."
+
+   That splits cleanly: the node sheet's box is inside something he opened on purpose and
+   stays as it is; this one sits on the front door forever, and the front door's whole job
+   is the map and the one button he came to press. So the label becomes the control — the
+   same disclosure the Archive drawer already uses, down to the caret and the "closed
+   unless explicitly opened" default, so it is a pattern he has met rather than a new one.
+
+   Twenty-odd pixels closed against eighty open, and it remembers what he chose. */
+const FC_OPEN_KEY = "hvr_fcopen";
+function forecastOpen() { return lsGet(FC_OPEN_KEY) === "1"; }
 function learnRenderForecast() {
   const box = document.getElementById("lFc");
   if (!box) return;
   const F = forecastFacts();
+  const open = forecastOpen();
   box.innerHTML = "";
-  const head = document.createElement("div");
+
+  /* The label IS the toggle. A separate caret button beside a static heading would be two
+     targets for one action on the narrowest thing on screen. */
+  const head = document.createElement("button");
+  head.type = "button";
   head.className = "lfc-h";
-  head.textContent = "What's coming";
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+  const caret = document.createElement("span");
+  caret.className = "lfc-caret";
+  caret.textContent = open ? "▾" : "▸";
+  head.append(caret, document.createTextNode("What's coming"));
+  head.onclick = () => {
+    lsSet(FC_OPEN_KEY, forecastOpen() ? "0" : "1");
+    learnRenderForecast();
+  };
   box.append(head);
+  if (!open) return;
+
+  const body = document.createElement("div");
+  body.className = "lfc-b";
   const p = document.createElement("p");
   p.className = "lfc-line";
   p.textContent = forecastLine(F);
-  box.append(p);
-  /* Filled in by forecastCoachNote when it arrives, and absent otherwise — the lines above
-     are already a complete answer without it. */
+  body.append(p);
+  /* Filled in by forecastCoachNote when it arrives, and absent otherwise — the line above
+     is already a complete answer without it. */
   const say = document.createElement("p");
   say.className = "lfc-say"; say.id = "lFcSay"; say.style.display = "none";
-  box.append(say);
+  body.append(say);
   /* The report behind the box. Opens the coach pointed at the forecast, so "what else is
      coming" is one tap from the sentence that raised the question. */
   const more = document.createElement("button");
   more.type = "button"; more.className = "linkbtn lfc-more";
   more.textContent = "See it all";
   more.onclick = () => uhModalOpen(true, { kind: "forecast", id: "" });
-  box.append(more);
+  body.append(more);
+  box.append(body);
+  /* Only while it is open, which also means a closed box spends nothing: the coach's
+     sentence is not written for a panel nobody is looking at. */
   setTimeout(() => { try { Promise.resolve(forecastCoachNote(F)).catch(() => {}); } catch (e) {} }, 900);
 }
 
@@ -30390,6 +30432,38 @@ T("forecastLine: one line, and never the size of the pile", () => {
     "nothing overdue is a fact, not an empty state");
   assertEq(forecastLine({ due: 0, fresh: 0, targets: [], close: [], node: null, thin: [] }),
     "Nothing queued right now.", "and an empty app still says one thing");
+});
+T("the forecast box is closed until he opens it, and remembers", () => {
+  /* George: "This is just too much at the bottom of hte screen by defaut ... maybe it
+     needs to be togglable". Closed by default is the whole point, so the default is what
+     this pins — and a closed box must not spend a call writing a sentence into a panel
+     nobody is looking at. */
+  const saved = lsGet(FC_OPEN_KEY);
+  const box = document.getElementById("lFc");
+  const keep = box.innerHTML;
+  try {
+    localStorage.removeItem(FC_OPEN_KEY);
+    assertTrue(!forecastOpen(), "closed unless explicitly opened, like the archive drawer");
+    learnRenderForecast();
+    assertTrue(!box.querySelector(".lfc-b"), "so no body is drawn");
+    assertTrue(!!box.querySelector(".lfc-h"), "but the label is, because it is the control");
+    assertEq(box.querySelector(".lfc-caret").textContent, "▸", "pointing closed");
+    assertEq(box.querySelector(".lfc-h").getAttribute("aria-expanded"), "false");
+
+    box.querySelector(".lfc-h").onclick();
+    assertTrue(forecastOpen(), "one tap opens it");
+    assertEq(lsGet(FC_OPEN_KEY), "1", "and the choice is remembered");
+    assertTrue(!!box.querySelector(".lfc-b"), "the body is there now");
+    assertTrue(!!box.querySelector(".lfc-line").textContent, "with a line in it");
+    assertEq(box.querySelector(".lfc-caret").textContent, "▾", "pointing open");
+
+    box.querySelector(".lfc-h").onclick();
+    assertTrue(!forecastOpen(), "and it shuts again");
+    assertEq(lsGet(FC_OPEN_KEY), "0", "remembered shut, not merely absent");
+  } finally {
+    if (saved == null) localStorage.removeItem(FC_OPEN_KEY); else lsSet(FC_OPEN_KEY, saved);
+    box.innerHTML = keep;
+  }
 });
 T("forecastWorthSaying: the coach stays quiet when he would only paraphrase", () => {
   /* What actually went wrong on his phone: handed one fact, the model padded it back into

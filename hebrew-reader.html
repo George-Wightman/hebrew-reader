@@ -1379,6 +1379,29 @@
   /* Quieter than lmicerr on purpose: nothing has gone wrong, the mic is just saying
      it would rather not guess. Muted, not the warning colour. */
   .lmicsoft { font-size: .82rem; color: var(--muted); margin-top: 9px; }
+  /* THE AMEND CONTROL. Quiet by default — it is an offer, not the thing he came to the card
+     to press, and the grade buttons below it must stay the loudest thing. No glyph and no
+     label pair: §4's "one signal, not four weak ones" is the reason this is one control
+     wearing two faces rather than two controls. */
+  .lamend { margin-top: 10px; }
+  .lamend-q { font-size: .74rem; color: var(--muted); margin-bottom: 6px; }
+  .lamend-opts { display: flex; gap: 7px; }
+  /* Both options weighted the SAME. Making the target look like the right answer would be
+     asking him to confirm the app rather than to tell it what he said, and the whole value
+     of the tap is that it is evidence. */
+  .lamend-opt { flex: 1; background: var(--panel); border: 1px solid var(--border);
+                border-radius: 9px; padding: 8px 6px; font-family: inherit; cursor: pointer;
+                display: flex; flex-direction: column; gap: 1px; align-items: center; }
+  .lamend-opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .lamend-opt b { font-size: .92rem; color: var(--ink); font-weight: 600; }
+  .lamend-opt span { font-size: .72rem; color: var(--muted); }
+  .lamend-no { font-size: .76rem; padding: 0; }
+  /* What the coach said back, in the coach's own face — the display serif he wears
+     everywhere else in the app, so this reads as him talking rather than as the card
+     reporting. */
+  .lamend-said { font-family: var(--display); font-size: .86rem; line-height: 1.5;
+                 color: #6d5836; text-align: left; margin-top: 4px;
+                 padding-left: 11px; border-left: 2px solid var(--gold-soft); }
   .lgrade.suggested { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
   /* Hints are deliberately plain — they're a concession, not a reward. */
@@ -12770,6 +12793,19 @@ function flagContext(report) {
     }
     if (s) c.session = { at: s.i + 1, of: (s.cards || []).length, got: s.got };
     if (s && s.path) c.lesson = s.path.id + " · lesson " + s.path.lesson;
+  } catch (e) {}
+  /* WHAT HE ACTUALLY SAID, which every flag about a mark needs and none of them carried.
+     Added here rather than at the one call site that prompted it, because a flag raised
+     from the nav mid-card wants exactly the same thing — and half his flags are about
+     what the recogniser did. */
+  try {
+    const sp = learnSpoken;
+    if (sp) c.spoken = { text: sp.text || "", conf: sp.conf || 0, unsure: !!sp.unsure,
+                         expected: (sp.expected || []).join(" "),
+                         status: (sp.status || []).join(","),
+                         alts: (sp.alts || []).slice(0, 3),
+                         soundPairs: (sp.soundPairs || [])
+                           .map(p => p.expected + " / " + p.heard) };
   } catch (e) {}
   try {
     const id = (learnSession && learnSession.path && learnSession.path.id) || campSheetId;
@@ -26087,6 +26123,10 @@ async function learnSpeakAttempt(btn, c) {
   learnReveal();
   const card2 = document.getElementById("lCard");
   if (learnSpoken.unsure) learnMicUnsure(card2);
+  /* After the reveal, alongside the other post-reveal notes and for the same reason: the
+     card is on screen and gradeable, and this is an offer to correct it rather than
+     anything the grade waits on. */
+  learnAmendRender(card2);
   /* Fired AFTER the reveal, deliberately not awaited. The card is already on screen
      and gradeable; this catches up with it or it doesn't.
 
@@ -26330,6 +26370,178 @@ function learnGraceNote(card, msg) {
   syncPadOffset();
 }
 
+/* THE ONE RULE THAT TURNS AN ALIGNMENT INTO A GRADE, extracted so the amend control can
+   re-derive rather than nudge. It used to live inline in learnScoreSpoken, and the moment a
+   second caller needed it the choice was to copy the formula or share it — the style
+   guide's "two figures describing the same clearance must be one constant", applied to a
+   threshold rather than a distance. */
+function learnSuggestFrom(status) {
+  const matched = (status || []).filter(s => s === "matched").length;
+  const near = (status || []).filter(s => s === "near").length;
+  if (!(status || []).length) return null;
+  return matched === status.length ? 2
+    : (matched + near) >= Math.ceil(status.length / 2) ? 1 : 0;
+}
+
+/* ---- when the app got it wrong and he could not say so ----------------------
+   George, across five flags in a fortnight and then directly: "Homophone disambiguation
+   instead of a wrong mark" and "'That's not what I meant' as one tap on any card".
+
+   ONE CONTROL, WEARING TWO FACES, and that is his call rather than a preference. This card
+   lost a glyph, a label and a direction pill to style guide §4's "one signal, not four weak
+   ones", and two new controls would put most of that back. What it does is one thing in his
+   terms — the app got that wrong, let me say so — and the card decides which form that
+   takes.
+
+   Face one, when heSoundAlike rescued something: the app already knows exactly what the
+   ambiguity was, so it asks. Face two, otherwise: the report, one tap, no keyboard. */
+function learnAmendPairs() {
+  return (learnSpoken && learnSpoken.soundPairs) || [];
+}
+/* Transliteration first with the English in brackets. He reads the transliteration — it is
+   the line he actually produces from — and it keeps a mixed-script run out of a button
+   label, where the bidi reversal measured on the node sheet this week would come straight
+   back with nothing to isolate it. */
+function learnWordLabel(he, lib) {
+  const l = lib || libAll();
+  const tr = (trFormsOf(he, l) || [])[0] || "";
+  const e = l[he] || {};
+  const en = e.en || ((typeof DICT !== "undefined" && DICT[he]) ? DICT[he][1] : "") || "";
+  return { tr: tr || he, en: en };
+}
+/* HE ALREADY GRADES HIMSELF. Missed / Nearly / Got it are his and always have been, so this
+   is strictly LESS latitude than he holds already: two words the app itself proposed as the
+   ambiguity, and the only assertion available is which one he said. srsAnswer is written
+   from the resulting grade through exactly the path it always was. */
+function learnAmendResolve(pair, saidTarget) {
+  const sp = learnSpoken;
+  if (!sp || !pair) return;
+  sp.soundPairs = (sp.soundPairs || []).filter(p => p !== pair);
+  if (saidTarget) {
+    sp.status[pair.i] = "matched";
+    /* learnMarks is 0 = got it, 1 = missed, 2 = nearly — a different scale from the grade,
+       and getting them the wrong way round is the mistake this comment exists to stop. */
+    if (learnMarks && learnMarks[pair.i] !== undefined) learnMarks[pair.i] = 0;
+    if (learnMicGrades(learnSession && learnSession.cards[learnSession.i]) && !learnCardTokens)
+      learnSuggested = learnSuggestFrom(sp.status);
+    try { statsBump({ amendWon: 1 }); } catch (e) {}
+  } else {
+    try { statsBump({ amendKept: 1 }); } catch (e) {}
+  }
+  if (learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
+  if (learnSuggestPaint) learnSuggestPaint();
+  learnAmendRender(document.getElementById("lCard"));
+}
+function learnAmendRender(card) {
+  if (!card) return;
+  const old = card.querySelector(".lamend"); if (old) old.remove();
+  if (!learnSpoken) return;
+  const wrap = document.createElement("div");
+  wrap.className = "lamend";
+  const pair = learnAmendPairs()[0];
+  if (pair) {
+    const lib = libAll();
+    const A = learnWordLabel(pair.expected, lib), B = learnWordLabel(pair.heard, lib);
+    const q = document.createElement("div");
+    q.className = "lamend-q";
+    q.textContent = "Did you say…";
+    wrap.append(q);
+    const opts = document.createElement("div");
+    opts.className = "lamend-opts";
+    [[A, true], [B, false]].forEach(([lab, isTarget]) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "lamend-opt";
+      const t = document.createElement("b"); t.textContent = lab.tr;
+      b.append(t);
+      if (lab.en) { const s = document.createElement("span"); s.textContent = lab.en; b.append(s); }
+      b.onclick = () => learnAmendResolve(pair, isTarget);
+      opts.append(b);
+    });
+    wrap.append(opts);
+  } else {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "linkbtn lamend-no";
+    b.textContent = "That's not what I meant";
+    b.onclick = () => learnAmendReport(b);
+    wrap.append(b);
+  }
+  const act = card.querySelector(".lactions");
+  if (act) card.insertBefore(wrap, act); else card.append(wrap);
+  syncPadOffset();
+}
+
+/* ONE TAP DOES BOTH, and the pairing is the point. The flag is the record that reaches
+   Claude; the coach's answer is what he gets back in the moment. Splitting them would make
+   the useful half cost a second tap, and "one tap" was the whole of the ask — the reason he
+   asked being that a thought arriving mid-card currently costs a modal and a keyboard.
+
+   This is also where the gap in learnGrace is closed. Grace only ever writes its note on
+   the `fair: true` path, so when the app decides his answer was NOT a fair alternative he
+   gets no reason at all — and that is the more common case, and where "why is my word
+   wrong?" actually lives. Here it is on demand, so it costs nothing on the cards he does
+   not care about. */
+function learnAmendPrompt(c, sp, lib) {
+  const trOf = w => { const t = trFormsOf(w, lib); return t.length ? " (" + t[0] + ")" : ""; };
+  const want = (sp.expected || []).filter((w, i) => sp.status[i] !== "matched");
+  return "You are a warm, brisk Hebrew coach. An English speaker learning conversational " +
+    "Hebrew has just been marked down on a card and says that is not what he meant.\n\n" +
+    "He was shown this English:\n  " + (learnGraceEnglish(c) || "(none)") + "\n\n" +
+    "The app wanted:\n  " + (sp.expected || []).join(" ") + "\n\n" +
+    "The recogniser heard him say:\n  " + (sp.text || "(nothing)") + "\n\n" +
+    (want.length ? "It marked these as not said:\n" +
+      want.map(w => "  " + w + trOf(w)).join("\n") + "\n\n" : "") +
+    "Tell him in two or three sentences what the difference actually is between what he " +
+    "said and what was wanted — the nuance, not the spelling. If what he said is in fact a " +
+    "fair way to say that English, say so plainly and say what the wanted word adds.\n\n" +
+    "Write transliteration with the English in brackets, never Hebrew letters. Plain text, " +
+    "no markdown, no preamble, do not address him by name.";
+}
+async function learnAmendReport(btn) {
+  const s = learnSession, c = s && s.cards[s.i], sp = learnSpoken;
+  if (!c || !sp) return;
+  btn.disabled = true;
+  btn.textContent = "Noted — asking the coach…";
+  /* FILED FIRST, and deliberately before the call. The record is the half that must not
+     depend on a network: a thought he tapped is captured even if the coach never answers.
+     flagContext already carries the card, the node, the content state and the last three
+     AI calls, so this adds only what it could not know — that the tap was about a mark. */
+  let flag = null;
+  try {
+    flag = flagAdd("[card] That's not what I meant.", flagContext());
+  } catch (e) {}
+  let answer = "";
+  try {
+    answer = String(await geminiRequest([{ text: learnAmendPrompt(c, sp, libAll()) }],
+      GEMINI_MODELS_FAST, { label: "That's not what I meant" }) || "").trim();
+  } catch (e) {
+    answer = "";
+  }
+  /* The answer rides the flag, exactly as uhAnswerText already does from Under the hood —
+     so when it reaches me I can see what he was told and correct the app, rather than
+     arguing against a prior I cannot see. */
+  if (flag && answer) {
+    try {
+      const all = flagAll();
+      const i = all.findIndex(f => f && f.id === flag.id);
+      if (i !== -1) {
+        all[i] = Object.assign({}, all[i],
+          { text: all[i].text + "\n\n## The coach was asked\n" + answer });
+        flagSave(all);
+      }
+    } catch (e) {}
+  }
+  const card = document.getElementById("lCard");
+  const wrap = card && card.querySelector(".lamend");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const note = document.createElement("div");
+  note.className = "lamend-said";
+  note.textContent = answer ||
+    "Noted and sent to Claude. The coach could not be reached just now.";
+  wrap.append(note);
+  syncPadOffset();
+}
+
 function learnMicError(card, msg) {
   const el = document.createElement("div"); el.className = "lmicerr"; el.textContent = msg;
   const act = card.querySelector(".lactions");
@@ -26470,10 +26682,17 @@ function learnScoreSpoken(c, text, res) {
      runners-up are searched alongside the transcript, same as micHeardIn does. */
   const heardAll = said.concat(alts.reduce((acc, s) => acc.concat(heWords(s)), []));
   let soundWon = 0;
+  /* BOTH SIDES OF THE AMBIGUITY, kept because this is the only place both are known.
+     The rescue can say "one of these two came out of his mouth"; it cannot say which,
+     and until now it guessed — softening to `near`, which docks him for a word he may
+     well have said perfectly. Recording the pair is what lets him settle it himself. */
+  const soundPairs = [];
   a.status = a.status.map((st, i) => {
     if (st !== "missed") return st;
-    if (!heardAll.some(w => heSoundAlike(expected[i], w, lib))) return st;
+    const heard = heardAll.filter(w => heSoundAlike(expected[i], w, lib))[0];
+    if (!heard) return st;
     soundWon++;
+    soundPairs.push({ i: i, expected: expected[i], heard: heard });
     return "near";
   });
   /* Counted so Phase 1's effect is measurable against the adjudicator's own record
@@ -26481,7 +26700,8 @@ function learnScoreSpoken(c, text, res) {
   if (soundWon) { try { statsBump({ soundWon: soundWon }); } catch (e) {} }
   learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {},
                   alts: alts, conf: (res && res.confidence) || 0,
-                  unsure: micUnsure(res && res.confidence), expected: expected };
+                  unsure: micUnsure(res && res.confidence), expected: expected,
+                  soundPairs: soundPairs };
 
   /* The he-IL recogniser transcribes English perfectly well — the finding that made
      this worth building. So "you reached for the English word" is detectable, and
@@ -26512,10 +26732,7 @@ function learnScoreSpoken(c, text, res) {
      Word and chunk cards grade as one unit, so the mic condenses the whole
      alignment into a single recommendation. */
   if (learnMicGrades(c) && !chips && a.status.length) {
-    const matched = a.status.filter(s => s === "matched").length;
-    const near = a.status.filter(s => s === "near").length;
-    learnSuggested = matched === a.status.length ? 2
-      : (matched + near) >= Math.ceil(a.status.length / 2) ? 1 : 0;
+    learnSuggested = learnSuggestFrom(a.status);
   } else {
     learnSuggested = null;
   }
@@ -31119,6 +31336,89 @@ const SOUND_LIB = {
   "בת":   { tr: "bat" },
   "יפה":  { tr: "yafe/yafa" }
 };
+T("learnSuggestFrom: one rule, shared by the mic and by the amend control", () => {
+  /* Extracted so the upgrade re-derives rather than nudging. Copying the formula was the
+     alternative, and two thresholds describing one grade is the thing §5 forbids. */
+  assertEq(learnSuggestFrom(["matched", "matched"]), 2, "all matched is Got it");
+  assertEq(learnSuggestFrom(["matched", "near"]), 1, "half or better is Nearly");
+  assertEq(learnSuggestFrom(["matched", "missed", "missed"]), 0, "below half is Missed");
+  assertEq(learnSuggestFrom(["near", "near", "missed"]), 1, "near counts towards the half");
+  assertEq(learnSuggestFrom([]), null, "and nothing to score suggests nothing");
+});
+T("learnAmendResolve: saying it was the target lifts exactly that word", () => {
+  /* THE POINT OF THE WHOLE FEATURE. The rescue could only ever reach `near`, so a word he
+     said correctly still docked him; this is the path from near to matched, and it must not
+     touch anything it was not asked about. */
+  const savedSp = learnSpoken, savedMk = learnMarks, savedSug = learnSuggested,
+        savedSess = learnSession, savedTok = learnCardTokens;
+  try {
+    learnCardTokens = null;
+    learnSession = { i: 0, cards: [{ kind: "word", key: "אטי" }] };
+    const pair = { i: 0, expected: "אטי", heard: "איתי" };
+    learnSpoken = { text: "איתי", expected: ["אטי", "יפה"],
+                    status: ["near", "near"], soundPairs: [pair] };
+    learnMarks = [1, 2];
+    learnSuggested = 1;
+    learnAmendResolve(pair, true);
+    assertEq(learnSpoken.status, ["matched", "near"], "only the disputed word moves");
+    assertEq(learnMarks, [0, 2], "its mark becomes Got it, the other is untouched");
+    assertEq(learnSuggested, 1, "re-derived from the rule, not nudged blindly");
+    assertEq(learnSpoken.soundPairs, [], "and the question is answered, so it stops asking");
+
+    /* Every word resolved should re-derive all the way to Got it. */
+    const p2 = { i: 1, expected: "יפה", heard: "יפה" };
+    learnSpoken.status = ["matched", "near"];
+    learnSpoken.soundPairs = [p2];
+    learnAmendResolve(p2, true);
+    assertEq(learnSuggested, 2, "with nothing left near, the whole card is Got it");
+  } finally {
+    learnSpoken = savedSp; learnMarks = savedMk; learnSuggested = savedSug;
+    learnSession = savedSess; learnCardTokens = savedTok;
+  }
+});
+T("learnAmendResolve: saying it was the OTHER word changes nothing", () => {
+  /* The app was right and he says so. That must leave the softened mark exactly where the
+     rescue put it — crediting him for agreeing would make the control worthless as
+     evidence. */
+  const savedSp = learnSpoken, savedMk = learnMarks, savedSug = learnSuggested,
+        savedSess = learnSession, savedTok = learnCardTokens;
+  try {
+    learnCardTokens = null;
+    learnSession = { i: 0, cards: [{ kind: "word", key: "אטי" }] };
+    const pair = { i: 0, expected: "אטי", heard: "איתי" };
+    learnSpoken = { text: "איתי", expected: ["אטי"], status: ["near"], soundPairs: [pair] };
+    learnMarks = [1];
+    learnSuggested = 0;
+    learnAmendResolve(pair, false);
+    assertEq(learnSpoken.status, ["near"], "the mark stands");
+    assertEq(learnMarks, [1], "and so does the grade");
+    assertEq(learnSuggested, 0, "nothing is suggested off the back of it");
+    assertEq(learnSpoken.soundPairs, [], "but it stops asking, having been answered");
+  } finally {
+    learnSpoken = savedSp; learnMarks = savedMk; learnSuggested = savedSug;
+    learnSession = savedSess; learnCardTokens = savedTok;
+  }
+});
+T("learnWordLabel: transliteration and gloss, never bare Hebrew in a button", () => {
+  /* A button label is a plain text node with nothing to hang unicode-bidi on, so Hebrew in
+     it would reverse against the surrounding punctuation the way the node sheet's list
+     did. Transliteration is also simply what he reads. */
+  const lab = learnWordLabel("אטי", SOUND_LIB);
+  assertEq(lab.tr, "iti", "the transliteration the library holds");
+  assertTrue(!/[֐-׿]/.test(lab.tr), "and no Hebrew letters in it");
+  assertEq(learnWordLabel("nothing-known", {}).tr, "nothing-known",
+    "a word with no transliteration anywhere falls back rather than rendering blank");
+});
+T("learnAmendPrompt: carries both sides and refuses Hebrew letters back", () => {
+  const c = { kind: "word", key: "אטי" };
+  const sp = { text: "איתי", expected: ["אטי"], status: ["near"] };
+  const p = learnAmendPrompt(c, sp, SOUND_LIB);
+  assertTrue(p.indexOf("איתי") !== -1, "what the recogniser heard");
+  assertTrue(p.indexOf("אטי") !== -1, "and what the app wanted");
+  assertTrue(/never Hebrew letters/.test(p),
+    "and the answer comes back in transliteration, which is what he reads");
+  assertTrue(/not the spelling/.test(p), "asked for the nuance, which is the actual question");
+});
 T("heSoundAlike: the recogniser's איתי rescues the אטי he actually said", () => {
   assertTrue(heSoundAlike("אטי", "איתי", SOUND_LIB),
              "identical transliterations are the app telling itself these sound the same");

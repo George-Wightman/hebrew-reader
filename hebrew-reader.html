@@ -3446,6 +3446,35 @@ function mergePathScores(a, b) {
   return out;
 }
 
+/* THE SCHEDULER'S OWN EVIDENCE, and it was being halved by every sync.
+
+   hvr_srslog is an ARRAY, and an array with no MERGE_RULES entry falls to
+   `mineIsNewer ? mine : theirs` — so a week of answers on the phone was discarded the
+   first time the laptop synced, and vice versa. Nothing visibly broke, which is what made
+   it survive: the only consumer is srsCalibration, which exists precisely to tell him
+   whether the schedule is right about him, and it was quietly being asked that question
+   against half the evidence.
+
+   Union by (timestamp, word, side). Two devices cannot produce the same answer to the same
+   word on the same side in the same millisecond, and an entry is written once and never
+   edited, so there is no field-level conflict to resolve — only the question of whether
+   both survive. They must.
+
+   Sorted by time and then by that identity so the output cannot depend on which side was
+   called `a` — the standing rule mergeById carries, and the reason is the same: an
+   order that flips per device rewrites the file on every sync forever. */
+function mergeSrsLog(a, b, cap) {
+  const byId = {};
+  [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(e => {
+    if (!e || typeof e !== "object") return;
+    byId[[e.t || 0, e.k || "", e.s || ""].join("|")] = e;
+  });
+  const ids = Object.keys(byId).sort((x, y) =>
+    ((byId[x].t || 0) - (byId[y].t || 0)) || (x < y ? -1 : x > y ? 1 : 0));
+  const out = ids.map(k => byId[k]);
+  return cap ? out.slice(-cap) : out;
+}
+
 /* Saved messages, keyed by timestamp. Newest first, same as the app writes them. */
 function mergeHistory(a, b, cap) {
   const byTs = {};
@@ -3547,7 +3576,8 @@ const MERGE_RULES = {
   "hvr_coachlanded": (a, b) => mergeMaxNums(a, b),
   "hvr_recency":    (a, b) => mergeMaxNums(a, b),
   "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX),
-  "hvr_campaign":   (a, b) => mergeCampaign(a, b)
+  "hvr_campaign":   (a, b) => mergeCampaign(a, b),
+  "hvr_srslog":     (a, b) => mergeSrsLog(a, b, SRSLOG_MAX)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -8477,7 +8507,30 @@ function SYNC_LOCAL_SET() {
        was raised about it. */
     AI_LOG_KEY, AI_ACK_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
-    VNOTES_KEY
+    VNOTES_KEY,
+    /* THE SAME TRAP THE AI LOG FELL INTO, and it shipped again. syncKeys is a prefix
+       scan, so anything hvr_-prefixed syncs unless it is named here — and none of these
+       four had a MERGE_RULES entry, which means the default applied.
+
+       COACH_KEY is the one that actually loses data. Its value is an object, so it hits
+       mergeObjUnion — a SHALLOW assign — and `past` is taken whole from one side. Two
+       sittings on the phone and one on the laptop merge to whichever blob was stamped
+       later, and the other device's history is gone. That is precisely the shape of the
+       campaign bug and of the flags bug before mergeFlags existed. A conversation is a
+       fact about the device it happened on, exactly like the AI log above it, so local
+       is the honest fix rather than a merge rule for something that does not need to
+       travel.
+
+       FORECAST_SAY_KEY is a cache keyed by a hash of local facts — syncing a cache is
+       pure waste, and a hash computed on another device's numbers is not a hit worth
+       having. FC_OPEN_KEY is a disclosure's open/closed state, and every other one in
+       this app (PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY) is already local; it was the
+       odd one out.
+
+       COACH_HINT_KEY deliberately stays synced: "he has been shown the long-press hint"
+       is a fact about HIM, not about a device, and learning it twice on two devices is
+       the worse outcome. */
+    COACH_KEY, FORECAST_SAY_KEY, FC_OPEN_KEY
   ]));
 }
 
@@ -11317,7 +11370,16 @@ function promoteFromArchive(key) {
   renderLibrary();
   if (!document.getElementById("archDrawer").classList.contains("collapsed")) renderArchive();
   if (typeof renderPad === "function") renderPad();
-  document.getElementById("archStatus").textContent = "“" + key + "” added to your Library.";
+  /* The word is Hebrew and the sentence around it is English, so it needs to be its own
+     bidi run or the closing quote and the full stop swap sides. A text node has nothing to
+     hang unicode-bidi on, hence the <bdi> — which is exactly what that element is for, and
+     the cheapest form of the fix the node sheet needed a CSS rule for. */
+  const st = document.getElementById("archStatus");
+  st.textContent = "";
+  const w = document.createElement("bdi");
+  w.textContent = key;
+  st.append(document.createTextNode("“"), w,
+            document.createTextNode("” added to your Library."));
 }
 
 /* The count used to also mirror onto a red badge on the Words tab; that was dropped
@@ -19203,12 +19265,18 @@ function campConstellation(n, seed) {
 }
 function campLayout(c) {
   const cc = c || campAll();
+  /* READ ONCE. campChapterStanding takes an srs precisely so it need not fetch its own,
+     and these two call sites were the ones not passing it — so each chapter parsed the
+     whole schedule twice, and a five-chapter map parsed a 50KB store ten times to lay out
+     a picture that does not depend on it changing mid-loop. Measured at 8 of the 20
+     srsAll() calls in one front-door render. */
+  const ss = srsAll();
   const nodes = [], bands = [];
   cc.chapters.forEach((ch, ci) => {
     const bandY = CAMP_TOP + ci * CAMP_BAND;
     const y = bandY;
     bands.push({ y: bandY - 40, top: bandY - 40, bottom: bandY + CAMP_BAND - 40,
-                 label: ch.theme || "", n: ch.n, state: campChapterStanding(ch, cc) });
+                 label: ch.theme || "", n: ch.n, state: campChapterStanding(ch, cc, ss) });
     /* A fogged chapter has a sketch and no nodes yet; it still occupies a band, and
        its silhouettes are placed the same way real nodes are. */
     const list = (ch.nodes || []).length ? ch.nodes
@@ -19216,7 +19284,7 @@ function campLayout(c) {
                                             name: sk && sk.name || "", fog: true,
                                             words: [], carry: [], needs: [] }));
     const shape = campConstellation(list.length, campChapterSeed(ch, ci));
-    const standing = campChapterStanding(ch, cc);
+    const standing = campChapterStanding(ch, cc, ss);
     list.forEach((node, i) => {
       /* Past the sixth node the constellation repeats one band lower — it cannot
          happen today (CAMP_MAX_NODES is 6) but a chapter that grew a spawned node
@@ -20143,7 +20211,33 @@ const PATH_PASS_PCT = 60;
 /* Lessons 1-2 are "meet the words" flashcards — there's no real way to fail them, so
    attempting one is passing it. From lesson 3 on, a genuine score is required. */
 function pathLessonPassed(n, pct) { return n <= 2 ? true : pct >= PATH_PASS_PCT; }
-function pathLessonRec(secId, n) { return (pathScoresAll()[secId] || {})[n]; }
+/* MEASURED: one front-door render called this 232 times, and each call parsed the whole
+   scores store. campNodeWalked -> campNodeEverGold -> here runs per node per state check,
+   and there are several state checks per node per render, so it scales as nodes squared
+   against a store that only grows.
+
+   Memoised on the RAW STRING rather than invalidated by hand: any save changes the string,
+   so the cache cannot go stale, and there is no write path to remember to hook. Safe to
+   share the parsed object because both callers — campNodeAuto and campNodeEverGold — read
+   one boolean off the record and return it. The write paths (pathScoresSave's callers)
+   call pathScoresAll() directly and still get their own fresh parse to mutate, which is
+   why this memo lives here and NOT in pathScoresAll.
+
+   THE SENTINEL CANNOT BE null. lsGet returns null for an absent key, so seeding the
+   cache key with null made "nothing stored yet" compare equal to "not cached yet" — the
+   first call skipped the parse and returned the uninitialised value, and every campaign
+   test threw on a fresh store. A dedicated object is the only value lsGet can never
+   return. */
+const _PLR_NONE = {};
+let _plrRaw = _PLR_NONE, _plrVal = {};
+function pathLessonRec(secId, n) {
+  const raw = lsGet(PATH_SCORES_KEY);
+  if (raw !== _plrRaw) {
+    _plrRaw = raw;
+    try { _plrVal = JSON.parse(raw) || {}; } catch (e) { _plrVal = {}; }
+  }
+  return (_plrVal[secId] || {})[n];
+}
 function pathContentAll() {
   try { return JSON.parse(lsGet(PATH_CONTENT_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -24885,7 +24979,11 @@ function forecastOpen() { return lsGet(FC_OPEN_KEY) === "1"; }
 function learnRenderForecast() {
   const box = document.getElementById("lFc");
   if (!box) return;
-  const F = forecastFacts();
+  /* THE FACTS ARE NOT FREE and this used to gather them before asking whether anyone was
+     going to see them. forecastFacts walks the whole library through learnTargets, prunes
+     the bank, and runs campGoldPlan over every node — measured at 20ms of a 96ms front-door
+     render, spent on a body that is collapsed by default and therefore usually discarded
+     unrendered. Gathered after the early return now, so a closed box costs one lsGet. */
   const open = forecastOpen();
   box.innerHTML = "";
 
@@ -24906,6 +25004,7 @@ function learnRenderForecast() {
   box.append(head);
   if (!open) return;
 
+  const F = forecastFacts();
   const body = document.createElement("div");
   body.className = "lfc-b";
   const p = document.createElement("p");
@@ -31846,6 +31945,73 @@ T("SYNC lists do not overlap — a key cannot be both secret and merely local", 
   const both = [...SYNC_NEVER_SET()].filter(k => SYNC_LOCAL_SET().has(k));
   assertEq(both, []);
 });
+T("SYNC: the coach's own keys do not travel, and the one that would lose data least of all", () => {
+  /* syncKeys is a PREFIX SCAN, so every new hvr_ key ships syncing by default. That has
+     now caught three features — the campaign, the AI log, and the coach. COACH_KEY is the
+     dangerous one: it is an object, so it falls to mergeObjUnion's shallow assign and
+     `past` is taken whole from whichever blob is stamped later, destroying the other
+     device's sittings exactly as the campaign was destroyed. */
+  assertTrue(SYNC_LOCAL_SET().has(COACH_KEY), "a conversation belongs to the device it happened on");
+  assertTrue(SYNC_LOCAL_SET().has(FORECAST_SAY_KEY), "and a cache keyed on local facts is waste");
+  assertTrue(SYNC_LOCAL_SET().has(FC_OPEN_KEY), "as every other disclosure state already is");
+  [PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY].forEach(k =>
+    assertTrue(SYNC_LOCAL_SET().has(k), "which is the convention this now matches"));
+  /* And the deliberate exception, so a later tidy-up does not sweep it in with the rest. */
+  assertTrue(!SYNC_LOCAL_SET().has(COACH_HINT_KEY),
+    "having been shown a hint is a fact about him, not about a device");
+  /* THE STANDING RULE, stated once here rather than per key, because a prefix scan means
+     the next feature opts IN to syncing by forgetting about it.
+
+     ARRAYS are the destructive case: mergeOneKey's default for one is
+     `mineIsNewer ? mine : theirs`, so one device's whole list is thrown away. That is the
+     campaign bug, the flags bug and the srslog bug, all three. Plain objects fall to
+     mergeObjUnion instead, which is a top-level union — both devices' entries survive and
+     only a same-key conflict picks a side, which is acceptable for the settings-shaped
+     stores that use it. So this asserts on arrays, which is where the real loss is. */
+  const arrays = [...new Set(Object.keys(localStorage).filter(k => k.indexOf("hvr_") === 0))]
+    .filter(k => !SYNC_NEVER_SET().has(k) && !SYNC_LOCAL_SET().has(k) && !MERGE_RULES[k])
+    .filter(k => { try { return Array.isArray(JSON.parse(lsGet(k))); } catch (e) { return false; } });
+  assertEq(arrays, [], "every synced array-valued key has a merge rule");
+});
+T("mergeSrsLog: both devices' answers survive, and the order cannot flip", () => {
+  /* It had no rule, so an array hit `mineIsNewer ? mine : theirs` and one device's
+     calibration evidence was discarded on every sync — silently, because the only thing
+     that reads it is the "is the schedule right?" measurement. */
+  const phone = [{ t: 100, k: "בית", s: "prod", g: 2 }, { t: 300, k: "רכבת", s: "prod", g: 1 }];
+  const laptop = [{ t: 200, k: "מטוס", s: "recv", g: 3 }];
+  const merged = mergeSrsLog(phone, laptop);
+  assertEq(merged.map(e => e.t), [100, 200, 300], "all three, in time order");
+  assertEq(mergeSrsLog(laptop, phone).map(e => e.t), [100, 200, 300],
+    "and the same whichever device is merging — an order that flips rewrites the file forever");
+  /* The same answer arriving from both sides is one answer, not two. */
+  assertEq(mergeSrsLog(phone, phone).length, 2, "identical entries dedupe");
+  /* Same millisecond, different words, is two real answers and must not collapse. */
+  assertEq(mergeSrsLog([{ t: 5, k: "א", s: "prod" }], [{ t: 5, k: "ב", s: "prod" }]).length, 2,
+    "one timestamp, two words, two entries");
+  assertEq(mergeSrsLog([{ t: 5, k: "א", s: "prod" }], [{ t: 5, k: "א", s: "recv" }]).length, 2,
+    "and the two sides of one word are two entries");
+  assertEq(mergeSrsLog(phone, laptop, 2).map(e => e.t), [200, 300], "the cap keeps the newest");
+  assertEq(mergeSrsLog(null, undefined), [], "and nothing at all is survivable");
+  assertEq(mergeSrsLog([null, 3, "x"], []).length, 0, "as is a corrupt entry");
+});
+T("pathLessonRec: memoised on the raw store, so a save is picked up immediately", () => {
+  /* 232 parses of the whole scores store in one render is what this replaced. Keyed on the
+     raw string precisely so there is no invalidation to forget — the risk being cached
+     staleness, which is what this pins. */
+  const saved = lsGet(PATH_SCORES_KEY);
+  try {
+    pathScoresSave({ nd: { 99: { pct: 90, gold: true } } });
+    assertTrue(!!pathLessonRec("nd", 99), "reads what was just written");
+    assertEq(pathLessonRec("nd", 99).gold, true);
+    pathScoresSave({ nd: { 99: { pct: 90, gold: false } } });
+    assertEq(pathLessonRec("nd", 99).gold, false, "and sees the very next write, uncached");
+    pathScoresSave({});
+    assertEq(pathLessonRec("nd", 99), undefined, "including a write that removes it");
+    assertEq(pathLessonRec("nosuch", 99), undefined, "an absent section is undefined, not a throw");
+  } finally {
+    if (saved === null) localStorage.removeItem(PATH_SCORES_KEY); else lsSet(PATH_SCORES_KEY, saved);
+  }
+});
 
 /* ---- surviving a phone killing the tab ----
    sessionValidate is the gate on resuming. It is tested for what it REFUSES, because
@@ -33735,13 +33901,23 @@ T("mergeFlags: an untouched match merges to the same open flag either way", () =
   assertTrue(!mergeFlags([f], [Object.assign({}, f)], 40)[0].resolved);
 });
 T("flagResolve: stays in the store, inert rather than gone", () => {
-  lsSet(FLAG_KEY, JSON.stringify([{ id: "keep-me", text: "x" }]));
-  flagResolve("keep-me");
-  const out = flagAll();
-  assertEq(out.length, 1, "resolving is not deleting");
-  assertTrue(out[0].resolved);
-  assertTrue(out[0].resolvedTs > 0);
-  localStorage.removeItem(FLAG_KEY);
+  /* PUTS THE REAL FLAGS BACK. This used to overwrite hvr_flags and then REMOVE it, so
+     opening ?selftest on his phone destroyed every flag he had raised — verified: two
+     flags in, run the suite, key gone. It looked survivable only because mergeFlags is a
+     union and the next sync pull restores them; anything raised since the last push was
+     simply lost. CLAUDE.md's rule about restoring a real store in a finally exists for
+     exactly this, and this test was the one place breaking it. */
+  const saved = lsGet(FLAG_KEY);
+  try {
+    lsSet(FLAG_KEY, JSON.stringify([{ id: "keep-me", text: "x" }]));
+    flagResolve("keep-me");
+    const out = flagAll();
+    assertEq(out.length, 1, "resolving is not deleting");
+    assertTrue(out[0].resolved);
+    assertTrue(out[0].resolvedTs > 0);
+  } finally {
+    if (saved === null) localStorage.removeItem(FLAG_KEY); else lsSet(FLAG_KEY, saved);
+  }
 });
 T("flagsWaiting: honest about whether they have actually reached GitHub", () => {
   /* syncMeta().last is stamped only after a successful push — see syncRun, which carries

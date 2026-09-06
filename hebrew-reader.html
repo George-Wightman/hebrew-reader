@@ -8673,9 +8673,10 @@ function SYNC_LOCAL_SET() {
        this app (PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY) is already local; it was the
        odd one out.
 
-       COACH_HINT_KEY deliberately stays synced: "he has been shown the long-press hint"
-       is a fact about HIM, not about a device, and learning it twice on two devices is
-       the worse outcome. */
+       COACH_HINT_KEY used to be named here as a deliberate exception — "he has been shown
+       the long-press hint" being a fact about him rather than about a device. The gesture
+       and its key are both gone; a device that still holds hvr_coachhint keeps a harmless
+       orphan that nothing reads. */
     COACH_KEY, FORECAST_SAY_KEY, FC_OPEN_KEY
   ]));
 }
@@ -28983,75 +28984,30 @@ runFreshStart();
    card as you go, so the cards done so far are banked and only the current one is
    dropped. No confirm — leaving costs nothing, and a dialog guarding a harmless
    action is just friction. */
-/* ---- the coach, from the card he is actually on -----------------------------
-   The last of the coach's entry points and the only one that touches the drill card, so
-   it is deliberately A GESTURE AND NOT A CONTROL. Style guide §4 records that this card
-   lost a glyph, a label and a direction pill to "one signal, not four weak ones"; putting
-   a button back on it to reach something already one nav tap away would be re-adding
-   exactly what that argument removed. Holding the card adds nothing to look at.
+/* ---- reaching the coach from a card -----------------------------------------
+   THERE WAS A LONG-PRESS GESTURE HERE AND IT IS GONE. Holding the drill card opened the
+   inspector, after 550ms, anywhere on the card that was not already a control. George:
+   "why does holding down on the screen on any point pull up the 'under the hood'/ coach
+   feature? I'm trying to copy some text to show you a bug and it's keep piping it up".
 
-   Ignores anything that is already a control, and cancels on movement — the card carries
-   tappable words and a scroll, and a long-press that steals either would be worse than no
-   gesture at all. */
-const COACH_HINT_KEY = "hvr_coachhint";
-const COACH_PRESS_MS = 550;
-let coachPressT = null, coachPressAt = null, coachPressFired = false;
-function coachPressClear() {
-  if (coachPressT) { clearTimeout(coachPressT); coachPressT = null; }
-  coachPressAt = null;
-}
-/* Discoverable rather than permanent — §4 again: a line read three hundred times is
-   wallpaper. It says this once and never again after the gesture has been used. */
-function coachCardHint() {
-  return lsGet(COACH_HINT_KEY) === "1" ? "" : "Hold the card to ask the coach about it";
-}
+   It cancelled on movement, which was supposed to protect selection and did not: starting
+   a selection on Android IS a stationary hold, so the gesture always won. The reply
+   bubble is a plain div, so it was not covered by the button/input/textarea exclusion —
+   the one thing on the card he most wants to copy was the one it reliably stole.
+
+   Not worth rescuing with a longer hold or a two-finger variant. The gesture existed
+   because the coach was buried three scrolls inside the inspector; the nav bubble now
+   opens the coach dock in one tap from anywhere, so it was shortcutting a journey that no
+   longer exists — and it opened the OLD panel, which is now the demoted surface. Deleting
+   it costs nothing and gives the card's text back to the clipboard.
+
+   COACH_HINT_KEY ("hvr_coachhint") went with it. Devices that already have the key keep a
+   harmless orphan; nothing reads it. */
 function learnHintSet(text) {
   const el = document.getElementById("lRunHint");
   if (!el) return;
-  el.textContent = [text, coachCardHint()].filter(Boolean).join(" · ");
+  el.textContent = text || "";
 }
-(function coachWireCard() {
-  const card = document.getElementById("lCard");
-  if (!card) return;
-  card.addEventListener("pointerdown", (e) => {
-    if (e.button) return;
-    if (e.target && e.target.closest && e.target.closest("button, input, textarea, a, select")) return;
-    coachPressFired = false;
-    coachPressAt = { x: e.clientX, y: e.clientY };
-    coachPressT = setTimeout(() => {
-      coachPressT = null;
-      coachPressFired = true;
-      try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) {}
-      /* Pointed at the card he is on. uhModalOpen puts the session above it in the trail,
-         so the way out of a card is its session rather than the top of the panel. */
-      let i = 0;
-      try { i = (typeof learnSession !== "undefined" && learnSession) ? learnSession.i : 0; } catch (err) {}
-      lsSet(COACH_HINT_KEY, "1");
-      /* The hint has done its job the moment the gesture works once. Taken off the line
-         now rather than at the next render, so it is gone when he closes the panel. */
-      const hintEl = document.getElementById("lRunHint");
-      if (hintEl) hintEl.textContent = hintEl.textContent
-        .replace(/\s*·?\s*Hold the card to ask the coach about it/, "").trim();
-      uhModalOpen(true, { kind: "card", id: String(i) });
-    }, COACH_PRESS_MS);
-  });
-  card.addEventListener("pointermove", (e) => {
-    if (!coachPressAt) return;
-    if (Math.abs(e.clientX - coachPressAt.x) > 10 || Math.abs(e.clientY - coachPressAt.y) > 10)
-      coachPressClear();
-  });
-  ["pointerup", "pointercancel", "pointerleave"].forEach(ev =>
-    card.addEventListener(ev, coachPressClear));
-  /* The click and the context menu that follow a completed press belong to a gesture that
-     is already over — without this, holding a word both opens the coach and reveals the
-     word underneath it. */
-  card.addEventListener("click", (e) => {
-    if (!coachPressFired) return;
-    coachPressFired = false;
-    e.preventDefault(); e.stopPropagation();
-  }, true);
-  card.addEventListener("contextmenu", (e) => { if (coachPressFired) e.preventDefault(); });
-})();
 
 document.getElementById("lQuitBtn").onclick = () => {
   statsCardEnd();          // don't bill the abandoned card's open time to anything
@@ -31247,38 +31203,39 @@ T("campNodeWalked: without any lesson record it is still walked", () => {
     assertTrue(!campNodeDone("nd", st.c, st.srs), "but walked is not gold");
   } finally { pathScoresSave(keep); }
 });
-T("coachCardHint: says it once and never again", () => {
-  /* Standing instructions become wallpaper — §4. This is the whole reason the gesture is
-     announced by a line that retires itself rather than by a control that cannot. */
-  const saved = lsGet(COACH_HINT_KEY);
-  try {
-    localStorage.removeItem(COACH_HINT_KEY);
-    assertTrue(/Hold the card/.test(coachCardHint()), "before it has ever been used");
-    lsSet(COACH_HINT_KEY, "1");
-    assertEq(coachCardHint(), "", "and nothing at all afterwards");
-  } finally { if (saved == null) localStorage.removeItem(COACH_HINT_KEY); else lsSet(COACH_HINT_KEY, saved); }
-});
-T("learnHintSet: the shortcuts and the hint share one line without a stray separator", () => {
-  const saved = lsGet(COACH_HINT_KEY);
+T("learnHintSet: the line carries the shortcuts and nothing else now", () => {
+  /* It used to append "Hold the card to ask the coach about it" and retire that line once
+     the gesture had been used. The gesture is gone — it stole text selection on the one
+     element he most wants to copy — so the line is the shortcuts alone. */
   const el = document.getElementById("lRunHint");
   const keep = el.textContent;
   try {
-    lsSet(COACH_HINT_KEY, "1");
     learnHintSet("");
-    assertEq(el.textContent, "", "on touch, with the hint retired, the line is empty");
+    assertEq(el.textContent, "", "an empty base leaves no stray separator behind it");
     learnHintSet("Space to reveal");
-    assertEq(el.textContent, "Space to reveal", "and carries only the shortcuts");
-    localStorage.removeItem(COACH_HINT_KEY);
-    learnHintSet("");
-    assertEq(el.textContent, "Hold the card to ask the coach about it",
-      "an empty base does not leave a leading separator");
-    learnHintSet("Space to reveal");
-    assertEq(el.textContent, "Space to reveal · Hold the card to ask the coach about it",
-      "and both together are joined once");
-  } finally {
-    if (saved == null) localStorage.removeItem(COACH_HINT_KEY); else lsSet(COACH_HINT_KEY, saved);
-    el.textContent = keep;
-  }
+    assertEq(el.textContent, "Space to reveal", "and a real one is passed straight through");
+    assertTrue(!/Hold the card/.test(el.textContent), "with no trace of the retired gesture");
+  } finally { el.textContent = keep; }
+});
+T("the long-press gesture is gone, card text and all", async () => {
+  /* George: "I'm trying to copy some text to show you a bug and it's keep piping it up."
+     Driven through a real pointerdown on the real card rather than asserted on a name,
+     because the way this regresses is someone re-wiring the listener. The wait has to
+     OUTLAST the 550ms the gesture used to take — checking immediately would have passed
+     just as happily while the gesture was still there. */
+  assertEq(typeof COACH_PRESS_MS, "undefined", "the gesture's timer constant is gone");
+  assertEq(typeof coachCardHint, "undefined", "and the hint line that announced it");
+  const card = document.getElementById("lCard");
+  const modal = document.getElementById("uhModal");
+  assertTrue(!!card && !!modal, "the card and the panel both still exist");
+  const was = modal.style.display;
+  try {
+    modal.style.display = "none";
+    card.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 40 }));
+    await new Promise(r => setTimeout(r, 700));
+    assertEq(modal.style.display, "none",
+      "a hold of 700ms on the card no longer opens the inspector");
+  } finally { modal.style.display = was; }
 });
 T("forecastLine: names the words, because a count is not information", () => {
   /* George on "153 due for review — the next session takes 5 of them": "See how that's not
@@ -32859,9 +32816,8 @@ T("SYNC: the coach's own keys do not travel, and the one that would lose data le
   assertTrue(SYNC_LOCAL_SET().has(FC_OPEN_KEY), "as every other disclosure state already is");
   [PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY].forEach(k =>
     assertTrue(SYNC_LOCAL_SET().has(k), "which is the convention this now matches"));
-  /* And the deliberate exception, so a later tidy-up does not sweep it in with the rest. */
-  assertTrue(!SYNC_LOCAL_SET().has(COACH_HINT_KEY),
-    "having been shown a hint is a fact about him, not about a device");
+  /* COACH_HINT_KEY was asserted here as the deliberate exception. It went when the
+     long-press gesture it announced was deleted. */
   /* THE STANDING RULE, stated once here rather than per key, because a prefix scan means
      the next feature opts IN to syncing by forgetting about it.
 

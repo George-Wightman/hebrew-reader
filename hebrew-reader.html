@@ -6764,6 +6764,26 @@ function storageSummary(r) {
 const HEBREW_FORM_RE = /^[֐-׿'’ ]+$/;
 function isHebrewForm(s) { return HEBREW_FORM_RE.test(String(s || "").trim()); }
 
+/* ANYTHING SPOKEN ALOUD HAS TO BE HEBREW ALONE. The compose coach filled say.tr and
+   say.en correctly and then duplicated both inside say.he — "מעולה! ואיפה אתה שותה קפה
+   עכשיו? (meula! ve'eifo ata shote kafe achshav? - Excellent! And where are you drinking
+   coffee now?)" — so speakHe read out the Hebrew, then the transliteration, then the
+   English. George: "it read out like the full thing not like it usually does."
+
+   The prompt now says he is Hebrew letters only, and this is why that is not enough on
+   its own: the same argument composeCredit makes, where the app derives and the model
+   only points. A prompt is a request; this is the thing that holds.
+
+   CUTS AT THE FIRST LATIN LETTER rather than stripping brackets, because the pollution
+   has no fixed shape — a parenthetical, a dash, a bare gloss trailing off the end are all
+   the same mistake. Hebrew punctuation, digits and quotes before that point survive,
+   since a real reply can contain them. Returns "" when there was no Hebrew at all, which
+   the caller already handles: composeAdvance stages `failed` and he can send again. */
+function heOnly(s) {
+  const cut = String(s || "").split(/[A-Za-z]/)[0];
+  return cut.replace(/[\s(\[{<"'’,\-–—:;]+$/, "").trim();
+}
+
 /* Roots come back separated by either the Hebrew maqaf (ה־ל־ך) or an ASCII
    hyphen (ש-ל-ח), sometimes both within one batch. Displayed side by side that
    just looks like a bug, so settle on the maqaf. */
@@ -21582,11 +21602,23 @@ function composePrompt(x) {
     "best — the version of his sentence worth keeping for him to practise later: his " +
     "own when it was clean, the corrected one otherwise. Give he, tr (transliteration) " +
     "and en (English). Leave he empty if the sentence is not worth keeping.\n" +
-    "say — your reply, in Hebrew he can follow at his level, WITH translit and English. " +
-    "React to what he actually said. It must be a sentence a Hebrew speaker would really " +
-    "utter — read it back to yourself before you send it. Never quote a " +
-    "mistranscription back at him, and never make your reply be ABOUT the wording of the " +
-    "transcript.\n" +
+    /* THE LINE THAT MADE IT READ THE WHOLE THING ALOUD. It used to end "in Hebrew he can
+       follow at his level, WITH translit and English" — meant as "fill in the tr and en
+       fields", read by the model as "put them inside the string". It filled all three
+       correctly AND duplicated two of them into he, so speakHe read the Hebrew, then the
+       transliteration, then the English. George: "it read out like the full thing not
+       like it usually does". composeTidy's heOnly guard is the half that actually holds;
+       this is the half that stops it happening. */
+    "say — your reply, in Hebrew he can follow at his level. React to what he actually " +
+    "said. It must be a sentence a Hebrew speaker would really utter — read it back to " +
+    "yourself before you send it. Never quote a mistranscription back at him, and never " +
+    "make your reply be ABOUT the wording of the transcript.\n" +
+    "  say.he — HEBREW LETTERS ONLY. No transliteration, no English, no brackets, no " +
+    "gloss. This string is spoken aloud by the device exactly as written, so anything in " +
+    "it that is not Hebrew gets read out to him.\n" +
+    "  say.tr — the pronunciation. say.en — the English. They are SEPARATE FIELDS and " +
+    "are already shown to him under the Hebrew. Putting them in he as well does not help " +
+    "him, it makes the app read them out.\n" +
     /* THE FIELD THE WHOLE "never end on an unanswered question" RULE RESTS ON. The old
        code inferred this from say.he being non-empty, which is true of every reply the
        coach ever writes and therefore told it nothing — so he got cut off mid-question:
@@ -21615,9 +21647,12 @@ function composeNormalise(out) {
     bad: (Array.isArray(out.bad) ? out.bad : []).filter(k => typeof k === "string"),
     fix: String(out.fix || "").trim(),
     why: String(out.why || "").trim(),
-    say: { he: String(say.he || "").trim(), tr: String(say.tr || "").trim(),
+    /* heOnly on both, and on newWords below. say.he is what speakHe reads aloud; best.he
+       is what gets BANKED for later practice, so a polluted one outlives the turn and
+       comes back as a drill card weeks later. Same exposure, same guard. */
+    say: { he: heOnly(say.he), tr: String(say.tr || "").trim(),
            en: String(say.en || "").trim() },
-    best: { he: String(best.he || "").trim(), tr: String(best.tr || "").trim(),
+    best: { he: heOnly(best.he), tr: String(best.tr || "").trim(),
             en: String(best.en || "").trim() },
     /* Absent means "did not ask" — a reply that forgot the field is treated as one that
        owes him nothing, which errs towards ending cleanly rather than towards a turn
@@ -21820,8 +21855,14 @@ async function composeTurn(s, c) {
     /* The reason the mode exists at all, in George's words: "its also a way for hte app
        to learn to other words I ight be aware of that havent came up organically". Free
        composition is where he reaches for words nobody scripted for him. */
-    try { padIngest({ words: out.newWords.map(w => ({ hebrew: w && w.he, translit: w && w.tr,
-                                                      english: w && w.en })) }); } catch (e) {}
+    /* heOnly here too, and this one goes furthest of the three: padIngest writes into his
+       LIBRARY, so a Hebrew word carrying a parenthetical gloss becomes a permanent entry
+       that no later turn can undo. Filtered rather than merely cleaned — a "word" with no
+       Hebrew left in it is not a word he said. */
+    try { padIngest({ words: out.newWords
+      .map(w => ({ hebrew: heOnly(w && w.he), translit: String((w && w.tr) || "").trim(),
+                   english: String((w && w.en) || "").trim() }))
+      .filter(w => w.hebrew) }); } catch (e) {}
   }
   return composeNormalise(out);
 }
@@ -34033,6 +34074,42 @@ T("composeNormalise: an odd reply degrades to a no-op rather than throwing", () 
      invent evidence for levelRecord out of a reply that was already wrong. */
   assertNull(composeNormalise({ lvl: 9 }).lvl);
   assertNull(composeNormalise({ lvl: "three" }).lvl);
+});
+T("heOnly: what gets spoken aloud is Hebrew and nothing else", () => {
+  /* THE EXACT PAYLOAD FROM THE FLAG. The model filled tr and en correctly and then
+     duplicated both into he, so speakHe read the Hebrew, the transliteration and the
+     English in one breath. George: "it read out like the full thing". */
+  assertEq(heOnly("מעולה! ואיפה אתה שותה קפה עכשיו? (meula! ve'eifo ata shote kafe achshav? - Excellent! And where are you drinking coffee now?)"),
+    "מעולה! ואיפה אתה שותה קפה עכשיו?",
+    "the Hebrew survives whole and the gloss is cut off it");
+  assertEq(heOnly("מעולה! הנה עוגיות וקפה בשבילך."), "מעולה! הנה עוגיות וקפה בשבילך.",
+    "a clean reply is untouched, punctuation and all");
+  /* No fixed shape to strip: it arrives as a parenthetical, after a dash, or bare. */
+  assertEq(heOnly("כן — yes"), "כן", "a dash and a gloss go too");
+  assertEq(heOnly("סוכר sukar"), "סוכר", "and a bare one with no punctuation at all");
+  assertEq(heOnly("שלום ["), "שלום", "a bracket opened for a gloss that never came");
+  assertEq(heOnly(""), "", "nothing in, nothing out");
+  assertEq(heOnly(null), "", "and a missing field does not throw");
+  /* Nothing but Latin means there is no reply. composeAdvance already stages `failed`
+     on an empty say.he and lets him send the same transcript again. */
+  assertEq(heOnly("Excellent! Where do you drink it?"), "",
+    "an all-English reply is no reply, not a spoken English sentence");
+  /* Hebrew legitimately carries digits and quotes — those are not the tell, Latin is. */
+  assertEq(heOnly('אני רוצה 2 קפה'), "אני רוצה 2 קפה", "digits are part of real Hebrew");
+});
+T("composeNormalise: the guard covers everything that outlives the turn", () => {
+  const polluted = "משרד (misrad - office)";
+  const out = composeNormalise({
+    say: { he: polluted, tr: "misrad", en: "office" },
+    best: { he: polluted, tr: "misrad", en: "office" }
+  });
+  assertEq(out.say.he, "משרד", "say.he is what speakHe reads aloud");
+  /* best.he is BANKED. A polluted one comes back as a drill card weeks later, long after
+     the turn that made it is gone — so it needs the guard more than say.he does, not
+     less. */
+  assertEq(out.best.he, "משרד", "and best.he is what gets banked for later practice");
+  assertEq(out.say.tr, "misrad", "the fields that are meant to be Latin are left alone");
+  assertEq(out.say.en, "office");
 });
 T("composeOpening: the weakest words go on the table first", () => {
   /* A node's whole purpose is the words at the bottom of its own sort — the same

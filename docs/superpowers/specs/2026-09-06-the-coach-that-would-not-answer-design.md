@@ -56,11 +56,16 @@ Two details from the capture that shape the fix:
   rows, so the attached source code was the empty string. The model had a blank panel *and*
   a rule saying answer only from the panel. So this is a prompt-framing bug end to end —
   there is no payload change that would have rescued it.
-- **The comment above the framing claims a test pins it** ("KEPT VERBATIM ACROSS THE
-  REWRITE, and a test holds it there"). There is no such test. `T("coachPrompt: sends the
-  live thread and this subject's report, not past ones")` checks the thread, the report,
-  the code and the retry — never the framing sentence. The claim is stale; nothing has to
-  be unpicked to change the wording.
+- **A test does pin the framing sentence, and it is right to.** `T("uhAskParts: sends the
+  panel, the real code, and says it is a fragment")` asserts `/fragment of a much larger/`
+  — it lives on `uhAskParts`, not `coachPrompt`, which is why a search of the coach tests
+  misses it. It caught the first cut of this change, which deleted the sentence outright.
+
+  It protects something real and separate from the bug: a model asked an app question
+  without it describes the app it imagines rather than the one he is holding. So the
+  sentence survives, **scoped to the app branch** instead of framing the whole prompt.
+  That is the actual distinction this change turns on — "this slice of code is partial" is
+  true and useful; "you know nothing but this slice" is what refused to say *office*.
 
 ## What is not wrong
 

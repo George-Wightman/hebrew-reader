@@ -14340,13 +14340,12 @@ function uhThreadBlock() {
   live.forEach(t => wrap.append(uhTurnBlock(t, false)));
   if (coachBusy) wrap.append(uhTurnBlock(
     { q: coachBusy.q, subject: coachBusy.subject, a: "", err: "", busy: true }, false));
-  if (live.length && !coachBusy) {
-    const warn = document.createElement("div");
-    warn.className = "uh-note";
-    warn.textContent = "Answered from this panel and the rules named on it — not the " +
-                       "whole app. Check it against the numbers below.";
-    wrap.append(warn);
-  }
+  /* THE STANDING CAVEAT IS GONE. It read "Answered from this panel and the rules named on
+     it — not the whole app", after every live turn, forever. Two things killed it: it is
+     no longer true, since the coach answers Hebrew from what it knows; and it was already
+     what style guide §4 calls wallpaper — a line rendered three hundred times is not read
+     the three hundred and first. coachUncited's caveat replaces it, and that one is rare
+     and names the actual figure. */
   return wrap;
 }
 /* Everything he can see, for the clipboard and for the flag. Past sittings included: they
@@ -14551,44 +14550,107 @@ function coachBoot() {
    of the same weight on the same fragment share their failure modes and agree confidently
    when both are wrong. So the app checks the figures itself instead of asking again.
 
-   SUBSTRING, and high-precision by design. Small integers he might be counting with are in
-   the payload almost always, so this does not fire on "2 words left"; what it catches is a
-   distinctive invented figure — a threshold, a stability, a difficulty — which is the
-   failure that actually misleads him. Same principle as composeCredit: the app derives,
-   the model only points. */
+   SUBSTRING, and high-precision by design. What it catches is a distinctive invented
+   figure — a threshold, a stability, a difficulty — which is the failure that actually
+   misleads him. Same principle as composeCredit: the app derives, the model only points.
+
+   ONLY FIGURES SHAPED LIKE A METRIC: a decimal, or an integer of two or more digits. The
+   old rule was "any number not in the payload", which was right while every answer was
+   about app state and became wrong the moment the coach started answering Hebrew. The
+   payload on a compose card is nearly empty — that is exactly the card the flag was
+   raised from — so "there are 2 ways to say it" would have burned a second call and then
+   told him to check "2" against a report that never mentions it.
+
+   The trade, taken deliberately: an invented single-digit metric ("your stability is 4
+   days") now passes unflagged. That is a real if narrow loss, bought against the guard
+   firing on ordinary prose, which is now most of what the coach says. */
 function coachUncited(answer, payload) {
   const hay = String(payload || "");
   const seen = {}, out = [];
   String(answer || "").replace(/\d+(?:\.\d+)?/g, m => {
+    if (m.indexOf(".") === -1 && m.length < 2) return m;
     if (!seen[m] && hay.indexOf(m) === -1) { seen[m] = 1; out.push(m); }
     return m;
   });
   return out;
 }
 
+/* Who he is, for a prompt that now hands him Hebrew to say. A parameter with a default
+   rather than a read inside the string builder, so a test can pin an answer without
+   depending on whichever way his real settings happen to be set today. */
+function coachWho() {
+  let gender = "m", level = LEVEL_MIN;
+  try { gender = speakerGet(); } catch (e) {}
+  try { level = learnerLevel(); } catch (e) {}
+  return { gender: gender, level: level };
+}
+
 /* What actually goes to the model. The CURRENT subject's report in full, and every earlier
    turn in this sitting as its text only — so a sitting that walks six words is one report
-   plus twelve short exchanges, not six reports. Past sittings are not here at all. */
-function coachPrompt(rep, code, thread, subject, question, retryOn) {
+   plus twelve short exchanges, not six reports. Past sittings are not here at all.
+
+   THE PROMPT THAT REFUSED TO SAY "OFFICE". This used to open by telling the model it was
+   looking at "a fragment of a much larger single-file app" and to answer "from the panel
+   and code below and NOTHING else" — so "how do I say office" came back as a request for
+   the vocabulary file, twice, in under a second, with both calls reporting success. See
+   2026-09-06-the-coach-that-would-not-answer-design.md.
+
+   The rewrite splits a rule the old text had welded together. "Never invent a figure about
+   his state" is the one worth having, and coachUncited enforces it in code either way.
+   "You know nothing except this panel" is the one that made him unanswerable, and it is
+   gone. A model permitted both kinds of answer picks the right one from the question
+   itself, which is why there is no routing call here — see the spec's deferred list. */
+function coachPrompt(rep, code, thread, subject, question, retryOn, who) {
   const hist = (thread || []).filter(t => t && t.a && !t.err);
+  const w = who || coachWho();
   return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
-    "learning conversational Hebrew to talk with his partner's grandfather. He is using " +
-    "an app you built with him and is asking you about what it is doing.\n\n" +
+    "learning conversational Hebrew to talk with his partner's grandfather. Everyday " +
+    "spoken Hebrew, never textbook.\n\n" +
     "You are the SAME coach who runs his sentence-building sessions. One voice: warm, " +
     "direct, never padded, never congratulatory about nothing.\n\n" +
-    /* KEPT VERBATIM ACROSS THE REWRITE, and a test holds it there. What follows is a
-       fragment of a much larger single-file app, and a model not told so will answer
-       about the app it imagines rather than the one he is holding. */
-    "What follows is a fragment of a much larger single-file Hebrew learning app: a " +
-    "diagnostic panel he is reading, and the source of the functions that produced it.\n\n" +
-    "Rules you must follow:\n" +
-    "- Answer from the panel and code below and NOTHING else. If what is shown cannot " +
-    "answer him, say so plainly and say what you would need. Never guess at code you " +
-    "cannot see.\n" +
-    "- Every number you state must appear in what you were given. Do not compute new " +
-    "figures, do not estimate, and do not round.\n" +
-    "- Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
-    "- Do not suggest edits to the app. Explain what it is doing and why.\n" +
+    "He asks you two different kinds of thing and you answer both.\n\n" +
+    "ABOUT HEBREW — how to say something, what a word means, why a form is what it is, " +
+    "how a native would really put it. ANSWER IT, from what you know, in full. This is " +
+    "the main thing he asks you and the reason you are here. He may be mid-session with " +
+    "a card on screen, or he may just have been asked something by his partner's " +
+    "grandfather and want to know how to reply. NEVER tell him you would need a file, a " +
+    "database, a dictionary or more of the app to answer a Hebrew question. You are his " +
+    "coach. You know Hebrew. Answer him.\n\n" +
+    "ABOUT THE APP — what it decided, why this card, why that word came up. Answer from " +
+    "the material below and only from it. This is where you must not guess: every figure " +
+    "you state about HIS words, HIS schedule or HIS progress has to appear in what you " +
+    "were given. Do not compute new figures, do not estimate, and do not round. If the " +
+    "material does not answer him, say so plainly and say what you would need. Never " +
+    "guess at code you cannot see, and do not suggest edits to the app.\n" +
+    /* THIS SENTENCE IS PINNED BY A TEST, and rightly — uhAskParts asserts it, which is
+       why the rewrite that dropped it failed the suite rather than shipping. Without it a
+       model asked an app question answers about the app it imagines instead of the one he
+       is holding. What changed is its SCOPE: it qualifies the app answer, where it was
+       written to belong, instead of standing at the top of the prompt fencing off Hebrew
+       as well. That framing is what refused to say "office"; this sentence never was. */
+    "What you are given of the app is a fragment of a much larger single-file program: a " +
+    "diagnostic panel he is reading, and the source of the functions that produced it. " +
+    "It is not the whole app, so do not describe machinery you cannot see.\n\n" +
+    "HE IS SPEAKING AS A " + (w.gender === "f" ? "WOMAN" : "MAN") + ". Anything you hand " +
+    "him to say agrees with that — ani rotze from a man, ani rotza from a woman.\n\n" +
+    "HIS LEVEL IS " + w.level + " OF 5.\n" + LEVEL_RUBRIC + "\n" +
+    "Pitch what you give him there or a little above it.\n\n" +
+    /* He READS the transliteration — it is the line he actually produces from — so a
+       second convention here teaches two spellings for one sound. CLAUDE.md calls this
+       non-negotiable and content/nodes.json carried both schemes until v4 because the
+       writer prompt says only "plain English letters the way he would type them". The
+       coach hands him transliteration straight into a chat, so it gets the scheme whole. */
+    "WHEN YOU GIVE HIM HEBREW: the Hebrew, then how it is said, then what it literally " +
+    "says. The written-out pronunciation follows this scheme exactly, because it is the " +
+    "line he reads aloud from:\n" +
+    "- kh for ח and כ, never ch — khaver, not chaver.\n" +
+    "- The article and one-letter prepositions JOIN the word: harekhov, bakheder, " +
+    "la'avoda. No hyphen.\n" +
+    "- An apostrophe before a vowel so the join stays readable: ha'ir, ha'otobus, la'ir " +
+    "— never hair, which reads as the English word.\n" +
+    "- ve- for ו as it is really spoken, not the formal u- or va-: ve'ani, vegvina.\n" +
+    "- No diacritics, and no nikud on the Hebrew.\n\n" +
+    "Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
     (retryOn && retryOn.length
       ? "\nYOUR LAST ANSWER USED FIGURES THAT ARE NOT IN THE MATERIAL: " +
         retryOn.join(", ") + ". Answer again using only figures that are present.\n"
@@ -14596,8 +14658,13 @@ function coachPrompt(rep, code, thread, subject, question, retryOn) {
     (hist.length ? "\n=== EARLIER IN THIS CONVERSATION ===\n" + hist.map(t =>
         (t.subject ? "(about " + t.subject + ")\n" : "") +
         "He asked: " + t.q + "\nYou said: " + t.a).join("\n\n") + "\n" : "") +
-    "\n=== WHAT HE IS LOOKING AT NOW" + (subject ? " (" + subject + ")" : "") +
-    " ===\n" + uhText(rep) +
+    /* CONTEXT, NOT THE LIMIT OF WHAT YOU KNOW — and it has to say so, because a section
+       header this emphatic is the whole reason the old prompt read as a wall. Asked from
+       the coach sheet with nothing open there may be no report at all; a bare header over
+       an empty string invites exactly the "I would need the file" answer again. */
+    "\n=== WHAT IS ON HIS SCREEN" + (subject ? " (" + subject + ")" : "") +
+    " ===\nBackground, so you know where he is. It is not the limit of what you know " +
+    "about Hebrew.\n" + (uhText(rep) || "(nothing in particular)") +
     (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
     "\n\n=== HIS QUESTION ===\n" + question;
 }
@@ -33402,6 +33469,15 @@ T("coachUncited: catches an invented figure and not a counted one", () => {
   assertEq(coachUncited("difficulty 6.5 and again 6.5 and also 9.9", payload), ["9.9"],
     "each uncited figure is reported once");
   assertEq(coachUncited("no numbers at all", payload), [], "prose alone is clean");
+  /* THE NARROWING, and the case that forced it. The flag was raised from a compose card,
+     whose report is three dashes — so an ordinary Hebrew answer counting on its fingers
+     had nothing to match against and would have burned a retry to caveat the word "2". */
+  assertEq(coachUncited("there are 2 ways to say it, and the 3rd is rarer", "(nothing in particular)"), [],
+    "a single digit in prose is not a metric, even with an empty payload");
+  assertEq(coachUncited("its stability is 8.3 days", "(nothing in particular)"), ["8.3"],
+    "a decimal still is, however empty the payload");
+  assertEq(coachUncited("it waits 21 days", "(nothing in particular)"), ["21"],
+    "and so is a two-digit figure — that is the shape an invented threshold takes");
   assertEq(coachUncited("", payload), [], "and so is nothing");
 });
 T("coach: a sitting ends on idle and on load, but not on navigation", () => {
@@ -33455,6 +33531,53 @@ T("coachPrompt: sends the live thread and this subject's report, not past ones",
     "an empty thread means no heading claiming there is one");
   const retry = coachPrompt(rep, "", [], "רכבת", "why", ["8.3"]);
   assertTrue(retry.indexOf("8.3") !== -1, "a retry names the figures it must not repeat");
+});
+T("coachPrompt: a Hebrew question is answerable, and the old wall is not there", () => {
+  /* THE FLAGGED BUG, as a test. He asked "How do I say office" on a compose card and got
+     "I would need the vocabulary database ... not in this fragment" — twice, both calls
+     ok, because the prompt said answer from the panel and NOTHING else. A prompt that
+     scopes the model to the material cannot answer him, so the scoping is what is
+     asserted against, not the wording that happened to carry it. */
+  const empty = { title: "The coach", sections: [] };
+  const p = coachPrompt(empty, "", [], "", "How do I say office", null,
+                        { gender: "m", level: 2 });
+  assertTrue(p.indexOf("NOTHING else") === -1,
+    "the model is no longer told the panel is all it knows");
+  /* The fragment sentence STAYS — uhAskParts pins it and it earns that, or an app answer
+     describes machinery the model never saw. What moved is its scope: it qualifies the
+     app branch now instead of framing the whole prompt, which is the difference between
+     "this slice of code is partial" and "you know nothing but this slice". */
+  assertTrue(p.indexOf("fragment of a much larger") > p.indexOf("ABOUT THE APP"),
+    "the fragment caveat sits inside the app branch, not over the whole prompt");
+  assertTrue(p.indexOf("ABOUT HEBREW") < p.indexOf("fragment of a much larger"),
+    "so it is not the first thing the model reads about what it may answer");
+  assertTrue(/NEVER tell him you would need a file/.test(p),
+    "it is told outright not to ask for a file — that is the answer he actually got");
+  assertTrue(p.indexOf("ABOUT HEBREW") !== -1 && p.indexOf("ABOUT THE APP") !== -1,
+    "both kinds of question are permitted, which is what removes the need for a router");
+  /* The honesty rule survives the rewrite — it is a different rule from the wall, and
+     losing it with the wall is the way this change could quietly go wrong. */
+  assertTrue(/has to appear in what you were given/.test(p),
+    "figures about his own state are still fenced to the material");
+  /* He READS the transliteration. Two schemes teach two spellings for one sound. */
+  assertTrue(p.indexOf("kh for") !== -1 && p.indexOf("la'avoda") !== -1,
+    "the transliteration scheme goes with any Hebrew it hands him");
+  assertTrue(/SPEAKING AS A MAN/.test(p), "and who is speaking, so the Hebrew agrees");
+  assertTrue(p.indexOf("HIS LEVEL IS 2 OF 5") !== -1, "and where to pitch it");
+  const her = coachPrompt(empty, "", [], "", "q", null, { gender: "f", level: 4 });
+  assertTrue(/SPEAKING AS A WOMAN/.test(her), "the other setting reaches the prompt too");
+  /* Asked from the sheet with nothing open, uhText(null) is "". A bare header over an
+     empty string is the same invitation to go looking for a file. */
+  const bare = coachPrompt(null, "", [], "", "How do I say office", null,
+                           { gender: "m", level: 1 });
+  assertTrue(bare.indexOf("(nothing in particular)") !== -1,
+    "an empty report says so rather than trailing off into nothing");
+  assertTrue(bare.indexOf("How do I say office") !== -1, "and the question still arrives");
+});
+T("coachWho: reads his real settings, and never throws instead of answering", () => {
+  const w = coachWho();
+  assertTrue(w.gender === "m" || w.gender === "f", "gender is one of the two the app has");
+  assertTrue(w.level >= LEVEL_MIN && w.level <= LEVEL_MAX, "and the level is in band");
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {
   const st = { lib: { "בית": { tr: "bayit", en: "house" },

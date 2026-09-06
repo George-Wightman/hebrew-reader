@@ -9,6 +9,14 @@
      double-click habit is completely unaffected — they only do anything once the page
      is served over https. -->
 <link rel="manifest" href="./manifest.webmanifest">
+<!-- THE FIRST GEMINI CALL OF A SESSION paid DNS, TCP and TLS to a host the page had
+     never touched — commonly 300-900ms on a phone, and exactly what George meant by
+     "a decent bit of latency with the coach, especially on the first messsage".
+     Opening the connection while he is still reading the card moves that cost off the
+     turn. A hint, not a resource: sw.js's shell list is unaffected, and it costs
+     nothing on a session that never calls the API. crossorigin because the real
+     requests are CORS. -->
+<link rel="preconnect" href="https://generativelanguage.googleapis.com" crossorigin>
 <meta name="theme-color" content="#f5f0e7">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1234,6 +1242,16 @@
   .lwhy { margin-top: 18px; background: var(--accent-soft); border-radius: 8px;
           padding: 12px 14px; text-align: left; font-size: .88rem; white-space: pre-wrap; }
 
+  /* THE COACH SAYING IT DID NOT FOLLOW. Deliberately NOT the amber "unknown word"
+     treatment and not the red of a fault: nothing here is wrong. He reached for a word he
+     does not have, which is the app working — style guide §3 has teal meaning "you can
+     act on this", and the act is the button. */
+  .lunsure { margin-top: 14px; background: var(--accent-soft); border-radius: 8px;
+             padding: 10px 13px; text-align: left; display: flex; gap: 10px;
+             align-items: baseline; flex-wrap: wrap; }
+  .lunsure-t { flex: 1 1 180px; font-size: .84rem; color: var(--ink); line-height: 1.45; }
+  .lunsure-b { flex: 0 0 auto; font-size: .8rem; font-weight: 600; }
+
   .lactions { margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
   .lactions .btn { padding: 12px 32px; font-size: 1rem; border-radius: 10px; }
   /* The whole help path, in one quiet link under the one loud button. */
@@ -1446,6 +1464,15 @@
      reads as a message that's just arrived, not another row in the log. */
   .lbub.live { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .lbub.live .lbub-he { font-weight: 600; }
+  /* WAITING, NOT FROZEN. The bubble that holds the "…" while the coach thinks was
+     completely static, so two seconds read as a hung app rather than as someone
+     composing a reply. Nothing here makes the call faster; it stops the wait looking
+     like a fault, which is most of what "a decent bit of latency" was. */
+  .lbub.thinking .lbub-he { animation: lbubthink 1.2s ease-in-out infinite; }
+  @keyframes lbubthink { 0%, 100% { opacity: .32; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .lbub.thinking .lbub-he { animation: none; opacity: .6; }
+  }
   .lbub-he { font-family: "David", "Times New Roman", serif; font-size: 1.05rem;
              color: var(--hebrew); line-height: 1.5; }
   .lbub-tr { font-size: .74rem; color: var(--muted); direction: ltr; text-align: right; }
@@ -13892,6 +13919,49 @@ UH.card = function (id, st) {
       " — " + srsStrengthOf(st.srs, carried, "prod") + ", handed to you deliberately" });
   } catch (e) {}
 
+  /* THE HANDOFF. Without this a compose card reports "Hebrew: —, English: —, no gradable
+     words on this card" — which is what the dock coach was handed when George asked it,
+     mid-conversation, how to say office. It could see that a card existed and nothing
+     about the conversation standing on it, so "I was trying to say a few sugars" had
+     nothing to be answered from.
+
+     George's design, and the reason it works: the drill coach only has to notice, and
+     this is what lets the other one pick it up — "sort of like a 'start a side chat'
+     feature ... I could ask a Q without it seriously impacting hte flow."
+
+     Read straight off the card, which already holds all of it — no new state. */
+  if (kind === "compose") {
+    const lib = st.lib || {};
+    const name = k => (lib[k] && lib[k].tr) || k;
+    const turns = (card.turns || []).slice(-4);
+    const rows = [];
+    /* On `_out` rather than the card: composeAdvance stashes the whole reply there, and
+       the flag belongs to the turn that raised it, not to the card for ever. */
+    const unsure = (card._out && card._out.unsure) || "";
+    if (unsure) rows.push({ note: "You did not follow something he said: " + unsure });
+    turns.forEach(t => {
+      if (t.qhe) rows.push({ note: "You said: " + t.qhe + (t.qtr ? "  (" + t.qtr + ")" : "") });
+      if (t.said) rows.push({ note: "He said: " + t.said });
+      if (t.out && t.out.why) rows.push({ note: "You corrected: " + t.out.why });
+    });
+    /* The line he is answering RIGHT NOW, which is not in `turns` until he replies to it
+       — so leaving it out would hand the coach a transcript that stops one line short of
+       the thing he is actually stuck on. */
+    if (card.item && card.item.qhe)
+      rows.push({ note: "You have just said, and he is answering: " + card.item.qhe +
+                        (card.item.qtr ? "  (" + card.item.qtr + ")" : "") });
+    if (card._said) rows.push({ note: "His answer, as the machine heard it: " + card._said });
+    const objectives = card.objectives || [];
+    const landed = objectives.filter(k => (card.landed || {})[k]);
+    const left = objectives.filter(k => !(card.landed || {})[k]);
+    if (objectives.length) {
+      rows.push({ label: "Words on the table", value: objectives.map(name).join(", ") });
+      rows.push({ label: "He has used", value: landed.length ? landed.map(name).join(", ") : "none yet" });
+      rows.push({ label: "Still to work in", value: left.length ? left.map(name).join(", ") : "none — the list is done" });
+    }
+    if (rows.length) sections.push({ name: "The conversation", open: true, rows: rows });
+  }
+
   sections.push({ name: "Its words", open: true, rows: words.map(w => ({
     label: w, value: srsStrengthOf(st.srs, w, side),
     band: srsStrengthOf(st.srs, w, side), to: { kind: "word", id: w }
@@ -21557,10 +21627,35 @@ function composePrompt(x) {
     "HEAR is the machine's mistake, never his. Do not fault one and do not explain one " +
     "to him: homophones and near-homophones (אטי / איתי, לאט / לעט, " +
     "בקר / בוקר), a missing or added א ה י ו, a prefix the recogniser " +
-    "swallowed. Fault only what would still be wrong if a person had HEARD him say it. " +
-    "And if the transcript reads as nonsense, that is the recogniser — work out the " +
-    "sensible sentence he was most likely saying and answer THAT, rather than building a " +
-    "reply out of the nonsense.\n\n" +
+    "swallowed. Fault only what would still be wrong if a person had HEARD him say it.\n" +
+    /* WHERE IT USED TO GUESS. This read: "if the transcript reads as nonsense, that is
+       the recogniser — work out the sensible sentence he was most likely saying and
+       answer THAT". Written for homophones, and right for those. But it collapsed two
+       situations that need opposite handling, and resolved both by assuming.
+
+       George: "they shouldnt jsut assume (like in a recent example) that I was asking for
+       a few cooking, when what I mean to be asking was for a few sugars, but I didnt know
+       how to say that ... assuming isnt helpful and steers the conversation away from hte
+       direction I was lerning."
+
+       The test that separates them is the one the homophone rule above already uses —
+       could a person who HEARD him have produced this? bishul and sukar sound nothing
+       alike, so no amount of mishearing turns one into the other; אטי and איתי are the
+       same sound, so it does. */
+    "WHEN THE TRANSCRIPT DOES NOT MAKE SENSE there are two different reasons, and they " +
+    "need opposite answers. Ask: could a person who HEARD him say it have produced this " +
+    "transcript from the sentence you are imagining?\n" +
+    "- YES — the machine misheard. Work out the sentence he was really saying and answer " +
+    "THAT rather than building a reply out of the nonsense. Homophones, a swallowed " +
+    "prefix, a missing letter.\n" +
+    "- NO — the only way to make it make sense is to swap in a word that sounds nothing " +
+    "like what he said. He was REACHING for a word he does not have. Do NOT put your " +
+    "guess in his mouth and carry on. He cannot tell that happened, and it steers him " +
+    "away from the thing he was trying to learn to say.\n" +
+    "  Say you did not follow, short and in Hebrew — \"?סוכר\", or simply that you did " +
+    "not understand. You do NOT have to work out what he meant or teach him the word: he " +
+    "can ask you about it separately, and noticing is the whole job. Name what you think " +
+    "he was reaching for, IN ENGLISH, in `unsure`.\n\n" +
     "THE LIBRARY WORDS THE APP DETECTED IN THAT:\n  " +
     (x.saidKeys.length ? x.saidKeys.join(", ") : "(none)") + "\n\n" +
     "Judge whether he CONVEYED something sensible using the words you gave him. A " +
@@ -21570,6 +21665,26 @@ function composePrompt(x) {
        at most 3" every single turn, and a coach told its position against a quota plays
        to the quota — which is precisely the arbitrariness he felt. It now hears about
        the cap only on the turn that is actually the last one. */
+    /* WHAT THE TURN IS FOR, and where "amazing, ... then a strange follow up" came from.
+       The last branch used to read, every single turn: "Ask him one thing about what he
+       just said." A coach required to react and then ask opens with praise, because
+       praise is the cheapest reaction available — so every turn arrived as מעולה!
+       followed by a question that had to be manufactured whether or not there was
+       anything to ask.
+
+       George: "I find in practice that its always just it going 'amazing, ...' or
+       'excelent,...' then asking a kind of strange follow up." His call on the fix: let
+       it pick its move.
+
+       THE GUARD, which this needs or it brings back an older bug. composeEnds ends the
+       conversation when the coach did not ask AND nothing is outstanding — so a coach
+       freely choosing silence on the turn the list happens to complete would cut him off,
+       which is exactly the "conversation abruptly ended when I went to press reply" that
+       `ask` was added to fix. So the freedom is scoped to turns where there is still work
+       left; when the list is done the coach is told the consequence outright. */
+    "NEVER OPEN WITH PRAISE. Not מעולה, not יופי, not \"excellent\" — an automatic " +
+    "compliment on every single turn is worth nothing and he has said so. Praise him " +
+    "when he has actually done something hard, and otherwise just talk to him.\n\n" +
     (x.lastTurn
       ? "THIS IS THE LAST THING YOU WILL SAY TO HIM. Answer what he just said and sign " +
         "off warmly. DO NOT ask him a question — he has no way to reply to it."
@@ -21577,12 +21692,21 @@ function composePrompt(x) {
         ? "HE IS RUNNING OUT OF ROOM TO USE: " + x.outstanding.join(", ") + ". Stop " +
           "making conversation and make room — ask him something one of those words is " +
           "the natural answer to."
-        : "Ask him one thing about what he just said. If it opens a door to a word he " +
-          "still has to work in, better.") + "\n\n" +
+        : x.listDone
+          ? "He has used everything on the list, so this turn decides whether you carry " +
+            "on. Ask him something and he gets another turn; say nothing back and the " +
+            "conversation ends here. Both are fine — pick the one this moment deserves, " +
+            "and if you are ending it, end it warmly rather than trailing off."
+          : "YOUR MOVE IS YOURS TO PICK. Answer what he said, tell him something of your " +
+            "own, agree, disagree, or ask him something — whichever a real person would " +
+            "do next. You do NOT have to ask a question every turn; ask when you actually " +
+            "want to know, or when it opens a door to a word he still has to work in. A " +
+            "reply that just carries the conversation is a good turn.") + "\n\n" +
     "Return ONLY JSON, no markdown:\n" +
     '{"lvl":1-5,"ok":"clean|minor|wrong","bad":[""],"fix":"","why":"",' +
     '"best":{"he":"","tr":"","en":""},' +
-    '"say":{"he":"","tr":"","en":""},"ask":true,"newWords":[{"he":"","tr":"","en":""}]}\n\n' +
+    '"say":{"he":"","tr":"","en":""},"ask":true,"unsure":"",' +
+    '"newWords":[{"he":"","tr":"","en":""}]}\n\n' +
     "lvl — the level of what HE actually produced, by the rubric above. Not the level " +
     "you were aiming at.\n" +
     "ok — clean if it is natural Hebrew; minor if one small thing is off (agreement, a " +
@@ -21628,6 +21752,14 @@ function composePrompt(x) {
     "ask — true if your reply asks him something he is meant to answer, false if it " +
     "just responds or signs off. Be honest about this: the app uses it to decide " +
     "whether he still owes you an answer.\n" +
+    /* THE SIGNPOST. Deliberately English and deliberately short: it is not shown as part
+       of the conversation, it is what the dock coach reads when he taps through to ask
+       about it. "he can ask you about it separately" in the rule above is not a figure of
+       speech — UH.card hands this to the other coach. */
+    "unsure — set this ONLY when you took the NO branch above. One short line of ENGLISH " +
+    "saying what he appeared to say and what you think he was reaching for: \"you said " +
+    "something closer to 'cooking' — did you mean sugars?\". \"\" every other time, which " +
+    "is most turns.\n" +
     "newWords — any Hebrew word he said that is NOT in the pool or the detected list.";
 }
 
@@ -21657,7 +21789,10 @@ function composeNormalise(out) {
     /* Absent means "did not ask" — a reply that forgot the field is treated as one that
        owes him nothing, which errs towards ending cleanly rather than towards a turn
        spent answering a question that was never put. */
-    ask: out.ask === true || out.ask === "true"
+    ask: out.ask === true || out.ask === "true",
+    /* English by design, and never spoken — so no heOnly here. It is the handoff line the
+       dock coach reads, not part of the conversation. */
+    unsure: String(out.unsure || "").trim()
   };
 }
 
@@ -21829,7 +21964,11 @@ async function composeTurn(s, c) {
        decided this is the goodbye: the list is done and he was only owed one answer. */
     lastTurn: c.closing === true || turns + 1 >= COMPOSE_TURN_CAP,
     pointed: outstanding.length > 0 &&
-             (COMPOSE_TURN_CAP - turns) <= outstanding.length + 1
+             (COMPOSE_TURN_CAP - turns) <= outstanding.length + 1,
+    /* THE SAME CONDITION composeEnds ends on, so the prompt and the code cannot disagree
+       about which turns are free to stay silent. Style guide §5: two figures describing
+       one thing have to be one figure. */
+    listDone: outstanding.length === 0
   });
   let out = null;
   try {
@@ -26379,7 +26518,7 @@ function learnRenderCompose(card, c, s) {
   }
 
   if (stage === "sending") {
-    const b = convoBubble("them", "…", ""); b.classList.add("live");
+    const b = convoBubble("them", "…", ""); b.classList.add("live", "thinking");
     card.append(b);
     return;
   }
@@ -26459,6 +26598,27 @@ function learnRenderCompose(card, c, s) {
     const r = document.createElement("div"); r.className = "lretract lretractalone";
     r.textContent = c._retract.say;
     card.append(r);
+  }
+  /* THE HANDOFF, at the point the doubt actually is. The Hebrew reply above has already
+     said it did not follow; this is the English note plus the way through to the coach
+     who can do something about it. George: "I then pull hte coach and ask him in english
+     can you help me here I was trying ot say... and he explains it to me, then I return
+     to the conversation with that new info in hand."
+
+     A button rather than an instruction to go and tap the nav bubble: the whole point is
+     that it should not seriously interrupt the conversation. */
+  if (out && out.unsure) {
+    const u = document.createElement("div"); u.className = "lunsure";
+    const t = document.createElement("div"); t.className = "lunsure-t";
+    t.textContent = out.unsure;
+    const b = document.createElement("button");
+    b.className = "linkbtn lunsure-b"; b.type = "button";
+    b.textContent = "Ask the coach";
+    /* The dock reads UH.card, which now carries this conversation — so it opens already
+       knowing what was said and what was not followed. No argument to pass. */
+    b.onclick = () => coachDockOpen(true);
+    u.append(t, b);
+    card.append(u);
   }
   if (out && out.lvl) {
     const b = document.createElement("div"); b.className = "lbuilt";
@@ -34097,6 +34257,85 @@ T("heOnly: what gets spoken aloud is Hebrew and nothing else", () => {
   /* Hebrew legitimately carries digits and quotes — those are not the tell, Latin is. */
   assertEq(heOnly('אני רוצה 2 קפה'), "אני רוצה 2 קפה", "digits are part of real Hebrew");
 });
+T("composePrompt: it may pause on a reach, and may not paper over one", () => {
+  /* George: "they shouldnt jsut assume ... that I was asking for a few cooking, when what
+     I mean to be asking was for a few sugars." The old text told it to do exactly that. */
+  const base = { level: 3, objectives: ["סוכר"], landed: [], outstanding: ["סוכר"],
+                 pool: "", history: "", said: "כמה בישול", saidKeys: [], alts: [],
+                 theirLine: "", lastTurn: false, pointed: false, listDone: false };
+  const p = composePrompt(base);
+  assertTrue(!/reads as nonsense, that is the recogniser/.test(p),
+    "the blanket instruction to guess is gone");
+  assertTrue(/could a person who HEARD him say it have produced this/i.test(p),
+    "and the test that splits a mishearing from a reach is stated");
+  assertTrue(/REACHING for a word he does not have/.test(p),
+    "the second branch is named as its own case");
+  assertTrue(/Do NOT put your guess in his mouth/.test(p), "and forbidden explicitly");
+  /* Noticing is the whole job — the dock coach does the explaining. */
+  assertTrue(/noticing is the whole job/i.test(p),
+    "it is told it does not have to resolve what it flagged");
+  assertTrue(p.indexOf("unsure") !== -1, "and the field that carries the handoff");
+});
+T("composePrompt: the turn picks its move, except where silence would end it", () => {
+  const base = { level: 3, objectives: ["קפה"], landed: [], outstanding: ["קפה"],
+                 pool: "", history: "", said: "אני רוצה קפה", saidKeys: ["קפה"], alts: [],
+                 theirLine: "", lastTurn: false, pointed: false, listDone: false };
+  const mid = composePrompt(base);
+  assertTrue(/NEVER OPEN WITH PRAISE/.test(mid), "the reflex compliment is banned by name");
+  assertTrue(/YOUR MOVE IS YOURS TO PICK/.test(mid), "and the turn is free while work is left");
+  assertTrue(/do NOT have to ask a question every turn/i.test(mid),
+    "which is the half that stops the manufactured follow-up");
+  assertTrue(!/Ask him one thing about what he just said/.test(mid),
+    "the instruction that produced the old shape is gone");
+  /* THE GUARD. composeEnds ends the conversation on a turn where the coach did not ask
+     and nothing is outstanding, so on exactly those turns it must be told the stakes —
+     or "let it pick" quietly reintroduces the abrupt ending `ask` was added to fix. */
+  const done = composePrompt(Object.assign({}, base, { outstanding: [], listDone: true }));
+  assertTrue(/the conversation ends here/.test(done),
+    "with the list done, it is told silence ends the conversation");
+  assertTrue(!/YOUR MOVE IS YOURS TO PICK/.test(done),
+    "so that turn is not also told it may do as it likes");
+  /* The two branches that were already right are untouched. */
+  const last = composePrompt(Object.assign({}, base, { lastTurn: true }));
+  assertTrue(/DO NOT ask him a question/.test(last), "the goodbye turn still signs off");
+  const pointed = composePrompt(Object.assign({}, base, { pointed: true }));
+  assertTrue(/Stop making conversation and make room/.test(pointed),
+    "and a turn short on room still asks pointedly");
+});
+T("UH.card: a compose card hands the dock the conversation, not three dashes", () => {
+  /* THE REASON THE DOCK COULD NOT HELP. On a compose card this reported "Hebrew: —,
+     English: —, no gradable words on this card", and coachPrompt feeds that to the coach
+     as what is on his screen — so mid-conversation it could see a card existed and
+     nothing about the conversation standing on it. */
+  const card = { kind: "compose", pool: [], objectives: ["סוכר", "קפה"],
+                 landed: { "קפה": true }, words: [],
+                 turns: [{ qhe: "מה אתה רוצה?", qtr: "ma ata rotze?", said: "אני רוצה קפה",
+                           out: { why: "" } }],
+                 item: { qhe: "כמה סוכר?", qtr: "kama sukar?", qen: "How much sugar?" },
+                 _said: "כמה בישול",
+                 _out: { unsure: "you said something closer to 'cooking' — did you mean sugars?" } };
+  const st = { lib: { "סוכר": { tr: "sukar", en: "sugar" }, "קפה": { tr: "kafe", en: "coffee" } },
+               srs: {}, session: { cards: [card], i: 0, got: 0 } };
+  const txt = uhText(UH.card("0", st));
+  assertTrue(txt.indexOf("The conversation") !== -1, "the section exists at all");
+  assertTrue(txt.indexOf("did you mean sugars?") !== -1,
+    "the flagged doubt is the first thing in it");
+  assertTrue(txt.indexOf("אני רוצה קפה") !== -1, "an earlier exchange is there");
+  /* The line he is mid-answer on is not in `turns` yet, and it is the one he is stuck on. */
+  assertTrue(txt.indexOf("כמה סוכר?") !== -1, "including the line he is answering right now");
+  assertTrue(txt.indexOf("כמה בישול") !== -1, "and what the machine heard him say");
+  assertTrue(/Still to work in: sukar/.test(txt), "the outstanding word, by a name he can read");
+  assertTrue(/He has used: kafe/.test(txt), "and what has already landed");
+});
+T("UH.card: a card that is not a conversation gains nothing", () => {
+  /* The section is conditional. A sentence card picking up an empty "The conversation"
+     heading would be the panel looking broken. */
+  const card = { kind: "sentence", item: { he: "בית", en: "house" }, words: ["בית"] };
+  const st = { lib: { "בית": { tr: "bayit", en: "house" } }, srs: {},
+               session: { cards: [card], i: 0, got: 0 } };
+  assertTrue(uhText(UH.card("0", st)).indexOf("The conversation") === -1,
+    "no conversation section on a card that has no conversation");
+});
 T("composeNormalise: the guard covers everything that outlives the turn", () => {
   const polluted = "משרד (misrad - office)";
   const out = composeNormalise({
@@ -34110,6 +34349,12 @@ T("composeNormalise: the guard covers everything that outlives the turn", () => 
   assertEq(out.best.he, "משרד", "and best.he is what gets banked for later practice");
   assertEq(out.say.tr, "misrad", "the fields that are meant to be Latin are left alone");
   assertEq(out.say.en, "office");
+  /* `unsure` is English BY DESIGN and never spoken — running heOnly over it would empty
+     the one field whose whole job is to be readable. */
+  const u = composeNormalise({ unsure: "you said something closer to 'cooking'" });
+  assertEq(u.unsure, "you said something closer to 'cooking'",
+    "the handoff line is English and must survive intact");
+  assertEq(composeNormalise({}).unsure, "", "and is empty when there was no doubt");
 });
 T("composeOpening: the weakest words go on the table first", () => {
   /* A node's whole purpose is the words at the bottom of its own sort — the same

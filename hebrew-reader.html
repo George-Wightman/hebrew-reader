@@ -8741,7 +8741,10 @@ function SYNC_LOCAL_SET() {
        the long-press hint" being a fact about him rather than about a device. The gesture
        and its key are both gone; a device that still holds hvr_coachhint keeps a harmless
        orphan that nothing reads. */
-    COACH_KEY, FORECAST_SAY_KEY, FC_OPEN_KEY
+    COACH_KEY, FORECAST_SAY_KEY, FC_OPEN_KEY,
+    /* Same reasoning as AI_LOG_KEY above: a fact about the device in his hand, not about
+       him, and it reaches me inside the flag (flagContext) rather than as its own store. */
+    TRAIL_KEY
   ]));
 }
 
@@ -13294,6 +13297,44 @@ function mergeSessions(a, b, cap) {
   });
   const out = Object.keys(by).map(k => by[k]).sort((x, y) => (x.at || 0) - (y.at || 0));
   return cap ? out.slice(-cap) : out;
+}
+
+/* WHERE HE HAD JUST BEEN. A flag records where he IS, and half his flags are raised a
+   screen or two after the thing that prompted them — the latency flag was written on
+   lEnd, about turns that happened on lCard. Device-local for the same reason the AI log
+   is: it is a fact about the device in his hand, and it travels inside the flag rather
+   than as a store of its own.
+
+   Consecutive time on one screen is ONE entry with a moving `last`, not a heartbeat.
+   Returning to a screen is a new visit, because "he went back" is the interesting part. */
+const TRAIL_KEY = "hvr_trail";
+const TRAIL_MAX = 30;
+/* An unchanged screen only rewrites the store this often. learnRenderCard runs several
+   times per card — every async landing re-renders it — and persisting a `last` that
+   moved by 40ms is a localStorage write per render on a phone, for nothing. The entry
+   still dedupes immediately; only the WRITE is throttled. */
+const TRAIL_TOUCH_MS = 30 * 1000;
+
+function trailAll() {
+  try { const v = JSON.parse(lsGet(TRAIL_KEY)); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+
+function trailNote(view, screen, now) {
+  try {
+    const ts = now || Date.now();
+    const list = trailAll();
+    const top = list[list.length - 1];
+    if (top && top.view === view && top.screen === screen) {
+      const dirty = (ts - top.last) >= TRAIL_TOUCH_MS;
+      top.last = ts;
+      if (!dirty) return;
+      lsSet(TRAIL_KEY, JSON.stringify(list.slice(-TRAIL_MAX)));
+      return;
+    }
+    list.push({ view: String(view || ""), screen: String(screen || ""), at: ts, last: ts });
+    lsSet(TRAIL_KEY, JSON.stringify(list.slice(-TRAIL_MAX)));
+  } catch (e) {}
 }
 
 /* =====================  THINGS TO CHANGE  =====================
@@ -26791,6 +26832,11 @@ function learnRenderCard() {
   learnHintSet(isTouchPrimary() ? ""
     : "Space to reveal" + (hasHeVoice() ? " · R replays · Shift+R slower" : ""));
   learnSpeakPrompt();
+
+  /* Every card render is a screen he is looking at. trailNote dedupes consecutive
+     identical screens itself, so this is one localStorage write per actual move (and
+     even that is throttled while sitting still — see TRAIL_TOUCH_MS). */
+  try { trailNote(lsGet(VIEW_KEY) || "", learnScreenShowing() || ""); } catch (e) {}
 }
 
 /* Where you are on the ladder, said on the button itself. */
@@ -34089,6 +34135,31 @@ T("sessRecord: keeps the conversation, bounded, and never the whole prompt", () 
     for (let i = 0; i < SESS_MAX + 4; i++) sessRecord({ turns: [] }, "n" + i);
     assertEq(sessAll().length, SESS_MAX, "and the ring is capped");
   } finally { lsSet(SESS_KEY, was || "[]"); }
+});
+
+T("trailNote: the last few screens, deduped, never unbounded", () => {
+  /* "Recent pages" from George's ask. A flag says where he IS; this says where he had
+     just BEEN, which is most of what "you aren't left guessing" means for a flag raised
+     two screens after the thing that annoyed him. */
+  const was = lsGet(TRAIL_KEY);
+  try {
+    lsSet(TRAIL_KEY, "[]");
+    trailNote("learn", "lCard", 1000);
+    trailNote("learn", "lCard", 2000);
+    assertEq(trailAll().length, 1, "sitting on one screen is one entry, not a heartbeat");
+    assertEq(trailAll()[0].last, 1000,
+             "and a re-render moments later does not rewrite the store at all");
+    /* Past the throttle it does persist, because "still here twenty minutes on" is a
+       different fact from "still here 40ms on". */
+    trailNote("learn", "lCard", 1000 + TRAIL_TOUCH_MS + 1);
+    assertEq(trailAll()[0].last, 1000 + TRAIL_TOUCH_MS + 1, "past the throttle it lands");
+
+    trailNote("map", "", 3000);
+    trailNote("learn", "lCard", 4000);
+    assertEq(trailAll().length, 3, "going back is a new visit, not the old one");
+    for (let i = 0; i < TRAIL_MAX + 10; i++) trailNote("v" + i, "", 5000 + i);
+    assertEq(trailAll().length, TRAIL_MAX);
+  } finally { lsSet(TRAIL_KEY, was || "[]"); }
 });
 
 T("hvr_sessions: syncs, and has a merge rule so it is not overwritten", () => {

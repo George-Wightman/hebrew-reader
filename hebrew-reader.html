@@ -3738,7 +3738,8 @@ const MERGE_RULES = {
   /* Without this it falls through to the array default — newer blob wins — and the
      phone's record of what went wrong on the phone is erased by the laptop every sync.
      That is the exact failure the note beside COACH_KEY describes shipping twice. */
-  "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX)
+  "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX),
+  "hvr_sessions":   (a, b) => mergeSessions(a, b, SESS_MAX)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -13239,6 +13240,62 @@ function healthLines(list) {
   return healthRows(list).map(r => r.label + " — " + r.value);
 }
 
+/* =====================  THE CONVERSATIONS THEMSELVES  =====================
+
+   Chasing the latency flag on 2026-09-07 meant rebuilding his session out of
+   hvr_coachlanded TIMESTAMPS cross-referenced against content/nodes.json, because
+   nothing had stored what was actually said. It worked, and it was detective work.
+   George: "storing the conversations would give you real material to work with in cases
+   like this."
+
+   WRITTEN ONCE, WHEN THE CONVERSATION ENDS. `c.turns` already holds everything; there is
+   no new capture and no per-turn cost. Bounded on both axes — SESS_MAX conversations,
+   SESS_TURN_MAX turns each, keeping the END of a long one because the turn he flags is
+   the one he just finished.
+
+   THE PROMPT IS NOT KEPT. It is 6KB per turn and regenerable from composePrompt, so
+   storing it would trade the thing this is for against the budget compression just
+   bought. What is kept is what he said, what the coach answered, and how it was
+   judged. */
+const SESS_KEY = "hvr_sessions";
+const SESS_MAX = 8, SESS_TURN_MAX = 12;
+
+function sessAll() {
+  try { const v = JSON.parse(lsGet(SESS_KEY)); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+
+function sessRecord(c, node, now) {
+  try {
+    const at = now || Date.now();
+    const turns = ((c && c.turns) || []).slice(-SESS_TURN_MAX).map(t => ({
+      said: String((t && t.said) || ""),
+      say: String((t && t.out && t.out.say && t.out.say.he) || ""),
+      ok: String((t && t.out && t.out.ok) || ""),
+      why: String((t && t.out && t.out.why) || "")
+    }));
+    const list = sessAll().concat([{
+      id: syncDeviceId() + "-" + at, at: at, node: String(node || ""),
+      lvl: learnerLevel(), objectives: ((c && c.objectives) || []).slice(0, 8),
+      turns: turns
+    }]).slice(-SESS_MAX);
+    lsSet(SESS_KEY, JSON.stringify(list));
+    return list;
+  } catch (e) { return sessAll(); }
+}
+
+/* Keyed by id — device plus timestamp — so two devices' sessions both survive and a
+   re-push of the same one does not duplicate. Same shape as mergeFlags, for the same
+   reason: without a rule here the array default lets the newer blob win outright. */
+function mergeSessions(a, b, cap) {
+  const by = {};
+  [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(s => {
+    if (s && s.id) by[s.id] = s;
+  });
+  const out = Object.keys(by).map(k => by[k]).sort((x, y) => (x.at || 0) - (y.at || 0));
+  return cap ? out.slice(-cap) : out;
+}
+
 /* =====================  THINGS TO CHANGE  =====================
    George: "i need a way to highlight what i want to change its not alwawys a bug its
    more id new features to change, so when i come to chat youll know thevnd what im
@@ -22545,7 +22602,15 @@ function composeAdvance(s, c, out) {
                  said: c._said || "", out: out });
 
   const clean = out.ok !== "wrong";
-  if (composeEnds(c, out)) { learnAdvance(clean); return; }
+  if (composeEnds(c, out)) {
+    /* The whole conversation, once, at the moment it is over — not per turn.
+       THE NODE IS AT session.path.id, NOT session.node: campBegin builds
+       `path: { id, lesson, camp: true }` and there is no `node` field. Reading
+       learnSession.node would silently record every conversation against "". */
+    try { sessRecord(c, (learnSession && learnSession.path && learnSession.path.id) || ""); }
+    catch (e) {}
+    learnAdvance(clean); return;
+  }
 
   /* ON, WITHOUT LEAVING THE PAGE. The coach's line becomes the thing he is answering
      and the card re-renders in place with the correction, the reply and the microphone
@@ -33986,6 +34051,53 @@ T("hvr_health: syncs, and has a merge rule so it is not overwritten", () => {
              "the whole point is that it reaches me through the sync");
   assertTrue(!!MERGE_RULES[HEALTH_KEY],
              "and it must not fall through to the array default");
+});
+
+T("sessRecord: keeps the conversation, bounded, and never the whole prompt", () => {
+  /* WHY THIS EXISTS. Chasing the latency flag meant reconstructing his session from
+     hvr_coachlanded TIMESTAMPS and content/nodes.json, because nothing stored what was
+     actually said. George: "storing the conversations would give you real material to
+     work with in cases like this."
+
+     Bounded on both axes on purpose. A conversation is worth keeping; the 6KB prompt
+     that produced each turn is not, and it is regenerable from composePrompt. */
+  const was = lsGet(SESS_KEY);
+  try {
+    lsSet(SESS_KEY, "[]");
+    const c = { kind: "compose", objectives: ["שולחן"], turns: [
+      { said: "כן השולחן יותר נוח מהמיטה",
+        out: { ok: "clean", why: "", say: { he: "אז תישן טוב על השולחן!" } } }
+    ] };
+    sessRecord(c, "c2-0-1qt5");
+    const all = sessAll();
+    assertEq(all.length, 1);
+    assertEq(all[0].node, "c2-0-1qt5");
+    assertEq(all[0].turns[0].said, "כן השולחן יותר נוח מהמיטה", "what he said, verbatim");
+    assertEq(all[0].turns[0].say, "אז תישן טוב על השולחן!", "and what the coach answered");
+    assertEq(all[0].turns[0].ok, "clean");
+
+    /* Longer than SESS_TURN_MAX keeps the END of the conversation: the turn he flagged
+       is the one he had just finished, never the opening. */
+    const long = { kind: "compose", objectives: [], turns: [] };
+    for (let i = 0; i < SESS_TURN_MAX + 5; i++)
+      long.turns.push({ said: "turn" + i, out: { ok: "clean", say: { he: "r" + i } } });
+    sessRecord(long, "n");
+    const kept = sessAll()[sessAll().length - 1].turns;
+    assertEq(kept.length, SESS_TURN_MAX);
+    assertEq(kept[kept.length - 1].said, "turn" + (SESS_TURN_MAX + 4), "the last turn survives");
+
+    for (let i = 0; i < SESS_MAX + 4; i++) sessRecord({ turns: [] }, "n" + i);
+    assertEq(sessAll().length, SESS_MAX, "and the ring is capped");
+  } finally { lsSet(SESS_KEY, was || "[]"); }
+});
+
+T("hvr_sessions: syncs, and has a merge rule so it is not overwritten", () => {
+  assertTrue(!SYNC_LOCAL_SET().has(SESS_KEY), "the point is that it reaches me");
+  assertTrue(!!MERGE_RULES[SESS_KEY], "and it must not fall through to the array default");
+  const a = [{ id: "aaa-1", node: "n", at: 1, turns: [] }];
+  const b = [{ id: "bbb-1", node: "n", at: 2, turns: [] }];
+  assertEq(mergeSessions(a, b, SESS_MAX).length, 2, "two devices' sessions are both kept");
+  assertEq(mergeSessions(a, a.slice(), SESS_MAX).length, 1, "a re-push does not duplicate");
 });
 
 T("syncKeys: does not carry stores nothing in the app reads", () => {

@@ -7195,10 +7195,15 @@ function cliticCandidates(lib, opts) {
    and audio transcription depends on that 20. Enrichment must never be the
    reason a voice note cannot be transcribed. */
 async function formsAsk(prompt) {
-  /* Full thinking on purpose: GEMINI_THINKING's "minimal" was measured for the
-     pad's interactive latency. A background queue has no latency budget to
-     protect, and morphology is where reasoning pays. waitOnRateLimit likewise:
-     this is the ONE caller that should sit out a per-minute 429. */
+  /* waitOnRateLimit: this is the ONE caller that should sit out a per-minute 429 — a
+     background queue has no latency budget to protect.
+
+     This used to claim "full thinking on purpose", and it was never true. geminiSend
+     applies its thinking config to every caller; there has never been a way for one
+     call site to opt out, so this queue has been running at the same minimal budget as
+     the interactive pad the whole time. Left as it is rather than quietly changed:
+     morphology probably IS where reasoning pays, but that is a claim to measure, not to
+     fix in passing while correcting a comment. */
   return extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
                                          { waitOnRateLimit: true,
                                            label: "Looking up word forms" }));
@@ -12938,10 +12943,25 @@ function aiLogRender() {
     /* Both the relative and the absolute time. "12m ago" is what he reads; the clock
        time is what he can match against a screenshot when he sends me one. */
     when.textContent = [syncAgo(e.ts), new Date(e.ts).toLocaleTimeString(),
-                        e.model || "", e.ms ? (e.ms / 1000).toFixed(1) + "s" : ""]
+                        e.model || "", e.ms ? (e.ms / 1000).toFixed(1) + "s" : "",
+                        /* WHY it took that long, on the same line as how long it took.
+                           Thinking tokens are the difference between a 4.5s coach turn
+                           and a 1.1s one, and until now the line said only "4.5s". */
+                        e.think ? "thinking: " + e.think : "",
+                        e.thoughtTok ? e.thoughtTok + " thought" : ""]
       .filter(Boolean).join(" · ");
     head.append(lab, when);
     row.append(head);
+    /* A REFUSED CONTROL IS A FINDING, not a detail — it means a model turned down what
+       the app asked for and quietly ran some other way, which is precisely how Flash
+       spent weeks at its default budget with nothing in the log to say so. Shown at the
+       top level, in the error colour, on a row that otherwise says it succeeded. */
+    if (e.skipped) {
+      const sk = document.createElement("div");
+      sk.className = "ailogerr";
+      sk.textContent = e.skipped + " — fell back to what it would accept";
+      row.append(sk);
+    }
     if (!e.ok) {
       const err = document.createElement("div");
       err.className = "ailogerr";
@@ -13096,8 +13116,14 @@ function flagContext(report) {
                   thin: contentThinNow() };
   } catch (e) {}
   try {
+    /* think/thoughtTok/skipped ride along because `ms` on its own could not answer "why
+       was that slow" — a 4,506ms coach turn and a 1,116ms one differ by which thinking
+       control the model accepted, and the flag that reported the slow one carried no
+       trace of it. Four short fields, and the next flag about latency arrives already
+       explained. */
     c.ai = aiLogAll().slice(0, FLAG_AI_CALLS).map(e => ({
       label: e.label, ok: e.ok, model: e.model, ms: e.ms, err: e.err,
+      think: e.think, thoughtTok: e.thoughtTok, outTok: e.outTok, skipped: e.skipped,
       req: String(e.req || "").slice(0, FLAG_AI_PREVIEW),
       res: String(e.res || "").slice(0, FLAG_AI_PREVIEW)
     }));
@@ -15192,9 +15218,49 @@ function aiModalOpen(on) {
    for minimal thinking gives 0 thinking tokens and 2.25s — a 4.5x speedup, with
    BETTER answers (they come out more concrete). The model was never the
    bottleneck; the reasoning budget was.
-   Note "thinkingBudget: 0" — the 2.5-era control — is rejected outright by 3.x
-   with 400 invalid argument. 3.x wants thinkingLevel. */
-const GEMINI_THINKING = { thinkingConfig: { thinkingLevel: "minimal" } };
+
+   THAT IS STILL TRUE, AND THE CONTROL FOR SAYING IT HAS MOVED — twice now, in
+   opposite directions, which is why this is a per-model list rather than one
+   constant. The note that used to sit here read "thinkingBudget: 0 — the 2.5-era
+   control — is rejected outright by 3.x with 400 invalid argument. 3.x wants
+   thinkingLevel." Measured against the live API on 2026-09-07, that has inverted
+   for one of the two models:
+
+     gemini-flash-latest       thinkingLevel "minimal" -> HTTP 400, "not supported
+                               for this model". thinkingBudget 0 and thinkingLevel
+                               "low" both work.
+     gemini-flash-lite-latest  thinkingLevel "minimal" works, 0 thinking tokens.
+
+   And because the loop below quietly falls through to `null` on a 400, that 400
+   cost nothing visible and everything real: EVERY Flash call was two round trips,
+   and the second carried no thinking control at all, so Flash ran at its default
+   budget on the one path George sits and waits for. His coach turn measured
+   4,506ms; the same prompt with a config Flash accepts measured 1,116-1,800ms.
+   Nothing in the log said so, because a silently-degraded fallback looks exactly
+   like a slow model. See
+   docs/superpowers/specs/2026-09-07-coach-latency-harness-design.md.
+
+   "low" rather than budget 0 for Flash. Both measured 0 thinking tokens on the
+   coach turn, so on that prompt they are the same request — but budget 0 forecloses
+   reasoning outright, and this model both judges his Hebrew and writes the Hebrew he
+   imitates. "low" spends nothing when nothing is needed and can still think on a
+   turn that earns it, which is the behaviour we want on the harder cards. */
+function thinkingChain(model) {
+  return /lite/.test(String(model))
+    ? [{ thinkingConfig: { thinkingLevel: "minimal" } },
+       { thinkingConfig: { thinkingBudget: 0 } }, null]
+    : [{ thinkingConfig: { thinkingLevel: "low" } },
+       { thinkingConfig: { thinkingBudget: 0 } }, null];
+}
+/* Short label for the log, so "which control actually got used" is readable at a
+   glance rather than reconstructed from the model name. */
+function thinkingLabel(cfg) {
+  const t = (cfg && cfg.thinkingConfig) || null;
+  if (!t) return "default";
+  if (t.thinkingLevel) return t.thinkingLevel;
+  if (t.thinkingBudget === 0) return "budget0";
+  return "budget" + t.thinkingBudget;
+}
 
 /* The one place every Gemini call goes through — used to be two separate copies
    of this loop (here, and inline in transcribeAudio), which is exactly the kind
@@ -15261,6 +15327,11 @@ let lastGeminiTiming = null;
    an empty `model` field and nothing to diagnose from. Reset at the top of every
    geminiSend, so it always describes the most recent call and never accumulates. */
 let lastGeminiTried = [];
+/* Thinking configs the API refused on this call, newest call only — reset alongside
+   lastGeminiTried for the same reason: it must describe the most recent call and never
+   accumulate. Non-empty means a model turned down the control we asked for, which is
+   exactly the condition that went unnoticed for weeks. */
+let lastThinkingSkips = [];
 
 /* opts.waitOnRateLimit — sit out a per-minute 429 instead of moving on. OFF by
    default, and deliberately so: waiting is right for the background form queue
@@ -15285,8 +15356,16 @@ async function geminiRequest(parts, models, opts) {
   const started = Date.now();
   try {
     const out = await geminiSend(parts, models, opts);
+    /* HOW THE CALL WAS SHAPED, not just how long it took. `ms` alone said "4.5 seconds"
+       and left the reason to be guessed at; `think` and `thoughtTok` say WHY, and
+       `skipped` says the model refused what we asked for. All three ride the flag
+       through flagContext, so the next time an API changes underneath this app he can
+       send me a flag that already contains the diagnosis. */
+    const t = lastGeminiTiming || {};
     aiLogNote({ ts: Date.now(), label: label, ok: true, ms: Date.now() - started,
-                model: (lastGeminiTiming && lastGeminiTiming.model) || "",
+                model: t.model || "", think: t.think || "",
+                thoughtTok: t.thoughtTok || 0, outTok: t.outTok || 0, inTok: t.inTok || 0,
+                skipped: (t.skipped && t.skipped.length) ? t.skipped.join("; ") : "",
                 req: aiLogParts(parts), res: String(out).slice(0, AI_LOG_PREVIEW) });
     return out;
   } catch (e) {
@@ -15296,6 +15375,7 @@ async function geminiRequest(parts, models, opts) {
        as an opaque string. */
     aiLogNote({ ts: Date.now(), label: label, ok: false, ms: Date.now() - started,
                 model: (lastGeminiTried || []).join(" → "),
+                skipped: (lastThinkingSkips || []).join("; "),
                 err: (e && e.message) || String(e),
                 req: aiLogParts(parts), res: "" });
     throw e;                       // rethrown: every caller's error handling is unchanged
@@ -15321,6 +15401,7 @@ async function geminiSend(parts, models, opts) {
      diagnosis had to be reasoned from the throw site instead of read off the evidence.
      Short strings, because this ends up in a log line he reads on a phone. */
   lastGeminiTried = [];
+  lastThinkingSkips = [];
   /* WHERE THE WALK STARTS. It always began at key 1, so key 2 was a fallback rather than a
      peer and every request in a burst hit the same per-minute limit — the limit CLAUDE.md
      says is the one that actually bites. Rotating the start spreads them across both keys
@@ -15338,8 +15419,15 @@ async function geminiSend(parts, models, opts) {
                            (keys.length > 1 ? "#" + (ki + 1) : ""));
       /* Model APIs churn — a dated model name has already been retired underneath
          this app once. If the speed config is what's rejected, retry without it:
-         slower but working beats broken. */
-      for (const cfg of [GEMINI_THINKING, null]) {
+         slower but working beats broken.
+
+         AND SAY SO WHEN IT HAPPENS. This fallback was silent, and silence let it
+         become the permanent path for gemini-flash every call for weeks — the 400 was
+         swallowed by `continue` and the retry looked, from the log, like an ordinary
+         slow request. `null` is now the last resort behind two configs rather than the
+         only alternative to one, and every rejection is recorded on lastThinkingSkips
+         so the log can name what was refused instead of only what worked. */
+      for (const cfg of thinkingChain(model)) {
         const body = { contents: [{ parts: parts }] };
         if (cfg) body.generationConfig = cfg;
         let resp = null, text = "", waits = 0, spent = false, dayGone = false;
@@ -15385,8 +15473,20 @@ async function geminiSend(parts, models, opts) {
           const out = ((((json.candidates || [])[0] || {}).content || {}).parts || [])
             .map(p => p.text || "").join("").trim();
           if (out) {
+            /* THE FIELDS THAT WOULD HAVE CAUGHT THIS ONE. `thinking: !!cfg` was already
+               computed here and was already enough — every Flash call recorded false —
+               but it stopped at this variable and never reached the log, so nothing he
+               could send me ever carried it. It is a label now rather than a boolean,
+               because "which control" is the question, and thoughtTok comes straight off
+               usageMetadata, which the app was reading past. A Flash call spending
+               thinking tokens is the bug, stated as a number. */
+            const um = json.usageMetadata || {};
             lastGeminiTiming = { ms: Date.now() - started, model: model,
-                                 thinking: !!cfg };
+                                 thinking: !!cfg, think: thinkingLabel(cfg),
+                                 thoughtTok: um.thoughtsTokenCount || 0,
+                                 outTok: um.candidatesTokenCount || 0,
+                                 inTok: um.promptTokenCount || 0,
+                                 skipped: lastThinkingSkips.slice() };
             aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
@@ -15399,7 +15499,15 @@ async function geminiSend(parts, models, opts) {
            short retry hint: a throttled request was still a request and is counted,
            but it is not evidence that the day is gone. */
         if (spent) { aiQNote(model, dayGone ? "spent" : "ok", keyId, opts.label || ""); break; }
-        if (resp.status === 400 && cfg) continue;   // the config was the problem — retry plain
+        /* The config was the problem — try the next one down the chain. RECORDED, not
+           just skipped: this line silently cost every Flash call a wasted round trip and
+           its whole thinking budget, and left nothing behind to notice it by. */
+        if (resp.status === 400 && cfg) {
+          const note = model.replace("gemini-", "").replace("-latest", "") +
+                       " rejected " + thinkingLabel(cfg);
+          if (lastThinkingSkips.indexOf(note) === -1) lastThinkingSkips.push(note);
+          continue;
+        }
         /* A 5xx IS THIS MODEL FAILING, NOT THE CALL FAILING — the identical argument the
            timeout above makes, and the identical bug. `throw` here escaped the config,
            model AND key loops at once, so one overloaded gemini-flash killed a whole
@@ -33456,9 +33564,10 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
     msg = "";
     try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
     assertEq(msg, "HTTP 400");
-    /* Twice, both on flash: once with the thinking config and once without, which is the
-       pre-existing "maybe the config was the problem" retry. Never flash-lite. */
-    assertEq(tried.length, 2);
+    /* Three times, all on flash: thinkingChain's two configs and then the bare request,
+       which is the "maybe the config was the problem" retry. Was two before 2026-09-07,
+       when flash's chain was one config plus the bare retry. Never flash-lite. */
+    assertEq(tried.length, thinkingChain("gemini-flash-latest").length);
     assertTrue(tried.every(u => u.indexOf("gemini-flash-lite") === -1),
                "a 400 must not walk on to the next model");
   } finally {
@@ -33466,6 +33575,76 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
     lsSet(AI_Q_KEY, q || "");
   }
 });
+T("thinkingChain: each model is offered a control it will actually accept", () => {
+  /* THE BUG THIS IS FOR. gemini-flash-latest answers thinkingLevel "minimal" with a 400
+     ("not supported for this model"), measured against the live API on 2026-09-07. The
+     old code offered every model that one config and nothing else, so Flash spent every
+     call falling through to a bare request at its DEFAULT budget: 4,506ms on George's
+     coach turn against 1,116-1,800ms for a config it accepts.
+
+     Asserted as "flash is never offered minimal" rather than "flash is offered low",
+     because the second would pass on a chain that offered low AND minimal — and it is
+     minimal reaching Flash that costs the round trip. */
+  const flash = thinkingChain("gemini-flash-latest");
+  const lite = thinkingChain("gemini-flash-lite-latest");
+  const levels = c => flash.concat(lite).length && c.map(
+    x => x && x.thinkingConfig ? (x.thinkingConfig.thinkingLevel || "budget") : "none");
+
+  assertTrue(levels(flash).indexOf("minimal") === -1,
+             "flash must never be sent minimal: " + levels(flash).join(","));
+  assertTrue(levels(lite).indexOf("minimal") !== -1,
+             "lite accepts minimal and it is the cheapest thing that works");
+  /* The bare request stays LAST on both, and only last. It is the churn escape hatch —
+     an API that changes underneath this app again must still get an answer — but it is
+     the slowest option and must never be reached while a real control is untried. */
+  [["flash", flash], ["lite", lite]].forEach(([name, chain]) => {
+    assertEq(chain[chain.length - 1], null, name + " must end with the bare request");
+    assertEq(chain.filter(c => c === null).length, 1,
+             name + " must offer the bare request exactly once");
+    assertTrue(chain.length >= 2, name + " needs a real control before the fallback");
+  });
+});
+
+T("geminiSend: a refused thinking control is recorded, not silently swallowed", async () => {
+  /* WHY THIS EXISTS AT ALL. The fallback worked perfectly and that was the problem: the
+     400 was consumed by `continue`, so from every log George could send me, a Flash call
+     that had wasted a round trip and lost its thinking budget was indistinguishable from
+     one that was merely slow. The fix is only half a fix if the next API change is as
+     quiet as this one was. */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  const q = lsGet(AI_Q_KEY);
+  try {
+    geminiKeys = () => ["k"];
+    let n = 0;
+    /* Refuses the first config the way the real API does, then answers. */
+    geminiFetchWithRetry = (url, body) => {
+      if (n++ === 0) return Promise.resolve({ ok: false, status: 400,
+        text: () => Promise.resolve('{"error":{"message":"Thinking level MINIMAL is not supported"}}') });
+      return Promise.resolve({ ok: true, json: async () => ({
+        candidates: [{ content: { parts: [{ text: "ok" }] } }],
+        usageMetadata: { thoughtsTokenCount: 7, candidatesTokenCount: 20,
+                         promptTokenCount: 100 } }) });
+    };
+    assertEq(await geminiSend([{ text: "x" }], ["gemini-flash-latest"], {}), "ok");
+    assertEq(lastThinkingSkips.length, 1, "the refusal must be recorded");
+    assertTrue(/rejected/.test(lastThinkingSkips[0]), lastThinkingSkips[0]);
+    /* And the numbers that make "why was it slow" answerable off a flag. */
+    assertEq(lastGeminiTiming.thoughtTok, 7, "thinking tokens come off usageMetadata");
+    assertTrue(!!lastGeminiTiming.think, "the winning control is named");
+
+    /* A CLEAN CALL LEAVES NOTHING BEHIND. `skipped` is read as "something was refused",
+       so a stale entry from the previous call would report a bug that did not happen —
+       the same accumulation trap lastGeminiTried is reset for. */
+    n = 1;
+    await geminiSend([{ text: "x" }], ["gemini-flash-latest"], {});
+    assertEq(lastThinkingSkips.length, 0, "a call that was not refused records no refusal");
+    assertEq(lastGeminiTiming.skipped.length, 0, "and the timing record agrees");
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    lsSet(AI_Q_KEY, q || "");
+  }
+});
+
 /* ---- under the hood ----
    THE TEST THAT MATTERS IS THAT THE EXPLANATIONS DO NOT LIE. An inspector that
    confidently explains a rule the app no longer follows is worse than no inspector at

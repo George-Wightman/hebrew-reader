@@ -8710,6 +8710,13 @@ function SYNC_LOCAL_SET() {
     AI_LOG_KEY, AI_ACK_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY,
+    /* NOTHING IN THIS FILE READS THESE. They are residue from features that were
+       deleted while syncKeys' prefix scan kept carrying them: hvr_convo alone was
+       30.7KB of a 1,018KB payload on 2026-09-07. Listed rather than removed from
+       localStorage, because deleting a store this file no longer understands is not
+       ours to do — this only stops them travelling. Confirm with:
+         grep -c '"hvr_convo"' hebrew-reader.html      # must be 0 outside this list */
+    "hvr_convo", "hvr_lastmsg", "hvr_laneorder",
     /* THE SAME TRAP THE AI LOG FELL INTO, and it shipped again. syncKeys is a prefix
        scan, so anything hvr_-prefixed syncs unless it is named here — and none of these
        four had a MERGE_RULES entry, which means the default applied.
@@ -33837,6 +33844,17 @@ T("hvr_health: syncs, and has a merge rule so it is not overwritten", () => {
              "the whole point is that it reaches me through the sync");
   assertTrue(!!MERGE_RULES[HEALTH_KEY],
              "and it must not fall through to the array default");
+});
+
+T("syncKeys: does not carry stores nothing in the app reads", () => {
+  /* syncKeys is a PREFIX SCAN over hvr_, so a store outlives the feature that wrote it
+     and keeps riding every sync — hvr_convo was 30.7KB of a 1,018KB payload on
+     2026-09-07, from a feature that no longer exists. Named here rather than deleted
+     from localStorage: his device may still hold them, and this only stops them
+     travelling. */
+  const dead = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder"];
+  dead.forEach(k => assertTrue(SYNC_LOCAL_SET().has(k),
+    k + " has no reader in this file and must not be synced"));
 });
 
 T("thinkingChain: each model is offered a control it will actually accept", () => {

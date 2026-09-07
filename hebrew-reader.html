@@ -8783,6 +8783,69 @@ function b64decodeUtf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
+/* =====================  THE PAYLOAD, COMPRESSED  =====================
+
+   The blob grows at 753 bytes per WORD HE LEARNS — 544 words was 400KB of library and
+   SRS on 2026-09-07, and 2,000 words (conversational Hebrew, which is the actual goal)
+   projects to 1.47MB in those two stores alone. Success makes the file bigger, so no
+   amount of pruning is a strategy: slimming resolved flags bought 68KB, about ninety
+   words.
+
+   Compression is, because of what the bytes ARE. `forms` and `formsMeta` are 86% of the
+   library — grammar tables and provenance about them, with `formsMeta.lemma` repeating
+   the key, `forms.sg.he` repeating the key again and `state` almost always
+   "verified"/"verified". That is the most compressible data imaginable, and gzip
+   measured 8.1x on the real blob: 1,018,405 bytes to 125,171.
+
+   AN ENVELOPE RATHER THAN RAW GZIP BYTES. Raw would be smaller — one base64 instead of
+   two — but the file would stop being JSON, and `blob.app !== "hebrew-reader"` in
+   syncPull is the check that catches pointing the app at the wrong repo. Self-describing
+   is worth the 25%: 167KB against 1,018KB is still six times the headroom.
+
+   DEGRADES RATHER THAN FAILS. A browser without CompressionStream writes the old format,
+   which every build can read. Nothing here is allowed to make a device unable to sync. */
+const SYNC_SCHEMA_GZIP = 2;
+
+function syncCanCompress() {
+  return typeof CompressionStream === "function" && typeof DecompressionStream === "function";
+}
+
+async function syncEncodeBlob(blob) {
+  const plain = JSON.stringify(blob);
+  if (!syncCanCompress()) return plain;
+  try {
+    const cs = new CompressionStream("gzip");
+    const w = cs.writable.getWriter();
+    w.write(new TextEncoder().encode(plain)); w.close();
+    const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    let bin = "";
+    const CHUNK = 0x8000;                  // same argument-limit guard as b64encodeUtf8
+    for (let i = 0; i < buf.length; i += CHUNK)
+      bin += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+    return JSON.stringify({ app: "hebrew-reader", schema: SYNC_SCHEMA_GZIP,
+                            enc: "gzip", updated: blob.updated, device: blob.device,
+                            body: btoa(bin) });
+  } catch (e) { return plain; }            // never let compression cost him a sync
+}
+
+async function syncDecodeBlob(text) {
+  let outer;
+  try { outer = JSON.parse(text); }
+  catch (e) { throw new Error("the synced file couldn't be read"); }
+  if (!outer || outer.enc !== "gzip") return outer;
+  if (!syncCanCompress())
+    throw new Error("this browser can't read the compressed sync file — update it, or sync from your other device");
+  const bin = atob(String(outer.body || "").replace(/\s/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const ds = new DecompressionStream("gzip");
+  const w = ds.writable.getWriter();
+  w.write(bytes); w.close();
+  const plain = await new Response(ds.readable).text();
+  try { return JSON.parse(plain); }
+  catch (e) { throw new Error("the synced file couldn't be read"); }
+}
+
 /* ---- what does not need to ride the private sync ----------------------------
    A bank item written by Claude comes from content/nodes.json, which is a PUBLIC file in
    the repo the app is served from — every device can already fetch it, and contentIngest
@@ -8924,9 +8987,10 @@ async function syncPull() {
      problem and says so, and folding it into the parse handler would relabel it as a
      corrupt file — which is the same misdirection this whole change is fixing. */
   const text = await syncBlobText(j);
-  let blob = null;
-  try { blob = JSON.parse(text); }
-  catch (e) { throw new Error("the synced file couldn't be read"); }
+  /* syncDecodeBlob owns the parse now, because "is this compressed" has to be answered
+     before "is this valid JSON" — and it throws the same message for a genuinely
+     unreadable file, so nothing downstream changes. */
+  const blob = await syncDecodeBlob(text);
   if (!blob || blob.app !== "hebrew-reader") throw new Error("that file isn't a Hebrew Reader sync file");
   return { blob: blob, sha: j.sha };
 }
@@ -33272,6 +33336,32 @@ T("b64: survives Hebrew, which btoa alone does not", () => {
 T("b64: survives an empty string and plain ASCII", () => {
   assertEq(b64decodeUtf8(b64encodeUtf8("")), "");
   assertEq(b64decodeUtf8(b64encodeUtf8("hello")), "hello");
+});
+
+T("syncDecodeBlob: reads the old format and the compressed one", async () => {
+  /* THE MIGRATION, AND THE ONLY PART OF IT THAT CAN STRAND HIM. A device that cannot
+     read the compressed envelope sees a corrupt file, and the failure looks like the
+     token being wrong. Reading both is permanent — there is no later cleanup task that
+     removes the plain branch, because a blob written by an old build can arrive at any
+     time. */
+  const plain = { app: "hebrew-reader", schema: 1, updated: "2026-09-07T00:00:00.000Z",
+                  device: "aaa", keys: { hvr_stats: "{\"a\":1}" } };
+  const got = await syncDecodeBlob(JSON.stringify(plain));
+  assertEq(got.device, "aaa", "an uncompressed blob still reads");
+  assertEq(got.keys.hvr_stats, "{\"a\":1}");
+
+  const packed = await syncEncodeBlob(plain);
+  assertTrue(packed.indexOf("\"enc\":\"gzip\"") !== -1, "the envelope names its encoding");
+  const back = await syncDecodeBlob(packed);
+  assertEq(back.device, "aaa", "and it round-trips");
+  assertEq(back.keys.hvr_stats, "{\"a\":1}");
+
+  /* Hebrew is the whole reason b64encodeUtf8 exists; a compression path that mangles it
+     would break every word in the library. */
+  const heb = { app: "hebrew-reader", schema: 1, updated: "x", device: "d",
+                keys: { hvr_library: "{\"שולחן\":{\"tr\":\"shulkhan\"}}" } };
+  const heBack = await syncDecodeBlob(await syncEncodeBlob(heb));
+  assertEq(heBack.keys.hvr_library, "{\"שולחן\":{\"tr\":\"shulkhan\"}}");
 });
 
 /* ---- what travels, and what must never ---- */

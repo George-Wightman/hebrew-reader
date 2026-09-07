@@ -111,8 +111,8 @@ under-the-hood report, three AI calls at 400 characters each, the transcript, th
 card. For a flag already marked addressed, that has done its job.
 
 `flagSlimForSync` drops `ctx` from resolved flags only. His words, the timestamp
-and the resolved state all survive; 26 of 35 flags shed their diagnostics, worth
-about 78KB.
+and the resolved state all survive; 26 of 35 flags shed their diagnostics,
+measured at 67,742 bytes — 66.2KB — off the 105.6KB the store weighed before.
 
 **At the push and nowhere else**, following `bankSlimForSync` exactly. The comment
 on `bankDropStubs` records what happened the one time slimming ran before the merge:

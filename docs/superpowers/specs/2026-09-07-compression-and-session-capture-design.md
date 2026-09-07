@@ -15,8 +15,9 @@ And, when the ordering of that plan of attack was in question:
 That second line settles the first. He is not asking for two independent
 features that happen to be requested in the same breath — he is asking whether
 there is room to add the second one at all, because storage has already come up
-before. It has: the 1MB Contents-API cliff (`2026-09-02`) and the 105KB of
-resolved-flag context that `flagSlimForSync` trimmed (`2026-09-07`, see
+before. It has: the 1MB Contents-API cliff (`2026-09-02`) and `hvr_flags`
+carrying 105.6KB of resolved-flag context that `flagSlimForSync` then trimmed
+down by 66.2KB (`2026-09-07`, see
 `2026-09-07-noticing-when-it-runs-worse-design.md`) were both storage problems
 found the hard way. This spec is the plan of attack he asked for, and its answer
 to "what comes first" is: shrink what is already there before anything new rides
@@ -88,7 +89,7 @@ handled on pull: `syncBlobText` falls through to the Git Data blob endpoint
 fixed 2026-09-02, recorded in `2026-09-07-noticing-when-it-runs-worse-design.md`.
 Reading a blob past 1MB already works. Compression is not about avoiding a read
 failure that would otherwise be imminent; it is about the growth *curve* —
-`flagSlimForSync` bought back 78KB once, worth about a hundred words, by
+`flagSlimForSync` bought back 66.2KB once, worth about ninety words, by
 trimming data that already existed. Compression buys back 8× on data that keeps
 being created, for as long as he keeps learning words. One is a discount;
 the other changes the slope.

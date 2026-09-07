@@ -3734,7 +3734,11 @@ const MERGE_RULES = {
   "hvr_recency":    (a, b) => mergeMaxNums(a, b),
   "hvr_flags":      (a, b) => mergeFlags(a, b, FLAG_MAX),
   "hvr_campaign":   (a, b) => mergeCampaign(a, b),
-  "hvr_srslog":     (a, b) => mergeSrsLog(a, b, SRSLOG_MAX)
+  "hvr_srslog":     (a, b) => mergeSrsLog(a, b, SRSLOG_MAX),
+  /* Without this it falls through to the array default — newer blob wins — and the
+     phone's record of what went wrong on the phone is erased by the laptop every sync.
+     That is the exact failure the note beside COACH_KEY describes shipping twice. */
+  "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -8829,9 +8833,35 @@ function syncSnapshot() {
    API's 1,000,000-byte read cap with the bank half full, and the PUT crosses the same
    line. Phase 0's blob fallback fixed the read; nothing fixes the write, so the payload
    stays small on purpose. */
+/* A RESOLVED FLAG'S CONTEXT HAS DONE ITS JOB. Each flag carries `ctx`: a full
+   under-the-hood report, three AI calls at 400 characters each, the transcript, the card.
+   That is what makes a flag worth raising — and once he has marked it addressed, it is
+   105KB of a 1,018KB blob describing conversations that are over. 26 of his 35 flags were
+   resolved on 2026-09-07, worth about 78KB.
+
+   HIS WORDS ARE NEVER TOUCHED. `text`, `ts`, `resolved` and `resolvedTs` all survive; only
+   the diagnostic payload goes, and only on flags he has ticked off himself.
+
+   At the wire and nowhere else, which is not a style preference — see bankDropStubs. The
+   one time slimming ran before the merge, the device's own bank items were slimmed to
+   stubs, all 330 pre-baked sentences were deleted and the empty result was pushed. Local
+   storage keeps everything; only the file gets smaller. */
+function flagSlimForSync(raw) {
+  let a;
+  try { a = JSON.parse(raw); } catch (e) { return raw; }
+  if (!Array.isArray(a)) return raw;
+  return JSON.stringify(a.map(f => {
+    if (!f || !f.resolved || !f.ctx) return f;
+    const out = Object.assign({}, f);
+    delete out.ctx;
+    return out;
+  }));
+}
+
 function syncSnapshotForPush(blob) {
   const keys = Object.assign({}, blob.keys);
   if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
+  if (keys[FLAG_KEY]) keys[FLAG_KEY] = flagSlimForSync(keys[FLAG_KEY]);
   return Object.assign({}, blob, { keys: keys });
 }
 
@@ -12807,7 +12837,12 @@ function aiStrongLeft(q, today) {
    partway through rather than hold a decision made an hour ago. */
 function aiModelsFor(role) {
   if (role === "review") return GEMINI_MODELS;
-  return aiStrongLeft() > AI_STRONG_RESERVE ? GEMINI_MODELS : GEMINI_MODELS_FAST;
+  if (aiStrongLeft() > AI_STRONG_RESERVE) return GEMINI_MODELS;
+  /* Working as designed and worth knowing about anyway: from here on the coach is a
+     weaker model, which is exactly the sort of "why did today feel different" that has
+     no other trace. Recorded, not warned about — the reserve exists on purpose. */
+  healthNote("pool-downgrade", "strong pool at or below the reserve of " + AI_STRONG_RESERVE);
+  return GEMINI_MODELS_FAST;
 }
 /* PER KEY, because the caps are per key and a combined figure was telling him the wrong
    thing about his own budget. Falls back to the old single line when only one key is
@@ -12990,13 +13025,126 @@ function aiLogRender() {
     }
     list.append(row);
   });
-  document.getElementById("aiQuota").textContent = aiQSummary(aiQAll(), todayISO());
+  /* Under the quota, because it answers the neighbouring question. The quota line says
+     what has been spent; this says what was quietly given up to spend it. */
+  const health = healthLines();
+  document.getElementById("aiQuota").textContent =
+    aiQSummary(aiQAll(), todayISO()) +
+    (health.length ? "\n\nRunning worse than designed:\n" + health.join("\n") : "");
 }
 /* Painted once on load, so a failure from a background call at the end of yesterday's
    session is still red this morning — the store is what remembers, not the session. Down
    here rather than beside the click handlers because aiInflight above is a let. */
 setTimeout(aiStarPaint, 0);
 setTimeout(flagPaint, 0);
+
+/* =====================  WHEN IT RUNS WORSE THAN DESIGNED  =====================
+
+   gemini-flash-latest refused the thinking control this app was sending it, geminiSend
+   fell back to a bare request, and Flash ran at its default reasoning budget on every
+   coach turn for weeks. Nothing broke. Nothing was logged. The symptom was "it feels
+   slow", and it was found only because George raised a flag and someone sat down with an
+   API key.
+
+   The app is full of paths shaped like that, and they are all individually correct —
+   that is what a fallback is FOR. What was missing is that none of them accumulate
+   anywhere durable. hvr_ailog now carries `think`, `thoughtTok` and `skipped`, which is
+   the right data in the wrong place: it is device-local by deliberate choice (see
+   SYNC_LOCAL_SET), capped at twenty, and a flag snapshots only the last three calls. So
+   a degradation running on every single call for a month still reaches me by luck.
+
+   The comment on AI_LOG_KEY says "what actually needs to reach me is already snapshotted
+   into whichever flag was raised about it". This store is the case that argument misses:
+   the flag he raised about latency DID reach me, and it could not say why, because the
+   evidence was a pattern across hundreds of calls rather than a fact about three.
+
+   ONE ENTRY PER KIND PER DEVICE, EVER. Not a log — a log of a per-call failure is a
+   flood, and thirty copies of one fact is not thirty facts. `n` counts, `last` says
+   whether it is still happening, and the ring cannot grow past the number of distinct
+   things that have ever gone wrong. Bounded by construction rather than by trimming.
+
+   It reaches me for free, exactly as the flags do: syncKeys() is a prefix scan over
+   hvr_. Which is also the trap — anything hvr_-prefixed syncs UNLESS it is named in
+   SYNC_LOCAL_SET, and with no MERGE_RULES entry the default array rule applies and the
+   newer blob simply overwrites. That is the bug the comment beside COACH_KEY describes
+   happening twice. Hence mergeHealth below, registered in MERGE_RULES. */
+const HEALTH_KEY = "hvr_health";
+const HEALTH_MAX = 40;
+
+/* Entries that could not be persisted. A ledger whose entire job is recording failures
+   must not go blind in the one case where STORAGE is the thing failing — lsSet already
+   alarms through storageFailed, but the alarm is a message on a screen and this is the
+   thing that has to survive to the next sync. Small on purpose: it exists to carry a
+   handful of notes through a full-storage session, not to become a second store. */
+let healthMem = [];
+const healthKeyOf = e => [e.dev || "", e.kind || "", e.detail || ""].join("|");
+
+function healthAll() {
+  let v = [];
+  try { const p = JSON.parse(lsGet(HEALTH_KEY)); if (Array.isArray(p)) v = p; } catch (e) {}
+  return healthMem.length ? mergeHealth(v, healthMem, HEALTH_MAX) : v;
+}
+
+/* Records that a degraded path was taken. Never throws and never blocks: every caller is
+   in the middle of doing something more important than bookkeeping. */
+function healthNote(kind, detail, now) {
+  try {
+    const ts = now || Date.now();
+    const dev = syncDeviceId();
+    const entry = { kind: String(kind || ""), detail: String(detail || ""), dev: dev };
+    const list = healthAll().map(e => Object.assign({}, e));
+    const want = healthKeyOf(entry);
+    const hit = list.filter(e => healthKeyOf(e) === want)[0];
+    if (hit) { hit.n = (hit.n || 1) + 1; hit.last = ts; }
+    else list.push(Object.assign(entry, { n: 1, first: ts, last: ts }));
+    /* Oldest-seen evicted first when full, so a problem that is still happening outlives
+       one that stopped months ago. */
+    list.sort((x, y) => (x.last || 0) - (y.last || 0));
+    const out = list.slice(-HEALTH_MAX);
+    if (!lsSet(HEALTH_KEY, JSON.stringify(out))) healthMem = out.slice(-8);
+    return out;
+  } catch (e) { return healthAll(); }
+}
+
+/* PER DEVICE, AND NEVER SUMMED. Adding counts across blobs would inflate on every
+   re-push of an unchanged ledger — the same double-counting trap the srslog merge avoids
+   by keying on the event rather than tallying. Keyed by device, each side's count stays
+   honest, and a reader wanting a total can add them up itself. */
+function mergeHealth(a, b, cap) {
+  const by = {};
+  [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(e => {
+    if (!e || typeof e !== "object" || !e.kind) return;
+    const k = healthKeyOf(e), was = by[k];
+    /* isFinite rather than `|| Infinity`, because a timestamp of 0 is falsy and a real
+       value — the test caught this collapsing `first: 0` back to the later of the two,
+       which would quietly narrow the window this store exists to widen. */
+    const num = (v, fallback) => (typeof v === "number" && isFinite(v)) ? v : fallback;
+    by[k] = was
+      ? { kind: e.kind, detail: e.detail, dev: e.dev,
+          n: Math.max(num(was.n, 0), num(e.n, 0)),
+          first: Math.min(num(was.first, Infinity), num(e.first, Infinity)),
+          last: Math.max(num(was.last, 0), num(e.last, 0)) }
+      : e;
+  });
+  const out = Object.keys(by).map(k => by[k])
+    .sort((x, y) => (x.last || 0) - (y.last || 0));
+  return cap ? out.slice(-cap) : out;
+}
+
+/* One row per kind, newest first. Says what degraded, how often, and when it last
+   happened — "is this still going on" being the only question worth asking of it.
+   Split label/value because UH rows render as a pair; healthLines flattens the same
+   thing for the AI modal, which is plain text. */
+function healthRows(list) {
+  return (list || healthAll()).slice().sort((x, y) => (y.last || 0) - (x.last || 0))
+    .map(e => ({ label: e.kind + (e.detail ? " · " + e.detail : ""),
+                 value: (e.n || 1) + "x, last " +
+                        syncAgo(new Date(e.last || 0).toISOString()) }));
+}
+function healthLines(list) {
+  return healthRows(list).map(r => r.label + " — " + r.value);
+}
+
 /* =====================  THINGS TO CHANGE  =====================
    George: "i need a way to highlight what i want to change its not alwawys a bug its
    more id new features to change, so when i come to chat youll know thevnd what im
@@ -14126,11 +14274,21 @@ UH.root = function (id, st) {
   const lib = st.lib || {}, srs = st.srs || {};
   const counts = { "new": 0, weak: 0, progressing: 0, strong: 0 };
   Object.keys(lib).forEach(k => { counts[srsStrengthBoth(srs, k)]++; });
+  /* FIRST, AND ONLY WHEN THERE IS SOMETHING TO SAY. uhText renders this report into
+     every flag's context, so a degraded path that has been running for a month now
+     arrives at the top of the next flag he raises about anything at all — which is the
+     whole point. Silent when the list is empty, so a healthy app reads exactly as it
+     did before. */
+  const health = healthRows();
+  const sections = [];
+  if (health.length) sections.push({
+    name: "Running worse than designed", open: true, rows: health
+  });
   return {
     title: "The coach",
     subtitle: "Ask about anything the app just did",
     search: true,
-    sections: [{
+    sections: sections.concat([{
       name: "Elsewhere", open: true, rows: [
         { label: "What's coming", value: "what the next session would pick, and what is close",
           to: { kind: "forecast", id: "" } },
@@ -14145,7 +14303,7 @@ UH.root = function (id, st) {
       name: "The library", open: true, rows: SRS_BANDS.slice().reverse().map(b =>
         ({ label: b, value: counts[b] + " word" + (counts[b] === 1 ? "" : "s"), band: b }))
         .concat([{ label: "total", value: Object.keys(lib).length + " words" }])
-    }]
+    }])
   };
 };
 
@@ -15487,6 +15645,17 @@ async function geminiSend(parts, models, opts) {
                                  outTok: um.candidatesTokenCount || 0,
                                  inTok: um.promptTokenCount || 0,
                                  skipped: lastThinkingSkips.slice() };
+            /* THE TWO WAYS THIS CALL COULD HAVE QUIETLY BEEN WORSE THAN ASKED FOR, both
+               recorded where they will still be readable in a month. Neither is an
+               error: the request succeeded, and that is precisely why nothing noticed
+               for weeks. */
+            if (lastThinkingSkips.length)
+              healthNote("thinking-refused", lastThinkingSkips[0]);
+            const wanted = (models || GEMINI_MODELS)[0];
+            if (wanted && model !== wanted)
+              healthNote("model-downshift",
+                         wanted.replace("gemini-", "").replace("-latest", "") + " → " +
+                         model.replace("gemini-", "").replace("-latest", ""));
             aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
@@ -33575,6 +33744,101 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
     lsSet(AI_Q_KEY, q || "");
   }
 });
+T("healthNote: one entry per kind per device, counted rather than repeated", () => {
+  /* A per-call degradation fired on EVERY Flash call for weeks. A log of that is a
+     flood and thirty copies of one fact is not thirty facts, so the store counts
+     instead of appending — which is also what makes it bounded without trimming. */
+  const was = lsGet(HEALTH_KEY), wasMem = healthMem;
+  try {
+    lsSet(HEALTH_KEY, "[]"); healthMem = [];
+    healthNote("thinking-refused", "flash rejected minimal", 1000);
+    healthNote("thinking-refused", "flash rejected minimal", 2000);
+    healthNote("thinking-refused", "flash rejected minimal", 3000);
+    let all = healthAll();
+    assertEq(all.length, 1, "three of the same thing is one entry");
+    assertEq(all[0].n, 3, "counted");
+    assertEq(all[0].first, 1000, "first seen is when it started");
+    assertEq(all[0].last, 3000, "last seen is whether it is still happening");
+
+    /* A DIFFERENT detail is a different fact and must not be folded in — "flash
+       rejected low" after a config change is news, not more of the same. */
+    healthNote("thinking-refused", "flash rejected low", 4000);
+    assertEq(healthAll().length, 2, "a different detail is a different entry");
+    healthNote("model-downshift", "flash → flash-lite", 5000);
+    assertEq(healthAll().length, 3, "and so is a different kind");
+
+    /* Oldest-seen evicted first, so something still happening outlives something that
+       stopped months ago — the opposite order would drop the live problem. */
+    for (let i = 0; i < HEALTH_MAX + 5; i++) healthNote("k" + i, "d", 10000 + i);
+    all = healthAll();
+    assertEq(all.length, HEALTH_MAX, "the ring never grows past its cap");
+    assertTrue(all.every(e => (e.last || 0) >= (all[0].last || 0)), "sorted oldest first");
+  } finally { lsSet(HEALTH_KEY, was || "[]"); healthMem = wasMem; }
+});
+
+T("healthNote: still records when the store itself is what failed", () => {
+  /* THE CASE THAT MATTERS MOST AND IS EASIEST TO GET WRONG. A ledger whose job is
+     recording failures must not go blind when storage is the failure — otherwise the
+     one incident it most needs to report is the one it cannot. */
+  const was = lsGet(HEALTH_KEY), wasMem = healthMem, realSet = lsSet;
+  try {
+    lsSet(HEALTH_KEY, "[]"); healthMem = [];
+    lsSet = () => false;                       // every write refused, as a full store does
+    healthNote("thinking-refused", "flash rejected minimal", 1000);
+    lsSet = realSet;
+    const all = healthAll();
+    assertEq(all.length, 1, "the note survived a store that refused it");
+    assertEq(all[0].kind, "thinking-refused");
+  } finally { lsSet = realSet; lsSet(HEALTH_KEY, was || "[]"); healthMem = wasMem; }
+});
+
+T("mergeHealth: per device, and never summed", () => {
+  /* Summing would inflate on every re-push of an unchanged ledger — the same
+     double-counting the srslog merge avoids by keying on the event. */
+  const phone = [{ kind: "thinking-refused", detail: "d", dev: "aaa", n: 5, first: 1, last: 9 }];
+  const lap   = [{ kind: "thinking-refused", detail: "d", dev: "bbb", n: 2, first: 3, last: 7 }];
+  const both = mergeHealth(phone, lap, HEALTH_MAX);
+  assertEq(both.length, 2, "two devices seeing the same problem are two records");
+  assertEq(both.reduce((s, e) => s + e.n, 0), 7, "and the total is theirs to add up");
+
+  /* The same device's ledger arriving twice must not double. This is the actual sync
+     case: pull merges the remote copy of what this device already pushed. */
+  const again = mergeHealth(phone, phone.map(e => Object.assign({}, e)), HEALTH_MAX);
+  assertEq(again.length, 1);
+  assertEq(again[0].n, 5, "a re-push of the same ledger must not inflate the count");
+
+  /* A device that has since seen it more wins the count, and the window widens rather
+     than jumping — first can only go back, last can only go forward. */
+  const later = mergeHealth(phone, [{ kind: "thinking-refused", detail: "d", dev: "aaa",
+                                      n: 8, first: 0, last: 20 }], HEALTH_MAX);
+  assertEq(later[0].n, 8); assertEq(later[0].first, 0); assertEq(later[0].last, 20);
+});
+
+T("flagSlimForSync: resolved flags shed their context, and nothing he wrote", () => {
+  const raw = JSON.stringify([
+    { id: "1", text: "the coach is slow", ts: 10, resolved: true, resolvedTs: 20,
+      ctx: { report: "x".repeat(3000), ai: [1, 2, 3] } },
+    { id: "2", text: "still bothering me", ts: 30,
+      ctx: { report: "y".repeat(3000), ai: [1, 2, 3] } }
+  ]);
+  const out = JSON.parse(flagSlimForSync(raw));
+  assertTrue(!out[0].ctx, "a flag he has ticked off does not need its diagnostics");
+  assertEq(out[0].text, "the coach is slow", "his words always survive");
+  assertEq(out[0].resolved, true); assertEq(out[0].resolvedTs, 20);
+  assertTrue(!!out[1].ctx, "an OPEN flag keeps everything — it has not been read yet");
+  assertTrue(flagSlimForSync("not json").length > 0, "junk passes through untouched");
+});
+
+T("hvr_health: syncs, and has a merge rule so it is not overwritten", () => {
+  /* Both halves have shipped broken before. Anything hvr_-prefixed syncs unless named
+     in SYNC_LOCAL_SET — and without a MERGE_RULES entry the array default applies and
+     the newer blob simply wins, which is how the phone's history got erased twice. */
+  assertTrue(!SYNC_LOCAL_SET().has(HEALTH_KEY),
+             "the whole point is that it reaches me through the sync");
+  assertTrue(!!MERGE_RULES[HEALTH_KEY],
+             "and it must not fall through to the array default");
+});
+
 T("thinkingChain: each model is offered a control it will actually accept", () => {
   /* THE BUG THIS IS FOR. gemini-flash-latest answers thinkingLevel "minimal" with a 400
      ("not supported for this model"), measured against the live API on 2026-09-07. The

@@ -67,6 +67,35 @@ nor in the ledger is genuinely new and should be surfaced.
 
    (`$SCRATCH` is this session's scratchpad directory, given in the system prompt.)
 
+   **The one-megabyte cliff — this WILL bite.** The Contents API inlines a file as base64
+   only up to 1MB; above that it answers `200 OK` with `content: ""` and
+   `encoding: "none"`. On 2026-09-07 `progress.json` was at 1,018,405 bytes, **97.1% of
+   that cap**. `flagSlimForSync` bought it back to ~89.7%, but it will creep up again.
+
+   The app already survives this (`syncBlobText` falls through to the Git Data blob
+   endpoint, which carries the same file to 100MB under the same token and the same
+   Contents permission) — this skill did not, and it would have failed in the worst
+   possible way: an empty `content` decodes to nothing, `hvr_flags` reads as `[]`, and
+   the run reports **"no new flags"**. Silence that looks exactly like good news, from
+   the tool whose job is noticing problems.
+
+   So step 4 must handle it. If `content` is empty and `encoding` is `"none"`, refetch by
+   sha:
+
+   ```bash
+   TOKEN=$(cat "/c/Users/gwigh/.claude/projects/C--Users-gwigh-My-Drive--georgewight03-gmail-com--Hebrew-Learning/secrets/hebrew-reader-sync-token.txt")
+   SHA=$(python -c "import json,io;print(json.load(io.open(r'<SCRATCH>\hvr_progress_raw.json',encoding='utf-8'))['sha'])")
+   curl -s -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+     "https://api.github.com/repos/George-Wightman/hebrew-reader-sync/git/blobs/$SHA" \
+     -o "$SCRATCH/hvr_progress_raw.json"
+   unset TOKEN
+   ```
+
+   The blob response has the same `{content, encoding}` shape, base64 wrapped at 60
+   columns — so the decode below needs no change beyond stripping whitespace, which
+   `base64.b64decode` does not do by itself. Use
+   `base64.b64decode("".join(raw["content"].split()))`.
+
 3. **Handle the status before parsing anything:**
    - **403** ("Resource not accessible by personal access token"): the token's Contents
      permission isn't actually granted. Tell George plainly and ask him to check/regenerate
@@ -86,8 +115,12 @@ nor in the ledger is genuinely new and should be surfaced.
    python -c "
    import json, base64, time
    raw = json.load(open(r'C:\Users\gwigh\AppData\Local\Temp\claude\...\scratchpad\hvr_progress_raw.json', encoding='utf-8'))
-   blob = json.loads(base64.b64decode(raw['content']).decode('utf-8'))
+   # Empty content means the file crossed 1MB — refetch by sha (see step 2), don't
+   # carry on: '' decodes to nothing and every flag silently reads as absent.
+   assert raw.get('content'), 'empty content — over 1MB, refetch via git/blobs/' + raw.get('sha','')
+   blob = json.loads(base64.b64decode(''.join(raw['content'].split())).decode('utf-8'))
    flags = json.loads(blob['keys'].get('hvr_flags') or '[]')
+   health = json.loads(blob['keys'].get('hvr_health') or '[]')
 
    ledger = {}
    try:
@@ -129,7 +162,32 @@ nor in the ledger is genuinely new and should be surfaced.
    than making him ask for it — that's the entire reason the context is captured. Mention
    the resolved/handled counts briefly so he knows the filtering is happening, not just
    trust it silently.
-6. Treat the result as a punch list, not just a status report: if he asked to "check flags"
+6. **Read `hvr_health` every time, even when there are no new flags.** This is the store
+   that exists because a flag could not have told you: on 2026-09-07 `gemini-flash-latest`
+   had been refusing the app's thinking control and silently running at its default
+   reasoning budget for weeks, costing ~3.4s on every coach turn, and the only reason it
+   was found was George raising a flag and someone sitting down with an API key. Nothing
+   broke, so nothing said anything.
+
+   Each entry is `{kind, detail, dev, n, first, last}`, one per kind per device, `n`
+   counting occurrences. Kinds to expect:
+
+   - `thinking-refused` — a model turned down the reasoning control the app asked for and
+     fell back. **This is the one that cost weeks.** Treat any occurrence as a live bug,
+     not a curiosity: it means Gemini's API has changed underneath the app again.
+   - `model-downshift` — the answering model was not the one asked for first. A few is
+     ordinary (503s, per-minute limits). Hundreds means the good model is effectively
+     unavailable and the coach has quietly become a weaker one.
+   - `pool-downgrade` — `aiModelsFor` dropped to the fast pool because the strong pool hit
+     `AI_STRONG_RESERVE`. Working as designed; worth mentioning only if it is frequent,
+     because it silently changes what the coach is.
+
+   Report anything with a recent `last`, with its count, **before** the flags — a
+   degradation he never noticed outranks a note he chose to write. Say plainly when the
+   ledger is empty, too: "nothing has degraded since <first>" is a real result, and it is
+   the one that says the last fix held.
+
+7. Treat the result as a punch list, not just a status report: if he asked to "check flags"
    as a prelude to picking something up, offer to start on one rather than just printing
    the list and stopping.
 

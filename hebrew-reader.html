@@ -2097,6 +2097,20 @@
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     box-shadow: 0 2px 14px rgba(34,48,60,.10);
   }
+  /* QUIETER THAN THE MIC, deliberately. It sits next to a 44px filled circle and must not
+     compete with it — the mic is what he came to press. Same height so the row still
+     reads as one strip, but an outline pill with the state written in it rather than
+     signalled by colour: "he" and "en" are unambiguous where a tint would need learning.
+     Teal only when it is on Hebrew, i.e. when it is doing something other than the
+     default, which is §3's rule that teal means "you can act on this". */
+  .coachdock-lang {
+    flex: 0 0 auto; height: 44px; min-width: 40px; padding: 0 10px; border-radius: 22px;
+    cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,.93);
+    color: var(--muted); font-size: .82rem; font-weight: 600; letter-spacing: .02em;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .coachdock-lang.he { border-color: var(--accent); color: var(--accent); }
+  .coachdock-lang:disabled { opacity: .55; cursor: default; }
   .coachdock-mic svg { width: 20px; height: 20px; fill: currentColor; }
   .coachdock-mic:disabled { opacity: .55; cursor: default; }
   /* Send: filled teal, because there is now something to do and §3 has teal meaning
@@ -2751,6 +2765,11 @@
     <div class="coachdock-thread" id="coachDockThread"></div>
     <div class="coachdock-row">
       <input type="text" id="coachDockQ" autocomplete="off" placeholder="Ask the coach…">
+      <!-- WHICH LANGUAGE THE MIC IS LISTENING FOR. Not decoration and not a setting
+           buried in a modal: the recogniser can only be one language at a time, and this
+           is the only thing that knows which he is about to speak. Text, not a flag or a
+           globe — two letters say it and survive being 22px wide. -->
+      <button class="coachdock-lang" id="coachDockLang" type="button"></button>
       <!-- The one control, and always "press this when you're done": pulsing while it
            listens, a mic when there is nothing to send, an arrow when there is. -->
       <button class="coachdock-mic" id="coachDockMic" type="button" aria-label="Listening"></button>
@@ -8328,13 +8347,17 @@ document.getElementById("aiStar").onclick = () => aiModalOpen(true);
    tap-outside to close it, exactly as the sentence pad has none. */
 document.getElementById("uhBtn").onclick = () => coachDockOpen(!coachDockOn);
 document.getElementById("coachDockMic").onclick = () => coachDockMicPress();
+document.getElementById("coachDockLang").onclick = () => coachLangToggle();
 (function wireCoachDockBox() {
   const q = document.getElementById("coachDockQ");
   if (!q) return;
   /* "if I need to type I can press the box" — so reaching for it stops the mic, and must
      NOT throw away what it already heard. What was transcribed stays as editable text. */
   q.addEventListener("focus", () => coachDockHush());
-  q.addEventListener("input", () => coachDockPaintMic());
+  /* He has taken the text over, so it is no longer a machine transcript and the coach
+     must not be told to second-guess his spelling. Fires only on real typing — the
+     interim results are written to .value programmatically and raise no input event. */
+  q.addEventListener("input", () => { coachDockVoiceLang = ""; coachDockPaintMic(); });
   q.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); coachDockSend(); }
   });
@@ -15333,7 +15356,7 @@ function coachWho() {
    "You know nothing except this panel" is the one that made him unanswerable, and it is
    gone. A model permitted both kinds of answer picks the right one from the question
    itself, which is why there is no routing call here — see the spec's deferred list. */
-function coachPrompt(rep, code, thread, subject, question, retryOn, who) {
+function coachPrompt(rep, code, thread, subject, question, retryOn, who, asr) {
   const hist = (thread || []).filter(t => t && t.a && !t.err);
   const w = who || coachWho();
   return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
@@ -15399,10 +15422,27 @@ function coachPrompt(rep, code, thread, subject, question, retryOn, who) {
     " ===\nBackground, so you know where he is. It is not the limit of what you know " +
     "about Hebrew.\n" + (uhText(rep) || "(nothing in particular)") +
     (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
+    /* THE SAFETY NET FOR WHEN HE FORGETS THE SWITCH. Only ever set for a question he
+       DICTATED under the English recogniser — typed text means what it says, and a
+       Hebrew-set mic transcribes Hebrew correctly by definition.
+
+       The failure it exists for is specific and was the original flag: an English
+       recogniser hearing a Hebrew word writes down whichever English words sound like it,
+       so the coach was answering a question about a man called Adam. He can now switch the
+       mic to Hebrew, and this is what covers the turn where he did not. */
+    (asr === "en"
+      ? "\n\n=== HOW THIS QUESTION REACHED YOU ===\nHe DICTATED it through an ENGLISH " +
+        "speech recogniser. If he spoke a Hebrew word inside it, that word was not " +
+        "transcribed as Hebrew — it came out as whatever English words sound nearest, so " +
+        "adom (red) prints as \"Adam\" or \"a dome\". Where a word makes no sense in " +
+        "English but would make sense as a Hebrew word he is asking about, read it that " +
+        "way and answer the question he meant. Say which Hebrew word you took it to be, " +
+        "so he can correct you if you are wrong.\n"
+      : "") +
     "\n\n=== HIS QUESTION ===\n" + question;
 }
 
-async function uhAskParts(rep, question, thread, subject, retryOn) {
+async function uhAskParts(rep, question, thread, subject, retryOn, asr) {
   const src = await uhSourceText();
   const rules = uhRulesOn(rep);
   const wanted = [];
@@ -15411,7 +15451,7 @@ async function uhAskParts(rep, question, thread, subject, retryOn) {
     (UH_RULE_CONSTS[r] || []).forEach(c => { if (wanted.indexOf(c) === -1) wanted.push(c); });
   });
   const code = wanted.map(n => uhSourceOf(src, n)).filter(Boolean).join("\n\n");
-  return [{ text: coachPrompt(rep, code, thread, subject, question, retryOn) }];
+  return [{ text: coachPrompt(rep, code, thread, subject, question, retryOn, null, asr) }];
 }
 
 let coachBusy = null;     // { q, subject } while a call is in flight; the thread holds the rest
@@ -15419,7 +15459,7 @@ let coachBusy = null;     // { q, subject } while a call is in flight; the threa
    be open with the panel never having been touched — uhStack is empty then, and the
    subject would come out as "Top" for a question asked on a card. The sheet passes
    uhHere(), which is the same call flagContext makes for the same reason. */
-async function uhAsk(rep, question, at) {
+async function uhAsk(rep, question, at, asr) {
   const here = at || uhStack[uhStack.length - 1] || { kind: "root", id: "" };
   const subject = uhLabelFor(here.kind, here.id, uhState());
   let store = coachRollIdle(coachAll(), Date.now());
@@ -15434,7 +15474,7 @@ async function uhAsk(rep, question, at) {
        thing he asks all day. The fast pool is 500 and is lite-first with flash as its own
        fallback, so a lite failure already escalates without new code. His call, and the
        reasoning is in the spec so nobody restores it by accident. */
-    const parts = await uhAskParts(rep, question, store.live, subject, null);
+    const parts = await uhAskParts(rep, question, store.live, subject, null, asr);
     let out = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
                                          { label: "The coach — a question" }) || "").trim();
     let bad = coachUncited(out, parts[0].text);
@@ -15442,7 +15482,7 @@ async function uhAsk(rep, question, at) {
       /* ONE retry, naming what was wrong. Not a verify pass — the check is mechanical and
          has already found the fault; this is giving him a second chance at the same
          question, which is the only thing another call can honestly buy here. */
-      const again = await uhAskParts(rep, question, store.live, subject, bad);
+      const again = await uhAskParts(rep, question, store.live, subject, bad, asr);
       const out2 = String(await geminiRequest(again, GEMINI_MODELS_FAST,
                                               { label: "The coach — again, with the figures" }) || "").trim();
       if (out2) { out = out2; bad = coachUncited(out2, again[0].text); }
@@ -15479,6 +15519,41 @@ let coachDockListening = false;
 let coachDockStopped = false;   // did WE stop it, or did the endpointer decide?
 let coachDockSendOnEnd = true;  // an unattended end means he finished talking
 let coachDockMsg = "";          // a mic failure, shown until the next thing he does
+let coachDockVoiceLang = "";    // "en"/"he" if the box holds a transcript; "" once he types
+let coachDockRelisten = false;  // he changed language mid-listen; start again when this one ends
+
+/* WHICH LANGUAGE THE DOCK'S MIC LISTENS FOR, and why it is his choice rather than the
+   app's. Web Speech takes ONE language per session and has no multilingual mode, so the
+   app has to commit before he opens his mouth — and it has now guessed wrong in both
+   directions. en-GB destroyed the Hebrew inside his English questions: he said adom
+   (אדום) and it printed "Adam". he-IL, shipped 2026-09-08 on the file's own claim that it
+   "transcribes English perfectly well", failed his real test the same afternoon: "It
+   picks up the English initially, although it does lag a little bit. Then once I start
+   speaking Hebrew it doesn't then switch back to English."
+
+   That claim was true for a stray Hebrew word inside English and false for holding an
+   English conversation, which is what the dock is actually for. So there is no setting
+   that serves both, and a control is the honest answer: he knows which language he is
+   about to speak, and the app cannot.
+
+   Defaults to English because that is the common case — he asks in English about Hebrew.
+   Remembered across sessions so the choice costs one tap ever, not one per question. */
+const COACH_LANG_KEY = "hvr_coachlang";
+function coachLangGet() { return lsGet(COACH_LANG_KEY) === "he" ? "he" : "en"; }
+function coachLangSet(v) { lsSet(COACH_LANG_KEY, v === "he" ? "he" : "en"); }
+function coachLangCode() { return coachLangGet() === "he" ? "he-IL" : "en-GB"; }
+function coachLangToggle() {
+  coachLangSet(coachLangGet() === "he" ? "en" : "he");
+  /* Restart rather than wait for the next question. Changing it mid-listen means the
+     current attempt is in the wrong language, and micRecGet rebuilds on a mode change —
+     so the only useful thing to do with what it has heard so far is drop it.
+
+     The restart itself happens in coachDockListen, once the outstanding attempt has
+     actually ended; calling it from here cannot work, because this runs while that await
+     is still pending and the guard at the top of it would refuse. */
+  if (coachDockListening) { coachDockRelisten = true; coachDockHush(); }
+  coachDockPaintMic();
+}
 
 /* Constant markup, never a value from anywhere — the renderer's textContent-only rule is
    about untrusted strings, and these are three literals. */
@@ -15511,6 +15586,18 @@ function coachDockPaintMic() {
   b.innerHTML = coachDockListening ? COACH_STOP_SVG : hasText ? COACH_SEND_SVG : COACH_MIC_SVG;
   b.setAttribute("aria-label", coachDockListening ? "Finished talking — send to the coach"
                              : hasText ? "Send to the coach" : "Speak to the coach");
+  const L = document.getElementById("coachDockLang");
+  if (L) {
+    const he = coachLangGet() === "he";
+    L.textContent = he ? "he" : "en";
+    L.classList.toggle("he", he);
+    L.disabled = !!coachBusy;
+    /* The label says what it IS; the aria-label says what pressing it DOES, because a
+       screen reader announcing "en" on a button gives no clue it is a switch. */
+    L.setAttribute("aria-label", he ? "Mic is listening for Hebrew — switch to English"
+                                    : "Mic is listening for English — switch to Hebrew");
+    L.title = L.getAttribute("aria-label");
+  }
 }
 
 function coachDockRender() {
@@ -15609,25 +15696,28 @@ async function coachDockListen() {
   coachDockRender();
   let res;
   try {
-    /* he-IL, NOT en-GB, and the swap is the whole of a flag. The old reasoning — "he asks
-       in English even when the answer is Hebrew" — is right about the question and wrong
-       about what is IN it. His questions are about Hebrew words, so they contain Hebrew
-       words, and that is exactly when the coach is least able to help: he said adom
-       (אדום) and en-GB printed the English name "Adam". George: "I'm trying to speak in
-       Hebrew but it's obviously listening for English ... he just didn't pick it up".
-
-       The asymmetry that makes this safe is already established in this file, and
-       learnScoreSpoken's English-word detector is built on it: the he-IL recogniser
-       transcribes English perfectly well. So he-IL keeps the English and stops destroying
-       the Hebrew, where en-GB could only ever do one of the two.
+    /* HIS CHOICE, not a constant — see coachLangGet for why neither language works as
+       one. Both were tried as the fixed answer on 2026-09-08 and both failed in real use.
 
        NOT continuous, unlike the drill card. An unattended end here means he finished
        asking — coachDockSendOnEnd sends on it, which is what "dash a quick question" is
        for and what a hold would break. */
-    res = await micListen({ lang: "he-IL",
+    res = await micListen({ lang: coachLangCode(),
                             onInterim: t => { q.value = prefix + t; coachDockPaintMic(); } });
   } finally {
     coachDockListening = false;
+  }
+  /* SWITCHED LANGUAGE MID-SENTENCE. Checked here rather than in coachLangToggle because
+     `coachDockListening` is still true while this await is outstanding, so a restart
+     called from there hits the guard at the top of this function and silently does
+     nothing — the mic would stop and never come back, and he would have to tap it again
+     to say the thing he had just started saying. `res` is a stop we caused, so it is
+     dropped rather than reported as a mic failure. */
+  if (coachDockRelisten) {
+    coachDockRelisten = false;
+    q.value = base;
+    if (coachDockOn) { coachDockListen(); } else { coachDockPaintMic(); }
+    return;
   }
   if (!res || !coachDockOn) { coachDockPaintMic(); return; }
   if (!res.ok) {
@@ -15638,6 +15728,10 @@ async function coachDockListen() {
     return;
   }
   q.value = (prefix + res.text).trim();
+  /* Which mic produced this text, so the prompt can warn the coach about an English
+     transcript of a Hebrew word. Cleared the moment he types, because then it is his
+     spelling and means what it says. */
+  coachDockVoiceLang = coachLangGet();
   /* An end he did not ask for is the endpointer deciding he stopped talking, and "dash a
      quick question" means not needing a second tap to confirm it. Reaching for the
      keyboard clears the flag, so what was heard stays put and waits to be edited. */
@@ -15652,11 +15746,15 @@ function coachDockSend() {
   if (!text) return;
   q.value = "";
   coachDockMsg = "";
+  /* Read and cleared together: this belongs to the question being sent, and leaving it
+     set would mislabel the next one he types. */
+  const spokenIn = coachDockVoiceLang;
+  coachDockVoiceLang = "";
   /* The report for wherever he actually is, not for wherever the panel was last left. */
   const at = uhHere();
   let rep = null;
   try { rep = uhReportFor(at); } catch (e) {}
-  uhAsk(rep, text, at);
+  uhAsk(rep, text, at, spokenIn === "en" ? "en" : null);
   /* uhAsk repaints on its way to the network, so this is belt and braces — but the box is
      empty NOW, and a send arrow still showing over an empty box is a button offering to
      send nothing. Cheap, and it stops this function depending on uhAsk's internals. */
@@ -17450,13 +17548,35 @@ function micHoldMayContinue(b) {
   return (b.restarts || 0) < MIC_HOLD_MAX_RESTARTS &&
          (Date.now() - (b.startedAt || 0)) < MIC_HOLD_MAX_MS;
 }
-function micRecGet() {
+/* MODE IS BAKED IN AT CONSTRUCTION, not poked into a live object.
+
+   Reuse exists for exactly one reason — see the long note above: a fresh recogniser per
+   card re-prompted for the microphone on file://. It was never a claim that a running
+   recogniser will notice its settings changing underneath it. `lang` was already being
+   reassigned per call on that assumption, and `continuous` joined it when the drill card
+   started holding the line, which is worse: the drill sets it true and the dock sets it
+   back to false on the SAME object, so the two callers now disagree about a live one.
+
+   This file has been burned once already by Chrome-on-Android handling the recogniser
+   differently from desktop (the micStream hold, which starts cleanly, reports no error and
+   hears nothing). Betting the coach's mic on how a reused instance re-reads its own
+   properties is the same bet, so: an instance whose mode differs from what is being asked
+   for is torn down and rebuilt. Same mode, same instance — so the file:// case that
+   motivated reuse, one caller drilling card after card, still never rebuilds. */
+function micRecGet(lang, continuous) {
   const SR = speechCtor();
-  if (!SR || micRecInstance) return micRecInstance;
+  if (!SR) return null;
+  if (micRecInstance &&
+      (micRecInstance.lang !== lang || micRecInstance.continuous !== continuous)) {
+    /* Safe here and nowhere else: micListen has already refused to proceed if anything
+       was still listening, so there is no pending promise for this to strand. */
+    micRecTeardown();
+  }
+  if (micRecInstance) return micRecInstance;
   const r = new SR();
-  r.lang = "he-IL";
+  r.lang = lang;
   r.interimResults = true;
-  r.continuous = false;
+  r.continuous = continuous;
   /* Was 1, which threw away the runners-up. A word the recogniser ranked second is a
      word it HEARD — grading that as "he didn't say it" is the false negative the whole
      of learnScoreSpoken's softening now exists to prevent. Costs nothing: the engine
@@ -17522,18 +17642,11 @@ function micRecGet() {
 /* Resolves rather than rejects on failure: every caller wants "here's what happened"
    so it can fall back to hand-grading, and none of them want a throw mid-card. */
 function micListen(opts) {
-  const r = micRecGet();
-  if (!r) return Promise.resolve({ ok: false, error: "unsupported" });
+  /* Busy BEFORE get: micRecGet may tear the instance down to change mode, and doing that
+     under a caller that is still listening would abort it mid-sentence. */
   if (micRecBusy) return Promise.resolve({ ok: false, error: "already-listening" });
-  /* .lang is read when start() is called, not when the instance was constructed, so
-     the one persistent recogniser (see micRecGet's comment on why it's reused rather
-     than rebuilt per card) can still switch between Hebrew production and the English
-     "what did it mean" box from one call to the next. */
-  r.lang = (opts && opts.lang) || "he-IL";
-  /* Read at start() like .lang, and for the same reason — one shared recogniser has to
-     hold the line for a drill card and still endpoint normally for the coach's question
-     box, where an unattended end genuinely means he finished asking. */
-  r.continuous = !!(opts && opts.continuous);
+  const r = micRecGet((opts && opts.lang) || "he-IL", !!(opts && opts.continuous));
+  if (!r) return Promise.resolve({ ok: false, error: "unsupported" });
   return new Promise(resolve => {
     micRecBusy = { resolve: resolve, opts: opts, carry: "", carrySegs: [], carryConf: 0,
                    wantStop: false, startedAt: Date.now(), restarts: 0 };
@@ -33271,7 +33384,7 @@ T("micHoldMayContinue: the two backstops that stop a held mic becoming a stuck o
 /* Drives the real micListen against a fake recogniser. The restart logic lives in event
    handlers that nothing else can reach, and it is the whole of the fix — asserting the
    pure predicate above would prove none of it. */
-function micFakeRun(body) {
+async function micFakeRun(body) {
   const realSR = window.SpeechRecognition, realWebkit = window.webkitSpeechRecognition;
   const wasInstance = micRecInstance, wasBusy = micRecBusy;
   let rec = null;
@@ -33283,7 +33396,10 @@ function micFakeRun(body) {
     window.SpeechRecognition = Fake;
     window.webkitSpeechRecognition = undefined;
     micRecInstance = null; micRecBusy = null;
-    return body(() => rec);
+    /* AWAITED, not returned. A body that awaits mid-way would otherwise have the real
+       recogniser put back underneath it by the finally below, and carry on driving a
+       Fake the rest of the suite can no longer see. */
+    return await body(() => rec);
   } finally {
     /* Put back BEFORE anything can await — the suite shares one recogniser and one
        window, and a leaked Fake would silently answer every later mic test. */
@@ -33336,6 +33452,96 @@ T("micListen: a real error ends the attempt even with the line held", async () =
   assertEq(res.ok, false);
   assertEq(res.error, "not-allowed",
            "a blocked mic will not fix itself on a retry, so retrying would hang the card");
+});
+T("micRecGet: a mode change rebuilds rather than poking a live recogniser", async () => {
+  const seen = await micFakeRun(async get => {
+    const a = micListen({ lang: "he-IL", continuous: true });
+    const first = get();
+    micStop(); first.onend();
+    await a;
+    /* Same mode: the file:// re-prompt workaround still holds, so this must NOT rebuild. */
+    const b = micListen({ lang: "he-IL", continuous: true });
+    const same = get();
+    micStop(); same.onend();
+    await b;
+    /* Different mode: a new object, because nothing here should depend on how Chrome
+       re-reads .continuous on an instance it has already started once. */
+    const c = micListen({ lang: "en-GB", continuous: false });
+    const rebuilt = get();
+    micStop(); rebuilt.onend();
+    await c;
+    return { reusedSameMode: same === first, rebuiltOnChange: rebuilt !== first,
+             lang: rebuilt.lang, continuous: rebuilt.continuous };
+  });
+  assertTrue(seen.reusedSameMode, "same lang and mode reuses the instance");
+  assertTrue(seen.rebuiltOnChange, "a different mode gets a different recogniser");
+  assertEq(seen.lang, "en-GB");
+  assertEq(seen.continuous, false);
+});
+T("coachLang: defaults to English, remembers Hebrew, and maps to a recogniser code", () => {
+  const had = lsGet(COACH_LANG_KEY);
+  try {
+    lsSet(COACH_LANG_KEY, "");
+    assertEq(coachLangGet(), "en", "English is the common case and the default");
+    assertEq(coachLangCode(), "en-GB");
+    coachLangSet("he");
+    assertEq(coachLangGet(), "he");
+    assertEq(coachLangCode(), "he-IL");
+    lsSet(COACH_LANG_KEY, "gibberish");
+    assertEq(coachLangGet(), "en", "anything unrecognised falls back rather than throwing");
+  } finally {
+    /* The suite shares one localStorage — put back exactly what was found. */
+    if (had === null || had === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
+    else lsSet(COACH_LANG_KEY, had);
+  }
+});
+T("coachLangToggle: switching mid-sentence restarts the mic in the new language", async () => {
+  /* The path that was wrong first time round. coachDockListening is still true while
+     coachDockListen's await is outstanding, so restarting from the toggle hit the guard
+     at the top of that function and did nothing: the mic stopped and never came back. */
+  const realMic = micListen, realAcquire = micAcquire, hadLang = lsGet(COACH_LANG_KEY);
+  const wasOn = coachDockOn;
+  const asked = [];
+  let release = null;
+  try {
+    lsSet(COACH_LANG_KEY, "en");
+    coachDockOn = true;
+    micAcquire = async () => true;
+    micListen = (opts) => {
+      asked.push(opts.lang);
+      /* First call hangs, exactly as a real one does while he is still talking; the
+         second resolves so the test does not. */
+      if (asked.length === 1) return new Promise(r => { release = r; });
+      return Promise.resolve({ ok: false, error: "aborted" });
+    };
+    coachDockListen();
+    await new Promise(r => setTimeout(r, 0));
+    assertEq(asked.join(","), "en-GB", "started in English");
+    assertTrue(coachDockListening, "and is still listening when he reaches for the switch");
+    coachLangToggle();                    // he realises he is about to speak Hebrew
+    release({ ok: false, error: "aborted" });   // micStop lands
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    assertEq(asked.join(","), "en-GB,he-IL",
+             "the attempt is restarted in Hebrew rather than just stopped");
+  } finally {
+    micListen = realMic; micAcquire = realAcquire;
+    coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
+    if (hadLang === null || hadLang === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
+    else lsSet(COACH_LANG_KEY, hadLang);
+  }
+});
+T("coachPrompt: warns the coach only about a question dictated in English", () => {
+  const rep = { title: "x", sections: [] };
+  const en = coachPrompt(rep, "", [], "", "how do I say Adam", null, null, "en");
+  assertTrue(en.indexOf("ENGLISH") !== -1 && en.indexOf("HOW THIS QUESTION REACHED YOU") !== -1,
+             "an English transcript says so, since adom prints as Adam");
+  const he = coachPrompt(rep, "", [], "", "how do I say adom", null, null, "he");
+  assertTrue(he.indexOf("HOW THIS QUESTION REACHED YOU") === -1,
+             "a Hebrew-set mic transcribes Hebrew correctly, so there is nothing to warn about");
+  const typed = coachPrompt(rep, "", [], "", "how do I say adom", null, null, null);
+  assertTrue(typed.indexOf("HOW THIS QUESTION REACHED YOU") === -1,
+             "and typed text means what it says — never tell the coach to reinterpret it");
 });
 T("micListen: without continuous the endpointer still ends it — the coach's box needs that", async () => {
   const res = await micFakeRun(get => {

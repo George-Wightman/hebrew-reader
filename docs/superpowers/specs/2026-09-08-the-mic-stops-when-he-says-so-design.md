@@ -226,14 +226,60 @@ dock captures the card context itself when he sends.
 - **"Explain this"** on the sentence pad (`padAskExplain`). Left alone — different
   surface, different job. See Deferred.
 
+## Phase 6 — he-IL was wrong too, so the choice becomes his
+
+**Added the same afternoon, after Phase 1 shipped and failed his test.** Flag
+`1788878896590-sgr7y`, 14:47, about an hour after the switch went live:
+
+> "So the language change on the coach doesn't really work. It is a little bit buggy. It
+> picks up the English initially, although it does lag a little bit. Then once I start
+> speaking Hebrew it doesn't then switch back to English. So we do have a problem there.
+> It doesn't work very well"
+
+The file's claim — *"the he-IL recogniser transcribes English perfectly well"* — turns out
+to be true for a stray English word inside Hebrew, which is all `learnScoreSpoken` ever
+needed it for, and false for holding an English conversation, which is what the dock is
+for. Web Speech takes one language per session and has no multilingual mode, so **there is
+no setting that serves both**, and the app had now guessed wrong in both directions.
+
+That makes it a choice rather than a default, and he is the only one who knows which
+language he is about to speak. So: a two-letter `he`/`en` control in the dock row,
+remembered across sessions, defaulting to **English** because that is the common case.
+
+Two things fell out of building it, both real bugs rather than polish:
+
+- **`micListen` was mutating a live shared recogniser.** `lang` had always been
+  reassigned per call on the assumption that a reused instance re-reads it at `start()`;
+  Phase 1 added `continuous` to that, which is worse, because the drill sets it true and
+  the dock sets it false on the *same object*. This file has already been burned once by
+  Chrome-on-Android handling the recogniser differently from desktop, and it is the
+  likeliest explanation of the "lag" in his flag. `micRecGet(lang, continuous)` now
+  rebuilds when the mode differs and reuses when it matches — so the `file://` re-prompt
+  case that motivated sharing, one caller drilling card after card, still never rebuilds.
+- **Toggling mid-sentence stopped the mic and never restarted it.** `coachDockListening`
+  is still true while `coachDockListen`'s await is outstanding, so a restart called from
+  the toggle hit that function's own guard and silently did nothing. The restart is now
+  deferred into `coachDockListen`, after the outstanding attempt actually ends.
+
+**The safety net for the turn where he forgets to flip it.** This is the option deferred
+below as "telling the coach its transcript came from an English recogniser", now built —
+because a toggle he can forget needs one, where a fixed `he-IL` did not. It is attached
+only to a question he *dictated under en-GB*: typed text means what it says, and a
+Hebrew-set mic transcribes Hebrew correctly by definition. The coach is told that a Hebrew
+word he spoke will have come out as whatever English sounds nearest, and asked to name
+which Hebrew word it read, so a wrong guess is visible rather than silently answered.
+
 ## Deferred, with reasons
 
-- **Telling the coach its transcript came from an English recogniser.** Redundant if
-  Phase 1's `he-IL` switch works, on George's own reading. Held as the fallback if
-  `he-IL` degrades his English in practice; only his Pixel can settle that.
-- **A per-call language toggle on the dock mic.** More UI, and it makes him decide
-  mid-flow which language he is about to use — which is the thing the dock exists to
-  avoid.
+- ~~**Telling the coach its transcript came from an English recogniser.**~~ **BUILT in
+  Phase 6.** Was deferred as redundant if `he-IL` worked, on George's own reading —
+  *"if A works C would be redundant right?"* It didn't, and a toggle he can forget needs
+  a net under it in a way a fixed `he-IL` did not.
+- ~~**A per-call language toggle on the dock mic.**~~ **BUILT in Phase 6.** Deferred here
+  as "more UI, and it makes him decide mid-flow which language he is about to use". The
+  evidence changed: the recogniser genuinely cannot do both, so *someone* decides either
+  way, and the app was deciding wrong. Moving the decision to the person who knows the
+  answer is the honest version of a choice that was always being made.
 - **Racing two recognisers, one per language.** Not possible: there is one
   `micRecInstance` by design and `micRecBusy` locks it.
 - **A code-level sanity check on the adjudicator's whole answer** (e.g. rejecting a reply

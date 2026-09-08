@@ -13468,6 +13468,17 @@ function flagContext(report) {
       res: String(e.res || "").slice(0, FLAG_AI_PREVIEW)
     }));
   } catch (e) {}
+  /* WHERE HE HAD JUST BEEN, and WHICH CONVERSATION THIS WAS. The latency flag was
+     raised on lEnd about turns that happened on lCard, and reconstructing those turns
+     took cross-referencing timestamps against content/nodes.json. The trail is copied;
+     the session is REFERENCED by id, because two flags raised in one sitting would
+     otherwise carry the same conversation twice into a payload we just spent a
+     migration shrinking. */
+  try { c.trail = trailAll().slice(-TRAIL_MAX); } catch (e) {}
+  try {
+    const last = sessAll()[sessAll().length - 1];
+    if (last) c.sessionId = last.id;
+  } catch (e) {}
   try { c.screenSize = window.innerWidth + "×" + window.innerHeight; } catch (e) {}
   return c;
 }
@@ -34160,6 +34171,23 @@ T("trailNote: the last few screens, deduped, never unbounded", () => {
     for (let i = 0; i < TRAIL_MAX + 10; i++) trailNote("v" + i, "", 5000 + i);
     assertEq(trailAll().length, TRAIL_MAX);
   } finally { lsSet(TRAIL_KEY, was || "[]"); }
+});
+
+T("flagContext: carries the trail, and points at the session rather than copying it", () => {
+  const wasT = lsGet(TRAIL_KEY), wasS = lsGet(SESS_KEY);
+  try {
+    lsSet(TRAIL_KEY, "[]"); lsSet(SESS_KEY, "[]");
+    trailNote("learn", "lCard", 1000);
+    trailNote("learn", "lEnd", 2000);
+    sessRecord({ turns: [{ said: "x", out: { ok: "clean", say: { he: "y" } } }] }, "c2-0-1qt5", 1500);
+    const c = flagContext("");
+    assertTrue(Array.isArray(c.trail), "the trail rides along");
+    assertEq(c.trail[c.trail.length - 1].screen, "lEnd", "newest last");
+    assertTrue(c.trail.length <= TRAIL_MAX);
+    assertEq(c.sessionId, sessAll()[sessAll().length - 1].id,
+             "and the conversation is REFERENCED, so two flags in one session do not store it twice");
+    assertTrue(!c.session, "never the turns themselves");
+  } finally { lsSet(TRAIL_KEY, wasT || "[]"); lsSet(SESS_KEY, wasS || "[]"); }
 });
 
 T("hvr_sessions: syncs, and has a merge rule so it is not overwritten", () => {

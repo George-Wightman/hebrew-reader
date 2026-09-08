@@ -162,6 +162,19 @@ nor in the ledger is genuinely new and should be surfaced.
    than making him ask for it — that's the entire reason the context is captured. Mention
    the resolved/handled counts briefly so he knows the filtering is happening, not just
    trust it silently.
+
+   When a flag carries `ctx.sessionId`, look it up in `blob['keys']['hvr_sessions']`
+   (same double-parse as `hvr_flags` and `hvr_health` — it's a JSON string under `keys`,
+   holding a JSON array) and show the last three turns of that conversation under the
+   flag: what he said, what the coach answered, how it was judged. That's the material
+   that used to take cross-referencing timestamps against `content/nodes.json` to
+   reconstruct by hand — now it's just the session the id points at.
+
+   When a flag carries `ctx.trail`, read the last few entries as where he had just been.
+   A flag raised on `lEnd` about something that happened on `lCard` is the normal case,
+   not the exception — most flags are written a screen or two after the thing that
+   actually prompted them, so the trail is often more informative than the screen the
+   flag itself was raised from.
 6. **Read `hvr_health` every time, even when there are no new flags.** This is the store
    that exists because a flag could not have told you: on 2026-09-07 `gemini-flash-latest`
    had been refusing the app's thinking control and silently running at its default

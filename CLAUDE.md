@@ -23,6 +23,22 @@ Then navigate with a query string not used before. This applies on `localhost`
 rebuild, so if the live site still shows the old build, poll rather than assume
 the push failed.
 
+**Clear it immediately before each verification navigate, not once at the start.**
+A reinstalled service worker does not control the page that triggered its install
+— only the *next* navigation. So clearing, then doing something else, then
+navigating gives you the stale shell again, and the symptom is a function you just
+added reading as `undefined` while a plain `fetch` of the same URL shows it
+present. Cost time twice on 2026-09-07.
+
+**`756/756` is environment-dependent, and a clean profile is not a clean run.**
+On a *completely empty* `localStorage` the suite is one short: `sync: the slimmed
+bank goes over the wire and never into local storage` throws `"undefined" is not
+valid JSON`, because it stubs `lsGet` while `syncSnapshot` enumerates the real
+keys through `exportKeys()`, so `local.keys[BANK_KEY]` is `undefined`. Pre-existing
+harness fragility, not app behaviour — a brand-new device has no bank to slim.
+Don't chase it, and don't take a one-short count on a fresh profile as a
+regression.
+
 Confirm content with `read_page` / `get_page_text` / `javascript_tool`, not
 screenshots — the Browser pane's screenshot can lag a beat behind the live DOM,
 and it occasionally stops compositing entirely (`preview_stop` then

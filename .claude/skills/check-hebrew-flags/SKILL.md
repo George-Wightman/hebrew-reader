@@ -111,14 +111,28 @@ nor in the ledger is genuinely new and should be surfaced.
    one bash used above — this is a plain `python` invocation, and it does not understand
    MSYS paths:
 
+   Since 2026-09-07, what you get back from the base64 decode above is not always the
+   blob itself — it's `syncEncodeBlob`'s output, which wraps the real blob in
+   `{app, schema, enc: "gzip", updated, device, body}` when the browser that wrote it
+   could compress (`CompressionStream` support) and leaves it as the plain blob when it
+   couldn't. Both are permanent, not a migration window: a build from before this date,
+   or any browser without `CompressionStream`, still writes plain JSON, and there's no
+   point after which that branch goes away. So check for `enc == "gzip"` first and only
+   gzip-decompress when it says so — anything else is already the blob:
+
    ```bash
    python -c "
-   import json, base64, time
+   import json, base64, time, gzip
    raw = json.load(open(r'C:\Users\gwigh\AppData\Local\Temp\claude\...\scratchpad\hvr_progress_raw.json', encoding='utf-8'))
    # Empty content means the file crossed 1MB — refetch by sha (see step 2), don't
    # carry on: '' decodes to nothing and every flag silently reads as absent.
    assert raw.get('content'), 'empty content — over 1MB, refetch via git/blobs/' + raw.get('sha','')
-   blob = json.loads(base64.b64decode(''.join(raw['content'].split())).decode('utf-8'))
+   text = base64.b64decode(''.join(raw['content'].split())).decode('utf-8')
+   outer = json.loads(text)
+   if outer.get('enc') == 'gzip':
+       blob = json.loads(gzip.decompress(base64.b64decode(''.join(outer['body'].split()))).decode('utf-8'))
+   else:
+       blob = outer
    flags = json.loads(blob['keys'].get('hvr_flags') or '[]')
    health = json.loads(blob['keys'].get('hvr_health') or '[]')
 

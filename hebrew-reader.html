@@ -1303,6 +1303,9 @@
   .lwd-en { color: var(--ink); font-size: .95rem; margin-top: 3px; }
   .lwd-why { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border);
              font-size: .85rem; text-align: left; color: var(--ink); white-space: pre-wrap; }
+  /* .linkbtn carries no padding, so two of them as bare siblings butt straight up against
+     each other. The row is what separates them; it also centres a lone one unchanged. */
+  .lwd-links { display: flex; gap: 16px; justify-content: center; margin-top: 9px; flex-wrap: wrap; }
   .lwd-grades { display: flex; gap: 7px; justify-content: center; margin-top: 11px; flex-wrap: wrap; }
   .lwd-grades .lgrade { padding: 6px 14px; font-size: .84rem; }
   .lwd-miss { color: var(--muted); font-size: .85rem; }
@@ -28815,12 +28818,6 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
   if (info.why) {
     const w = document.createElement("div"); w.className = "lwd-why"; w.textContent = info.why;
     panel.append(w);
-  } else if (geminiKeys().length && c.item) {
-    const ask = document.createElement("button");
-    ask.className = "linkbtn"; ask.type = "button"; ask.style.marginTop = "9px";
-    ask.textContent = "Why is it this word?";
-    ask.onclick = () => learnExplainWord(ask, panel, tok, c);
-    panel.append(ask);
   }
   /* KEPT AND ADDED TO, rather than replaced like the card's button was. "Why is it this
      word?" is the same one-shot shape, but it is not the one he complained about and it
@@ -28830,13 +28827,25 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
 
      What it could not do is be followed up, and this is where he says the follow-up
      actually lives — "Im usually askign about a specific word choice". So the handoff
-     sits under the explanation instead of in place of it. */
+     joins it rather than replacing it.
+
+     ONE ROW, because two bare .linkbtn siblings are inline with no padding and ran
+     together into "Why is it this word?Ask the coach" on the first card that showed both. */
   if (geminiKeys().length) {
+    const links = document.createElement("div"); links.className = "lwd-links";
+    if (!info.why && c.item) {
+      const ask = document.createElement("button");
+      ask.className = "linkbtn"; ask.type = "button";
+      ask.textContent = "Why is it this word?";
+      ask.onclick = () => learnExplainWord(ask, panel, tok, c);
+      links.append(ask);
+    }
     const coach = document.createElement("button");
-    coach.className = "linkbtn"; coach.type = "button"; coach.style.marginTop = "9px";
+    coach.className = "linkbtn"; coach.type = "button";
     coach.textContent = "Ask the coach";
     coach.onclick = () => { close(); coachDockOpen(true); };
-    panel.append(coach);
+    links.append(coach);
+    panel.append(links);
   }
 
   /* SAME ORDER AS THE CARD'S OWN GRADE ROW, which is the whole of the change. This used

@@ -8860,9 +8860,15 @@ async function syncEncodeBlob(blob) {
     const CHUNK = 0x8000;                  // same argument-limit guard as b64encodeUtf8
     for (let i = 0; i < buf.length; i += CHUNK)
       bin += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
-    return JSON.stringify({ app: "hebrew-reader", schema: SYNC_SCHEMA_GZIP,
-                            enc: "gzip", updated: blob.updated, device: blob.device,
-                            body: btoa(bin) });
+    return JSON.stringify({
+      /* DELIBERATELY NOT "hebrew-reader". syncPull guards on blob.app, and a build from
+         before the compressed reader would otherwise sail through that guard, find no
+         `keys`, merge against nothing, and push its own state over the whole file without
+         showing an error. Failing that guard turns a silent rollback into a loud refusal —
+         the message is wrong about the cause, but it stops rather than destroys. */
+      app: "hebrew-reader-gz", schema: SYNC_SCHEMA_GZIP,
+      enc: "gzip", updated: blob.updated, device: blob.device,
+      body: btoa(bin) });
   } catch (e) { return plain; }            // never let compression cost him a sync
 }
 
@@ -33676,12 +33682,44 @@ T("syncPush: sends the compressed envelope, slimmed first", async () => {
                      [{ id: "1", text: "keep", ts: 1, resolved: true, ctx: { report: "x".repeat(4000) } }]) } };
     await syncPush(blob, "oldsha");
     const file = b64decodeUtf8(sent.content);
-    assertTrue(file.indexOf("\"enc\":\"gzip\"") !== -1, "the file is the envelope");
-    const back = await syncDecodeBlob(file);
-    const flags = JSON.parse(back.keys.hvr_flags);
-    assertEq(flags[0].text, "keep", "his words survive the round trip");
-    assertTrue(!flags[0].ctx, "and the slimming happened BEFORE the compression");
+    /* CompressionStream/DecompressionStream are not universal — syncEncodeBlob falls
+       back to plain JSON without them, and every build reads both. Asserting the
+       envelope unconditionally would fail on such a browser for behaviour working
+       exactly as designed (see the same gate in the syncDecodeBlob test above). */
+    if (syncCanCompress()) {
+      assertTrue(file.indexOf("\"enc\":\"gzip\"") !== -1, "the file is the envelope");
+      const back = await syncDecodeBlob(file);
+      const flags = JSON.parse(back.keys.hvr_flags);
+      assertEq(flags[0].text, "keep", "his words survive the round trip");
+      assertTrue(!flags[0].ctx, "and the slimming happened BEFORE the compression");
+    } else {
+      /* The degrade path: no compression, but the plain JSON that goes out instead
+         must still be slimmed — that's what keeps the payload small on a browser
+         that can't gzip it. Nothing else pinned this. */
+      assertTrue(file.indexOf("\"enc\":\"gzip\"") === -1, "no envelope without compression");
+      const flags = JSON.parse(JSON.parse(file).keys.hvr_flags);
+      assertEq(flags[0].text, "keep", "his words survive as plain JSON");
+      assertTrue(!flags[0].ctx, "and the slimming still happened");
+    }
   } finally { fetchWithTimeout = realFetch; }
+});
+
+T("syncEncodeBlob: an old build refuses the envelope rather than merging against nothing", async () => {
+  /* syncPull's guard is `blob.app !== "hebrew-reader"`. It is the only thing standing
+     between a stale build and a silent rollback: parsing the envelope as a blob yields
+     no `keys`, mergeKeyMap treats that as "remote has nothing", and the device pushes
+     its own copy over the entire file without an error anywhere. */
+  if (!syncCanCompress()) return;
+  const packed = JSON.parse(await syncEncodeBlob(
+    { app: "hebrew-reader", schema: 1, updated: "u", device: "d", keys: { hvr_stats: "{}" } }));
+  assertTrue(packed.app !== "hebrew-reader",
+             "the envelope must NOT pass an old build's blob check");
+  assertTrue(!packed.keys, "and it genuinely has no keys, which is why that matters");
+  /* The current build is unaffected: it branches on `enc`, and the blob inside still
+     identifies itself normally. */
+  const inner = await syncDecodeBlob(JSON.stringify(packed));
+  assertEq(inner.app, "hebrew-reader", "the real blob still says what it is");
+  assertEq(inner.keys.hvr_stats, "{}");
 });
 
 /* ---- what travels, and what must never ---- */

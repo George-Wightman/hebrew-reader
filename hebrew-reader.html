@@ -17734,6 +17734,18 @@ function alignSpoken(expected, said) {
     }
   }
   const status = new Array(E).fill("missed");
+  /* A MISS HAS TWO SHAPES AND THEY ARE NOT THE SAME EVIDENCE. A substitution consumed a
+     word he actually said at that position — that is a candidate mishearing, and the
+     whole rescue stack downstream exists for it. A deletion consumed nothing: no word of
+     his aligned there at all. Both used to come out as plain "missed", so everything
+     downstream had to treat "he said something else" and "he said nothing" alike, and
+     learnAdjudicate then softened a word with no evidence anywhere behind it.
+
+     George, on the card that found this: "If its not there I didnt say it, and with the
+     edit above if its not htere its becuase I didnt say it not hte mic stopping early."
+     The second clause is the precondition, and it is why this ships behind the held mic
+     rather than in front of it. */
+  const gap = new Array(E).fill(false);
   const extra = [];
   let i = E, j = S;
   while (i > 0 || j > 0) {
@@ -17743,13 +17755,13 @@ function alignSpoken(expected, said) {
       if (s === 1) extra.push(said[j - 1]);
       i--; j--;
     } else if (i > 0 && cost[i][j] === cost[i - 1][j] + 1) {
-      status[i - 1] = "missed"; i--;
+      status[i - 1] = "missed"; gap[i - 1] = true; i--;
     } else {
       if (j > 0) extra.push(said[j - 1]);
       j--;
     }
   }
-  return { status: status, extra: extra.reverse() };
+  return { status: status, extra: extra.reverse(), gap: gap };
 }
 
 /* ---- did his guess at the MEANING land? -------------------------------------
@@ -27660,12 +27672,48 @@ function learnMicUnsure(card) {
 
    Budget is not the constraint people assume. AI_POOL_CAPS.fast is 500 a day against
    a handful in real use, so a session with five imperfect cards spends five. */
+/* NOT A WORD THAT WAS NEVER THERE. The prompt below already tells the model to leave out
+   an index where the transcript "shows nothing at all", and on 2026-09-08 flash-lite
+   ignored it: he reached five words into a six-word sentence, and both the substituted
+   word and the one he never said came back rescued. He watched the second one change
+   under him after the reveal — "then for some reason it changed at the lat second".
+
+   An instruction to a model is not a guard, so this is the guard. A gap index has already
+   failed every local test by the time we get here (see learnScoreSpoken), which means no
+   reading of the audio — not the top transcript, not a single runner-up — put anything at
+   that position. There is nothing left to have a second opinion about.
+
+   Substitutions are still asked about, and that is deliberate: אטי heard as איתי is
+   exactly this rescue's job and is the reason it exists. What it loses is only the case
+   where it had nothing whatsoever to go on. */
+function learnAdjudicateGap(spoken, i) {
+  return !!(spoken && spoken.gap && spoken.gap[i]);
+}
 function learnAdjudicateWanted(spoken) {
   const out = [];
   (spoken.status || []).forEach((st, i) => {
-    if (st === "missed" && spoken.expected && spoken.expected[i]) out.push(i);
+    if (st !== "missed" || !spoken.expected || !spoken.expected[i]) return;
+    if (learnAdjudicateGap(spoken, i)) return;
+    out.push(i);
   });
   return out;
+}
+/* Pure, so what he is told can be asserted without a card on screen. The transliteration
+   rides along because it is the form he actually reads — a bare Hebrew word in an English
+   sentence is the one part of this note he would have to decode. */
+function learnRescueText(words, lib) {
+  const names = (words || []).filter(Boolean).map(w => {
+    const t = trFormsOf(w, lib);
+    return t.length ? w + " (" + t[0] + ")" : w;
+  });
+  if (!names.length) return "";
+  return "Second opinion: you probably did say " + names.join(", ") +
+         " — raised from Missed to Nearly.";
+}
+function learnRescueNote(words) {
+  let msg = "";
+  try { msg = learnRescueText(words, libAll()); } catch (e) { return; }
+  if (msg) learnGraceNote(document.getElementById("lCard"), msg);
 }
 function learnAdjudicatePrompt(spoken, want, lib) {
   /* The transliteration goes in because the question is about SOUND and the model is
@@ -27721,10 +27769,15 @@ async function learnAdjudicate(c, spoken, askedAt) {
     return;
   }
   let moved = 0, won = 0;
+  const raised = [];
   said.forEach(i => {
     i = Number(i);
-    if (want.indexOf(i) === -1) return;              // only what we actually asked about
+    /* Only what we actually asked about — which is also where the gap guard bites a
+       second time, for free: learnAdjudicateWanted has left every gap index out of `want`,
+       so a model volunteering one here is ignored rather than trusted. */
+    if (want.indexOf(i) === -1) return;
     spoken.status[i] = "near";
+    raised.push(spoken.expected[i]);
     won++;
     /* Marks he has already corrected by hand are left alone — only a standing
        "missed" is softened, so this can never undo a deliberate tap. */
@@ -27733,6 +27786,16 @@ async function learnAdjudicate(c, spoken, askedAt) {
   /* Words genuinely softened on a card he was still looking at — the only outcome that
      was ever worth paying for. */
   if (won) { try { statsBump({ adjWon: won }); } catch (e) {} }
+  /* SAY SO. This used to change the marks and nothing else, and a mark that rewrites
+     itself a second after the reveal is exactly what he reported: "then for some reason
+     it changed at the lat second". The mutation was never the problem on its own — being
+     unable to see it was, and it is also why an over-generous rescue stayed invisible for
+     as long as it did.
+
+     Same slot and same class as every other advisory line, so this cannot become a second
+     visual language for the same job. Grace runs after this and replaces the line if it
+     has something better to say, which is the right precedence. */
+  if (raised.length) learnRescueNote(raised);
   if (moved && learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
   /* Whole-card grading: recompute the recommendation from the softened statuses and
      redraw the buttons, rather than rebuilding the card under him. */
@@ -28186,10 +28249,14 @@ function learnScoreSpoken(c, text, res) {
   /* Counted so Phase 1's effect is measurable against the adjudicator's own record
      rather than asserted — 21 calls and 6 rescues over the three days before this. */
   if (soundWon) { try { statsBump({ soundWon: soundWon }); } catch (e) {} }
+  /* Carried as the alignment found it, BEFORE the two rescues above are consulted — a
+     gap is a fact about where his words landed, not a verdict, and the rescues have
+     already had their say by overwriting `status`. A gap index still reading "missed"
+     here is one that failed the runners-up and the sound tiers as well. */
   learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {},
                   alts: alts, conf: (res && res.confidence) || 0,
                   unsure: micUnsure(res && res.confidence), expected: expected,
-                  soundPairs: soundPairs };
+                  soundPairs: soundPairs, gap: a.gap || [] };
 
   /* The he-IL recogniser transcribes English perfectly well — the finding that made
      this worth building. So "you reached for the English word" is detectable, and
@@ -33254,6 +33321,71 @@ T("micListen: without continuous the endpointer still ends it — the coach's bo
     return promise;
   });
   assertEq(res.text, "מה זה", "an unattended end here means he finished asking");
+});
+T("alignSpoken: a substitution and a deletion are both misses and are not the same miss", () => {
+  /* The exact card from the 2026-09-08 flag: he reached five words into six. One of the
+     two tail words had יותר land against it (a substitution — he said SOMETHING there)
+     and the other had nothing at all (a deletion).
+
+     WHICH of the two is deliberately not asserted. They are an equal-cost tie, so the
+     traceback's branch order decides it, and pinning that down would be writing a
+     contract the aligner does not offer — the guard downstream only needs to know that
+     one of them was never spoken, not which. */
+  const a = alignSpoken(["אני", "לא", "עייפ", "אני", "רק", "חושב"],
+                        ["אני", "לא", "עייפ", "אני", "יותר"]);
+  assertEq(a.status.join(","), "matched,matched,matched,matched,missed,missed");
+  assertEq(a.gap.filter(Boolean).length, 1, "he was one word short, so one word is a gap");
+  assertTrue(a.gap[4] || a.gap[5], "and it is one of the two he did not reach");
+  assertTrue(!a.gap[0] && !a.gap[1] && !a.gap[2] && !a.gap[3],
+             "nothing he actually said is ever a gap");
+});
+T("alignSpoken: gaps can never under-count how many words he did not say", () => {
+  /* The conservation law the guard actually rests on, and the reason the tie-break above
+     does not matter. Every expected word either consumes one of his or is a gap, and he
+     only has so many — so gaps >= expected - said, however the ties fall. */
+  [[["א", "ב", "ג", "ד"], ["א", "ב"]],
+   [["א", "ב", "ג"], ["ז"]],
+   [["א", "ב", "ג"], ["א", "ז", "ג", "ח", "ט"]],
+   [["א"], []]].forEach(([exp, said]) => {
+    const a = alignSpoken(exp, said);
+    assertTrue(a.gap.filter(Boolean).length >= Math.max(0, exp.length - said.length),
+               exp.join(" ") + " vs " + said.join(" "));
+  });
+});
+T("alignSpoken: a clean answer has no gaps at all", () => {
+  const a = alignSpoken(["שלום", "לך"], ["שלום", "לך"]);
+  assertEq(a.gap.join(","), "false,false");
+});
+T("alignSpoken: saying nothing makes every word a gap", () => {
+  const a = alignSpoken(["שלום", "לך"], []);
+  assertEq(a.gap.join(","), "true,true", "silence is not a set of mishearings");
+});
+T("learnAdjudicateWanted: a word nothing was said in place of is never asked about", () => {
+  /* The whole of the Phase 2 guard, on the shape that produced the flag. Index 4 is a
+     substitution and is still fair game — אטי heard as איתי is why this rescue exists.
+     Index 5 is a gap, and there is no reading of the audio that put anything there. */
+  const spoken = { status: ["matched", "missed", "missed"],
+                   expected: ["א", "ב", "ג"],
+                   gap: [false, false, true] };
+  assertEq(learnAdjudicateWanted(spoken).join(","), "1",
+           "the substitution is asked about; the deletion is not");
+});
+T("learnAdjudicateWanted: an old spoken record with no gap array still asks", () => {
+  /* learnSpoken is rebuilt per card and never persisted, so this cannot arrive from
+     storage — but compose builds one by hand, and a missing array must not be read as
+     "everything is a gap" and silence the rescue everywhere. */
+  const spoken = { status: ["missed", "missed"], expected: ["א", "ב"] };
+  assertEq(learnAdjudicateWanted(spoken).join(","), "0,1");
+});
+T("learnRescueText: a late softening says which words and which way", () => {
+  const lib = { "רק": { tr: "rak", en: "only" } };
+  assertEq(learnRescueText(["רק"], lib),
+           "Second opinion: you probably did say רק (rak) — raised from Missed to Nearly.");
+});
+T("learnRescueText: several words in one line, and nothing at all is no line", () => {
+  assertTrue(learnRescueText(["א", "ב"], {}).indexOf("א, ב") !== -1, "one note, not two");
+  assertEq(learnRescueText([], {}), "", "an empty rescue must not draw an empty note");
+  assertEq(learnRescueText(null, {}), "");
 });
 T("learnAdjudicateWanted: asks only about the words that look missed", () => {
   const spoken = { status: ["matched", "missed", "near", "missed"],

@@ -8955,10 +8955,24 @@ function flagSlimForSync(raw) {
   }));
 }
 
+/* KEYS NOTHING IN THIS FILE READS ANY MORE, dropped at the wire because naming them in
+   SYNC_LOCAL_SET was not enough. That set stops this device CONTRIBUTING a key; it does
+   not stop it TRAVELLING, because the pushed blob is mergeKeyMap(mine, remote), which
+   unions — so a key present only in the remote copy is carried into the next push and
+   lives forever. Measured on the live file after both devices synced on 2026-09-08: all
+   three were still there, a day after they were supposedly stopped.
+
+   DELIBERATELY AN EXPLICIT LIST rather than "anything syncKeys does not know about". A
+   device on an older build does not recognise a store a newer build added, and dropping
+   the unrecognised would have the old device delete the new one's data on every sync —
+   which is the same shape as the bug bankDropStubs paid 330 sentences to learn. */
+const SYNC_DEAD = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder"];
+
 function syncSnapshotForPush(blob) {
   const keys = Object.assign({}, blob.keys);
   if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
   if (keys[FLAG_KEY]) keys[FLAG_KEY] = flagSlimForSync(keys[FLAG_KEY]);
+  SYNC_DEAD.forEach(k => { delete keys[k]; });
   return Object.assign({}, blob, { keys: keys });
 }
 
@@ -34240,10 +34254,25 @@ T("syncKeys: does not carry stores nothing in the app reads", () => {
      and keeps riding every sync — hvr_convo was 30.7KB of a 1,018KB payload on
      2026-09-07, from a feature that no longer exists. Named here rather than deleted
      from localStorage: his device may still hold them, and this only stops them
-     travelling. */
+     travelling. Necessary but NOT sufficient — see the assertion below. */
   const dead = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder"];
   dead.forEach(k => assertTrue(SYNC_LOCAL_SET().has(k),
     k + " has no reader in this file and must not be synced"));
+
+  /* THE ASSERTION THAT WAS MISSING. The original test checked only that the keys were
+     named in SYNC_LOCAL_SET, which was true and proved nothing: the pushed blob is a
+     UNION with the remote copy, so a key already in the file came straight back on the
+     next sync. Measured still present on the live file a day later. This checks what
+     actually goes over the wire. */
+  const carried = syncSnapshotForPush({
+    app: "hebrew-reader", schema: SYNC_SCHEMA, updated: "2026-09-08T00:00:00.000Z",
+    device: "d", keys: { hvr_convo: "[1,2,3]", hvr_lastmsg: "{}", hvr_laneorder: "[]",
+                         hvr_stats: "{\"sessions\":1}" }
+  }).keys;
+  dead.forEach(k => assertTrue(!(k in carried),
+    k + " must not reach the wire even when the remote copy still has it"));
+  assertEq(carried.hvr_stats, "{\"sessions\":1}",
+           "and a live store is untouched by the dropping");
 });
 
 T("thinkingChain: each model is offered a control it will actually accept", () => {

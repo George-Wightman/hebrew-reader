@@ -15608,11 +15608,22 @@ async function coachDockListen() {
   coachDockRender();
   let res;
   try {
-    /* en-GB: he asks in English even when the answer is Hebrew. Same call the hear-box
-       makes, and interim results go straight into the box for the reason given there —
-       a recogniser hearing nothing and one hearing everything look identical from
-       outside, and the live text is the only thing that tells them apart. */
-    res = await micListen({ lang: "en-GB",
+    /* he-IL, NOT en-GB, and the swap is the whole of a flag. The old reasoning — "he asks
+       in English even when the answer is Hebrew" — is right about the question and wrong
+       about what is IN it. His questions are about Hebrew words, so they contain Hebrew
+       words, and that is exactly when the coach is least able to help: he said adom
+       (אדום) and en-GB printed the English name "Adam". George: "I'm trying to speak in
+       Hebrew but it's obviously listening for English ... he just didn't pick it up".
+
+       The asymmetry that makes this safe is already established in this file, and
+       learnScoreSpoken's English-word detector is built on it: the he-IL recogniser
+       transcribes English perfectly well. So he-IL keeps the English and stops destroying
+       the Hebrew, where en-GB could only ever do one of the two.
+
+       NOT continuous, unlike the drill card. An unattended end here means he finished
+       asking — coachDockSendOnEnd sends on it, which is what "dash a quick question" is
+       for and what a hold would break. */
+    res = await micListen({ lang: "he-IL",
                             onInterim: t => { q.value = prefix + t; coachDockPaintMic(); } });
   } finally {
     coachDockListening = false;
@@ -17414,6 +17425,30 @@ function micAltStrings(segs, best) {
   }
   return out;
 }
+/* HOLDING THE LINE THROUGH A PAUSE.
+
+   `continuous = false` lets Chrome's endpointer decide when he has finished, and on a
+   production card that is the wrong judge: it ends the attempt while he is still working
+   out the next word. George, on a six-word sentence he reached five words into — "Can we
+   also change that the lesson doesn't continue when I stop talking I have to press the
+   red button to continue please". The card's own live label already said "press Stop when
+   you've finished", which was aspirational rather than true.
+
+   It matters beyond the annoyance. A truncated utterance and a mis-heard one are
+   indistinguishable downstream, so every softening layer treated the words he never
+   reached as words the recogniser fumbled — see learnAdjudicateWanted, which can only
+   trust a missing word once this is fixed.
+
+   The endpointer still ends a session; what changes is that an end WE did not ask for
+   starts a new one and keeps the text. Two backstops so a forgotten mic can never hold
+   the device open — a wall clock and a restart count. Either one resolves normally with
+   whatever was heard, exactly as an endpointer end does today. */
+const MIC_HOLD_MAX_MS = 90000;
+const MIC_HOLD_MAX_RESTARTS = 40;
+function micHoldMayContinue(b) {
+  return (b.restarts || 0) < MIC_HOLD_MAX_RESTARTS &&
+         (Date.now() - (b.startedAt || 0)) < MIC_HOLD_MAX_MS;
+}
 function micRecGet() {
   const SR = speechCtor();
   if (!SR || micRecInstance) return micRecInstance;
@@ -17440,13 +17475,46 @@ function micRecGet() {
     best = txt;
     const last = e.results[e.results.length - 1];
     if (last && last[0] && last[0].confidence) conf = last[0].confidence;
-    if (micRecBusy && micRecBusy.opts && micRecBusy.opts.onInterim) micRecBusy.opts.onInterim(txt);
+    /* Everything heard so far, not just this session's share of it — otherwise the live
+       box appears to forget the first half of his sentence the moment a pause restarts
+       the recogniser, which looks exactly like the bug this replaced. */
+    if (micRecBusy && micRecBusy.opts && micRecBusy.opts.onInterim)
+      micRecBusy.opts.onInterim(((micRecBusy.carry || "") + " " + txt).trim());
+  };
+  /* One utterance out of however many sessions it took. Sessions are an artefact of the
+     endpointer, so they are joined and handed over as the single thing he said. */
+  const gather = () => {
+    const b = micRecBusy;
+    const txt = (((b && b.carry) || "") + " " + best).replace(/\s+/g, " ").trim();
+    if (!txt) return { ok: false, error: "no-speech" };
+    const allSegs = ((b && b.carrySegs) || []).concat(segs);
+    return { ok: true, text: txt, confidence: conf || (b && b.carryConf) || 0,
+             alts: micAltStrings(allSegs, txt) };
   };
   const finish = v => { const b = micRecBusy; best = ""; conf = 0; segs = []; micRecBusy = null; if (b) b.resolve(v); };
-  r.onerror = e => finish({ ok: false, error: e.error || "unknown" });
-  r.onend = () => finish(best.trim()
-    ? { ok: true, text: best.trim(), confidence: conf, alts: micAltStrings(segs, best.trim()) }
-    : { ok: false, error: "no-speech" });
+  r.onerror = e => {
+    const err = e.error || "unknown";
+    const b = micRecBusy;
+    /* A thinking pause raises no-speech, and onend follows it — so swallowing it here
+       leaves the restart decision in the one place that makes it. Every other error is
+       real: not-allowed and network do not fix themselves on a retry. */
+    if (b && b.opts && b.opts.continuous && !b.wantStop && err === "no-speech") return;
+    finish({ ok: false, error: err });
+  };
+  r.onend = () => {
+    const b = micRecBusy;
+    if (b && b.opts && b.opts.continuous && !b.wantStop && micHoldMayContinue(b)) {
+      b.carry = ((b.carry || "") + " " + best).replace(/\s+/g, " ").trim();
+      b.carrySegs = (b.carrySegs || []).concat(segs);
+      if (conf) b.carryConf = conf;
+      b.restarts = (b.restarts || 0) + 1;
+      best = ""; conf = 0; segs = [];
+      /* A start() that throws settles the promise below rather than stranding it — the
+         same rule micListen follows, and the reason micRecTeardown exists. */
+      try { r.start(); return; } catch (e) { /* fall through and settle */ }
+    }
+    finish(gather());
+  };
   micRecInstance = r;
   return r;
 }
@@ -17461,12 +17529,23 @@ function micListen(opts) {
      than rebuilt per card) can still switch between Hebrew production and the English
      "what did it mean" box from one call to the next. */
   r.lang = (opts && opts.lang) || "he-IL";
+  /* Read at start() like .lang, and for the same reason — one shared recogniser has to
+     hold the line for a drill card and still endpoint normally for the coach's question
+     box, where an unattended end genuinely means he finished asking. */
+  r.continuous = !!(opts && opts.continuous);
   return new Promise(resolve => {
-    micRecBusy = { resolve: resolve, opts: opts };
+    micRecBusy = { resolve: resolve, opts: opts, carry: "", carrySegs: [], carryConf: 0,
+                   wantStop: false, startedAt: Date.now(), restarts: 0 };
     try { r.start(); } catch (e) { micRecBusy = null; resolve({ ok: false, error: "start-failed" }); }
   });
 }
-function micStop() { if (micRecInstance) { try { micRecInstance.stop(); } catch (e) {} } }
+/* The flag is set BEFORE stop(), because it is the only thing that tells his press apart
+   from the endpointer giving up — and in continuous mode those two ends mean opposite
+   things. */
+function micStop() {
+  if (micRecBusy) micRecBusy.wantStop = true;
+  if (micRecInstance) { try { micRecInstance.stop(); } catch (e) {} }
+}
 function micRecTeardown() {
   /* Resolve whoever is waiting BEFORE abandoning the instance. This used to just null
      micRecBusy, which left the pending micListen promise unresolved forever — so a
@@ -27493,7 +27572,10 @@ async function learnSpeakAttempt(btn, c) {
       if (!got) { learnMicError(card, "Microphone blocked — grade it by hand."); return; }
     }
     const live = learnMicLiveBox(card);
-    res = await micListen({ onInterim: t => learnMicLiveSet(live, t) });
+    /* He is producing a whole sentence from scratch, so a pause mid-utterance is him
+       thinking, not him finishing. Only the Stop button ends this one — see
+       MIC_HOLD_MAX_MS for the backstops that stop that becoming a stuck mic. */
+    res = await micListen({ continuous: true, onInterim: t => learnMicLiveSet(live, t) });
   } finally {
     /* Every exit goes through here, including the blocked-mic return above and any
        throw — the button must never be left reading Stop with nothing listening. */
@@ -33082,6 +33164,96 @@ T("micUnsure: zero means no opinion offered, not no confidence", () => {
   assertTrue(!micUnsure(undefined));
   assertTrue(micUnsure(0.3), "a real low reading");
   assertTrue(!micUnsure(0.9));
+});
+T("micHoldMayContinue: the two backstops that stop a held mic becoming a stuck one", () => {
+  const now = Date.now();
+  assertTrue(micHoldMayContinue({ restarts: 3, startedAt: now }), "ordinary pause");
+  assertTrue(!micHoldMayContinue({ restarts: MIC_HOLD_MAX_RESTARTS, startedAt: now }),
+             "a recogniser ending instantly over and over must not loop forever");
+  assertTrue(!micHoldMayContinue({ restarts: 0, startedAt: now - MIC_HOLD_MAX_MS - 1 }),
+             "and a mic left running has a wall clock on it regardless");
+});
+/* Drives the real micListen against a fake recogniser. The restart logic lives in event
+   handlers that nothing else can reach, and it is the whole of the fix — asserting the
+   pure predicate above would prove none of it. */
+function micFakeRun(body) {
+  const realSR = window.SpeechRecognition, realWebkit = window.webkitSpeechRecognition;
+  const wasInstance = micRecInstance, wasBusy = micRecBusy;
+  let rec = null;
+  function Fake() { rec = this; this.started = 0; }
+  Fake.prototype.start = function () { this.started++; };
+  Fake.prototype.stop = function () {};
+  Fake.prototype.abort = function () {};
+  try {
+    window.SpeechRecognition = Fake;
+    window.webkitSpeechRecognition = undefined;
+    micRecInstance = null; micRecBusy = null;
+    return body(() => rec);
+  } finally {
+    /* Put back BEFORE anything can await — the suite shares one recogniser and one
+       window, and a leaked Fake would silently answer every later mic test. */
+    window.SpeechRecognition = realSR; window.webkitSpeechRecognition = realWebkit;
+    micRecInstance = wasInstance; micRecBusy = wasBusy;
+  }
+}
+function micFakeHeard(text) { return { results: [[{ transcript: text, confidence: 0.9 }]] }; }
+T("micListen: a pause does not end the attempt, and both halves come back as one utterance", async () => {
+  const p = micFakeRun(get => {
+    const promise = micListen({ continuous: true });
+    const rec = get();
+    rec.onresult(micFakeHeard("אני לא עייף"));
+    rec.onend();                       // the endpointer giving up while he thinks
+    assertEq(rec.started, 2, "an end we did not ask for starts listening again");
+    rec.onresult(micFakeHeard("אני רק חושב"));
+    micStop();                         // he presses Stop
+    rec.onend();
+    return promise;
+  });
+  const res = await p;
+  assertEq(res.ok, true);
+  assertEq(res.text, "אני לא עייף אני רק חושב",
+           "the sentence he was cut off in the middle of, whole");
+});
+T("micListen: no-speech is a thinking pause while the line is held, not a failure", async () => {
+  let settled = false;
+  const p = micFakeRun(get => {
+    const promise = micListen({ continuous: true });
+    const rec = get();
+    promise.then(() => { settled = true; });
+    rec.onerror({ error: "no-speech" });
+    rec.onend();
+    assertEq(rec.started, 2, "silence restarts rather than resolving");
+    rec.onresult(micFakeHeard("שלום"));
+    micStop();
+    rec.onend();
+    return promise;
+  });
+  const res = await p;
+  assertTrue(settled, "and it does settle once he stops it");
+  assertEq(res.text, "שלום", "what he said after the pause is still his answer");
+});
+T("micListen: a real error ends the attempt even with the line held", async () => {
+  const res = await micFakeRun(get => {
+    const promise = micListen({ continuous: true });
+    get().onerror({ error: "not-allowed" });
+    return promise;
+  });
+  assertEq(res.ok, false);
+  assertEq(res.error, "not-allowed",
+           "a blocked mic will not fix itself on a retry, so retrying would hang the card");
+});
+T("micListen: without continuous the endpointer still ends it — the coach's box needs that", async () => {
+  const res = await micFakeRun(get => {
+    const promise = micListen({ lang: "he-IL" });
+    const rec = get();
+    assertEq(rec.continuous, false, "the flag is per call, not per instance");
+    assertEq(rec.lang, "he-IL");
+    rec.onresult(micFakeHeard("מה זה"));
+    rec.onend();                       // nobody pressed anything
+    assertEq(rec.started, 1, "and this one does NOT go again");
+    return promise;
+  });
+  assertEq(res.text, "מה זה", "an unattended end here means he finished asking");
 });
 T("learnAdjudicateWanted: asks only about the words that look missed", () => {
   const spoken = { status: ["matched", "missed", "near", "missed"],

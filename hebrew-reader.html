@@ -3776,10 +3776,34 @@ function mergeNodeList(xs, ys) {
   const ida = a.map(n => n.id).join(""), idb = b.map(n => n.id).join("");
   const base = (a.length > b.length || (a.length === b.length && ida <= idb)) ? a : b;
   const other = base === a ? b : a;
-  const out = [], seen = {};
+  /* A NODE'S IDENTITY IS ITS NAME, NOT ITS ID — and keying only on the id drew George's
+     whole second chapter twice, on top of itself, on 2026-09-08.
+
+     Only chapter one's ids are authored: c1-hello, c1-people, c1-day, c1-asking. Every
+     chapter after it is generated, and the suffix is RANDOM PER DEVICE —
+
+       phone   c2-0-1qt5  c2-1-pb2c  c2-2-phgb  c2-3-6bgx
+       laptop  c2-0-vgft  c2-1-2bgi  c2-2-qi09  c2-3-g7n4
+
+     — so his laptop, which had generated chapter two for itself a fortnight earlier and
+     then sat unsynced, came back carrying four nodes this saw as new. Eight ids, eight
+     nodes, four names. Chapters three and four were untouched because the laptop stopped
+     before they existed, which is what made the cause legible.
+
+     The note above says the union is safe "only because nodes are never removed". True,
+     and not the whole assumption: it also rested on ids being stable, and for a generated
+     chapter they never have been.
+
+     First occurrence wins, and `base` is already chosen deterministically above, so both
+     devices keep the same copy and neither rewrites the file on the next sync. A node
+     with no name falls back to the id check alone rather than being folded into another. */
+  const out = [], seen = {}, seenName = {};
   base.concat(other).forEach(n => {
     if (seen[n.id]) return;
+    const nm = String(n.name || "").trim().toLowerCase();
+    if (nm && seenName[nm]) return;
     seen[n.id] = 1;
+    if (nm) seenName[nm] = 1;
     out.push(n);
   });
   return out;
@@ -17016,6 +17040,7 @@ fixBatchSrc();
   } catch (e) {}
 })();
 
+
 /* =====================  LEARN PAGE  =====================
    The other two pages are reactive — they need a message from grandad to exist.
    This one is where George practises PRODUCING Hebrew, out loud, on his own.
@@ -21361,6 +21386,62 @@ function campMix(a, b, t) {
    any more. {sectionId: {lessonNum: {pct, ts}}}, latest attempt per lesson wins. */
 const PATH_SCORES_KEY = "hvr_pathscores";
 function pathScoresAll() { try { return JSON.parse(lsGet(PATH_SCORES_KEY)) || {}; } catch (e) { return {}; } }
+
+/* THE MAP DRAWN TWICE, repaired on the devices that already have it.
+
+   mergeNodeList no longer folds a chapter's nodes together by id alone, but that only
+   stops it happening again — George's stored campaign already holds eight nodes in
+   chapter two where there should be four, and the map draws them on top of each other.
+   He described it as "the path is completely messed up, the nodes have doubled".
+
+   WHICH COPY SURVIVES IS DECIDED BY HIS HISTORY, NOT BY ORDER. hvr_pathscores is keyed
+   by node id, and only one side of each pair has ever been practised — his phone's
+   c2-0-1qt5, c2-1-pb2c, c2-2-phgb, against the laptop's c2-0-vgft, c2-1-2bgi, c2-2-qi09
+   which have no record at all. Keeping the scored id keeps the lessons he has already
+   done attached to the node he did them on. A pair where neither side has been touched
+   keeps the first, which is the order mergeNodeList would have settled on anyway.
+
+   Deliberately not a sync-time repair. Both devices run this against the same merged
+   pathscores, so both reach the same answer independently, and a device that never opens
+   again never needs to. */
+/* Pure, and separated from the one-shot below so it can be tested at all: a migration
+   that only ever runs behind a localStorage flag, once, is a migration nothing can
+   assert about. Mutates and returns the campaign, plus whether anything moved. */
+function campDedupeChapters(camp, scored) {
+  let changed = false;
+  scored = scored || {};
+  ((camp && camp.chapters) || []).forEach(ch => {
+    const nodes = (ch && ch.nodes) || [];
+    if (nodes.length < 2) return;
+    const byName = {}, order = [];
+    nodes.forEach((n, i) => {
+      const nm = String((n && n.name) || "").trim().toLowerCase();
+      /* No name is no claim to be the same node — keyed on position, so it is kept. */
+      const key = nm || (" id" + i);
+      if (!byName[key]) { byName[key] = n; order.push(key); return; }
+      const kept = byName[key];
+      /* The scored one wins; if neither or both are scored, the first stays. */
+      if (!scored[kept.id] && scored[n.id]) byName[key] = n;
+      changed = true;
+    });
+    if (order.length !== nodes.length) ch.nodes = order.map(k => byName[k]);
+  });
+  return { camp: camp, changed: changed };
+}
+
+(function campDedupeNodes() {
+  try {
+    if (localStorage.getItem("hvr_campdedupe_v1")) return;
+    const r = campDedupeChapters(campAll(), pathScoresAll());
+    if (r.changed) {
+      campSave(r.camp);
+      /* The map caches a drawn layout; leaving it would keep showing the doubled path
+         until something else happened to invalidate it. */
+      try { lsSet("hvr_mapdrawn", ""); } catch (e) {}
+    }
+    localStorage.setItem("hvr_campdedupe_v1", "1");
+  } catch (e) {}
+})();
 function pathScoresSave(v) { lsSet(PATH_SCORES_KEY, JSON.stringify(v)); }
 const PATH_PASS_PCT = 60;
 /* Lessons 1-2 are "meet the words" flashcards — there's no real way to fail them, so
@@ -35593,6 +35674,83 @@ T("mergeCampaign: chapters key on their number, and nodes union", () => {
   const out = mergeCampaign(p, q);
   assertEq(out.chapters.map(c => c.n), [1, 2], "sorted by number, not by argument order");
   assertEq(out.chapters[0].nodes.map(n => n.id), ["one"]);
+});
+T("campDedupeChapters: the doubled map is repaired, keeping the side he practised", () => {
+  /* The merge fix stops it happening again; this repairs the campaign that already has
+     it. Which copy survives is decided by hvr_pathscores, because only one side of each
+     pair has ever been practised — keeping the scored id keeps his finished lessons
+     attached to the node he did them on. Real ids and real scored keys from 2026-09-08. */
+  const camp = { v: 1, log: [], chapters: [
+    { n: 1, nodes: [{ id: "c1-hello", name: "How you are" },
+                    { id: "c1-people", name: "Who people are" }] },
+    { n: 2, nodes: [
+      { id: "c2-0-1qt5", name: "Family & home" }, { id: "c2-1-pb2c", name: "Going places" },
+      { id: "c2-2-phgb", name: "Liking & wanting" }, { id: "c2-3-6bgx", name: "How you feel" },
+      { id: "c2-0-vgft", name: "Family & home" }, { id: "c2-1-2bgi", name: "Going places" },
+      { id: "c2-2-qi09", name: "Liking & wanting" }, { id: "c2-3-g7n4", name: "How you feel" }] }] };
+  const scored = { "c1-hello": {}, "c1-people": {}, "c2-0-1qt5": {}, "c2-1-pb2c": {}, "c2-2-phgb": {} };
+  const r = campDedupeChapters(camp, scored);
+  assertTrue(r.changed, "it must report that it moved something");
+  assertEq(r.camp.chapters[0].nodes.length, 2, "an untouched chapter stays untouched");
+  const ids = r.camp.chapters[1].nodes.map(n => n.id);
+  assertEq(ids, ["c2-0-1qt5", "c2-1-pb2c", "c2-2-phgb", "c2-3-6bgx"],
+           "his practised ids survive, in teaching order");
+
+  /* THE ORDER OF THE PAIR MUST NOT DECIDE IT. Reversed, the scored copy comes second and
+     still has to win — otherwise the repair would strand the lessons it exists to save. */
+  const flipped = { v: 1, log: [], chapters: [{ n: 2, nodes: [
+    { id: "c2-0-vgft", name: "Family & home" }, { id: "c2-0-1qt5", name: "Family & home" }] }] };
+  assertEq(campDedupeChapters(flipped, scored).camp.chapters[0].nodes.map(n => n.id),
+           ["c2-0-1qt5"], "the scored copy wins from either position");
+
+  /* Neither scored: keep the first, which is what the merge would settle on anyway. */
+  const neither = { v: 1, log: [], chapters: [{ n: 5, nodes: [
+    { id: "c5-0-aaaa", name: "The gathering" }, { id: "c5-0-bbbb", name: "The gathering" }] }] };
+  assertEq(campDedupeChapters(neither, {}).camp.chapters[0].nodes.map(n => n.id), ["c5-0-aaaa"]);
+
+  /* A healthy campaign must come back untouched and say so, or every device would
+     rewrite its campaign on first load for nothing. */
+  const clean = { v: 1, log: [], chapters: [{ n: 2, nodes: [
+    { id: "c2-0-1qt5", name: "Family & home" }, { id: "c2-1-pb2c", name: "Going places" }] }] };
+  const c2 = campDedupeChapters(clean, scored);
+  assertTrue(!c2.changed, "nothing to do means nothing changed");
+  assertEq(c2.camp.chapters[0].nodes.length, 2);
+  /* Nameless nodes are positional and must not collapse into each other. */
+  const anon = { v: 1, log: [], chapters: [{ n: 9, nodes: [{ id: "p" }, { id: "q" }] }] };
+  assertEq(campDedupeChapters(anon, {}).camp.chapters[0].nodes.length, 2);
+});
+T("mergeCampaign: the same node generated twice is one node, not two", () => {
+  /* THE BUG THIS IS FOR, with George's real ids. Only chapter one's are authored; every
+     chapter after it is generated with a RANDOM PER-DEVICE suffix, so his laptop — which
+     had built chapter two for itself a fortnight earlier and then sat unsynced — came
+     back with four nodes the id union saw as new. Eight nodes, four names, drawn on top
+     of each other: "the path is completely messed up, the nodes have doubled". */
+  const phone = { chapters: [{ n: 2, state: "live", nodes: [
+    { id: "c2-0-1qt5", name: "Family & home" }, { id: "c2-1-pb2c", name: "Going places" },
+    { id: "c2-2-phgb", name: "Liking & wanting" }, { id: "c2-3-6bgx", name: "How you feel" }] }] };
+  const laptop = { chapters: [{ n: 2, state: "live", nodes: [
+    { id: "c2-0-vgft", name: "Family & home" }, { id: "c2-1-2bgi", name: "Going places" },
+    { id: "c2-2-qi09", name: "Liking & wanting" }, { id: "c2-3-g7n4", name: "How you feel" }] }] };
+  const merged = mergeCampaign(phone, laptop).chapters[0].nodes;
+  assertEq(merged.length, 4, "four names is four nodes however the ids were rolled");
+  assertEq(merged.map(n => n.name),
+           ["Family & home", "Going places", "Liking & wanting", "How you feel"],
+           "and the teaching order is untouched");
+  /* Both devices must settle on the SAME copy, or each rewrites the file on every sync
+     forever — the standing warning this whole family of merges carries. */
+  assertEq(mergeCampaign(laptop, phone).chapters[0].nodes.map(n => n.id),
+           merged.map(n => n.id), "and which copy survives cannot depend on argument order");
+
+  /* A genuinely different node still joins. The fix must not collapse a chapter to one
+     node just because two happen to share a name-less shape. */
+  const grown = { chapters: [{ n: 2, nodes: phone.chapters[0].nodes.concat(
+    [{ id: "c2-4-newx", name: "Somewhere new" }]) }] };
+  assertEq(mergeCampaign(grown, laptop).chapters[0].nodes.length, 5,
+           "a real fifth node is still added");
+  /* Nameless nodes keep the old id-only behaviour rather than folding together. */
+  const n1 = { chapters: [{ n: 3, nodes: [{ id: "p" }, { id: "q" }] }] };
+  assertEq(mergeCampaign(n1, { chapters: [{ n: 3, nodes: [{ id: "r" }] }] })
+             .chapters[0].nodes.length, 3, "no name means no claim to be the same node");
 });
 T("mergeCampaign: the output does not depend on which side is called `a`", () => {
   /* mergeById's standing warning: an order that flips between devices writes a different

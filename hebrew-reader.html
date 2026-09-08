@@ -1488,8 +1488,7 @@
      keeps meaning one thing everywhere. */
   .lmeaning { font-size: .84rem; font-weight: 600; margin-top: 6px; text-align: center; }
   .lmeaning.good { color: #2e7d5b; }
-  .lmeaning.partial { color: #a86a34; }
-  .lmeaning.off { color: #b3403a; }
+  .lmeaning.uncertain { color: var(--muted); }
 
   /* Progress. Numbers he'd actually act on, not a scoreboard — every tile is
      either time invested or words moved, nothing invented to look impressive.
@@ -3909,6 +3908,10 @@ function mergeKeyMap(mineKeys, theirKeys, mineUpdated, theirUpdated) {
    letting the omission be a surprise. */
 const EXPORT_PREFIX = "hvr_";
 const EXPORT_SCHEMA = 1;
+/* One registry for credential storage, diagnostic redaction and sync exclusions. */
+const CREDENTIAL_KEYS = Object.freeze({
+  gemini: "hvr_geminikey", geminiBackup: "hvr_geminikey2", syncToken: "hvr_synctoken"
+});
 
 function exportKeys() {
   const out = [];
@@ -8702,7 +8705,7 @@ function migrationHintCheck() {
 
    Every failure path here ends in "carry on working locally and say so". Sync is a
    convenience layered on an offline-first app; it must never be able to block it. */
-const SYNC_TOKEN_KEY = "hvr_synctoken";
+const SYNC_TOKEN_KEY = CREDENTIAL_KEYS.syncToken;
 const SYNC_REPO_KEY  = "hvr_syncrepo";     // "owner/name"
 const SYNC_META_KEY  = "hvr_syncmeta";     // { sha, last, deviceId }
 const SYNC_FILE      = "progress.json";
@@ -8718,7 +8721,7 @@ let _syncNever = null, _syncLocal = null;
 /* Secrets never leave the device. They are already on both. */
 function SYNC_NEVER_SET() {
   return _syncNever || (_syncNever = new Set([
-    GEMINI_KEY, GEMINI_KEY2, SYNC_TOKEN_KEY, SYNC_REPO_KEY, SYNC_META_KEY
+    ...Object.values(CREDENTIAL_KEYS), SYNC_REPO_KEY, SYNC_META_KEY
   ]));
 }
 /* Genuinely device-local: an in-flight session belongs to the device running it, and
@@ -9111,6 +9114,14 @@ async function syncPush(blob, sha) {
 let syncInFlight = false;
 let syncLastRun = 0;
 
+/* Compare the entire syncable snapshot, including additions and removals. The
+   timestamp is deliberately ignored: taking a snapshot is not itself a change. */
+function syncSameKeys(a, b) {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length &&
+    keys.every(k => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]);
+}
+
 /* The whole cycle. `opts.force` skips the rate limit (the manual button); `opts.quiet`
    keeps a routine background run from shouting about a missing network. */
 async function syncRun(reason, opts) {
@@ -9125,7 +9136,10 @@ async function syncRun(reason, opts) {
      this guard held and the session he abandoned never ended to trigger the sync after
      it. force:true would have got it up there by trampling the very thing this line
      protects; pushing without applying gets it up there and protects it. */
-  if (sessionBusy() && !opts.force && !opts.pushOnly) return false;
+  if (sessionBusy() && !opts.pushOnly) {
+    if (!opts.quiet) syncSetStatus("Practice is in progress — sync will run after the session.");
+    return false;
+  }
   /* The gap throttles the periodic syncs. A flag submit is a deliberate act, and one
      tap should not have to wait out a timer it never started. */
   if (!opts.force && !opts.pushOnly && Date.now() - syncLastRun < SYNC_MIN_GAP_MS) return false;
@@ -9133,18 +9147,25 @@ async function syncRun(reason, opts) {
 
   syncInFlight = true;
   syncSetStatus("syncing…");
+  let failure = "";
   try {
-    let sha = null, merged = null;
+    let sha = null, merged = null, mine = null, localChanged = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       const remote = await syncPull();
-      const mine = syncSnapshot();
+      mine = syncSnapshot();
       merged = remote.blob
         ? { app: "hebrew-reader", schema: SYNC_SCHEMA, updated: new Date().toISOString(),
             device: mine.device,
             keys: mergeKeyMap(mine.keys, remote.blob.keys, mine.updated, remote.blob.updated) }
         : mine;
       sha = await syncPush(merged, remote.sha);
-      if (sha !== null) break;                    // pushed
+      if (sha === null) continue;                // remote changed; pull again
+      /* Network awaits let a grade, edit, or flag arrive after our snapshot. Never
+         write that older snapshot over the new local work. Retry the entire merge
+         and upload, with the same bounded budget as a remote conflict. */
+      localChanged = !syncSameKeys(mine.keys, syncSnapshot().keys);
+      if (!localChanged) break;
+      sha = null;
     }
     /* THE GUARANTEE THE COMMENT BELOW MAKES, ACTUALLY ENFORCED. The loop used to also
        break on `!remote.sha` — "nothing to collide with" — which is true of the pull but
@@ -9154,7 +9175,9 @@ async function syncRun(reason, opts) {
        storage, `last` was still stamped, and the nav still said "synced just now" for a
        sync that never reached GitHub. Nothing was lost, but the one indicator he has for
        "is the phone up to date" was lying, which is worse than a visible failure. */
-    if (sha === null) throw new Error("couldn't save to GitHub — it kept changing under us");
+    if (sha === null) throw new Error(localChanged
+      ? "New changes are safe on this device — sync again when you've finished editing."
+      : "couldn't save to GitHub — it kept changing under us");
     /* Applied only after a successful push, so a failed sync never half-rewrites
        local data with a merge that was never agreed.
 
@@ -9164,23 +9187,29 @@ async function syncRun(reason, opts) {
        that could change the card he is looking at. Local ends up momentarily BEHIND
        remote, which the next ordinary sync corrects. */
     let changed = 0;
-    if (!opts.pushOnly) {
+    /* A session can BEGIN while the pull or push is pending. The entry guard alone
+       cannot protect it. Defer applying until its normal session-end sync. */
+    const apply = !opts.pushOnly && !sessionBusy();
+    if (apply) {
       Object.keys(merged.keys).forEach(k => {
         const v = merged.keys[k];
         if (v === null || v === undefined) return;
-        if (lsGet(k) !== v) { lsSet(k, v); changed++; }
+        if (lsGet(k) !== v) {
+          if (!lsSet(k, v)) throw new Error("Uploaded, but couldn't save incoming progress on this device.");
+          changed++;
+        }
       });
     }
     const m = syncMeta();
     /* Stamped either way, and honestly: `last` is read by flagsWaiting to answer "have
        they reached me yet", and after a pushOnly they have. Leaving it would keep the
        flag indicator claiming a backlog that is already on GitHub. */
-    m.sha = sha; m.last = new Date().toISOString();
+    m.sha = sha; m.last = mine.updated;
     syncMetaSave(m);
     /* NOT stamped under pushOnly. syncLastRun gates the periodic syncs, and consuming
        that budget here would let one flag suppress the end-of-session sync that does the
        actual merging — trading a four-hour delay on flags for one on everything else. */
-    if (!opts.pushOnly) syncLastRun = Date.now();
+    if (apply) syncLastRun = Date.now();
     syncSetStatus("");
     if (changed) syncAfterApply();
     /* The flag's teal is a claim about whether GitHub has them. This is the moment that
@@ -9188,11 +9217,12 @@ async function syncRun(reason, opts) {
     try { flagPaint(); } catch (e) {}
     return true;
   } catch (e) {
-    syncSetStatus(e.message || "sync failed", true);
+    failure = e.message || "sync failed";
+    syncSetStatus(failure, true);
     return false;
   } finally {
     syncInFlight = false;
-    syncPaint();
+    syncPaint(failure, !!failure);
   }
 }
 
@@ -12396,8 +12426,8 @@ document.getElementById("libViewToggle").addEventListener("click", () =>
    said. This runs the other way — composing a reply to speak back. It lives under
    the Library grid rather than as a third view because the whole point is writing
    while looking at your own words. */
-const PAD_KEY = "hvr_pad", PAD_OPEN_KEY = "hvr_padopen", GEMINI_KEY = "hvr_geminikey";
-const GEMINI_KEY2 = "hvr_geminikey2";
+const PAD_KEY = "hvr_pad", PAD_OPEN_KEY = "hvr_padopen", GEMINI_KEY = CREDENTIAL_KEYS.gemini;
+const GEMINI_KEY2 = CREDENTIAL_KEYS.geminiBackup;
 /* Primary first, backup last — geminiRequest() exhausts every model on one key
    before moving to the next, so the backup stays reserved rather than being
    drawn down alongside the primary. */
@@ -14516,7 +14546,7 @@ UH.content = function (id, st) {
    pushed to GitHub inside a flag must not be the thing that leaks them. Redacted to a
    length and a fingerprint, which is everything a diagnosis ever needs from them —
    "is one set", "are they the same one" — and nothing a thief does. */
-const UH_SECRET_KEYS = ["hvr_geminikey", "hvr_synctoken"];
+const UH_SECRET_KEYS = Object.values(CREDENTIAL_KEYS);
 function uhRawValue(k) {
   let v = null;
   try { v = lsGet(k); } catch (e) { return "(unreadable)"; }
@@ -17651,28 +17681,31 @@ function alignSpoken(expected, said) {
    write what it means in english?... definetly keep both of htem jsut add hte
    box getting marked."
 
-   Coverage of the expected meaning's significant words, not exact-string
-   equality — "his back hurts" and "back pain" should both read as understood.
-   Filler words are excluded so a guess can't score by accident on "the/to/is". */
-const MEANING_STOPWORDS = new Set(["a","an","the","to","is","are","am","was","were",
-  "it","its","he","she","they","you","i","we","of","in","on","at","for","and","or",
-  "that","this","be","being","been","do","does","did","will","would","can","could",
-  "not","no","so","with","my","your","his","her","their","our"]);
-function meaningWords(s) {
-  return String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
-    .filter(w => w.length > 1 && !MEANING_STOPWORDS.has(w));
+   Word overlap cannot certify meaning: removing "not" and pronouns accepted
+   opposite answers, and substrings accepted "category" for "cat". Matching
+   wording can suggest a grade; different wording needs the learner's judgment,
+   including valid paraphrases. This check remains instant and offline. */
+function meaningNormalize(s) {
+  return String(s || "").toLowerCase().replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").trim();
 }
 /* Returns null when there's nothing to check against — an item generated before
    this existed, or missing its English gloss for any reason — rather than
    scoring a guess against an empty target, which would always read as a miss. */
 function matchMeaning(guess, expectedEn) {
-  const need = meaningWords(expectedEn);
-  if (!need.length) return null;
-  const said = meaningWords(guess).join(" ");
-  if (!said) return null;
-  const hit = need.filter(w => said.indexOf(w) !== -1).length;
-  const ratio = hit / need.length;
-  return ratio >= 0.6 ? "good" : ratio > 0 ? "partial" : "off";
+  const need = meaningNormalize(expectedEn), said = meaningNormalize(guess);
+  if (!need || !said) return null;
+  return said === need ? "good" : "uncertain";
+}
+function learnCheckMeaning(noteEl, expectedEn) {
+  const verdict = matchMeaning(noteEl.value, expectedEn);
+  learnSuggested = verdict === "good" ? 2 : null;
+  if (!verdict) return;
+  const v = document.createElement("div");
+  v.className = "lmeaning " + verdict;
+  v.textContent = verdict === "good" ? "✓ Matches the model answer."
+    : "Different wording — compare the meaning below and choose your grade.";
+  noteEl.insertAdjacentElement("afterend", v);
 }
 
 /* ---- spaced repetition ----------------------------------------------------- */
@@ -26972,8 +27005,8 @@ function learnRenderCard() {
 
      And "Show me" was doing two different jobs under one label. On a production card it
      is the giving-up path. On a comprehension card there is no Hebrew mic at all
-     (learnMicKinds excludes them), so you type your guess and pressing it runs
-     matchMeaning and GRADES you — which is not surrender, it is submitting. */
+     (learnMicKinds excludes them), so you type your guess and pressing it
+     checks for matching wording and reveals the meaning for self-assessment. */
   const micOK = learnMicKinds(c) && speechSupported();
   const act = document.createElement("div"); act.className = "lactions";
   if (micOK) {
@@ -28352,23 +28385,10 @@ function learnReveal() {
   else if (c.kind === "chunk") { const p = chunkAll()[c.key] || []; he = c.key; tr = p[0] || ""; en = p[1] || ""; }
   else { he = c.item.he; tr = c.item.tr; en = c.item.en || ""; }
 
-  /* The box graded, at last — this is the whole point of the round. Feeds
-     `learnSuggested` (the exact mechanism the mic already uses to recommend a
-     grade), so it's a genuine grade when a listen item has no per-word chips —
-     and a no-op, correctly, when chips ARE present: word-level recognition and
-     whole-sentence comprehension are different signals, and this never overrides
-     the finer-grained one. */
+  /* Only matching wording suggests Got it. A different answer may be a good
+     paraphrase or the opposite meaning; leave its grade to the learner. */
   if (isHearKind(c.kind) && noteEl && noteEl.value.trim()) {
-    const verdict = matchMeaning(noteEl.value, en);
-    if (verdict) {
-      const v = document.createElement("div");
-      v.className = "lmeaning " + verdict;
-      v.textContent = verdict === "good" ? "✓ You got the meaning."
-                     : verdict === "partial" ? "Close — you got part of it."
-                     : "Not quite — see the real meaning below.";
-      noteEl.insertAdjacentElement("afterend", v);
-      learnSuggested = verdict === "good" ? 2 : verdict === "partial" ? 1 : 0;
-    }
+    learnCheckMeaning(noteEl, en);
   }
 
   /* Reply is the only kind with a genuinely separate question — qhe/qtr/qen are
@@ -28583,7 +28603,7 @@ function learnReveal() {
   learnHintSet(isTouchPrimary()
     ? ""
     : (learnCardTokens ? "Space to continue"
-        : learnSuggested !== null ? "Space accepts what it heard · 1 Missed · 2 Nearly · 3 Got it"
+        : learnSuggested !== null ? "Space accepts the suggested grade · 1 Missed · 2 Nearly · 3 Got it"
         : "1 Missed · 2 Nearly · 3 Got it") +
       (hasHeVoice() ? " · R replays · Shift+R slower" : ""));
 }
@@ -34870,10 +34890,13 @@ T("uhRawValue: a credential is never rendered, however it is reached", () => {
      thing that would leak them. Both routes to a value are checked, because redacting
      the list and not the leaf would be worse than redacting neither — it would look
      safe. */
+  /* Independently enumerate the storage contract, not the redaction list under
+     test: the old test could never notice the backup key missing from that list. */
+  const credentials = ["hvr_geminikey", "hvr_geminikey2", "hvr_synctoken"];
   const saved = {};
   try {
-    UH_SECRET_KEYS.forEach(k => { saved[k] = lsGet(k); lsSet(k, "AIzaSyTOTALLYREALSECRET1234"); });
-    UH_SECRET_KEYS.forEach(k => {
+    credentials.forEach(k => { saved[k] = lsGet(k); lsSet(k, "AIzaSyTOTALLYREALSECRET1234"); });
+    credentials.forEach(k => {
       const v = uhRawValue(k);
       assertTrue(v.indexOf("TOTALLYREALSECRET") === -1, k + " leaked through uhRawValue");
       assertTrue(/^\(set · \d+ chars/.test(v), "but it still says one is set: " + v);
@@ -34885,7 +34908,7 @@ T("uhRawValue: a credential is never rendered, however it is reached", () => {
   } finally {
     /* Restored whatever happened — leaving a fake key in the real store would break
        every AI call on this device, silently, forever. */
-    UH_SECRET_KEYS.forEach(k => {
+    credentials.forEach(k => {
       if (saved[k] === null || saved[k] === undefined) { try { localStorage.removeItem(k); } catch (e) {} }
       else lsSet(k, saved[k]);
     });
@@ -38714,6 +38737,189 @@ T("mergeById: a level already set is not overwritten", () => {
   const mine = [{ id: "a", he: "x", lvl: 2 }];
   const theirs = [{ id: "a", he: "x", lvl: 5 }];
   assertEq(mergeById(mine, theirs)[0].lvl, 2, "mine wins on every field it has");
+});
+
+/* ---- September 8 reliability regressions ---- */
+/* Exercise the real sync loop, snapshot and merge with isolated storage and
+   transport boundaries. No test touches personal progress or a real endpoint. */
+async function withSyncRaceTest(run) {
+  const real = { configured: syncConfigured, busy: sessionBusy, pull: syncPull,
+    push: syncPush, keys: syncKeys, get: lsGet, set: lsSet, device: syncDeviceId,
+    meta: syncMeta, saveMeta: syncMetaSave, status: syncSetStatus, paint: syncPaint,
+    after: syncAfterApply, flag: flagPaint, flight: syncInFlight, last: syncLastRun };
+  const st = { local: { hvr_testgrade: "before" }, busy: false, remote: null,
+    uploads: [], meta: { last: "2026-01-01T00:00:00.000Z" }, applied: 0,
+    status: "", bad: false, rejectWrite: "", pulls: 0 };
+  try {
+    syncConfigured = () => true;
+    sessionBusy = () => st.busy;
+    syncKeys = () => Object.keys(st.local);
+    lsGet = k => Object.prototype.hasOwnProperty.call(st.local, k) ? st.local[k] : null;
+    lsSet = (k, v) => { if (k === st.rejectWrite) return false; st.local[k] = v; return true; };
+    syncDeviceId = () => "test-device";
+    syncMeta = () => Object.assign({}, st.meta);
+    syncMetaSave = m => { st.meta = m; };
+    syncSetStatus = (msg, bad) => { st.status = msg; st.bad = !!bad; };
+    syncPaint = (msg, bad) => { st.bad = !!bad; };
+    syncAfterApply = () => { st.applied++; };
+    flagPaint = () => {};
+    syncInFlight = false; syncLastRun = 0;
+    syncPull = async () => { st.pulls++; return { sha: "old", blob: st.remote }; };
+    syncPush = async blob => {
+      const copy = JSON.parse(JSON.stringify(blob));
+      st.uploads.push(copy);
+      st.remote = copy;
+      return st.onPush ? st.onPush(copy) : "new";
+    };
+    await run(st);
+  } finally {
+    syncConfigured = real.configured; sessionBusy = real.busy;
+    syncPull = real.pull; syncPush = real.push; syncKeys = real.keys;
+    lsGet = real.get; lsSet = real.set; syncDeviceId = real.device;
+    syncMeta = real.meta; syncMetaSave = real.saveMeta;
+    syncSetStatus = real.status; syncPaint = real.paint;
+    syncAfterApply = real.after; flagPaint = real.flag;
+    syncInFlight = real.flight; syncLastRun = real.last;
+  }
+}
+T("sync race: a grade saved during upload is uploaded again and survives locally", () => withSyncRaceTest(async st => {
+  st.onPush = () => {
+    if (st.uploads.length === 1) st.local.hvr_testgrade = "new grade";
+    return "new";
+  };
+  assertTrue(await syncRun("test", { force: true }));
+  assertEq(st.local.hvr_testgrade, "new grade");
+  assertEq(st.uploads.length, 2);
+  assertEq(st.uploads[1].keys.hvr_testgrade, "new grade");
+  assertEq(st.meta.last, st.uploads[1].updated, "receipt identifies the snapshot actually uploaded");
+}));
+T("sync race: a key added during upload is included in the retry", () => withSyncRaceTest(async st => {
+  st.onPush = () => {
+    if (st.uploads.length === 1) st.local.hvr_testnew = "new word";
+    return "new";
+  };
+  assertTrue(await syncRun("test", { force: true }));
+  assertEq(st.uploads.length, 2);
+  assertEq(st.uploads[1].keys.hvr_testnew, "new word");
+  assertEq(st.local.hvr_testnew, "new word");
+}));
+T("sync race: real SRS records retain a review completed during upload", () => withSyncRaceTest(async st => {
+  const old = { prod: { last: "2026-09-08", n: 2, due: "2026-09-10", diff: 5, stab: 2 } };
+  const fresh = { prod: { last: "2026-09-08", n: 3, due: "2026-09-12", diff: 4, stab: 4 } };
+  st.local[SRS_KEY] = JSON.stringify({ "בית": old });
+  st.onPush = () => {
+    if (st.uploads.length === 1) st.local[SRS_KEY] = JSON.stringify({ "בית": fresh });
+    return "new";
+  };
+  assertTrue(await syncRun("test", { force: true }));
+  assertEq(st.uploads.length, 2);
+  assertEq(JSON.parse(st.uploads[1].keys[SRS_KEY])["בית"].prod, fresh.prod);
+  assertEq(JSON.parse(st.local[SRS_KEY])["בית"].prod, fresh.prod);
+}));
+T("sync race: repeated local writes stop retries without overwriting or claiming success", () => withSyncRaceTest(async st => {
+  st.onPush = () => { st.local.hvr_testgrade = "edit " + st.uploads.length; return "new"; };
+  assertEq(await syncRun("test", { force: true }), false);
+  assertEq(st.uploads.length, 3);
+  assertEq(st.local.hvr_testgrade, "edit 3");
+  assertEq(st.meta.last, "2026-01-01T00:00:00.000Z");
+  assertEq(st.applied, 0);
+  assertTrue(st.bad, "finally must not clear the failure indicator");
+  assertTrue(st.status.indexOf("safe on this device") !== -1);
+}));
+T("sync race: force never bypasses active practice", () => withSyncRaceTest(async st => {
+  st.busy = true;
+  assertEq(await syncRun("manual", { force: true }), false);
+  assertEq(st.pulls, 0);
+  assertEq(st.uploads.length, 0);
+  assertEq(st.local.hvr_testgrade, "before");
+}));
+T("sync race: a session started during upload defers incoming progress", () => withSyncRaceTest(async st => {
+  st.remote = { updated: "2026-01-01T00:00:00.000Z", keys: { hvr_testremote: "remote" } };
+  st.onPush = () => { st.busy = true; return "new"; };
+  assertTrue(await syncRun("test", { force: true }));
+  assertEq(st.uploads[0].keys.hvr_testremote, "remote", "there really is incoming data to defer");
+  assertEq(st.local.hvr_testgrade, "before");
+  assertEq(st.local.hvr_testremote, undefined);
+  assertEq(st.applied, 0);
+  assertEq(syncLastRun, 0, "do not suppress session-end reconciliation");
+  st.busy = false; st.onPush = null;
+  assertTrue(await syncRun("session"));
+  assertEq(st.local.hvr_testremote, "remote", "a later idle sync applies incoming progress");
+}));
+T("sync race: push-only flags stay safe during practice and retry new flags", () => withSyncRaceTest(async st => {
+  st.busy = true;
+  st.onPush = () => {
+    if (st.uploads.length === 1) st.local.hvr_testflag = "another flag";
+    return "new";
+  };
+  assertTrue(await syncRun("flag", { pushOnly: true }));
+  assertEq(st.uploads.length, 2);
+  assertEq(st.uploads[1].keys.hvr_testflag, "another flag");
+  assertEq(st.applied, 0);
+  assertEq(syncLastRun, 0);
+}));
+T("sync race: failed incoming storage never earns a sync receipt", () => withSyncRaceTest(async st => {
+  st.remote = { updated: "2099-01-01T00:00:00.000Z", keys: { hvr_testgrade: "remote" } };
+  st.rejectWrite = "hvr_testgrade";
+  assertEq(await syncRun("test", { force: true }), false);
+  assertEq(st.local.hvr_testgrade, "before");
+  assertEq(st.meta.last, "2026-01-01T00:00:00.000Z");
+  assertTrue(st.bad);
+}));
+T("sync race: remote collisions retry and exhaust without applying", () => withSyncRaceTest(async st => {
+  st.onPush = () => null;
+  assertEq(await syncRun("test", { force: true }), false);
+  assertEq(st.uploads.length, 3);
+  assertEq(st.local.hvr_testgrade, "before");
+  assertEq(st.applied, 0);
+  assertEq(st.meta.last, "2026-01-01T00:00:00.000Z");
+}));
+T("sync snapshots: comparison detects removed keys as well as changed and added ones", () => {
+  assertTrue(syncSameKeys({ a: "1", b: "2" }, { b: "2", a: "1" }));
+  assertTrue(!syncSameKeys({ a: "1", b: "2" }, { a: "1" }));
+  assertTrue(!syncSameKeys({ a: "1" }, { a: "2" }));
+  assertTrue(!syncSameKeys({ a: "1" }, { a: "1", b: "2" }));
+});
+T("meaning: misleading overlap never earns a grade", () => {
+  [ ["category", "cat"], ["I do not want tea", "I want tea"],
+    ["she called him", "he called her"], ["the dog bit the man", "the man bit the dog"],
+    ["I bought bread", "I will buy bread"], ["I want 2 apples", "I want 12 apples"],
+    ["I don't want tea", "I want tea"], ["I want tea", "I never want tea"],
+    ["3.14", "314"], ["-5", "5"], ["let's eat grandma", "let's eat, grandma"]
+  ].forEach(pair => assertEq(matchMeaning(pair[0], pair[1]), "uncertain", pair.join(" / ")));
+});
+T("meaning: matching wording allows harmless presentation differences", () => {
+  assertEq(matchMeaning("  I WANT   tea. ", "I want tea"), "good");
+  assertEq(matchMeaning("I don’t want tea!", "I don't want tea"), "good");
+  assertEq(matchMeaning("cat", "cat"), "good");
+  assertEq(matchMeaning("no", "no"), "good");
+});
+T("meaning: paraphrases and unrelated answers both need self-assessment", () => {
+  assertEq(matchMeaning("back pain", "his back hurts"), "uncertain");
+  assertEq(matchMeaning("I would like some tea", "I want tea"), "uncertain");
+  assertEq(matchMeaning("I went swimming", "the street is narrow"), "uncertain");
+  assertNull(matchMeaning("", "cat"));
+  assertNull(matchMeaning("cat", ""));
+  assertNull(matchMeaning("...", "cat"));
+});
+T("meaning: uncertain feedback clears a suggestion and never claims an answer is wrong", () => {
+  const keep = learnSuggested;
+  const box = document.createElement("div"), input = document.createElement("textarea");
+  box.append(input);
+  try {
+    input.value = "I do not want tea";
+    learnSuggested = 2;
+    learnCheckMeaning(input, "I want tea");
+    assertNull(learnSuggested, "Space must not accept a guessed grade");
+    assertTrue(!!box.querySelector(".lmeaning.uncertain"));
+    assertTrue(box.textContent.indexOf("choose your grade") !== -1);
+    input.value = "I want tea";
+    learnCheckMeaning(input, "I want tea");
+    assertEq(learnSuggested, 2);
+    assertTrue(!!box.querySelector(".lmeaning.good"));
+    learnCheckMeaning(input, "");
+    assertNull(learnSuggested);
+  } finally { learnSuggested = keep; }
 });
 
 if (location.search.indexOf("selftest") !== -1) {

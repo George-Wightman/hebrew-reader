@@ -121,13 +121,20 @@ makes the rest of this a design decision instead of a rationing exercise.
 ## The compression design
 
 **An envelope, not raw gzip bytes.** The compressed blob is
-`{ app, schema: 2, enc: "gzip", updated, device, body }` — a self-describing
-JSON wrapper around a base64 gzip payload, rather than gzip bytes on their own.
-Raw would save the second base64 pass, but the file would stop being JSON, and
-`blob.app !== "hebrew-reader"` in `syncPull` is the exact check that catches a
-token pointed at the wrong repo. Keeping that check alive costs roughly 25% —
-167 KB against 1,018 KB is still six times the headroom he has ever used, so
-that trade is not close.
+`{ app: "hebrew-reader-gz", schema: 2, enc: "gzip", updated, device, body }` —
+a self-describing JSON wrapper around a base64 gzip payload, rather than gzip
+bytes on their own. Raw would save the second base64 pass, but the file would
+stop being JSON at all, which is a worse failure than the one this shape
+actually guards against. `app` is deliberately **not** `"hebrew-reader"`: an
+old build's `syncPull` guards on exactly that string, and if the compressed
+envelope kept it, that guard would pass, the old build would find no `keys` on
+an object it doesn't know how to decode, and it would merge its own state
+against nothing and push it over the whole file — a silent rollback, with
+nothing on screen to say it happened. Naming it `"hebrew-reader-gz"` instead
+makes the same guard fail loudly on an old build, throwing rather than
+proceeding. The 25% given up by staying JSON instead of raw gzip bytes — 167 KB
+against 1,018 KB — buys that: still six times the headroom he has ever used,
+so the trade is not close.
 
 **`CompressionStream` / `DecompressionStream`, native, no library.** Both are
 available in Chrome 80+ and therefore on his Pixel; a browser without them
@@ -231,8 +238,23 @@ guessing" means for a flag raised after the fact.
 ## Flags: the trail is copied, the session is referenced
 
 `flagContext` gains two fields: `ctx.trail` (the last `TRAIL_MAX` screen
-visits, copied in full — it is small and bounded) and `ctx.sessionId` (a
-reference to the most recent entry in `hvr_sessions`, not a copy of it).
+visits, copied in full — it is small and bounded) and, conditionally,
+`ctx.sessionId` (a reference to an entry in `hvr_sessions`, not a copy of it).
+
+**Conditionally, not unconditionally — the last entry in `hvr_sessions` is not
+always the conversation he means.** `sessAll()`'s last entry is the last one
+that *ended*, and a flag can be raised while a different conversation is still
+live, or long after the last one ended entirely. So `ctx.sessionId` is only
+attached when the most recent entry ended within `SESS_FLAG_WINDOW_MS` (30
+minutes) of the flag — the same window `COACH_IDLE_MS` uses to decide a
+sitting is over — alongside `ctx.sessionAt` so the reader can see how fresh it
+actually is. When the card he is on is mid-conversation (`kind === "compose"`)
+at flag time, the flag instead carries `ctx.sessionLive: true`: those turns are
+not written to `hvr_sessions` until the conversation ends, so there is nothing
+yet to reference, and the flag says that plainly rather than pointing at
+whatever conversation happens to be last. A flag can carry neither field —
+`sessionId` too old, no live conversation — and that absence is itself
+meaningful: nothing recent to attach.
 
 The distinction matters because a sitting can raise more than one flag.
 Copying the conversation into every flag raised during it would put the same

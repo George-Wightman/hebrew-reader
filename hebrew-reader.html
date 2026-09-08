@@ -178,6 +178,13 @@
   .modal textarea, .modal input[type=password], .modal input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: .9rem; }
   .modal textarea { min-height: 140px; font-family: monospace; }
   .modal .note { font-size: .8rem; color: var(--muted); }
+  /* aiLogRender joins the quota line and the health lines with "\n", and each health
+     line already carries its own "·" — but .note is a plain <p>, white-space: normal by
+     default, so every newline collapsed and the whole thing rendered as one run-on
+     sentence with no visible delimiter between entries. pre-line keeps the \n breaks
+     while still wrapping normally, so the quota line's own length still wraps exactly as
+     before this rule existed. */
+  #aiQuota { white-space: pre-line; }
   .modal .btnrow { justify-content: flex-end; }
 
   /* ---- word strength ---- */
@@ -8721,6 +8728,13 @@ function SYNC_LOCAL_SET() {
     SESSION_KEY, BLOCK_KEY, ZOOM_KEY, HE_KEY, LIBVIEW_KEY, MAPPOS_KEY, MAPVIEW_KEY,
     COLLAPSE_KEY, VIEW_KEY, PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY, PAD_KEY,
     AUDIO_CONSENT_KEY, "hvr_migrated", "hvr_voicebanner",
+    /* Same kind of thing as hvr_migrated just above: a per-device migration marker, not
+       a fact about him. It is hvr_-prefixed, so without this it would sync — and once it
+       lands on a device that has not repaired yet, campDedupeNodes returns at its first
+       line and that device's own repair never runs. A device that has not fixed its
+       doubled chapter must still be allowed to, regardless of what the other device has
+       already done. */
+    "hvr_campdedupe_v1",
     /* "Have I read that file yet" is a fact about this device, not about him. Syncing it
        would let one device's marker tell another to skip a file it has never read — and
        the marker is only an optimisation anyway, since the bank itself syncs and
@@ -19383,7 +19397,21 @@ function campApplyPlan(plan) {
     words.forEach(w => { taken[w] = true; });
     built.push({
       id: "c" + n + "-" + i + "-" + Math.random().toString(36).slice(2, 6),
-      name: String(raw.name || "Something new").slice(0, 40),
+      /* THE FALLBACK MUST BE UNIQUE PER NODE, because mergeNodeList and
+         campDedupeChapters now key a node's identity on its name, not just its id (see
+         "A NODE'S IDENTITY IS ITS NAME" above mergeNodeList). A bare "Something new" on
+         two unnamed nodes in one chapter is not a naming quirk to either of them — it is
+         one identity claimed twice, and the second occurrence is exactly what both of
+         those functions delete: its words drop out of the map and its bank sentences and
+         pathscores are orphaned, with no error anywhere to say so. Appending the index
+         keeps unnamed siblings distinct within their own chapter. Do not "tidy" this
+         back to a bare literal.
+
+         The 40-char slice() below is a second, narrower collision route — two genuinely
+         different names that agree on their first 40 characters still collide — left
+         alone because truncating there is the actual UI constraint, but worth knowing
+         about if this bug resurfaces with named nodes involved. */
+      name: String(raw.name || ("Something new " + (i + 1))).slice(0, 40),
       icon: (String(raw.icon || "").match(/[֐-׿]+/) || [words[0] || CAMP_ICON_FALLBACK])[0],
       lvl: Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.round(Number(raw.lvl)) || learnerLevel())),
       situation: String(raw.situation || raw.name || "").slice(0, 160),
@@ -34077,6 +34105,13 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
      THROWS, and an uncaught throw escaped the key loop, the model loop and the config
      loop at once — the one failure mode the fallback list could not see. */
   const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  /* hvr_health SYNCS, and check-hebrew-flags reads a thinking-refused or
+     model-downshift entry there as evidence of a live bug, not a curiosity — so a test
+     that reaches the success branch below (it does: it falls through to flash-lite and
+     that IS a downshift) must not leave that entry sitting in the real ledger for the
+     next session, or even the next device, to trip over. Snapshotted and restored the
+     same way AI_Q_KEY already is, just below. */
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
   try {
     geminiKeys = () => ["k"];
     const asked = [];
@@ -34098,7 +34133,10 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
     let msg = "";
     try { await geminiSend([{ text: "x" }], null, {}); } catch (e) { msg = e.message; }
     assertEq(msg, "the request took longer than 20s");
-  } finally { geminiFetchWithRetry = realFetch; geminiKeys = realKeys; }
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+  }
 });
 /* Kept as one test to match the timeout case above, which it mirrors exactly. It no
    longer HAS to be: writing it as three is what proved the runner was starting async
@@ -34150,6 +34188,9 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
   const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
   /* hvr_ai_q is a live counter and the success case below writes an "ok" into it. */
   const q = lsGet(AI_Q_KEY);
+  /* Same reach-to-flash-lite success as the timeout test above, same downshift note into
+     the real, synced hvr_health — see that test for why this must be undone. */
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
   const busy = () => Promise.resolve({ ok: false, status: 503,
     text: () => Promise.resolve('{"error":{"code":503,"message":"overloaded"}}') });
   try {
@@ -34197,6 +34238,7 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(AI_Q_KEY, q || "");
+    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
   }
 });
 T("healthNote: one entry per kind per device, counted rather than repeated", () => {
@@ -34461,6 +34503,9 @@ T("geminiSend: a refused thinking control is recorded, not silently swallowed", 
      quiet as this one was. */
   const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
   const q = lsGet(AI_Q_KEY);
+  /* The success below is exactly what records the thinking-refused entry this test is
+     named for, into the real, synced hvr_health — see the timeout test above for why. */
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
   try {
     geminiKeys = () => ["k"];
     let n = 0;
@@ -34490,6 +34535,7 @@ T("geminiSend: a refused thinking control is recorded, not silently swallowed", 
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(AI_Q_KEY, q || "");
+    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
   }
 });
 
@@ -35786,6 +35832,27 @@ T("campDedupeChapters: the doubled map is repaired, keeping the side he practise
   const anon = { v: 1, log: [], chapters: [{ n: 9, nodes: [{ id: "p" }, { id: "q" }] }] };
   assertEq(campDedupeChapters(anon, {}).camp.chapters[0].nodes.length, 2);
 });
+T("the campaign repair and the merge agree on which copy survives", () => {
+  /* campDedupeChapters keeps the SCORED id so his finished lessons stay attached;
+     mergeNodeList keeps first-in-base-order and knows nothing about scores. They must
+     not disagree, or the repair is undone on the next sync and chapter two's pathscores
+     detach — the map shows the nodes unstarted and he does them again.
+
+     They converge because hvr_campdedupe_v1 is device-local: each device repairs against
+     the same MERGED pathscores and reaches the same answer, so the merge only ever sees
+     lists that already agree. This pins that on his real ids. */
+  const dup = [{ id: "c2-0-1qt5", name: "Family & home" }, { id: "c2-1-pb2c", name: "Going places" },
+               { id: "c2-0-vgft", name: "Family & home" }, { id: "c2-1-2bgi", name: "Going places" }];
+  const scored = { "c2-0-1qt5": {}, "c2-1-pb2c": {} };
+  const repaired = campDedupeChapters(
+    { v: 1, log: [], chapters: [{ n: 2, nodes: dup.map(n => ({ id: n.id, name: n.name })) }] },
+    scored).camp.chapters[0].nodes.map(n => n.id);
+  const merged = mergeCampaign(
+    { chapters: [{ n: 2, nodes: [dup[0], dup[1]] }] },
+    { chapters: [{ n: 2, nodes: [dup[2], dup[3]] }] }).chapters[0].nodes.map(n => n.id);
+  assertEq(repaired, ["c2-0-1qt5", "c2-1-pb2c"], "the repair keeps what he practised");
+  assertEq(merged, repaired, "and the merge must not undo it on the next sync");
+});
 T("mergeCampaign: the same node generated twice is one node, not two", () => {
   /* THE BUG THIS IS FOR, with George's real ids. Only chapter one's are authored; every
      chapter after it is generated with a RANDOM PER-DEVICE suffix, so his laptop — which
@@ -36226,6 +36293,13 @@ T("aiModelsFor: the reviewer outlives everyone else in the pool", () => {
      The order is the design: the reviewer is the last thing to degrade because it is the
      only thing standing between a generated sentence and months of drilling. */
   const real = lsGet(AI_Q_KEY);
+  /* aiModelsFor calls healthNote("pool-downgrade", ...) whenever it steps the coach down,
+     and the two assertions below that trigger it do so for real, into hvr_health — which
+     SYNCS, and which check-hebrew-flags reads as evidence of a live bug, not a test
+     artifact. Left alone, running the suite manufactures the exact false alarm this
+     branch's health ledger exists to catch. Snapshotted and restored the same way
+     AI_Q_KEY already is below. */
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
   try {
     const day = todayISO();
     const set = n => lsSet(AI_Q_KEY, JSON.stringify({ day: day, strong: n, fast: 0, spent: {} }));
@@ -36246,6 +36320,7 @@ T("aiModelsFor: the reviewer outlives everyone else in the pool", () => {
     assertEq(aiModelsFor("coach"), GEMINI_MODELS_FAST);
   } finally {
     if (real == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, real);
+    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
   }
 });
 T("learnReviewItems: required means it banks nothing rather than banking unchecked", async () => {

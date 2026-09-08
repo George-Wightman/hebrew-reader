@@ -34,8 +34,30 @@ that is the failure being replaced, and skipping this step reproduces it.
 ### 1. Read his live state
 
 Same read-only token and repo as `check-hebrew-flags` — see that skill for the token path
-and the `progress.json` fetch. Decode `keys` and take `hvr_library`, `hvr_srs`,
-`hvr_campaign`, `hvr_bank`.
+and the `progress.json` fetch, including the 1MB cliff and its refetch-by-sha fallback.
+
+**The outer object is not always the blob itself.** Since 2026-09-07, what the base64
+decode hands back is `syncEncodeBlob`'s output: `{app, schema, updated, device, keys}`
+when the writing browser could not compress, or `{app: "hebrew-reader-gz", schema, enc:
+"gzip", updated, device, body}` when it could, with `body` a base64 gzip blob of the real
+`{..., keys}` object. Both are live, permanently — an old build or a browser without
+`CompressionStream` still writes plain JSON — so check `enc == "gzip"` and only
+gzip-decompress when it says so; anything else is already the object with `keys` on it.
+This skill wrote sentences against a decode that assumed the old shape once already: the
+outer object came back with no `keys` at all, `contentThinNow()` read as "nothing is
+short", and the run reported there was nothing to write — silence that looked like good
+news, in the skill whose whole job is writing his actual practice content. Use
+`check-hebrew-flags`'s Python decode block as the reference implementation (it handles
+both branches already) rather than re-deriving it, and — like that skill — treat an empty
+or missing `keys` after decoding as a failure to report, not as "nothing needs writing":
+
+```python
+assert isinstance(blob.get("keys"), dict) and blob["keys"], \
+    "decoded to no keys — envelope format changed again, do not proceed as if there is nothing to do"
+```
+
+Once decoded, take `hvr_library`, `hvr_srs`, `hvr_campaign`, `hvr_bank` from `keys` (each
+still a JSON string needing a second parse, same as `hvr_flags`).
 
 **Write his data to the session scratchpad, never into this repo.** It is a public
 repository and his library and SRS must not land in it. Delete it when finished.

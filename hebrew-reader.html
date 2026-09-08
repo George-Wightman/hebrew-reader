@@ -1246,8 +1246,6 @@
   .lfit { margin-top: 18px; font-size: .84rem; color: var(--muted); }
   .lfit span { display: inline-block; background: var(--accent-soft); color: var(--accent);
                border-radius: 6px; padding: 2px 9px; margin: 4px 3px 0; font-weight: 600; }
-  .lwhy { margin-top: 18px; background: var(--accent-soft); border-radius: 8px;
-          padding: 12px 14px; text-align: left; font-size: .88rem; white-space: pre-wrap; }
 
   /* THE COACH SAYING IT DID NOT FOLLOW. Deliberately NOT the amber "unknown word"
      treatment and not the red of a fault: nothing here is wrong. He reached for a word he
@@ -28737,12 +28735,22 @@ function learnReveal() {
     card.append(act);
   }
 
+  /* WAS "Why is it phrased like that?", a one-shot canned question that fired, replaced
+     itself with the answer, and left nowhere to follow up. George: "the automatic info it
+     gave is not what I wanted to ask about ... 'why is it like that' is actually usless
+     for a whole sentence, Im usually askign about a specific word choice so I would need
+     to specifiy anyway."
+
+     No preamble and no seeded question, on his instruction. The dock reads its own
+     context from uhHere() / uhReportFor() when he sends, so it already knows the card —
+     there is nothing to hand it. Identical to the compose card's handoff and to the nav
+     magnifier, which is what he asked for: "same as the button at the top". */
   if (c.kind !== "word" && geminiKeys().length) {
-    const why = document.createElement("button");
-    why.className = "linkbtn"; why.type = "button"; why.style.marginTop = "16px";
-    why.textContent = "Why is it phrased like that?";
-    why.onclick = () => learnWhy(why, c);
-    card.append(why);
+    const ask = document.createElement("button");
+    ask.className = "linkbtn"; ask.type = "button"; ask.style.marginTop = "16px";
+    ask.textContent = "Ask the coach";
+    ask.onclick = () => coachDockOpen(true);
+    card.append(ask);
   }
 
   playHe(answerKey, he);
@@ -28814,11 +28822,39 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
     ask.onclick = () => learnExplainWord(ask, panel, tok, c);
     panel.append(ask);
   }
+  /* KEPT AND ADDED TO, rather than replaced like the card's button was. "Why is it this
+     word?" is the same one-shot shape, but it is not the one he complained about and it
+     does a second job the coach cannot: learnExplainWord writes tr/en/why back through
+     learnSaveGloss, so the panel stays richer afterwards. It is also already specific to
+     one word, which is the exact thing he said the sentence-level button was missing.
 
-  /* Explicit, and in the order they'll actually be used. "Got it" first because
-     it's the one that undoes a mis-tap. */
+     What it could not do is be followed up, and this is where he says the follow-up
+     actually lives — "Im usually askign about a specific word choice". So the handoff
+     sits under the explanation instead of in place of it. */
+  if (geminiKeys().length) {
+    const coach = document.createElement("button");
+    coach.className = "linkbtn"; coach.type = "button"; coach.style.marginTop = "9px";
+    coach.textContent = "Ask the coach";
+    coach.onclick = () => { close(); coachDockOpen(true); };
+    panel.append(coach);
+  }
+
+  /* SAME ORDER AS THE CARD'S OWN GRADE ROW, which is the whole of the change. This used
+     to run Got it / Nearly / Missed, on the argument that "Got it" belongs first because
+     it is the one that undoes a mis-tap. Defensible alone and wrong in context: the two
+     rows sit one tap apart on the same card and he hits both in a session. George: "on
+     some excersizes the order is 'got it' 'nearly' 'missed', then on other pages its theo
+     other way around."
+
+     It also lands the right way round on the style guide's rule that gold means "you did
+     this" — the card's row already ends on gold, and this now agrees.
+
+     DISPLAY ONLY. The two rows encode differently and both encodings stay exactly as they
+     were: whole-card grades are 0/1/2 Missed/Nearly/Got it, while learnMarks is 0 Got it,
+     1 Missed, 2 Nearly — which learnAdjudicate depends on when it moves a mark from 1 to
+     2. Only the array order moved; every label keeps the value it already had. */
   const grades = document.createElement("div"); grades.className = "lwd-grades";
-  [["Got it", 0, "g2"], ["Nearly", 2, "g1"], ["Missed", 1, "g0"]].forEach(([label, mark, cls]) => {
+  [["Missed", 1, "g0"], ["Nearly", 2, "g1"], ["Got it", 0, "g2"]].forEach(([label, mark, cls]) => {
     const b = document.createElement("button");
     b.className = "lgrade " + cls; b.type = "button"; b.textContent = label;
     b.onclick = () => { learnMarks[i] = mark; close(); };
@@ -28827,11 +28863,12 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
   panel.append(grades);
 }
 
-/* Flash-Lite first, deliberately, here and in learnWhy below: these are the two AI
-   calls in the app George can fire repeatedly by hand, and lite's allowance is 500/day
-   against Flash's 20. Both are short teaching notes — the same job padAskExplain
-   already sends to the lite pool — so the strong pool was never buying anything here,
-   and two taps on a card used to cost a tenth of the day's transcription budget. */
+/* Flash-Lite first, deliberately: this is the AI call in the app George can fire
+   repeatedly by hand, and lite's allowance is 500/day against Flash's 20. It is a short
+   teaching note — the same job padAskExplain already sends to the lite pool — so the
+   strong pool was never buying anything here, and two taps on a card used to cost a
+   tenth of the day's transcription budget. (It had a twin in learnWhy, the sentence-level
+   "why is it phrased like that", until that became a handoff to the coach on 2026-09-08.) */
 async function learnExplainWord(btn, panel, tok, c) {
   btn.disabled = true; btn.textContent = "Asking…";
   busy(true);
@@ -28859,24 +28896,6 @@ async function learnExplainWord(btn, panel, tok, c) {
     const idx = learnCardTokens.indexOf(tok);
     learnFillWordPanel(panel, tok, c, idx, learnPanelCtl.repaint, learnPanelCtl.close);
     syncPadOffset();
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = /limit/.test(e.message) ? "Daily AI limit reached" : "Couldn't ask — " + e.message;
-  } finally { busy(false); }
-}
-
-async function learnWhy(btn, c) {
-  btn.disabled = true; btn.textContent = "Asking…";
-  busy(true);
-  try {
-    const out = await geminiRequest([{ text:
-      "Explain briefly, to an English speaker learning to SPEAK conversational Hebrew, why this " +
-      "is phrased the way it is:\n\n" + c.item.he + "\n" + c.item.tr + "\n\"" + (c.item.en || "") +
-      "\"\n\nTwo or three sentences. Give the rule behind it so it carries into his next sentence. " +
-      "Plain text, no markdown, no preamble." }], GEMINI_MODELS_FAST,
-      { label: "Why it is phrased that way" });
-    const box = document.createElement("div"); box.className = "lwhy"; box.textContent = out.trim();
-    btn.replaceWith(box);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = /limit/.test(e.message) ? "Daily AI limit reached" : "Couldn't ask — " + e.message;
@@ -33381,6 +33400,31 @@ T("learnRescueText: a late softening says which words and which way", () => {
   const lib = { "רק": { tr: "rak", en: "only" } };
   assertEq(learnRescueText(["רק"], lib),
            "Second opinion: you probably did say רק (rak) — raised from Missed to Nearly.");
+});
+T("the two grade rows read the same way round, and still mean what they meant", () => {
+  /* Both rows are built from array literals inside render functions, so the only honest
+     way to hold them together is to read the source. Ugly, and it is what catches the
+     drift: they sit a tap apart on the same card and disagreed for months.
+
+     The values are asserted alongside the order deliberately. Reordering the panel row is
+     safe only because every label kept its own mark — learnMarks encodes 0 Got it,
+     1 Missed, 2 Nearly, which learnAdjudicate relies on when it moves a mark from 1 to 2,
+     and it is NOT the whole-card 0/1/2. A future tidy that "unified" them would look like
+     an improvement and would silently regrade every tapped word. */
+  const src = String(learnReveal) + String(learnFillWordPanel);
+  const rows = src.match(/\[\["(?:Missed|Nearly|Got it)"[\s\S]{0,120}?\]\]/g) || [];
+  assertEq(rows.length, 2, "found both grade rows in the source");
+  const encodings = rows.map(row => {
+    assertEq((row.match(/"(Missed|Nearly|Got it)"/g) || []).join(","),
+             '"Missed","Nearly","Got it"', "same order in both rows: " + row);
+    return (row.match(/"(?:Missed|Nearly|Got it)",\s*(\d)/g) || [])
+             .map(m => m.replace(/\D/g, "")).join(",");
+  });
+  /* Exactly these two, one each. Same order on screen, different numbers underneath — a
+     tidy that made them agree numerically would read as an improvement and would regrade
+     every tapped word. */
+  assertEq(encodings.slice().sort().join(" | "), "0,1,2 | 1,2,0",
+           "each row kept its own encoding rather than being merged: " + encodings.join(" / "));
 });
 T("learnRescueText: several words in one line, and nothing at all is no line", () => {
   assertTrue(learnRescueText(["א", "ב"], {}).indexOf("א, ב") !== -1, "one note, not two");

@@ -9061,9 +9061,13 @@ async function syncPull() {
 }
 
 async function syncPush(blob, sha) {
-  /* Slimmed HERE, at the wire, and nowhere earlier — see syncSnapshotForPush. */
+  /* SLIM, THEN COMPRESS, THEN ENCODE — in that order. syncSnapshotForPush decides what
+     is worth sending; compressing first would faithfully ship the bytes it was about to
+     drop. syncEncodeBlob falls back to plain JSON on a browser without CompressionStream,
+     and every build since 2026-09-07 reads both, so a device that cannot compress still
+     syncs. */
   const body = { message: "practice from " + blob.device + " · " + blob.updated.slice(0, 16).replace("T", " "),
-                 content: b64encodeUtf8(JSON.stringify(syncSnapshotForPush(blob))) };
+                 content: b64encodeUtf8(await syncEncodeBlob(syncSnapshotForPush(blob))) };
   if (sha) body.sha = sha;
   const resp = await fetchWithTimeout(ghURL(SYNC_FILE), {
     method: "PUT", headers: ghHeaders(), body: JSON.stringify(body) });
@@ -33653,6 +33657,31 @@ T("syncDecodeBlob: reads the old format and the compressed one", async () => {
       () => { throw new Error("a truncated gzip envelope must throw"); },
       (err) => assertEq(err.message, "the synced file couldn't be read"));
   }
+});
+
+T("syncPush: sends the compressed envelope, slimmed first", async () => {
+  /* ORDER MATTERS AND IS EASY TO GET BACKWARDS. syncSnapshotForPush drops resolved
+     flags' ctx and stubs the bank; compressing before that would ship the bytes we
+     just decided not to send. */
+  const realFetch = fetchWithTimeout;
+  try {
+    let sent = null;
+    fetchWithTimeout = (url, opts) => {
+      sent = JSON.parse(opts.body);
+      return Promise.resolve({ ok: true, status: 200,
+        json: async () => ({ content: { sha: "newsha" } }) });
+    };
+    const blob = { app: "hebrew-reader", schema: 1, updated: "2026-09-07T00:00:00.000Z",
+                   device: "aaa", keys: { hvr_flags: JSON.stringify(
+                     [{ id: "1", text: "keep", ts: 1, resolved: true, ctx: { report: "x".repeat(4000) } }]) } };
+    await syncPush(blob, "oldsha");
+    const file = b64decodeUtf8(sent.content);
+    assertTrue(file.indexOf("\"enc\":\"gzip\"") !== -1, "the file is the envelope");
+    const back = await syncDecodeBlob(file);
+    const flags = JSON.parse(back.keys.hvr_flags);
+    assertEq(flags[0].text, "keep", "his words survive the round trip");
+    assertTrue(!flags[0].ctx, "and the slimming happened BEFORE the compression");
+  } finally { fetchWithTimeout = realFetch; }
 });
 
 /* ---- what travels, and what must never ---- */

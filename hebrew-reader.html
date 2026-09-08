@@ -9010,7 +9010,18 @@ function flagSlimForSync(raw) {
    device on an older build does not recognise a store a newer build added, and dropping
    the unrecognised would have the old device delete the new one's data on every sync —
    which is the same shape as the bug bankDropStubs paid 330 sentences to learn. */
-const SYNC_DEAD = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder"];
+/* The last entry is here for a DIFFERENT reason from the three above it, and the
+   difference is worth stating or someone will "tidy" it out. Those three are dead: no
+   reader left anywhere. hvr_campdedupe_v1 is very much alive — it is the marker saying
+   this device has already repaired its doubled campaign — it simply must never travel,
+   because a device that has NOT repaired yet would receive it and skip its own repair.
+
+   Naming it in SYNC_LOCAL_SET was the first attempt and was not enough, for exactly the
+   reason this list exists: that only stops the device CONTRIBUTING the key, and it was
+   already in the file, so mergeKeyMap's union handed it straight back on the next sync.
+   Measured still travelling after the fix shipped. Dropping at the wire is the only
+   thing that removes a key once it is in there. */
+const SYNC_DEAD = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder", "hvr_campdedupe_v1"];
 
 function syncSnapshotForPush(blob) {
   const keys = Object.assign({}, blob.keys);
@@ -34463,6 +34474,19 @@ T("syncKeys: does not carry stores nothing in the app reads", () => {
     k + " must not reach the wire even when the remote copy still has it"));
   assertEq(carried.hvr_stats, "{\"sessions\":1}",
            "and a live store is untouched by the dropping");
+
+  /* THE SAME MISTAKE, MADE AGAIN THREE COMMITS LATER, and caught only by reading the
+     live file after it shipped. hvr_campdedupe_v1 is not dead — it is the marker saying
+     this device has repaired its doubled campaign — but it must never travel, because a
+     device that has NOT repaired yet would receive it and skip its own repair. It was
+     added to SYNC_LOCAL_SET alone, which stops this device contributing it and does
+     nothing about the copy already in the file. */
+  const flagged = syncSnapshotForPush({
+    app: "hebrew-reader", schema: SYNC_SCHEMA, updated: "2026-09-08T00:00:00.000Z",
+    device: "d", keys: { hvr_campdedupe_v1: "1", hvr_stats: "{}" } }).keys;
+  assertTrue(!("hvr_campdedupe_v1" in flagged),
+             "a repair marker must not reach a device that has not repaired yet");
+  assertTrue(SYNC_LOCAL_SET().has("hvr_campdedupe_v1"), "and it is not contributed either");
 });
 
 T("thinkingChain: each model is offered a control it will actually accept", () => {

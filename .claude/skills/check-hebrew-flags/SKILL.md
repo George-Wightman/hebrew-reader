@@ -163,12 +163,32 @@ nor in the ledger is genuinely new and should be surfaced.
    the resolved/handled counts briefly so he knows the filtering is happening, not just
    trust it silently.
 
-   When a flag carries `ctx.sessionId`, look it up in `blob['keys']['hvr_sessions']`
-   (same double-parse as `hvr_flags` and `hvr_health` — it's a JSON string under `keys`,
-   holding a JSON array) and show the last three turns of that conversation under the
-   flag: what he said, what the coach answered, how it was judged. That's the material
-   that used to take cross-referencing timestamps against `content/nodes.json` to
-   reconstruct by hand — now it's just the session the id points at.
+   `ctx.sessionId` is not always there, and its absence is not a gap in the data — it's
+   the app declining to guess. `sessAll()` only gains an entry when a conversation
+   *ends* (`composeEnds`), so a bare "last entry" would silently point at whatever
+   conversation happened to finish last, however unrelated or however old. The app
+   instead attaches `sessionId` only when that last entry ended within the previous
+   half hour — the same window `COACH_IDLE_MS` uses to decide a sitting is over — and
+   carries `sessionAt` alongside it so you can see how fresh it actually is. When it's
+   there, look it up in `blob['keys']['hvr_sessions']` (same double-parse as
+   `hvr_flags` and `hvr_health` — it's a JSON string under `keys`, holding a JSON
+   array) and show the last three turns of that conversation under the flag: what he
+   said, what the coach answered, how it was judged. That's the material that used to
+   take cross-referencing timestamps against `content/nodes.json` to reconstruct by
+   hand — now it's just the session the id points at.
+
+   `ctx.sessionLive: true` means something different and is worth saying plainly: he
+   was still mid-conversation when he flagged, and those turns are not in
+   `hvr_sessions` at all yet — they only get written when the conversation ends. Don't
+   go looking for a session id here or report "no conversation found"; say he was
+   still talking, and if the flag itself needs that context, the flag's own text is
+   all there is until he finishes.
+
+   And when a flag carries **neither** `sessionId` nor `sessionLive` — no error, just
+   nothing there — that means no conversation ended in the last half hour and none was
+   in progress either. That's itself worth knowing rather than skipping past: it says
+   the flag isn't about a recent coaching exchange, so don't manufacture context that
+   isn't there by reaching for an old session anyway.
 
    When a flag carries `ctx.trail`, read the last few entries as where he had just been.
    A flag raised on `lEnd` about something that happened on `lCard` is the normal case,

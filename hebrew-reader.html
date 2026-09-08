@@ -13262,6 +13262,10 @@ function healthLines(list) {
    judged. */
 const SESS_KEY = "hvr_sessions";
 const SESS_MAX = 8, SESS_TURN_MAX = 12;
+/* HOW RECENTLY A CONVERSATION HAS TO HAVE ENDED to be the one he is flagging. Thirty
+   minutes is the same span COACH_IDLE_MS uses to decide a sitting is over, so "the
+   conversation he was just in" means the same thing in both places. */
+const SESS_FLAG_WINDOW_MS = 30 * 60 * 1000;
 
 function sessAll() {
   try { const v = JSON.parse(lsGet(SESS_KEY)); return Array.isArray(v) ? v : []; }
@@ -13475,9 +13479,27 @@ function flagContext(report) {
      otherwise carry the same conversation twice into a payload we just spent a
      migration shrinking. */
   try { c.trail = trailAll().slice(-TRAIL_MAX); } catch (e) {}
+  /* ONLY WHEN IT IS PLAUSIBLY THE CONVERSATION HE MEANS. sessAll()'s last entry is the
+     last one that ENDED, which is not the same thing as the one he is flagging. A flag
+     raised mid-conversation would point at the PREVIOUS session, and a flag about the
+     map raised a week later would still carry whatever conversation happened last —
+     and the reading tool prints it underneath as if it were context. A confidently
+     wrong reference is worse than none. */
   try {
-    const last = sessAll()[sessAll().length - 1];
-    if (last) c.sessionId = last.id;
+    const cards = (learnSession && learnSession.cards) || [];
+    const here = cards[learnSession ? learnSession.i : -1];
+    if (here && here.kind === "compose") {
+      /* Still talking. The turns are on the card and are not written to hvr_sessions
+         until composeEnds, so there is nothing to point at yet — say that, rather than
+         pointing at the one before it. */
+      c.sessionLive = true;
+    } else {
+      const last = sessAll()[sessAll().length - 1];
+      if (last && (Date.now() - (last.at || 0)) <= SESS_FLAG_WINDOW_MS) {
+        c.sessionId = last.id;
+        c.sessionAt = last.at;
+      }
+    }
   } catch (e) {}
   try { c.screenSize = window.innerWidth + "×" + window.innerHeight; } catch (e) {}
   return c;
@@ -34179,14 +34201,28 @@ T("flagContext: carries the trail, and points at the session rather than copying
     lsSet(TRAIL_KEY, "[]"); lsSet(SESS_KEY, "[]");
     trailNote("learn", "lCard", 1000);
     trailNote("learn", "lEnd", 2000);
-    sessRecord({ turns: [{ said: "x", out: { ok: "clean", say: { he: "y" } } }] }, "c2-0-1qt5", 1500);
+    sessRecord({ turns: [{ said: "x", out: { ok: "clean", say: { he: "y" } } }] },
+               "c2-0-1qt5", Date.now() - 1500);
     const c = flagContext("");
     assertTrue(Array.isArray(c.trail), "the trail rides along");
     assertEq(c.trail[c.trail.length - 1].screen, "lEnd", "newest last");
     assertTrue(c.trail.length <= TRAIL_MAX);
     assertEq(c.sessionId, sessAll()[sessAll().length - 1].id,
              "and the conversation is REFERENCED, so two flags in one session do not store it twice");
-    assertTrue(!c.session, "never the turns themselves");
+    assertTrue(JSON.stringify(c).indexOf("\"turns\"") === -1,
+               "the conversation is REFERENCED, never copied into the flag");
+
+    /* A conversation that ended weeks ago is not what this flag is about. */
+    lsSet(SESS_KEY, "[]");
+    sessRecord({ turns: [{ said: "old", out: { ok: "clean", say: { he: "y" } } }] },
+               "c2-0-1qt5", Date.now() - SESS_FLAG_WINDOW_MS - 1);
+    assertTrue(!flagContext("").sessionId,
+               "a stale conversation must not be attached to an unrelated flag");
+    /* One that just ended is. */
+    lsSet(SESS_KEY, "[]");
+    sessRecord({ turns: [{ said: "new", out: { ok: "clean", say: { he: "y" } } }] },
+               "c2-0-1qt5", Date.now() - 1000);
+    assertEq(flagContext("").sessionId, sessAll()[0].id, "a fresh one is");
   } finally { lsSet(TRAIL_KEY, wasT || "[]"); lsSet(SESS_KEY, wasS || "[]"); }
 });
 

@@ -30,6 +30,17 @@ navigating gives you the stale shell again, and the symptom is a function you ju
 added reading as `undefined` while a plain `fetch` of the same URL shows it
 present. Cost time twice on 2026-09-07.
 
+**Registrations and caches are per ORIGIN, so clearing on localhost does nothing
+for Pages.** Obvious written down, invisible in the moment: the natural shape of a
+verification run is to test on `localhost:8778`, push, then jump straight to
+`george-wightman.github.io` — and the clear you just ran belonged to the origin you
+are leaving. `github.io` still has its own registration and its own `hvr-shell-v3`,
+and serves them. The symptom is a *much* older build than the one you replaced
+(752/752 against a working tree at 785), plus deleted functions still present, which
+reads like a failed push until you `curl` the URL and find the new code sitting there.
+Clear again **after** landing on the new origin, then navigate once more with an
+unused query string. Cost a round on 2026-09-08.
+
 **`756/756` is environment-dependent, and a clean profile is not a clean run.**
 On a *completely empty* `localStorage` the suite is one short: `sync: the slimmed
 bank goes over the wire and never into local storage` throws `"undefined" is not

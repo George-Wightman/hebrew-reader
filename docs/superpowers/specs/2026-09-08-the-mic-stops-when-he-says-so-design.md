@@ -269,6 +269,43 @@ Hebrew-set mic transcribes Hebrew correctly by definition. The coach is told tha
 word he spoke will have come out as whatever English sounds nearest, and asked to name
 which Hebrew word it read, so a wrong guess is visible rather than silently answered.
 
+## Phase 7 — the switch keeps the sentence, and the box wraps
+
+Phase 6's toggle worked and took the sentence with it:
+
+> "So the toggle works but it deletes my message it doesnt conjoin them it just starts a
+> new message entirely. I would also like to make hte text box wrap with the text not jsut
+> disappear to the side of the screen, its currently locked at 1 row."
+
+**The deletion was in the restart.** It reset the box to `base` — the value from *before*
+the attempt it was replacing — which is right for a cancelled listen and exactly wrong
+here. Switching language mid-sentence is the one case where both halves matter: he asks in
+English and then wants to say the Hebrew part properly. A stop we caused still returns what
+the recogniser heard, so the fix commits `res.text` into the box before restarting, and
+the restarted listen reads that as its own `base` and prefixes the next transcript onto
+it. That is what joins them; nothing else had to change.
+
+Verified end to end: two recognisers, one sentence. `"how do I say"` captured under
+`en-GB`, `"הספר האדום"` under `he-IL`, and what reaches the coach is
+`"how do I say הספר האדום"`.
+
+**The box is a `<textarea>` now**, one row tall and growing with the text, capped around
+six lines so a long question scrolls rather than eating the thread above it. The row
+aligns to `flex-end` so the two round controls stay level with the last line instead of
+drifting into the middle of a tall question, and the corner radius drops from 999px to
+22px — half the single-line height, so it is the same pill when short and a rounded box
+when it grows, where 999px bows the sides in. Enter still sends; Shift+Enter is the new
+line.
+
+Height is measured from JS rather than declared, because `rows` is a minimum and CSS
+cannot size a box to its content. The reset to `auto` before measuring is what lets it
+shrink again — `scrollHeight` never reports less than the height already set — and the cap
+is **read from the computed `max-height`** rather than repeated as a number, after an
+unclamped first version wrote `height: 5146px` on a narrow layout. Invisible on screen,
+since `max-height` still governs what renders, and precisely the style guide's "two
+figures describing the same clearance must be one constant" with the two figures five
+thousand pixels apart.
+
 ## Deferred, with reasons
 
 - ~~**Telling the coach its transcript came from an English recogniser.**~~ **BUILT in

@@ -2077,15 +2077,25 @@
   .coachdock-thread .uh-ans.past { background: rgba(255,255,255,.62); box-shadow: none; }
   .coachdock-empty { font-size: .8rem; color: var(--muted); padding: 2px 2px 6px; }
 
-  .coachdock-row { display: flex; gap: 8px; align-items: center; }
-  .coachdock-row input {
+  /* flex-end, not center: the box grows upward as it wraps and the two round controls
+     have to stay level with its LAST line, or they drift into the middle of a tall
+     question and stop looking like they belong to the row. */
+  .coachdock-row { display: flex; gap: 8px; align-items: flex-end; }
+  .coachdock-row textarea {
     flex: 1 1 auto; min-width: 0; padding: 11px 14px; font: inherit; font-size: .92rem;
-    color: var(--ink); border: 1px solid rgba(226,221,210,.9); border-radius: 999px;
+    color: var(--ink); border: 1px solid rgba(226,221,210,.9); border-radius: 22px;
     background: rgba(255,255,255,.93);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     box-shadow: 0 2px 14px rgba(34,48,60,.10);
+    /* The pill shape only reads as a pill while it is one line tall; past that a 999px
+       radius bows the sides in. 22px is half the 44px single-line height, so it is
+       identical to the old shape when short and a rounded box when it grows. */
+    resize: none; overflow-y: auto; line-height: 1.35;
+    /* Roughly six lines. Past that it scrolls rather than eating the conversation above
+       it — the thread is what he is reading. */
+    max-height: 140px;
   }
-  .coachdock-row input:focus { outline: none; border-color: var(--accent); }
+  .coachdock-row textarea:focus { outline: none; border-color: var(--accent); }
 
   /* THE PULSING CIRCLE. George: "a symbol to show hes listening like a pulsing circle in
      the bottom right next to the box I can press when Im done talking to sent to coach."
@@ -2764,7 +2774,10 @@
     <div class="coachdock-top" id="coachDockTop"></div>
     <div class="coachdock-thread" id="coachDockThread"></div>
     <div class="coachdock-row">
-      <input type="text" id="coachDockQ" autocomplete="off" placeholder="Ask the coach…">
+      <!-- A TEXTAREA, not an input, so a long question wraps instead of scrolling off to
+           the side. It starts one row tall and grows with the text — see coachDockAutoGrow
+           for why the height is driven from JS rather than by rows/CSS alone. -->
+      <textarea id="coachDockQ" rows="1" autocomplete="off" placeholder="Ask the coach…"></textarea>
       <!-- WHICH LANGUAGE THE MIC IS LISTENING FOR. Not decoration and not a setting
            buried in a modal: the recogniser can only be one language at a time, and this
            is the only thing that knows which he is about to speak. Text, not a flag or a
@@ -8357,9 +8370,13 @@ document.getElementById("coachDockLang").onclick = () => coachLangToggle();
   /* He has taken the text over, so it is no longer a machine transcript and the coach
      must not be told to second-guess his spelling. Fires only on real typing — the
      interim results are written to .value programmatically and raise no input event. */
-  q.addEventListener("input", () => { coachDockVoiceLang = ""; coachDockPaintMic(); });
+  q.addEventListener("input", () => { coachDockVoiceLang = ""; coachDockAutoGrow(); coachDockPaintMic(); });
+  /* Enter still SENDS, which it has always done here and is what the button beside it
+     does. Shift+Enter is the way to a new line now that this is a textarea and one
+     exists — the chat convention, and the way round that keeps the common case one key.
+     Without the preventDefault a send would also leave a newline behind in the box. */
   q.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); coachDockSend(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); coachDockSend(); }
   });
 })();
 document.getElementById("uhClose").onclick = () => uhModalOpen(false);
@@ -15572,6 +15589,34 @@ function coachPaint() {
   if (coachDockOn) coachDockRender();
 }
 
+/* THE BOX GROWS WITH THE QUESTION. It was an <input>, so anything longer than the width
+   scrolled off to the right and he could not see what he had dictated — George: "I would
+   also like to make hte text box wrap with the text not jsut disappear to the side of the
+   screen, its currently locked at 1 row."
+
+   Height has to be measured rather than declared: `rows` is a minimum, not a fit, and CSS
+   alone cannot size a box to content. Reset to auto FIRST — scrollHeight never shrinks
+   below the height already set, so without that the box would grow and never come back
+   down when he clears it. Capped in CSS, and once the cap bites the element scrolls, which
+   is why the height is allowed to settle at scrollHeight and not forced past it.
+
+   Called from every place that writes to .value, including the programmatic ones: interim
+   speech results raise no input event, so nothing else would notice. */
+function coachDockAutoGrow() {
+  const q = document.getElementById("coachDockQ");
+  if (!q) return;
+  q.style.height = "auto";
+  /* CLAMPED HERE TOO, and the cap is READ FROM THE CSS rather than repeated as a number.
+     max-height already stops the box rendering taller, so this changes nothing on screen —
+     what it stops is the inline height being a fiction. Left unclamped it wrote
+     `height: 5146px` on a narrow layout, which is invisible until something measures it,
+     and then it is the style guide's "two figures describing the same clearance" with the
+     two figures disagreeing by 5000 pixels. */
+  const cap = parseFloat(getComputedStyle(q).maxHeight);
+  const want = q.scrollHeight;
+  q.style.height = (isFinite(cap) && cap > 0 ? Math.min(want, cap) : want) + "px";
+}
+
 /* ONE CONTROL, three states, and it is always "press this when you're done" — which is
    how he described it. Pulsing red while it listens; a mic when there is nothing to send;
    an arrow the moment there is. */
@@ -15664,6 +15709,9 @@ function coachDockOpen(on) {
   coachPastOpen = false;
   coachDockMsg = "";
   coachDockRender();
+  /* The box keeps whatever was in it when he closed the dock, and a textarea reopened at
+     its default one row would hide the tail of it. */
+  coachDockAutoGrow();
   coachDockListen();
 }
 
@@ -15703,7 +15751,7 @@ async function coachDockListen() {
        asking — coachDockSendOnEnd sends on it, which is what "dash a quick question" is
        for and what a hold would break. */
     res = await micListen({ lang: coachLangCode(),
-                            onInterim: t => { q.value = prefix + t; coachDockPaintMic(); } });
+                            onInterim: t => { q.value = prefix + t; coachDockAutoGrow(); coachDockPaintMic(); } });
   } finally {
     coachDockListening = false;
   }
@@ -15715,19 +15763,30 @@ async function coachDockListen() {
      dropped rather than reported as a mic failure. */
   if (coachDockRelisten) {
     coachDockRelisten = false;
-    q.value = base;
+    /* KEEP WHAT HE HAS ALREADY SAID. This used to reset the box to `base` — the value
+       from before this attempt started — which threw away the half of the sentence he had
+       just spoken in the other language. George: "it deletes my message it doesnt conjoin
+       them it jsut starts a new message entirely."
+
+       Switching language mid-sentence is the case where BOTH halves matter: he asks in
+       English and then wants to say the Hebrew bit properly. Committing it here is also
+       what joins them, because the restarted listen reads the box as its own `base` and
+       prefixes the next transcript onto it. A stop we caused still returns what it heard,
+       so res is the better source than the interim text already on screen. */
+    if (res && res.ok && res.text) { q.value = (prefix + res.text).trim(); coachDockAutoGrow(); }
     if (coachDockOn) { coachDockListen(); } else { coachDockPaintMic(); }
     return;
   }
   if (!res || !coachDockOn) { coachDockPaintMic(); return; }
   if (!res.ok) {
-    q.value = base;
+    q.value = base; coachDockAutoGrow();
     coachDockMsg = learnMicErrorText(res, coachDockStopped, "type it instead");
     coachDockRender();
     try { q.focus(); } catch (e) {}
     return;
   }
   q.value = (prefix + res.text).trim();
+  coachDockAutoGrow();
   /* Which mic produced this text, so the prompt can warn the coach about an English
      transcript of a Hebrew word. Cleared the moment he types, because then it is his
      spelling and means what it says. */
@@ -15745,6 +15804,7 @@ function coachDockSend() {
   const text = q.value.trim();
   if (!text) return;
   q.value = "";
+  coachDockAutoGrow();
   coachDockMsg = "";
   /* Read and cleared together: this belongs to the question being sent, and leaving it
      set would mislabel the next one he types. */
@@ -33529,6 +33589,75 @@ T("coachLangToggle: switching mid-sentence restarts the mic in the new language"
     coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
     if (hadLang === null || hadLang === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
     else lsSet(COACH_LANG_KEY, hadLang);
+  }
+});
+T("coachLangToggle: switching mid-sentence keeps what he already said and joins to it", async () => {
+  /* The half of the restart that was wrong on the first attempt: it reset the box to the
+     value from before the attempt, throwing away the English he had just dictated.
+     George: "it deletes my message it doesnt conjoin them it jsut starts a new message
+     entirely." Both halves matter here — asking in English, then saying the Hebrew. */
+  const realMic = micListen, realAcq = micAcquire, hadLang = lsGet(COACH_LANG_KEY);
+  const wasOn = coachDockOn, q = document.getElementById("coachDockQ"), savedQ = q.value;
+  const bases = [];
+  let release = null;
+  try {
+    lsSet(COACH_LANG_KEY, "en");
+    coachDockOn = true; q.value = "";
+    micAcquire = async () => true;
+    micListen = (opts) => {
+      /* What the box held when this attempt started IS the prefix the next transcript
+         gets joined onto, so recording it is recording the join. */
+      bases.push(q.value);
+      if (bases.length === 1) return new Promise(r => { release = r; });
+      return Promise.resolve({ ok: true, text: "הספר האדום", confidence: 0.9, alts: [] });
+    };
+    coachDockListen();
+    await new Promise(r => setTimeout(r, 0));
+    coachLangToggle();
+    release({ ok: true, text: "how do I say", confidence: 0.9, alts: [] });
+    for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0));
+    assertEq(bases[0], "", "the first attempt started from an empty box");
+    assertEq(bases[1], "how do I say",
+             "and the second starts from what he had already said, not from nothing");
+  } finally {
+    micListen = realMic; micAcquire = realAcq;
+    coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
+    q.value = savedQ;
+    if (hadLang === null || hadLang === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
+    else lsSet(COACH_LANG_KEY, hadLang);
+  }
+});
+T("coachDockAutoGrow: the box wraps and grows with the question, then shrinks back", () => {
+  /* It was an <input>: a long question scrolled off to the right where he could not see
+     what he had dictated. The shrink half is the one that needs a test — scrollHeight
+     never reports less than the height already set, so an implementation that forgets to
+     reset to auto grows once and stays tall forever. */
+  const realListen = coachDockListen, wasOn = coachDockOn;
+  const q = document.getElementById("coachDockQ"), savedQ = q.value;
+  try {
+    coachDockListen = () => {};          // no microphone in here
+    coachDockOpen(true);                 // it is display:none closed, so nothing measures
+    assertEq(q.tagName, "TEXTAREA", "an input cannot wrap at all");
+    q.value = "short";
+    coachDockAutoGrow();
+    const one = parseFloat(q.style.height);
+    assertTrue(one > 0, "a measured height, not a guess: " + q.style.height);
+    q.value = ("a long question about how to say something in Hebrew ").repeat(6);
+    coachDockAutoGrow();
+    const many = parseFloat(q.style.height);
+    const cap = parseFloat(getComputedStyle(q).maxHeight);
+    assertTrue(many > one, "wrapping text makes it taller (" + one + " -> " + many + ")");
+    /* Against the CSS cap, not a number copied from it — so moving max-height moves the
+       test with it rather than leaving a second figure behind to disagree. */
+    assertTrue(many <= cap, "but never past the cap that would eat the thread: " + many +
+                            " vs max-height " + cap);
+    q.value = "short";
+    coachDockAutoGrow();
+    assertEq(parseFloat(q.style.height), one, "and it comes back down when the text goes");
+  } finally {
+    coachDockOpen(false); coachDockListen = realListen;
+    q.value = savedQ; coachDockAutoGrow();
+    if (wasOn) coachDockOpen(true);
   }
 });
 T("coachPrompt: warns the coach only about a question dictated in English", () => {

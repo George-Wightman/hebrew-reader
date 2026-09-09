@@ -17569,6 +17569,40 @@ function micRelease() {
    instead of file://, which is a bigger decision than this file can make alone. */
 let micRecInstance = null;
 let micRecBusy = null;   // {resolve, opts} for whichever card is currently waiting
+/* TWO PIECES WHERE ONE IS THE OTHER GROWN ARE ONE UTTERANCE SNAPSHOTTED TWICE.
+
+   This used to be `txt += res[0].transcript` over every entry in `e.results`, which is
+   only correct on an engine that REPLACES an interim result in place as it firms up.
+   Chrome on Android appends each interim as a new entry carrying the whole phrase from
+   the start, so the loop concatenated eleven overlapping copies of one sentence. Asked
+   for סבתא שלי שותה תה בבוקר on 2026-09-09 it recorded
+   "סבתאסבתא שליסבתא שלי..." and graded one word of four as said. See
+   docs/superpowers/specs/2026-09-09-the-recogniser-repeating-itself-design.md.
+
+   Deliberately NOT a filter on `isFinal`: the same snapshot arrived five times
+   identically, which an interim/final split neither explains nor collapses. Growth is
+   the thing that can actually be observed, so growth is what this reads.
+
+   The word boundary is not decoration — without it תה is a prefix of תהילה and a real
+   second word gets swallowed as a snapshot of the first. */
+function micGrowFlat(s) { return String(s || "").replace(/\s+/g, " ").trim(); }
+function micGrown(a, b) {   // is b a's phrase, continued from the start?
+  return b.length > a.length && b.indexOf(a) === 0 && b.charAt(a.length) === " ";
+}
+/* a and b are {text, segs}; so is what comes back. When one snapshot supersedes another
+   its segments go with it — the winning result carries alternatives for the whole
+   phrase, so the loser's are subsumed rather than lost. */
+function micGrowJoin(a, b) {
+  const fa = micGrowFlat(a && a.text), fb = micGrowFlat(b && b.text);
+  if (!fa) return { text: fb, segs: (b && b.segs) || [] };
+  if (!fb) return { text: fa, segs: (a && a.segs) || [] };
+  if (fa === fb || micGrown(fb, fa)) return { text: fa, segs: (a && a.segs) || [] };
+  if (micGrown(fa, fb)) return { text: fb, segs: (b && b.segs) || [] };
+  /* Genuinely different pieces — desktop Chrome's successive finals. The space is what
+     `+=` was missing; an engine that already supplies a leading one flattens back. */
+  return { text: micGrowFlat(fa + " " + fb),
+           segs: ((a && a.segs) || []).concat((b && b.segs) || []) };
+}
 /* The recogniser's runners-up, assembled into whole utterances. It returns alternatives
    per SEGMENT, and "did he say this word" wants them as sentences. A segment that
    offered fewer alternatives falls back to its own top guess, so one five-way segment
@@ -17644,33 +17678,35 @@ function micRecGet(lang, continuous) {
   r.maxAlternatives = 5;
   let best = "", conf = 0, segs = [];
   r.onresult = e => {
-    let txt = "";
-    segs = [];
+    let acc = { text: "", segs: [] };
     for (let i = 0; i < e.results.length; i++) {
       const res = e.results[i];
-      txt += res[0].transcript;
       const alt = [];
       for (let j = 0; j < res.length; j++) alt.push(String(res[j].transcript || ""));
-      segs.push(alt);
+      acc = micGrowJoin(acc, { text: String(res[0].transcript || ""), segs: [alt] });
     }
-    best = txt;
+    best = acc.text;
+    segs = acc.segs;
     const last = e.results[e.results.length - 1];
     if (last && last[0] && last[0].confidence) conf = last[0].confidence;
     /* Everything heard so far, not just this session's share of it — otherwise the live
        box appears to forget the first half of his sentence the moment a pause restarts
        the recogniser, which looks exactly like the bug this replaced. */
     if (micRecBusy && micRecBusy.opts && micRecBusy.opts.onInterim)
-      micRecBusy.opts.onInterim(((micRecBusy.carry || "") + " " + txt).trim());
+      micRecBusy.opts.onInterim(micGrowJoin({ text: micRecBusy.carry || "", segs: [] },
+                                            { text: best, segs: [] }).text);
   };
   /* One utterance out of however many sessions it took. Sessions are an artefact of the
      endpointer, so they are joined and handed over as the single thing he said. */
   const gather = () => {
     const b = micRecBusy;
-    const txt = (((b && b.carry) || "") + " " + best).replace(/\s+/g, " ").trim();
-    if (!txt) return { ok: false, error: "no-speech" };
-    const allSegs = ((b && b.carrySegs) || []).concat(segs);
-    return { ok: true, text: txt, confidence: conf || (b && b.carryConf) || 0,
-             alts: micAltStrings(allSegs, txt) };
+    /* Same join as the loop above, and for the same reason: a restart mid-sentence
+       re-emits from the start, so carry and best overlap by construction. */
+    const all = micGrowJoin({ text: (b && b.carry) || "", segs: (b && b.carrySegs) || [] },
+                            { text: best, segs: segs });
+    if (!all.text) return { ok: false, error: "no-speech" };
+    return { ok: true, text: all.text, confidence: conf || (b && b.carryConf) || 0,
+             alts: micAltStrings(all.segs, all.text) };
   };
   const finish = v => { const b = micRecBusy; best = ""; conf = 0; segs = []; micRecBusy = null; if (b) b.resolve(v); };
   r.onerror = e => {
@@ -17685,8 +17721,10 @@ function micRecGet(lang, continuous) {
   r.onend = () => {
     const b = micRecBusy;
     if (b && b.opts && b.opts.continuous && !b.wantStop && micHoldMayContinue(b)) {
-      b.carry = ((b.carry || "") + " " + best).replace(/\s+/g, " ").trim();
-      b.carrySegs = (b.carrySegs || []).concat(segs);
+      const held = micGrowJoin({ text: b.carry || "", segs: b.carrySegs || [] },
+                               { text: best, segs: segs });
+      b.carry = held.text;
+      b.carrySegs = held.segs;
       if (conf) b.carryConf = conf;
       b.restarts = (b.restarts || 0) + 1;
       best = ""; conf = 0; segs = [];
@@ -33415,6 +33453,39 @@ T("micAltStrings: never returns the winner, or the same runner-up twice", () => 
 T("micAltStrings: nothing to work with is not an error", () => {
   assertEq(micAltStrings([], "x").length, 0);
   assertEq(micAltStrings(null, "x").length, 0);
+});
+/* The two sequences below are the real thing, reconstructed byte-for-byte from what the
+   adjudicator was sent on 2026-09-09 — not invented shapes. Folding them the way
+   onresult does is the whole of the bug. */
+const micFold = list => list.reduce(
+  (acc, t) => micGrowJoin(acc, { text: t, segs: [[t]] }), { text: "", segs: [] });
+T("micGrowJoin: eleven snapshots of one sentence are one sentence", () => {
+  assertEq(micFold(["סבתא", "סבתא שלי", "סבתא שלי", "סבתא שלי", "סבתא שלי", "סבתא שלי",
+                    "סבתא שלי שותה", "סבתא שלי שותה", "סבתא שלי שותה תה",
+                    "סבתא שלי שותה תה בבוקר", "סבתא שלי שותה תה בבוקר"]).text,
+           "סבתא שלי שותה תה בבוקר",
+           "the old concatenation made this eleven copies and graded one word of four");
+  assertEq(micFold(["זה", "זה היה", "זה היה", "זה היה ממש", "זה היה ממש",
+                    "זה היה ממש כיף", "זה היה ממש כיף"]).text, "זה היה ממש כיף");
+});
+T("micGrowJoin: distinct segments still join, in order", () => {
+  /* Desktop Chrome, which replaces its interim in place and hands over successive
+     finals. Nothing here is a prefix of anything, so every comparison falls through. */
+  assertEq(micFold(["סבתא", " שלי", " שותה"]).text, "סבתא שלי שותה");
+  assertEq(micGrowJoin({ text: "", segs: [] }, { text: "כן", segs: [] }).text, "כן");
+  assertEq(micGrowJoin({ text: "כן", segs: [] }, { text: "", segs: [] }).text, "כן");
+});
+T("micGrowJoin: a longer word that starts with a shorter one is not a snapshot", () => {
+  assertEq(micFold(["תה", "תהילה"]).text, "תה תהילה",
+           "without the word boundary תהילה would swallow the תה he actually said");
+});
+T("micGrowJoin: the winning snapshot brings its own alternatives", () => {
+  const a = { text: "סבתא", segs: [["סבתא", "סבא"]] };
+  const b = { text: "סבתא שלי", segs: [["סבתא שלי", "סבא שלי"]] };
+  assertEq(micGrowJoin(a, b).segs, [["סבתא שלי", "סבא שלי"]],
+           "b covers the whole phrase, so a's runners-up are subsumed rather than kept");
+  assertEq(micGrowJoin(b, a).text, "סבתא שלי", "a stale shorter snapshot loses");
+  assertEq(micGrowJoin(b, a).segs, [["סבתא שלי", "סבא שלי"]]);
 });
 T("micHeardIn: a word the recogniser ranked second is a word it heard", () => {
   assertTrue(micHeardIn("שלום", ["מה שלום שלך"]), "present in an alternative");

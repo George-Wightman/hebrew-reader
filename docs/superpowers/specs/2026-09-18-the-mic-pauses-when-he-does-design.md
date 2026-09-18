@@ -44,8 +44,10 @@ Holding through a pause moves up to the card, and he makes every decision:
 - **Say it** starts listening. Words appear live.
 - **Pause** (the same button, while listening) stops the session and keeps what it
   heard. If the endpointer hears him stop, the card lands in the same paused state.
-- Paused, the card shows what he has said so far, with **Submit** (the loud button),
-  **Keep going** (a new session, whose words are added to the end), and **Start over**.
+- Paused, the card shows what he has said so far. Left to right: **Start over** (small,
+  faint warm tint, hardest to reach), **Submit** (the loud one), **Keep going** (small,
+  faint teal tint) —
+  Keep going starts a new session whose words are added to the end.
   If nothing has been heard yet, it shows only **Try again**.
 - Nothing is graded until Submit. Parts are joined with `micJoinParts`: text in order,
   runners-up assembled per part, and confidence taken from the least sure part.

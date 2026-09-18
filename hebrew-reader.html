@@ -1326,14 +1326,16 @@
     font-weight: 600; font-family: inherit; }
   .lmic:disabled { opacity: .55; cursor: default; }
   .lmic.listening { background: #b3403a; border-color: #b3403a; animation: lmicpulse 1.1s infinite; }
-  /* Keep going / Start over on a paused card: the same size as .lmic so the row reads as
-     one set of choices, outlined so Submit is plainly the expected one. */
-  .lmicquiet { border: 1px solid var(--accent); background: #fff; color: var(--accent);
-    border-radius: 9px; cursor: pointer; padding: 9px 16px; font-size: .95rem;
+  /* The paused card's row, in his order: Start over on the left where it is hardest to
+     reach, Submit in the middle and largest, Keep going on the right. The side buttons
+     are a step smaller and carry a faint tint each: warm for throwing the attempt away,
+     teal for carrying on. Faint on purpose, so that only Submit reads as the answer. */
+  .lmicquiet { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+    border-radius: 8px; cursor: pointer; padding: 6px 10px; font-size: .82rem;
     font-weight: 600; font-family: inherit; }
-  /* Three across a phone-width card (~294px) on one line. */
-  .lactions .lmicpause { padding: 9px 12px; }
-  .lactions:has(.lmicpause) { gap: 8px; }
+  .lmicquiet.redo { border-color: #d9b3ad; background: #fbefec; color: var(--bad); }
+  .lactions:has(.lmicpause) { gap: 8px; align-items: center; }
+  .lactions .lmic.lmicpause { padding: 10px 22px; }
   @keyframes lmicpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(179,64,58,.45); }
                          50% { box-shadow: 0 0 0 8px rgba(179,64,58,0); } }
 
@@ -27801,7 +27803,7 @@ async function learnSpeakAttempt(btn, c) {
 }
 
 /* The paused card: what he has said so far, and the ways on. Submit is the loud one —
-   it is the common next step — and the others are quiet beside it. */
+   it is the common next step — flanked by Start over (left) and Keep going (right). */
 function learnMicPaused(card, btn, c, askedAt) {
   const hold = learnMicHoldFor(askedAt);
   const said = micJoinParts(hold.parts).text;
@@ -27816,9 +27818,9 @@ function learnMicPaused(card, btn, c, askedAt) {
     b.onclick = fn; row.insertBefore(b, btn); return b;
   };
   const keep = () => { learnMicPauseClear(card); learnSpeakAttempt(btn, c); };
+  if (said) mk("lmicquiet redo", "Start over", () => { hold.parts = []; keep(); });
   if (said) mk("lmic", "Submit", () => learnSpeakSubmit(card, c, askedAt));
   mk("lmicquiet", said ? "Keep going" : "Try again", keep);
-  if (said) mk("lmicquiet", "Start over", () => { hold.parts = []; keep(); });
   syncPadOffset();
 }
 

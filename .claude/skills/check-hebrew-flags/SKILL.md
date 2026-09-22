@@ -28,11 +28,23 @@ side of that pipeline: fetch the file, filter out what's already handled, show t
   This is *my* bookkeeping, not his — I write to it after shipping a fix for something a
   flag named, and it's how a flag stops being re-shown even before he's opened the app to
   tap anything. My token is deliberately read-only (his choice), so I cannot write
-  `resolved` into his repo myself; this ledger is the only durable way I have to remember
-  "I already did this."
+  `resolved` into his repo myself.
 
 Never assume "no new flags" without having checked both. A flag that's neither resolved
 nor in the ledger is genuinely new and should be surfaced.
+
+**Since 2026-09-22 I can also close flags in the app itself**, through
+`content/flag-status.json` in the *app* repo (public, served by Pages; see
+`docs/superpowers/specs/2026-09-22-five-flags-and-the-backlog-design.md`). The app fetches
+it when it checks for content, resolves the listed flags as `resolvedBy: "claude"` with my
+note, and the ordinary sync carries that into `progress.json` — so a flag I closed there
+shows up as `resolved` on the next fetch. The ledger stays: it is still how I remember a
+fix before his device has picked the file up.
+
+Flags now carry an optional `kind`: `bug`, `idea`, or `hebrew` (Wrong Hebrew, which also
+retired the sentence into `hvr_retired` on the spot, so the `ctx.retire` on it is already
+out of his bank). A `ctx.coach` on a flag means he pressed "Not right" on a coach answer —
+the question and answer are in it. Group the report by kind.
 
 ## Where the credentials live
 
@@ -253,13 +265,21 @@ Once a fix for something a flag named has actually shipped and been verified —
 ```
 
 Read the existing file first (it may already have entries), merge in the new one, and
-write the whole object back — don't append raw text or you'll break the JSON. This is the
-only way "tick them off so future pulls don't repull the same old flags" works from my
-side, since I cannot write `resolved` into his repo.
+write the whole object back — don't append raw text or you'll break the JSON.
 
-Telling George which flags this covers is still worth doing even though the ledger is
-mine — he may want to also tap "Mark addressed" himself so the app's own view of things
-agrees with the repo, but that's his call, not something this skill does for him.
+**Then close it in the app too**: add the id to `content/flag-status.json` in this repo and
+push it with the fix (or on its own once the fix is verified live).
+
+```json
+"<flag id>": { "status": "addressed", "kind": "bug", "at": "<ISO>",
+               "note": "<one plain line he will read in the app, with the commit>" }
+```
+
+`status` is `addressed`, `wontdo` (shown to him as "Not doing this: <note>"), or `question`
+(my note appears under his flag as "Claude asks: …" and it stays open). `kind` files an
+unfiled flag. **The file is public** — ids, kinds and my notes only. Never quote his flag
+text or anything personal in a note. Write the note for him, not for me: the ledger keeps
+the technical detail. He sees "Recently addressed by Claude" in the flag panel for a week.
 
 ## If the token is broken
 

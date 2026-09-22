@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "flags": {
+    "1788873957185-k3xe3": { "status": "addressed", "kind": "idea", "at": "2026-09-08T15:40:00Z",
+      "note": "The 'why is it phrased like that' button is gone; the card has 'Ask the coach' instead (6714c36)." },
+    "1788875975076-2ue53": { "status": "addressed", "kind": "bug", "at": "2026-09-08T15:40:00Z",
+      "note": "A word nothing was said in place of is never softened to nearly any more (dc3f968)." },
+    "1788876252673-y3qub": { "status": "addressed", "kind": "bug", "at": "2026-09-08T16:30:00Z",
+      "note": "Superseded by the he/en switch in the coach's box (67dc301)." },
+    "1788878896590-sgr7y": { "status": "addressed", "kind": "bug", "at": "2026-09-08T16:30:00Z",
+      "note": "The he/en switch in the coach's box, remembered, English by default (67dc301)." },
+    "1788984522827-1b7o5": { "status": "addressed", "kind": "bug", "at": "2026-09-09T20:39:11Z",
+      "note": "The recogniser was repeating its own interim results; collapsed (c0e96c4)." },
+    "1788984579717-gw6mn": { "status": "addressed", "kind": "bug", "at": "2026-09-09T20:39:11Z",
+      "note": "Same fix: the repeated transcript is collapsed (c0e96c4)." },
+    "1789631253020-1rdc9": { "status": "addressed", "kind": "bug", "at": "2026-09-18T22:23:41Z",
+      "note": "The mic listens once per go now, and the card pauses with Submit / Keep going / Start over (9da11f9)." },
+    "1789769458555-xjeln": { "status": "addressed", "kind": "bug", "at": "2026-09-18T22:23:41Z",
+      "note": "The mic listens once per go now, and the card pauses with Submit / Keep going / Start over (9da11f9)." },
+
+    "1789225911914-e0po8": { "status": "addressed", "kind": "hebrew", "at": "2026-09-22T23:30:00Z",
+      "note": "Retired, with 17 other sentences from the first month that were wrong. The rest from before 7 Sep go through the reviewer once (664d8e3)." },
+    "1789941028423-uqklw": { "status": "addressed", "kind": "hebrew", "at": "2026-09-22T23:30:00Z",
+      "note": "Retired in the same clean-up (664d8e3). Next time, the Wrong Hebrew chip takes a sentence out on the spot." },
+    "1789771151810-eg2tu": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
+      "note": "Yesterday can no longer pass for now: time words, people, numbers and never-words are refused outright, and the judge must say what changed before it rules (f597440)." },
+    "1789940987901-5i18u": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
+      "note": "Fixed on your phone. A web page can't switch Android's mic beep off." },
+    "1790070083381-msl2f": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
+      "note": "The English sits inside the coach's bubble now (4b2b748). The coach also waits for the arrow before sending, and is Hebrew-only (fd88fb8)." }
+  }
+}

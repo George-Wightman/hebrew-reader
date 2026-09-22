@@ -2733,6 +2733,163 @@
     .hist-item { max-width: 100%; }
     .libnote, .archnote { font-size: .74rem; }
   }
+
+  /* =====================================================================
+     ATLAS (2026-09-23) — the chrome, then each screen in the phase that restyled it.
+     Last in the sheet on purpose: these rules win over the older ones above at equal
+     specificity, so each earlier section still reads as it was written and this is
+     the one place that says what the redesign changed. Tokens only — the literal-
+     colour test covers this section too.
+     ===================================================================== */
+
+  /* ---- the chrome ---- */
+  :root { --dockh: 0px; }
+  body.chrome-home, body.chrome-words, body.chrome-progress {
+    --dockh: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .topnav {
+    position: sticky; top: 0; z-index: 45; gap: 2px; min-height: 58px;
+    padding: 6px 8px 6px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .navtitle { font-family: var(--display); font-size: 1.5rem; font-weight: 500;
+              color: var(--ink); line-height: 1.1; }
+  .navicons { gap: 2px; margin-left: 6px; }
+  .navend, .navstar, .navme {
+    width: 44px; height: 44px; border-radius: 22px; padding: 0; border: 0;
+    display: flex; align-items: center; justify-content: center; background: none;
+    color: var(--muted); cursor: pointer; flex: 0 0 auto; line-height: 0;
+  }
+  .navend { display: none; margin-left: -8px; }
+  .navend svg, .navme svg { width: 21px; height: 21px; fill: none; stroke: currentColor;
+                            stroke-width: 1.8; stroke-linecap: round; }
+  .navstar svg { width: 20px; height: 20px; }
+  .navstar:hover, .navend:hover { color: var(--accent); background: var(--accent-soft); }
+  /* Reached through the profile sheet now. Kept in the DOM: aiStarPaint and the flag's
+     painter still write to them, and the sheet's rows press them. */
+  #aiStar, #settingsBtn { display: none; }
+  .navme { position: relative; border: 1px solid var(--border); background: var(--panel);
+           color: var(--ink); margin-left: 4px; }
+  .navme:hover { border-color: var(--accent); }
+  .navme-badge { position: absolute; right: -3px; top: -3px; min-width: 18px; height: 18px;
+                 padding: 0 4px; border-radius: 9px; background: var(--gold); color: var(--on-gold);
+                 font-size: 10.5px; font-weight: 700; line-height: 1; display: flex;
+                 align-items: center; justify-content: center; border: 2px solid var(--panel); }
+  .navme-badge.bad { background: var(--bad); color: var(--on-accent); }
+  .navme-badge[hidden] { display: none; }
+
+  /* Home: no bar. The map runs to the top edge and the profile button floats on it. */
+  body.chrome-home .topnav { position: fixed; top: 0; right: 0; left: auto; min-height: 0;
+    padding: max(12px, env(safe-area-inset-top, 0px)) 12px 0 0; background: none;
+    border: 0; pointer-events: none; }
+  body.chrome-home .topnav > * { pointer-events: auto; }
+  body.chrome-home #uhBtn, body.chrome-home #flagBtn, body.chrome-home .navtitle { display: none; }
+  body.chrome-home .navme { box-shadow: var(--shadow), 0 4px 14px var(--c-34-48-60-16); }
+  /* A lesson: the way out on the left, the coach and the flag on the right, and the
+     paper runs up behind them. The profile waits until he is back on the map. */
+  body.chrome-lesson .navend { display: flex; }
+  body.chrome-lesson #meBtn { display: none; }
+  body.chrome-lesson .topnav { background: transparent; border-bottom-color: transparent; }
+  /* The old "End session" link under the card: the ✕ top-left is that button now. */
+  body.chrome-lesson #lQuitBtn { display: none; }
+
+  /* ---- the dock ---- */
+  .dock { display: none; }
+  body.chrome-home .dock, body.chrome-words .dock, body.chrome-progress .dock { display: grid; }
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 46; height: var(--dockh);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
+  .dock .navbtn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; margin: 0; padding: 0; min-height: 48px; border: 0; background: none;
+    color: var(--muted); font: inherit; font-size: .74rem; font-weight: 500; cursor: pointer;
+    box-shadow: none;
+  }
+  .dock .navbtn svg { width: 24px; height: 24px; fill: none; stroke: currentColor;
+                      stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+  .dock .navbtn.active { color: var(--accent); font-weight: 600; box-shadow: none; }
+  .dock .navbtn:hover { color: var(--accent); }
+  /* Everything pinned to the bottom of the window stands on the dock, not under it. */
+  .lmap { bottom: var(--dockh); }
+  .lstats.open { bottom: var(--dockh); }
+  .padstrip { bottom: var(--dockh); }
+  .padstrip:not(.collapsed) { bottom: calc(52px + var(--dockh)); }
+  .padstrip-head { bottom: calc(14px + var(--dockh)); }
+  .padhaze { bottom: var(--dockh); }
+
+  /* ---- You: the profile sheet ---- */
+  .mesheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 47;
+    background: var(--panel); border-radius: 18px 18px 0 0;
+    box-shadow: 0 -12px 34px var(--c-34-48-60-22);
+    max-height: 86vh; overflow-y: auto; overscroll-behavior-y: contain;
+    padding: 10px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+    transform: translateY(104%); transition: transform .22s ease-out;
+  }
+  .mesheet.open { transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .mesheet { transition: none; } }
+  #meBackdrop { z-index: 46; background: var(--scrim); }
+  .mesheet-inner { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .sheet-handle { align-self: center; width: 40px; height: 4px; border-radius: 2px;
+                  background: var(--border); }
+  .me-head { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
+  .me-head .navsync { font-size: .86rem; color: var(--muted); }
+  .me-head .navsync i { width: 8px; height: 8px; }
+  .me-syncnow { padding: 7px 14px; border-radius: 18px; font-size: .84rem; }
+  .me-night { background: var(--bg); border-radius: 12px; padding: 12px; display: flex;
+              flex-direction: column; gap: 10px; }
+  .me-night-h { display: flex; align-items: center; gap: 8px; font-size: .95rem; }
+  .me-night-h svg { width: 18px; height: 18px; fill: none; stroke: var(--ink); stroke-width: 1.7;
+                    stroke-linejoin: round; }
+  .me-seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+            background: var(--hair); border-radius: 12px; padding: 4px; }
+  .me-seg button { height: 40px; border: 0; border-radius: 9px; background: transparent;
+                   font: inherit; font-size: .9rem; color: var(--muted); cursor: pointer; }
+  .me-seg button.on { background: var(--panel); color: var(--accent); font-weight: 600;
+                      box-shadow: var(--shadow); }
+  .me-note { margin: 0; font-size: .8rem; color: var(--muted); }
+  .me-rows { display: flex; flex-direction: column; }
+  .me-row { display: flex; align-items: center; gap: 14px; min-height: 58px; width: 100%;
+            padding: 6px 4px; border: 0; border-bottom: 1px solid var(--hair);
+            background: none; text-align: left; font: inherit; color: var(--ink); cursor: pointer; }
+  .me-row:last-child { border-bottom: 0; }
+  .me-row:hover .me-t b { color: var(--accent); }
+  .me-ic { width: 38px; height: 38px; border-radius: 10px; background: var(--bg); flex: 0 0 auto;
+           display: flex; align-items: center; justify-content: center; }
+  .me-ic svg { width: 19px; height: 19px; fill: none; stroke: var(--ink); stroke-width: 1.6;
+               stroke-linejoin: round; stroke-linecap: round; }
+  #meCoach .me-ic svg, #meAi .me-ic svg { fill: var(--ink); stroke: none; }
+  .me-t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .me-t > b { font-size: .96rem; font-weight: 600; }
+  .me-t span, .me-t .lthin { font-size: .8rem; color: var(--muted); margin: 0; line-height: 1.4; }
+  .me-count { flex: 0 0 auto; font-size: .76rem; font-weight: 700; color: var(--on-gold);
+              background: var(--gold); border-radius: 10px; padding: 2px 8px; }
+  .me-count[hidden], .me-row[hidden] { display: none; }
+  .me-thin { cursor: default; }
+  #meAi.bad .me-t span { color: var(--bad); }
+  #meAi.on .me-ic { background: var(--accent-soft); }
+
+  /* ---- home: the map, the slip, nothing over the sea ---- */
+  /* The stats pill: Progress is a tab now, so the pill that opened it steps off the
+     map. Kept in the DOM — its renderer and tests still find it. */
+  body.chrome-home #lMapBar { display: none; }
+  /* Daily practice, as a paper slip on the map: the world's type for its name, the
+     interface's for the buttons, and a real lift off the paper beneath it. */
+  .lact { border-radius: 10px; border-color: var(--border); background: var(--panel);
+          box-shadow: var(--lift); padding: 14px 16px 12px; }
+  .lact-name { font-size: 1.4rem; font-weight: 500; border-bottom: 0; padding-bottom: 0;
+               margin-bottom: 10px; }
+  .lact-quick { gap: 10px; }
+  .lact-quick button { border-radius: 24px; min-height: 48px; font-size: .95rem; font-weight: 600;
+                       border: 1.5px solid var(--accent); background: transparent; }
+  .lact-quick button.primary { flex: 2; }
+  .lfc-h { color: var(--muted); }
+  @media (max-width: 620px) {
+    .lact { left: 12px; right: 12px; bottom: 12px; padding: 14px 16px 12px; }
+  }
 </style>
 </head>
 <body>
@@ -2772,22 +2929,32 @@
   <button class="alarm-x" id="updateLater" aria-label="Not now">✕</button>
 </div>
 
-<nav class="topnav">
-  <span class="navbrand">שלום</span>
-  <button class="navbtn" id="navLearn">Learn</button>
-  <button class="navbtn" id="navWords">Words</button>
+<!-- THE CHROME (Atlas, 2026-09-23). One bar whose contents follow where he is —
+     chromeSync() sets body.chrome-{home,lesson,words,progress}:
+
+       home      the map is full-bleed; only the profile button shows, floating on it.
+                 George: "while on the home screen we can put the coach behind the
+                 profile icon ... on the home screen im not using coach very much."
+       lesson    a way out on the left; the coach and the flag on the right, always —
+                 "when in lessons/ any other page, the coach and flags should be at
+                 the top".
+       words,
+       progress  the page's name, then coach, flag and profile.
+
+     Every button that lived here keeps its id and its handler. The AI star and the
+     settings gear stay in the DOM (their painters and tests find them by id) but are
+     reached through the profile sheet now, which is where they are drawn. -->
+<nav class="topnav" id="topNav">
+  <button class="navend" id="navEnd" type="button" aria-label="Leave this and go back to the map">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  <span class="navtitle" id="navTitle"></span>
   <span class="navsp"></span>
-  <!-- Honest placeholder. Devices don't share anything yet, so it says so rather than
-       claiming a sync that doesn't exist. This is the slot that reports it when they do. -->
-  <span class="navsync" id="navSync" title="Your data lives in this browser only. Turn on sync in Settings."><i></i><span>on this device</span></span>
-  <!-- One flex group so the icon row spaces and aligns itself instead of each button
-       carrying its own margin. -->
   <span class="navicons">
-  <!-- The AI star. Its whole job is to make an invisible failure visible: a dead key and
-       a node with nothing left to write produced identical symptoms before this existed. -->
-  <!-- Things to change. Its own control rather than a gesture on the star, because the
-       whole point is catching a thought that arrives mid-card, and a control you have to
-       remember exists is one that never gets used. -->
+  <button class="navstar" id="uhBtn" type="button" title="The coach — ask about what you're doing"
+          aria-label="The coach">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c5.3 0 9.6 3.5 9.6 7.9 0 4.3-4.3 7.8-9.6 7.8-.9 0-1.8-.1-2.6-.3l-5 2.9a.5.5 0 0 1-.8-.5l.9-4.2C2.9 14.8 2.4 12.8 2.4 10.5c0-4.4 4.3-7.9 9.6-7.9z"/></svg>
+  </button>
   <button class="navstar navflag" id="flagBtn" type="button" title="Note something to change"
           aria-label="Note something to change">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 2.2a1 1 0 0 1 1 1v.7c2.4-1.2 4.6.6 6.9.6 1.3 0 2.6-.4 3.9-1.1a.7.7 0 0 1 1.1.6v8.2a.7.7 0 0 1-.4.6c-1.5.8-3 1.3-4.6 1.3-2.3 0-4.5-1.8-6.9-.7v7.3a1 1 0 0 1-2 0V3.2a1 1 0 0 1 1-1z"/></svg>
@@ -2795,23 +2962,89 @@
   <button class="navstar" id="aiStar" type="button" title="AI activity" aria-label="AI activity">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8c.62 5.2 4.98 9.56 10.2 10.2-5.22.62-9.58 4.98-10.2 10.2-.62-5.22-4.98-9.58-10.2-10.2 5.22-.64 9.58-5 10.2-10.2z"/></svg>
   </button>
-  <!-- THE COACH. This was a magnifier and the panel behind it was called Under the hood;
-       the panel is unchanged and still the evidence, but the way in is now a conversation
-       you can keep having, so the control says who you are talking to rather than what
-       you are looking through. George: "the coach is always with me, without it meaning
-       nothing effect."
-
-       Third in the same row as the flag and the star, and those two deliberately stay:
-       the star is a LOG — did the call fire, did it fail — which is how the coach itself
-       gets diagnosed when the coach is the thing that is broken, and the flag goes to
-       Claude rather than to a model. Same shape, different jobs. -->
-  <button class="navstar" id="uhBtn" type="button" title="The coach — ask about what you're doing"
-          aria-label="The coach">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c5.3 0 9.6 3.5 9.6 7.9 0 4.3-4.3 7.8-9.6 7.8-.9 0-1.8-.1-2.6-.3l-5 2.9a.5.5 0 0 1-.8-.5l.9-4.2C2.9 14.8 2.4 12.8 2.4 10.5c0-4.4 4.3-7.9 9.6-7.9z"/></svg>
-  </button>
   <button class="navgear" id="settingsBtn">⚙ Settings</button>
+  <button class="navme" id="meBtn" type="button" aria-haspopup="dialog"
+          aria-label="You — sync, night, the coach, flags and settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20.2c1.3-3.7 4-5.4 7.2-5.4s5.9 1.7 7.2 5.4"/></svg>
+    <span class="navme-badge" id="meBadge" hidden></span>
+  </button>
   </span>
 </nav>
+
+<!-- The three places you go. Bottom, where a thumb is, and three rather than four:
+     George agreed the coach belongs at the top instead ("the coach should have his chat
+     icon at the top all the time"). #navLearn and #navWords are the same buttons the old
+     top tabs were — setView's VIEWS table still finds them by id. -->
+<nav class="dock" id="dock" aria-label="Main">
+  <button class="navbtn" id="navLearn" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg>
+    <span>Walk</span></button>
+  <button class="navbtn" id="navWords" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5c3-1 6-1 8 1 2-2 5-2 8-1v14c-3-1-6-1-8 1-2-2-5-2-8-1z"/><path d="M12 6v14"/></svg>
+    <span>Words</span></button>
+  <button class="navbtn" id="navProgress" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16M6 15l4-5 3 3 5-7"/></svg>
+    <span>Progress</span></button>
+</nav>
+
+<!-- YOU. Everything the old top bar carried that is not the coach or the flag — and on
+     the home screen those two as well. A bottom sheet over the map, closed by tapping
+     outside it: the path sheet's pattern, which George already asked for once. -->
+<div class="sheetbackdrop" id="meBackdrop"></div>
+<div class="mesheet" id="meSheet" role="dialog" aria-modal="true" aria-label="You">
+  <div class="mesheet-inner">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="me-head">
+      <!-- Same element and same writer (syncPaint) as the old top bar's sync line. -->
+      <span class="navsync" id="navSync" title="Your data lives in this browser only. Turn on sync in Settings."><i></i><span>on this device</span></span>
+      <span class="navsp"></span>
+      <button class="btn secondary me-syncnow" id="meSyncNow" type="button">Sync now</button>
+    </div>
+    <div class="me-night">
+      <div class="me-night-h">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+        <b>Night</b>
+      </div>
+      <div class="me-seg" id="meTheme" role="radiogroup" aria-label="Night mode">
+        <button type="button" role="radio" data-mode="auto">Auto</button>
+        <button type="button" role="radio" data-mode="day">Day</button>
+        <button type="button" role="radio" data-mode="night">Night</button>
+      </div>
+      <p class="me-note" id="meThemeNote"></p>
+    </div>
+    <div class="me-rows">
+      <button class="me-row" id="meCoach" type="button">
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c5.3 0 9.6 3.5 9.6 7.9 0 4.3-4.3 7.8-9.6 7.8-.9 0-1.8-.1-2.6-.3l-5 2.9a.5.5 0 0 1-.8-.5l.9-4.2C2.9 14.8 2.4 12.8 2.4 10.5c0-4.4 4.3-7.9 9.6-7.9z"/></svg></span>
+        <span class="me-t"><b>The coach</b><span>Ask about a word, a sentence, anything</span></span>
+      </button>
+      <button class="me-row" id="meFlags" type="button">
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></span>
+        <span class="me-t"><b>Things to change</b><span>Your flags, and what Claude did with them</span></span>
+        <span class="me-count" id="meFlagCount" hidden></span>
+      </button>
+      <div class="me-row me-thin" id="meThin" hidden>
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4c-7 1-12 6-14 14M9 15c3 0 6-1 8-4M4 20l2-2"/></svg></span>
+        <span class="me-t"><b>Places that need sentences</b>
+          <!-- Moved here from the top of the map: same element, same writer
+               (learnRenderThin). It is a note about the app's supplies, not about the
+               world, and on the map it sat over the sea as the first thing he read. -->
+          <p class="lthin" id="lContentThin" style="display:none"></p></span>
+      </div>
+      <button class="me-row" id="meAi" type="button">
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8c.62 5.2 4.98 9.56 10.2 10.2-5.22.62-9.58 4.98-10.2 10.2-.62-5.22-4.98-9.58-10.2-10.2 5.22-.64 9.58-5 10.2-10.2z"/></svg></span>
+        <span class="me-t"><b>AI activity</b><span id="meAiSub">Every call the coach and the writers made</span></span>
+      </button>
+      <button class="me-row" id="meHood" type="button">
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></span>
+        <span class="me-t"><b>Under the hood</b><span>Why the app chose what it chose</span></span>
+      </button>
+      <button class="me-row" id="meSettings" type="button">
+        <span class="me-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></span>
+        <span class="me-t"><b>Settings</b><span>Keys, your data, sync, practice, audio</span></span>
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- Words: the Translator and the Library are one pipeline, so they're one page.
      A voice note comes in at the top, its new words land in Pending inside the grid,
@@ -2998,7 +3231,6 @@
              scoreboard makes more sense as the thing you press than as a landmark on
              the road. -->
         <button type="button" class="lmapbar" id="lMapBar" aria-label="Your practice — open full stats"></button>
-        <p class="lthin" id="lContentThin" style="display:none"></p>
         <div class="lbanner" id="lVoiceBanner" style="display:none">
           <div class="lbanner-head">
             <span><b>No Hebrew voice yet</b> — you'll read the pronunciation instead of hearing it.</span>
@@ -12183,9 +12415,142 @@ function setView(name) {
      new view isn't sitting under it (and so a hidden dock reserves nothing) */
   syncPadOffset();
   if (VIEWS[name].enter) VIEWS[name].enter();
+  chromeSync();
 }
 Object.keys(VIEWS).forEach(k =>
-  document.getElementById(VIEWS[k].nav).addEventListener("click", () => setView(k)));
+  document.getElementById(VIEWS[k].nav).addEventListener("click", () => {
+    /* Walk from Progress means "back to the map", not "stay in the stats room because
+       the map is technically the view underneath it". */
+    if (k === "learn") learnStatsOpen(false);
+    setView(k);
+  }));
+
+/* =====================  THE CHROME  =====================
+   Which furniture the screen wears, decided in one place. Pure so the suite can pin it:
+   the map is home only while the start screen is up and the stats room is shut; any
+   other Learn screen is a lesson (the drill, the walk home, the end of a walk). */
+function chromeModeFor(st) {
+  if (st.view !== "learn") return "words";
+  if (st.stats) return "progress";
+  return st.screen === "lStart" || !st.screen ? "home" : "lesson";
+}
+function chromeState() {
+  const learn = document.getElementById("viewLearn");
+  const pane = document.getElementById("lStatsPane");
+  return {
+    view: learn && learn.style.display !== "none" ? "learn" : "words",
+    screen: learnScreenShowing(),
+    stats: !!(pane && pane.classList.contains("open"))
+  };
+}
+const CHROME_TITLES = { words: "Words", progress: "Progress" };
+function chromeSync() {
+  const mode = chromeModeFor(chromeState());
+  const b = document.body;
+  ["home", "lesson", "words", "progress"].forEach(m => b.classList.toggle("chrome-" + m, m === mode));
+  const t = document.getElementById("navTitle");
+  if (t) t.textContent = CHROME_TITLES[mode] || "";
+  const on = { home: "navLearn", words: "navWords", progress: "navProgress" }[mode];
+  ["navLearn", "navWords", "navProgress"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("active", id === on);
+    if (id === on) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
+  });
+  if (mode !== "home") meSheetOpen(false);
+  syncNavOffset();
+  syncPadOffset();
+  return mode;
+}
+document.getElementById("navProgress").addEventListener("click", () => {
+  setView("learn");
+  /* A session in progress keeps its place: Progress from mid-drill would otherwise
+     throw the card away. learnStatsOpen only exists on the start screen anyway. */
+  if (learnScreenShowing() !== "lStart") return;
+  learnStatsOpen(true);
+});
+/* The way out, whichever lesson screen is up. Each is the button that screen already
+   had, pressed for him — no second copy of what "leaving" means. */
+function chromeExitFor(screen) {
+  return screen === "lRun" ? "lQuitBtn" : screen === "lSpeed" ? "lSpeedDone"
+       : screen === "lEnd" ? "lDoneBtn" : null;
+}
+document.getElementById("navEnd").addEventListener("click", () => {
+  const id = chromeExitFor(learnScreenShowing());
+  const el = id && document.getElementById(id);
+  if (el) el.click();
+});
+
+/* ---- You: the profile sheet ---- */
+let meOpen = false;
+function meSheetOpen(on) {
+  meOpen = !!on;
+  const sh = document.getElementById("meSheet"), bd = document.getElementById("meBackdrop");
+  if (!sh) return;
+  sh.classList.toggle("open", meOpen);
+  if (bd) bd.classList.toggle("open", meOpen);
+  if (meOpen) mePaint();
+}
+/* The sheet's rows are the old top bar's buttons, pressed for him — so the flag knows
+   which card it is on, the star clears its red, and nothing has two handlers. */
+function meDo(fn) { meSheetOpen(false); fn(); }
+document.getElementById("meBtn").addEventListener("click", () => meSheetOpen(!meOpen));
+document.getElementById("meBackdrop").addEventListener("click", () => meSheetOpen(false));
+document.getElementById("meCoach").addEventListener("click", () => meDo(() => document.getElementById("uhBtn").click()));
+document.getElementById("meFlags").addEventListener("click", () => meDo(() => document.getElementById("flagBtn").click()));
+document.getElementById("meAi").addEventListener("click", () => meDo(() => document.getElementById("aiStar").click()));
+document.getElementById("meHood").addEventListener("click", () => meDo(() => uhModalOpen(true)));
+document.getElementById("meSettings").addEventListener("click", () => meDo(() => document.getElementById("settingsBtn").click()));
+document.getElementById("meSyncNow").addEventListener("click", () => {
+  if (!syncConfigured()) { meDo(() => document.getElementById("settingsBtn").click()); return; }
+  syncRun("manual", { force: true }).then(() => { try { syncPaintSettings(); } catch (e) {} });
+});
+document.querySelectorAll("#meTheme button").forEach(btn =>
+  btn.addEventListener("click", () => { themeSet(btn.dataset.mode); mePaint(); }));
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && meOpen) meSheetOpen(false); });
+
+/* How many flags are still open, for the badge. Pure over the store. */
+function meFlagOpenCount(flags) { return (flags || []).filter(f => f && !f.resolved).length; }
+/* The profile button's badge and the sheet's rows. Cheap and idempotent — called by the
+   painters that feed it (flags, the AI star, the sync line) as well as on opening. */
+function mePaint() {
+  let open = 0;
+  try { open = meFlagOpenCount(flagAll()); } catch (e) {}
+  const count = document.getElementById("meFlagCount");
+  if (count) { count.hidden = !open; count.textContent = open ? String(open) : ""; }
+  const star = document.getElementById("aiStar");
+  const aiBad = !!(star && star.classList.contains("bad"));
+  const aiOn = !!(star && star.classList.contains("on"));
+  const ai = document.getElementById("meAi");
+  if (ai) { ai.classList.toggle("bad", aiBad); ai.classList.toggle("on", aiOn); }
+  const sub = document.getElementById("meAiSub");
+  if (sub) sub.textContent = aiBad ? "The last call failed — tap to see why"
+                           : aiOn ? "Working on something now…"
+                           : "Every call the coach and the writers made";
+  /* One badge, one meaning at a time: a failed AI call outranks open flags, because it
+     is the one that might explain something odd on screen right now. */
+  const badge = document.getElementById("meBadge");
+  if (badge) {
+    badge.hidden = !(aiBad || open);
+    badge.classList.toggle("bad", aiBad);
+    badge.textContent = aiBad ? "!" : (open ? String(open) : "");
+  }
+  const thin = document.getElementById("lContentThin");
+  const thinRow = document.getElementById("meThin");
+  if (thin && thinRow) thinRow.hidden = thin.style.display === "none" || !thin.textContent;
+  const mode = themeMode();
+  document.querySelectorAll("#meTheme button").forEach(btn => {
+    const on = btn.dataset.mode === mode;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  const note = document.getElementById("meThemeNote");
+  if (note) note.textContent = mode === "auto"
+    ? "Auto: night from 7pm, day from 7am."
+    : mode === "night" ? "Night until you change it." : "Day until you change it.";
+  const now = document.getElementById("meSyncNow");
+  if (now) now.textContent = syncConfigured() ? "Sync now" : "Set up sync";
+}
 
 /* =====================  THE INBOX  =====================
    The Translator, collapsed to a bar. Closed by default so the Library owns the page.
@@ -12987,7 +13352,11 @@ function syncPadOffset() {
     const inputTop = input.getBoundingClientRect().top;
     if (inputTop > 0) solid = window.innerHeight - inputTop;
   }
-  document.body.style.paddingBottom = Math.round(solid + 8) + "px";
+  /* The dock sits under everything on the pages that have it, so it is reserved on top
+     of the pad. 0 on a lesson, where the dock is hidden. */
+  const dock = document.getElementById("dock");
+  const dockH = dock ? dock.getBoundingClientRect().height : 0;
+  document.body.style.paddingBottom = Math.round(solid + 8 + dockH) + "px";
 
   /* the haze is purely a backdrop for the bubbles, so it tracks their extent */
   const haze = document.getElementById("padHaze");
@@ -13667,6 +14036,7 @@ function aiStarPaint() {
            : state === "bad" ? "The last AI call failed — tap to see why"
            : "AI activity";
   if (document.getElementById("aiModal").style.display !== "none") aiLogRender();
+  mePaint();
 }
 
 /* When he last looked. A number, not an object — the only question aiStatusOf asks is
@@ -14264,6 +14634,7 @@ function flagPaint() {
   el.classList.toggle("waiting", waiting);
   el.title = waiting ? "Written, but not synced yet — tap to see"
                      : "Note something to change";
+  mePaint();
 }
 
 function flagRender() {
@@ -24475,7 +24846,11 @@ function pathWirePinch() {
 function syncNavOffset() {
   const nav = document.querySelector(".topnav");
   if (!nav) return;
-  document.documentElement.style.setProperty("--navh", Math.round(nav.getBoundingClientRect().height) + "px");
+  /* On the home screen the bar is not a bar — the profile button floats over the map —
+     so the map starts at the top of the screen rather than under a measured strip. */
+  const h = document.body.classList.contains("chrome-home") ? 0
+          : Math.round(nav.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--navh", h + "px");
 }
 window.addEventListener("resize", () => {
   syncNavOffset();
@@ -26766,6 +27141,7 @@ const LEARN_SCREENS = ["lStart", "lRun", "lSpeed", "lEnd"];
 function learnShow(which) {
   LEARN_SCREENS.forEach(id =>
     document.getElementById(id).style.display = (id === which) ? "block" : "none");
+  chromeSync();
 }
 /* Which Learn screen is up, asked of the DOM rather than inferred from learnSession.
    `get` exists so the suite can drive this against plain stubs — there is no screen
@@ -27543,6 +27919,7 @@ function learnStatsOpen(on) {
   pane.classList.toggle("open", !!on);
   pane.style.display = on ? "" : "none";
   if (on) { learnRenderStats(); pane.scrollTop = 0; }
+  chromeSync();
 }
 
 /* "Time to go to Claude, the plans are laid out" — George's own words for what this
@@ -27552,7 +27929,7 @@ function learnRenderThin() {
   const el = document.getElementById("lContentThin");
   if (!el) return;
   const thin = contentThinNow();
-  if (!thin.length) { el.style.display = "none"; el.textContent = ""; return; }
+  if (!thin.length) { el.style.display = "none"; el.textContent = ""; mePaint(); return; }
   el.style.display = "";
   el.innerHTML = "";
   el.append(document.createTextNode("Running short of practice for "));
@@ -27567,6 +27944,7 @@ function learnRenderThin() {
   });
   if (rest) el.append(document.createTextNode(" and " + rest + " more"));
   el.append(document.createTextNode(". Next time you're at a computer, ask Claude to write some."));
+  mePaint();
 }
 
 function learnRenderStart() {
@@ -40855,6 +41233,42 @@ T("night: every --c-* token used in a rule has a day and a night value", () => {
     else if (nightBlock.indexOf("    " + n + ":") === -1) missing.push(n + " (night)");
   });
   assertEq(missing, []);
+});
+
+T("chrome: the map is home only on the start screen with the stats room shut", () => {
+  assertEq(chromeModeFor({ view: "learn", screen: "lStart", stats: false }), "home");
+  assertEq(chromeModeFor({ view: "learn", screen: "lStart", stats: true }), "progress");
+  assertEq(chromeModeFor({ view: "learn", screen: "lRun", stats: false }), "lesson");
+  assertEq(chromeModeFor({ view: "learn", screen: "lSpeed", stats: false }), "lesson");
+  assertEq(chromeModeFor({ view: "learn", screen: "lEnd", stats: false }), "lesson");
+  assertEq(chromeModeFor({ view: "words", screen: "lRun", stats: true }), "words");
+  assertEq(chromeModeFor({ view: "learn", screen: null, stats: false }), "home");
+});
+/* Nothing the old top bar carried may be lost in the move. George, before this began:
+   "a redesign must preserve all features of the app". */
+T("chrome: every control that left the top bar is still reachable", () => {
+  const nav = document.getElementById("topNav"), me = document.getElementById("meSheet");
+  const dock = document.getElementById("dock");
+  ["uhBtn", "flagBtn", "meBtn", "navEnd"].forEach(id =>
+    assertTrue(nav.contains(document.getElementById(id)), id + " in the top bar"));
+  ["navLearn", "navWords", "navProgress"].forEach(id =>
+    assertTrue(dock.contains(document.getElementById(id)), id + " in the dock"));
+  ["meCoach", "meFlags", "meAi", "meHood", "meSettings", "navSync", "lContentThin", "meTheme"].forEach(id =>
+    assertTrue(me.contains(document.getElementById(id)), id + " in the profile sheet"));
+  /* Still in the DOM, because their painters and the sheet's rows press them. */
+  assertTrue(!!document.getElementById("aiStar") && !!document.getElementById("settingsBtn"));
+});
+T("chrome: the badge counts only open flags", () => {
+  assertEq(meFlagOpenCount([]), 0);
+  assertEq(meFlagOpenCount(null), 0);
+  assertEq(meFlagOpenCount([{ text: "a" }, { text: "b", resolved: 1 }, { text: "c" }]), 2);
+});
+T("chrome: the way out of a lesson is the button that screen already had", () => {
+  assertEq(chromeExitFor("lRun"), "lQuitBtn");
+  assertEq(chromeExitFor("lSpeed"), "lSpeedDone");
+  assertEq(chromeExitFor("lEnd"), "lDoneBtn");
+  assertNull(chromeExitFor("lStart"));
+  ["lQuitBtn", "lSpeedDone", "lDoneBtn"].forEach(id => assertTrue(!!document.getElementById(id), id));
 });
 
 if (location.search.indexOf("selftest") !== -1) {

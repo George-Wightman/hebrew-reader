@@ -2890,6 +2890,125 @@
   @media (max-width: 620px) {
     .lact { left: 12px; right: 12px; bottom: 12px; padding: 14px 16px 12px; }
   }
+
+  /* ---- the practice cards ---- */
+  /* Drawn icons, as masks, so each takes the colour of the text it sits in — ink on
+     paper by day, pale ink at night, with no second set to keep in step. */
+  :root {
+    --ic-mic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3C/svg%3E");
+    --ic-play: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 4.5v15l12-7.5z' fill='black'/%3E%3C/svg%3E");
+    --ic-pause: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='5' width='4' height='14' rx='1' fill='black'/%3E%3Crect x='14' y='5' width='4' height='14' rx='1' fill='black'/%3E%3C/svg%3E");
+  }
+  /* The lesson is the world, top to bottom: the paper runs up behind the bar, and the
+     bar is only its three controls. */
+  body.chrome-lesson { background: linear-gradient(150deg, var(--paper-0), var(--paper-1) 48%, var(--paper-2)) fixed; }
+  body.chrome-lesson #lRun { top: 0; padding-top: calc(var(--navh, 58px) + 4px);
+    background: linear-gradient(150deg, var(--paper-0), var(--paper-1) 48%, var(--paper-2)); }
+  #lEnd { background: linear-gradient(150deg, var(--paper-0), var(--paper-1) 48%, var(--paper-2)); }
+  .lroadworn { stroke: var(--gold); }
+  .lwaydone { fill: var(--gold); }
+  .lwaynow { fill: var(--panel); }
+
+  /* A leaf of lighter paper with a real lift, the size the mockups gave it. */
+  .lcard { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+           box-shadow: var(--lift); padding: 30px 22px 24px; min-height: 300px; }
+  /* The one line that says what this card wants, now in the world's aside voice rather
+     than tracked capitals: read once as the card turns over, never shouted. */
+  .lask { font-family: var(--aside); font-style: italic; font-size: 1.08rem; font-weight: 500;
+          letter-spacing: 0; text-transform: none; color: var(--muted); margin: 0 0 18px; }
+  .lask.lquiet { font-family: var(--ui); font-style: normal; font-size: .82rem; }
+  .lprompt { font-family: var(--display); font-size: 2.4rem; line-height: 1.18; font-weight: 400; }
+  /* The one new word: a dashed tile, the "new" band's own mark, with its sound under it. */
+  .lnew { border-radius: 12px; border: 1.5px dashed var(--border); background: var(--bg);
+          padding: 8px 14px; margin: -6px 0 18px; }
+  .lnewlab { font-size: .72rem; letter-spacing: .04em; text-transform: none; color: var(--muted); }
+  .lnew b { font-family: var(--he); font-size: 1.45rem; font-weight: 500; color: var(--hebrew); }
+  .lhe { font-size: 3rem; line-height: 1.3; font-weight: 500; }
+  .lhe.long { font-size: 2rem; }
+  .ltr { font-size: 1.35rem; font-style: italic; font-weight: 500; }
+  .ltr.long { font-size: 1.08rem; }
+  .lrule { background: var(--border); }
+
+  /* THE MIC, as the one big thing to press. A pill rather than the mockup's circle,
+     because it carries words that change under him — Say it, Reply, Pause — and those
+     words are how he knows which state it is in. */
+  .lmic { display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+          min-height: 58px; padding: 0 32px 0 26px; border-radius: 29px; border: 0;
+          font-size: 1.08rem; box-shadow: 0 0 0 8px var(--accent-soft); }
+  .lmic::before { content: ""; width: 22px; height: 22px; background: currentColor;
+                  -webkit-mask: var(--ic-mic) center / contain no-repeat;
+                  mask: var(--ic-mic) center / contain no-repeat; flex: 0 0 auto; }
+  .lmic.listening::before { -webkit-mask-image: var(--ic-pause); mask-image: var(--ic-pause); }
+  .lmic.lmicpause::before { display: none; }
+  .lmicinline { display: inline-flex; align-items: center; gap: 6px; border-radius: 16px;
+                padding: 6px 12px; background: transparent; }
+  .lmicinline::before { content: ""; width: 14px; height: 14px; background: currentColor;
+                        -webkit-mask: var(--ic-mic) center / contain no-repeat;
+                        mask: var(--ic-mic) center / contain no-repeat; }
+  .lmicinline.listening::before { display: none; }
+  .lactions .btn { border-radius: 26px; min-height: 50px; }
+
+  /* Audio. The prompt's play button is the card's main object on a listen card, so it
+     is big and ink-dark; "slowly" beside it is a word, not a turtle. */
+  .laudio { gap: 16px; margin: 14px 0; }
+  .lspeaker { width: 88px; height: 88px; border-radius: 44px; background: var(--ink);
+              display: flex; align-items: center; justify-content: center;
+              box-shadow: 0 0 0 8px var(--hair), 0 10px 22px var(--c-34-48-60-16); }
+  .lspeaker::before { content: ""; width: 32px; height: 32px; margin-left: 4px; background: var(--panel);
+                      -webkit-mask: var(--ic-play) center / contain no-repeat;
+                      mask: var(--ic-play) center / contain no-repeat; }
+  .lspeaker:hover { transform: scale(1.04); }
+  .lturtle { font: inherit; font-size: .92rem; color: var(--ink); opacity: 1; height: 44px;
+             padding: 0 16px; border-radius: 22px; border: 1.5px solid var(--border); }
+  .lturtle:hover { transform: none; border-color: var(--accent); color: var(--accent); }
+  .laudio.lreplay { gap: 10px; margin: 12px 0 0; }
+  .laudio.lreplay button.lplay { display: inline-flex; align-items: center; gap: 7px; opacity: 1;
+    height: 42px; padding: 0 16px; border-radius: 21px; border: 1px solid var(--border);
+    font: inherit; font-size: .9rem; color: var(--ink); background: transparent; }
+  .laudio.lreplay button.lplay::before { content: ""; width: 12px; height: 12px; background: currentColor;
+    -webkit-mask: var(--ic-play) center / contain no-repeat; mask: var(--ic-play) center / contain no-repeat; }
+  .laudio.lreplay button.lplay.slow::before { opacity: .55; }
+  .laudio.lreplay button.lplay:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Help, one step at a time — the world's aside voice, not a link-blue footnote. */
+  .lstuck { font-family: var(--aside); font-style: italic; font-size: 1.06rem; color: var(--muted); }
+  .lhintbox { background: var(--bg); border-style: dashed; border-radius: 10px; }
+  .lprimechip { border-radius: 10px; background: var(--bg); }
+  .lprimechip i { font-size: 1rem; color: var(--hebrew); }
+
+  /* THE GRADES: three stamps. Gold is the one that means "you did this"; the suggested
+     one is marked, never pressed — accepting it stays his one deliberate tap. */
+  .lactions:has(> .lgrade) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                             gap: 10px; width: 100%; }
+  .lgrade { min-height: 66px; border-radius: 10px; padding: 8px 6px; font-family: var(--display);
+            font-size: 1.15rem; font-weight: 500; position: relative; background: var(--panel); }
+  .lgrade.g0 { border: 1.5px solid var(--c-e0a9a4); color: var(--bad); }
+  .lgrade.g1 { border: 1.5px solid var(--c-e2bb70); color: var(--c-a86a34); }
+  .lgrade.g2 { border: 1.5px solid var(--gold); background: var(--gold); color: var(--on-gold); }
+  .lgrade.g0:hover { background: var(--c-fbe4e2); color: var(--bad); border-color: var(--bad); }
+  .lgrade.g1:hover { background: var(--gold-soft); border-color: var(--warn); color: var(--c-a86a34); }
+  .lgrade.g2:hover { filter: brightness(1.06); color: var(--on-gold); background: var(--gold); }
+  .lgrade.suggested { border-width: 2.5px; box-shadow: 0 6px 16px var(--c-34-48-60-16); }
+  .lgrade.g0.suggested { border-color: var(--bad); }
+  .lgrade.g1.suggested { border-color: var(--warn); }
+  .lgrade.g2.suggested { box-shadow: 0 0 0 3px var(--gold-soft), 0 6px 16px var(--c-34-48-60-16); }
+  .lgrade.suggested::before { content: "suggested"; position: absolute; top: -9px; left: 50%;
+    transform: translateX(-50%); font-family: var(--ui); font-size: 9.5px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border-radius: 8px;
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+  .lwd-grades .lgrade { min-height: 40px; font-size: .92rem; }
+  .lwd-grades .lgrade.suggested::before { display: none; }
+
+  /* Per-word chips after the answer: bigger, and the same band colours as everywhere. */
+  .lchipw { border-radius: 10px; font-size: 1.2rem; padding: 4px 11px; font-style: italic; font-weight: 500; }
+  .lchipw.near { background: var(--gold-soft); border-color: var(--c-e2bb70); color: var(--c-a86a34); }
+  .lwdetail { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; }
+  .lwd-he { font-size: 2rem; }
+  .lwd-tr { font-style: italic; font-weight: 500; }
+  .lheard, .lmiclive { background: var(--bg); border-color: var(--border); border-radius: 10px; }
+  .lnotes { border-radius: 10px; background: var(--bg); font-size: 1rem; }
+  .lamend-opt { border-radius: 10px; }
+  .lamend-said, .lcoach, .lfc-line, .lfc-say, .lretract { font-family: var(--display); }
 </style>
 </head>
 <body>
@@ -27289,7 +27408,7 @@ function learnRenderStats() {
   } else if (!all.spoken) {
     sp.className = "lstatnote";
     sp.textContent = "You haven't used the microphone yet. On a card that asks you to produce " +
-      "Hebrew, press 🎤 Say it and it'll mark what you actually said.";
+      "Hebrew, press Say it and it'll mark what you actually said.";
   } else {
     sp.className = "";
     const pct = Math.round((all.spokenOk / all.spoken) * 100);
@@ -28404,11 +28523,13 @@ function learnRenderCard() {
        listening drill into a reading one, and reading was never the bottleneck. */
     const row = document.createElement("div"); row.className = "laudio";
     const spk = document.createElement("button");
-    spk.className = "lspeaker"; spk.type = "button"; spk.textContent = "🔊";
-    spk.title = "Play again (R)";
+    /* Drawn, not emoji (style guide §2: no stickers in the world layer). The icon is
+       the button's own CSS; the label is for a screen reader and the tooltip. */
+    spk.className = "lspeaker"; spk.type = "button"; spk.textContent = "";
+    spk.title = "Play again (R)"; spk.setAttribute("aria-label", "Play again");
     spk.onclick = () => learnSpeakPrompt();
     const turtle = document.createElement("button");
-    turtle.className = "lturtle"; turtle.type = "button"; turtle.textContent = "🐢";
+    turtle.className = "lturtle"; turtle.type = "button"; turtle.textContent = "slowly";
     turtle.title = "Play slower (Shift+R)";
     turtle.onclick = () => learnSpeakPrompt(true);
     row.append(spk, turtle);
@@ -28459,7 +28580,7 @@ function learnRenderCard() {
       const labRow = document.createElement("div"); labRow.className = "lnoteslabelrow";
       labRow.append(lab);
       const emic = document.createElement("button");
-      emic.className = "lmicinline"; emic.type = "button"; emic.textContent = "🎤 Speak";
+      emic.className = "lmicinline"; emic.type = "button"; emic.textContent = "Speak";
       emic.onclick = () => learnHearSpeakAttempt(emic, ta);
       labRow.append(emic);
       card.append(labRow, ta);
@@ -28488,10 +28609,10 @@ function learnRenderCard() {
   const act = document.createElement("div"); act.className = "lactions";
   if (micOK) {
     const mic = document.createElement("button");
-    /* "🎤 Say it", not "Say it": learnSpeakAttempt's finally block resets it to the
-       emoji form, so the button silently grew a microphone after the first attempt of
-       every session — and the hint in the stats pane names it as "🎤 Say it" too. */
-    mic.className = "lmic"; mic.type = "button"; mic.textContent = "🎤 Say it";
+    /* The label is plain "Say it" and the microphone is drawn by .lmic's own CSS — the
+       emoji is gone from the world layer (Atlas, 2026-09-23). learnSpeakAttempt reads
+       whatever this says as the resting label, so the two can never disagree again. */
+    mic.className = "lmic"; mic.type = "button"; mic.textContent = "Say it";
     mic.onclick = () => learnSpeakAttempt(mic, c);
     act.append(mic);
   } else {
@@ -28627,7 +28748,7 @@ function learnRenderCompose(card, c, s) {
     if (speechSupported()) {
       const mic = document.createElement("button");
       mic.className = "lmic"; mic.type = "button";
-      mic.textContent = turns.length ? "🎤 Reply" : "🎤 Say it";
+      mic.textContent = turns.length ? "Reply" : "Say it";
       mic.onclick = () => learnSpeakAttempt(mic, c);
       act.append(mic);
       card.append(act);
@@ -29646,7 +29767,7 @@ async function learnHearSpeakAttempt(btn, ta) {
   const base = ta.value.trim();
   const prefix = base ? base + " " : "";
   learnMicBusy = true; learnMicStopped = false;
-  btn.classList.add("listening"); btn.textContent = "⏹ Stop";
+  btn.classList.add("listening"); btn.textContent = "Stop";
   const askedAt = learnSession ? learnSession.i : -1;   // see learnSpeakAttempt
 
   /* No live box here — the textarea IS the live box, filling as the words arrive,
@@ -29663,7 +29784,7 @@ async function learnHearSpeakAttempt(btn, ta) {
     });
   } finally {
     learnMicBusy = false;
-    btn.classList.remove("listening"); btn.textContent = "🎤 Speak";
+    btn.classList.remove("listening"); btn.textContent = "Speak";
   }
   if (!res) { ta.value = base; learnNote = base; return; }
   /* Stale: the box on screen belongs to a different card now, and learnNote is the
@@ -30140,13 +30261,13 @@ function learnReveal() {
     }
     const btns = replay.querySelectorAll("button");
     if (btns[0]) {
-      btns[0].className = ""; btns[0].type = "button";
-      btns[0].textContent = "🔊"; btns[0].title = "Play again (R)";
+      btns[0].className = "lplay"; btns[0].type = "button";
+      btns[0].textContent = "Hear it"; btns[0].title = "Play again (R)";
       btns[0].onclick = () => playHe(answerKey, he);
     }
     if (btns[1]) {
-      btns[1].className = ""; btns[1].type = "button";
-      btns[1].textContent = "🐢"; btns[1].title = "Play slower (Shift+R)";
+      btns[1].className = "lplay slow"; btns[1].type = "button";
+      btns[1].textContent = "Slowly"; btns[1].title = "Play slower (Shift+R)";
       btns[1].onclick = () => playHe(answerKey, he, true);
     }
   }
@@ -31635,7 +31756,7 @@ document.addEventListener("keydown", (ev) => {
     else if (learnSuggested !== null) learnGrade(learnSuggested);
   } else if (ev.key === "r" || ev.key === "R") {
     ev.preventDefault();
-    const slow = ev.shiftKey;   // Shift+R: the same deliberately-slow pass the 🐢 button gives
+    const slow = ev.shiftKey;   // Shift+R: the same deliberately-slow pass the "slowly" button gives
     const c = learnSession.cards[learnSession.i];
     if (learnRevealed) playHe(cardAudioKey(c, "answer"), c.kind === "word" ? c.key : c.item.he, slow);
     else learnSpeakPrompt(slow);
@@ -41269,6 +41390,17 @@ T("chrome: the way out of a lesson is the button that screen already had", () =>
   assertEq(chromeExitFor("lEnd"), "lDoneBtn");
   assertNull(chromeExitFor("lStart"));
   ["lQuitBtn", "lSpeedDone", "lDoneBtn"].forEach(id => assertTrue(!!document.getElementById(id), id));
+});
+
+/* Style guide §2: no emoji in the world layer — stickers on hand-drawn paper. The drill
+   card and everything it builds are the world. Checked against the source of the
+   functions that draw it, so a new branch cannot quietly bring a sticker back.
+   Pictographs only: plain marks like a tick or a cross are type, not stickers. */
+T("cards: nothing the drill draws is an emoji", () => {
+  const src = [learnRenderCard, learnRenderCompose, learnReveal, learnSpeakAttempt, learnHearSpeakAttempt]
+    .map(String).join("\n");
+  const hits = src.match(/[\u{1F300}-\u{1FAFF}\u{23F8}-\u{23FA}]/gu) || [];
+  assertEq(hits, [], "emoji in the drill's rendering code");
 });
 
 if (location.search.indexOf("selftest") !== -1) {

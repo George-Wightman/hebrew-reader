@@ -2815,6 +2815,13 @@
                       stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
   .dock .navbtn.active { color: var(--accent); font-weight: 600; box-shadow: none; }
   .dock .navbtn:hover { color: var(--accent); }
+  .pneed circle { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+  .pneed path { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  /* On a laptop the three tabs would each be a third of a 1280px bar; they keep a
+     phone's spacing, centred. */
+  @media (min-width: 760px) {
+    .dock { padding-left: calc(50% - 250px); padding-right: calc(50% - 250px); }
+  }
   /* Everything pinned to the bottom of the window stands on the dock, not under it. */
   .lmap { bottom: var(--dockh); }
   .lstats.open { bottom: var(--dockh); }
@@ -23396,6 +23403,9 @@ function campRender() {
     });
   });
 
+  /* Which towns are running short of written practice — the same list the profile
+     sheet names in words. Asked once per render, not per node. */
+  const thin = new Set(contentThinNow());
   L.nodes.forEach(n => {
     if (n.fog) {
       svg += '<g class="pnode fognode" data-band="' + n.band + '">';
@@ -23438,6 +23448,14 @@ function campRender() {
     if (state === "done" && campNodeAuto(n.id))
       svg += '<text class="pauto" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
              '" text-anchor="middle" font-size="17">⏭</text>';
+    /* RUNNING SHORT, SAID BY THE MAP. This used to be a banner over the sea naming the
+       towns — the app talking, first thing on the screen. Now it is a small pen at the
+       town itself: terrain, not instruction (style guide §4), and the sentence that
+       explains it lives in the profile sheet. Drawn in the map's own ink, never a glyph. */
+    if (thin.has(n.name))
+      svg += '<g class="pneed" transform="translate(' + (n.x + 38) + ' ' + (n.y + 30) + ')">' +
+             '<title>Running short of written practice</title><circle r="11"/>' +
+             '<path d="M-5 5.5C-2 0 1.5-3.5 6-6M-2.5 2.5C.5 2.2 3 0 4.2-3.2M-6.2 6.6l1.4-1.4"/></g>';
     svg += '<text class="pnm" x="' + n.x + '" y="' + (n.y + 66) + '" text-anchor="middle" font-size="14">' +
            campEscape(n.name) + '</text>';
     /* The reason the planner gave for this node, shown only in the chapter you are in.
@@ -41599,6 +41617,14 @@ T("chrome: the way out of a lesson is the button that screen already had", () =>
   ["lQuitBtn", "lSpeedDone", "lDoneBtn"].forEach(id => assertTrue(!!document.getElementById(id), id));
 });
 
+T("map: every town running short of sentences carries the pen, and no other town does", () => {
+  campRender();
+  const want = new Set(contentThinNow());
+  const marked = [...document.querySelectorAll("#pathTree .pneed")].map(g =>
+    g.parentNode.querySelector(".pnm") && g.parentNode.querySelector(".pnm").textContent);
+  assertEq(marked.length, want.size, "one pen per thin town");
+  marked.forEach(name => assertTrue(want.has(name), name + " is really thin"));
+});
 /* Style guide §2: no emoji in the world layer — stickers on hand-drawn paper. The drill
    card and everything it builds are the world. Checked against the source of the
    functions that draw it, so a new branch cannot quietly bring a sticker back.

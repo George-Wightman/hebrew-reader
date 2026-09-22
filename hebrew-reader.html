@@ -296,6 +296,9 @@
   .ailogrow { border-top: 1px solid var(--hair); padding: 9px 0; font-size: .84rem; }
   .ailogrow:first-child { border-top: none; }
   .ailoglab { font-weight: 600; }
+  .flagreply { font-size: .8rem; color: var(--accent); margin: 4px 0 2px; }
+  .flagdonehead { margin-top: 14px; font-weight: 600; }
+  .flagdone .ailoglab { color: var(--muted); }
   .ailogrow.bad .ailoglab { color: var(--bad); }
   .ailogwhen { color: var(--muted); font-size: .78rem; margin-left: 6px; }
   .ailogerr { color: var(--bad); font-size: .78rem; margin-top: 3px; word-break: break-word; }
@@ -3767,18 +3770,50 @@ function mergeFlags(a, b, cap) {
     byId[f.id] = byId[f.id] ? mergeOneFlag(byId[f.id], f) : f;
   }));
   const out = Object.keys(byId).sort().map(k => byId[k]);
-  return cap ? out.slice(-cap) : out;
+  return cap ? flagTrim(out, cap) : out;
+}
+/* WHAT GOES WHEN THERE ARE TOO MANY. This was `slice(-cap)` — keep the newest forty — and
+   on 2026-09-22 he had exactly forty, twenty-seven of them resolved. The next flag would
+   have pushed out the oldest one whether or not anything had been done about it, so an
+   open thought could vanish to make room for a closed one.
+
+   Status first, then age. A resolved flag three weeks past being resolved has done its
+   job and is dropped outright — that is the "remove old ones" half of what he asked. Over
+   the cap, resolved ones go before any open one does. An open flag is only ever evicted
+   when open flags alone overflow the cap, which is a backlog problem no trim can solve.
+
+   Input is oldest-first, as the store and the merge both keep it, so "first found" is
+   "oldest". Both devices run the same rule, so they converge on the same list. */
+const FLAG_RESOLVED_KEEP_MS = 21 * 24 * 3600 * 1000;
+function flagTrim(list, cap, now) {
+  const t = now || Date.now();
+  const out = (list || []).filter(f => !(f && f.resolved && f.resolvedTs &&
+                                         t - f.resolvedTs > FLAG_RESOLVED_KEEP_MS));
+  if (!cap || out.length <= cap) return out;
+  let over = out.length - cap;
+  const drop = new Set();
+  out.forEach(f => { if (over > 0 && f.resolved) { drop.add(f); over--; } });
+  out.forEach(f => { if (over > 0 && !drop.has(f)) { drop.add(f); over--; } });
+  return out.filter(f => !drop.has(f));
 }
 /* RESOLVED ANYWHERE WINS. The alternative — newer blob's copy wins — could un-resolve a
    flag by merging in a device that synced before the tap reached it, which is exactly
    the kind of field going backwards on its own edit that mergeById's own comment warns
    against. When both sides resolved it independently, keep the earlier resolvedTs: that
    is when it was actually addressed, not whichever sync happened to land last. */
+/* What either side has added to a flag after it was written — its kind, my note on
+   what was done, my question back, who resolved it. Filled from whichever side has it:
+   none of these is ever cleared, so "the other side has it and I don't" can only mean
+   mine has not caught up. */
+const FLAG_ANNOTATIONS = ["kind", "note", "reply", "resolvedBy"];
 function mergeOneFlag(x, y) {
-  if (!x.resolved && !y.resolved) return x;         // identical otherwise; either is fine
+  const extra = {};
+  FLAG_ANNOTATIONS.forEach(k => { const v = x[k] || y[k]; if (v && v !== x[k]) extra[k] = v; });
+  if (!x.resolved && !y.resolved)                   // identical otherwise; either is fine
+    return Object.keys(extra).length ? Object.assign({}, x, extra) : x;
   const resolvedTs = x.resolved && y.resolved ? Math.min(x.resolvedTs || 0, y.resolvedTs || 0)
                     : x.resolved ? x.resolvedTs : y.resolvedTs;
-  return Object.assign({}, x, { resolved: true, resolvedTs: resolvedTs });
+  return Object.assign({}, x, extra, { resolved: true, resolvedTs: resolvedTs });
 }
 
 /* Which rule each store gets. Anything absent falls through to the generic handling
@@ -13544,8 +13579,59 @@ function flagNewId() { return String(Date.now()) + "-" + Math.random().toString(
 function flagAdd(text, ctx) {
   const f = { id: flagNewId(), ts: Date.now(),
               text: String(text || "").trim().slice(0, 2000), ctx: ctx || {} };
-  flagSave(flagAll().concat([f]).slice(-FLAG_MAX));
+  flagSave(flagTrim(flagAll().concat([f]), FLAG_MAX));
   return f;
+}
+
+/* ---- my side of the conversation -------------------------------------------------
+   George: "I would also like you to be able to remove old ones/ make addressed so there
+   isnt a load in the backlog."
+
+   I cannot write to his sync repo — the token I read it with is read-only, his choice,
+   and a second writer racing the app's own merges would be a worse problem than the
+   backlog. But I already push to this app's own repo, and content/ is served from it. So
+   the file is there: flag ids, a status, and one line from me. Never his text — that
+   stays in the private repo — so nothing here says what he wrote.
+
+   Applied on this device, then carried to the sync repo by the ordinary sync, which is
+   what makes the app's own "addressed" count and my ledger agree. */
+const FLAG_STATUS_URL = "./content/flag-status.json";
+const FLAG_KINDS = { bug: "Bug", idea: "Idea", hebrew: "Wrong Hebrew" };
+function flagApplyStatus(flags, file) {
+  const map = (file && file.flags && typeof file.flags === "object") ? file.flags : {};
+  let changed = 0;
+  const out = (flags || []).map(f => {
+    const s = f && f.id && map[f.id];
+    if (!s || typeof s !== "object") return f;
+    const g = Object.assign({}, f);
+    if (s.kind && FLAG_KINDS[s.kind] && !g.kind) g.kind = s.kind;
+    const note = String(s.note || "").trim().slice(0, 300);
+    if (s.status === "addressed" || s.status === "wontdo") {
+      if (!g.resolved) {
+        g.resolved = true;
+        g.resolvedTs = Date.parse(s.at || "") || Date.now();
+        g.resolvedBy = "claude";
+      }
+      if (note && !g.note) g.note = (s.status === "wontdo" ? "Not doing this: " : "") + note;
+    } else if (s.status === "question" && note && g.reply !== note) {
+      g.reply = note;
+    }
+    if (JSON.stringify(g) === JSON.stringify(f)) return f;
+    changed++;
+    return g;
+  });
+  return { flags: out, changed: changed };
+}
+async function flagStatusIngest() {
+  let file = null;
+  try {
+    const r = await fetchWithTimeout(FLAG_STATUS_URL, { cache: "no-store" }, FETCH_TIMEOUT_MS);
+    if (!r || !r.ok) return 0;
+    file = await r.json();
+  } catch (e) { return 0; }
+  const res = flagApplyStatus(flagAll(), file);
+  if (res.changed) { flagSave(res.flags); try { flagPaint(); } catch (e) {} }
+  return res.changed;
 }
 /* INERT, NOT DELETED — replacing what used to be flagDrop. Deleting a flag locally and
    then syncing brought it straight back: mergeFlags is a union, so "my copy is missing
@@ -13718,6 +13804,13 @@ function flagRender() {
     when.textContent = syncAgo(f.ts) + " · " + flagContextLine(f.ctx || {});
     head.append(lab, when);
     row.append(head);
+    /* A question back from me sits under the flag it is about, not in a separate list. */
+    if (f.reply) {
+      const rp = document.createElement("div");
+      rp.className = "flagreply";
+      rp.textContent = "Claude asks: " + f.reply;
+      row.append(rp);
+    }
 
     const more = document.createElement("div");
     more.className = "ailogmore";
@@ -13743,6 +13836,28 @@ function flagRender() {
     row.append(btn, done, more);
     list.append(row);
   });
+  /* WHAT I DID, WHERE HE WILL SEE IT. A week of it, then it folds into the count below —
+     long enough to notice, short enough not to become a second backlog. */
+  const recent = flags.filter(f => f.resolved && f.resolvedBy === "claude" && f.note &&
+                                   Date.now() - (f.resolvedTs || 0) < 7 * 24 * 3600 * 1000);
+  if (recent.length) {
+    const h = document.createElement("p");
+    h.className = "note flagdonehead";
+    h.textContent = "Recently addressed by Claude";
+    list.append(h);
+    recent.slice().reverse().forEach(f => {
+      const row = document.createElement("div");
+      row.className = "ailogrow flagdone";
+      const lab = document.createElement("span");
+      lab.className = "ailoglab";
+      lab.textContent = f.text || "(no words)";
+      const n = document.createElement("div");
+      n.className = "flagreply";
+      n.textContent = f.note;
+      row.append(lab, n);
+      list.append(row);
+    });
+  }
   if (resolvedCount) {
     const note = document.createElement("p");
     note.className = "note";
@@ -25943,6 +26058,8 @@ let contentLastCheck = 0;
 function contentCheck(force) {
   if (!force && Date.now() - contentLastCheck < CONTENT_RECHECK_MS) return Promise.resolve(0);
   contentLastCheck = Date.now();
+  /* Same moment, same throttle, and never waited on — see flagStatusIngest. */
+  try { flagStatusIngest().catch(() => {}); } catch (e) {}
   return Promise.resolve(contentIngest())
     .catch(e => { contentNote("check-threw", { err: (e && e.message) || String(e) }); return 0; });
 }
@@ -37681,19 +37798,66 @@ T("mergeFlags: resolved anywhere wins, so a tap cannot be undone by a slow sync"
   /* The bug this replaces: Delete removed a flag locally, and the next sync saw "my
      copy is missing it" and "GitHub's copy still has it" as indistinguishable from
      "never existed", and put it straight back. */
+  /* Recent times, because flagTrim drops what was resolved over three weeks ago — and a
+     resolvedTs of 500 was resolved in January 1970. */
   const open = { id: "1-a", text: "x" };
-  const resolved = { id: "1-a", text: "x", resolved: true, resolvedTs: 500 };
+  const resolved = { id: "1-a", text: "x", resolved: true, resolvedTs: Date.now() - 500 };
   assertTrue(mergeFlags([open], [resolved], 40)[0].resolved, "resolved beats open");
   assertTrue(mergeFlags([resolved], [open], 40)[0].resolved, "either argument order");
 });
 T("mergeFlags: both sides resolved independently keeps the EARLIER time", () => {
-  const a = { id: "1-a", resolved: true, resolvedTs: 900 };
-  const b = { id: "1-a", resolved: true, resolvedTs: 300 };
-  assertEq(mergeFlags([a], [b], 40)[0].resolvedTs, 300, "when it was actually addressed");
+  const t = Date.now();
+  const a = { id: "1-a", resolved: true, resolvedTs: t - 300 };
+  const b = { id: "1-a", resolved: true, resolvedTs: t - 900 };
+  assertEq(mergeFlags([a], [b], 40)[0].resolvedTs, t - 900, "when it was actually addressed");
 });
 T("mergeFlags: an untouched match merges to the same open flag either way", () => {
   const f = { id: "1-a", text: "same", ctx: { view: "learn" } };
   assertTrue(!mergeFlags([f], [Object.assign({}, f)], 40)[0].resolved);
+});
+T("flagTrim: over the cap, a resolved flag goes before any open one", () => {
+  const now = Date.parse("2026-09-22T12:00:00Z");
+  const list = [{ id: "1-a", text: "old but open" },
+                { id: "2-b", resolved: true, resolvedTs: now - 1000 },
+                { id: "3-c", text: "new" }];
+  assertEq(flagTrim(list, 2, now).map(f => f.id), ["1-a", "3-c"],
+           "his oldest open thought survives the next one arriving");
+});
+T("flagTrim: a flag resolved three weeks ago has done its job", () => {
+  const now = Date.parse("2026-09-22T12:00:00Z");
+  const list = [{ id: "1-a", resolved: true, resolvedTs: now - 22 * 24 * 3600 * 1000 },
+                { id: "2-b", resolved: true, resolvedTs: now - 2 * 24 * 3600 * 1000 },
+                { id: "3-c" }];
+  assertEq(flagTrim(list, 40, now).map(f => f.id), ["2-b", "3-c"]);
+});
+T("mergeFlags: my note and his kind travel with the flag", () => {
+  const a = { id: "1-a", text: "x", kind: "bug" };
+  const b = { id: "1-a", text: "x", resolved: true, resolvedTs: Date.now() - 5, resolvedBy: "claude", note: "fixed" };
+  [mergeFlags([a], [b], 40)[0], mergeFlags([b], [a], 40)[0]].forEach(m => {
+    assertEq(m.kind, "bug"); assertEq(m.note, "fixed"); assertEq(m.resolvedBy, "claude");
+    assertTrue(m.resolved);
+  });
+});
+T("flagApplyStatus: addressed resolves with my note; a question does not resolve", () => {
+  const flags = [{ id: "1-a", text: "x" }, { id: "2-b", text: "y" }, { id: "3-c", text: "z" },
+                 { id: "4-d", text: "w", resolved: true, resolvedTs: 9 }];
+  const file = { version: 1, flags: {
+    "1-a": { status: "addressed", note: "Shipped in abc123", at: "2026-09-22T10:00:00Z" },
+    "2-b": { status: "question", note: "Which card was it?" },
+    "4-d": { status: "addressed", note: "Done", kind: "idea" },
+    "9-z": { status: "addressed", note: "not his" } } };
+  const out = flagApplyStatus(flags, file);
+  assertTrue(out.flags[0].resolved && out.flags[0].resolvedBy === "claude");
+  assertEq(out.flags[0].note, "Shipped in abc123");
+  assertEq(out.flags[0].resolvedTs, Date.parse("2026-09-22T10:00:00Z"));
+  assertTrue(!out.flags[1].resolved, "a question leaves it open");
+  assertEq(out.flags[1].reply, "Which card was it?");
+  assertTrue(out.flags[2] === flags[2], "untouched flags are the same object");
+  assertEq(out.flags[3].resolvedTs, 9, "one he resolved himself keeps his time");
+  assertTrue(!out.flags[3].resolvedBy, "and is not claimed as mine");
+  assertEq(out.flags[3].kind, "idea");
+  assertEq(out.changed, 3);
+  assertEq(flagApplyStatus(out.flags, file).changed, 0, "applying twice changes nothing");
 });
 T("flagResolve: stays in the store, inert rather than gone", () => {
   /* PUTS THE REAL FLAGS BACK. This used to overwrite hvr_flags and then REMOVE it, so

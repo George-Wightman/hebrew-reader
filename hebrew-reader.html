@@ -28076,6 +28076,78 @@ async function learnAdjudicate(c, spoken, askedAt) {
    marks would quietly retire נוסע without him ever having said it. "This counted, but
    not cleanly" is the honest verdict, and the note is where the actual teaching goes. */
 const GRACE_MIN_WORDS = { sentence: 2, word: 1, chunk: 1 };
+
+/* THE WORDS A SYNONYM CANNOT STAND IN FOR. George, 2026-09-18, on עכשיו הקפה קר: "it was
+   going to give me 'nearly' when I said yesterday and it wanted now. That's is just not
+   correct at all." The adjudicator had already ruled correctly that עכשיו was not said;
+   grace then asked flash-lite whether אתמול was a fair way of saying "now", and it said
+   yes — with a note explaining that he had used the word for yesterday. The same flag's
+   log held a second one: אף אחד (nobody) passed for "never".
+
+   These are closed sets, and within each one every member changes the meaning of the
+   sentence rather than rephrasing it. Swapping one for another is never a synonym, so the
+   app can refuse without asking — no latency, and nothing for a small model to talk itself
+   into. `את` is left out of the people on purpose: it is also the object marker. */
+const GRACE_MEANING_CLASSES = {
+  time: ["עכשיו", "אתמול", "היום", "מחר", "הבוקר", "בבוקר", "הערב", "בערב", "הלילה",
+         "בלילה", "אחר כך", "קודם", "מקודם", "עוד מעט", "השבוע", "שלשום", "מחרתיים",
+         "תמיד", "לפעמים", "כבר", "עדיין"],
+  never: ["אף פעם", "אף אחד", "שום דבר", "כלום"],
+  person: ["אני", "אתה", "הוא", "היא", "אנחנו", "אתם", "אתן", "הם", "הן"],
+  number: ["אחד", "אחת", "שתיים", "שניים", "שני", "שתי", "שלוש", "שלושה", "ארבע", "ארבעה",
+           "חמש", "חמישה", "שש", "שישה", "שבע", "שבעה", "שמונה", "תשע", "תשעה", "עשר",
+           "עשרה"],
+  question: ["מה", "מי", "איפה", "מתי", "למה", "איך", "כמה", "לאן", "מאיפה", "איזה", "איזו"]
+};
+const GRACE_NEGATION = ["לא", "אין"];
+/* Which members of `list` occur in `toks`, as whole words or whole runs of words. A
+   leading ו is read through — ואני is אני — because the conjunction joins without
+   changing what the word is. Finals are already folded by heWords, so a phrase stored
+   as אפ פעמ still finds אף פעם. */
+function graceMembers(toks, list) {
+  const bare = toks.map(t => (t.length > 2 && t[0] === "ו") ? t.slice(1) : t);
+  const hit = [];
+  list.forEach(m => {
+    const mt = heWords(m);
+    for (let i = 0; i + mt.length <= toks.length; i++) {
+      let ok = true;
+      for (let j = 0; j < mt.length && ok; j++)
+        ok = toks[i + j] === mt[j] || bare[i + j] === mt[j];
+      if (ok) { hit.push(mt.join(" ")); break; }
+    }
+  });
+  return hit;
+}
+/* Pure. The class that clashed, or "" — "" means the rule has nothing to say and the
+   model is asked as before. Two ways to clash: a different member of the same class in
+   place of the one wanted, or a negation gained or lost. Leaving a time word out
+   altogether is NOT a clash here; whether "the coffee is cold" says "now the coffee is
+   cold" is a judgement, and judgements are what the call is for. */
+function graceMeaningClash(expected, said) {
+  const E = heWords(expected), S = heWords(said);
+  if (!E.length || !S.length) return "";
+  for (const cls of Object.keys(GRACE_MEANING_CLASSES)) {
+    const list = GRACE_MEANING_CLASSES[cls];
+    const e = graceMembers(E, list), s = graceMembers(S, list);
+    if (!e.length || !s.length) continue;
+    const gotAll = e.every(x => s.indexOf(x) !== -1);
+    const swapped = s.some(x => e.indexOf(x) === -1);
+    if (swapped && !gotAll) return cls;
+  }
+  const negE = graceMembers(E, GRACE_NEGATION.concat(GRACE_MEANING_CLASSES.never)).length > 0;
+  const negS = graceMembers(S, GRACE_NEGATION.concat(GRACE_MEANING_CLASSES.never)).length > 0;
+  if (negE !== negS) return "negation";
+  return "";
+}
+/* THE MODEL'S OWN ANSWER, READ STRICTLY. It has to say what changed before it rules, and
+   a model that names a difference has answered the question whatever it then puts in
+   `fair` — the coffee case wrote the difference into its note and passed it anyway. */
+function graceVerdict(out) {
+  if (!out || out.fair !== true) return false;
+  const ch = String(out.changes || "").trim();
+  if (ch && !/^(none|nothing|no change|no changes|n\/a|same|-)\.?$/i.test(ch)) return false;
+  return true;
+}
 /* The whole gate, as a pure predicate, so every refusal is testable without a network.
    Returns the indexes grace would be asked about — empty means do not ask at all. */
 function learnGraceWanted(c, spoken) {
@@ -28115,8 +28187,17 @@ function learnGracePrompt(c, spoken, want, en, lib) {
     "the sentence, or produced words that do not form a sentence.\n\n" +
     "These words are still marked missing:\n" +
     want.map(i => "  " + spoken.expected[i] + trOf(spoken.expected[i])).join("\n") + "\n\n" +
-    "Return JSON only, no markdown: {\"fair\": true, \"note\": \"...\"}\n" +
-    "Set fair to false if what he said does not convey that English.\n" +
+    /* `changes` FIRST, and the order is the point: a model writes its keys in order, so
+       this makes it say what differs before it rules on whether that matters. About
+       fifteen tokens, not a thinking pass — grace has to land while the card is up. */
+    "Return JSON only, no markdown, keys in this order: " +
+    "{\"changes\": \"...\", \"fair\": true, \"note\": \"...\"}\n" +
+    "changes: in under 10 words, what his version changes about the MEANING — a " +
+    "different time, person or number, a negation gained or lost, a different thing or " +
+    "action. Leave it \"\" if the meaning is the same; a different word that means the " +
+    "same is not a change.\n" +
+    "Set fair to false if what he said does not convey that English. If changes is not " +
+    "empty, fair is false.\n" +
     "The note is for him to read, one sentence, under 25 words, and only when fair is " +
     "true: say what he said works, then name what the wanted word means that his did " +
     "not. No preamble and do not address him by name.";
@@ -28125,6 +28206,7 @@ async function learnGrace(c, spoken, askedAt) {
   if (!spoken || !geminiKeys().length) return;
   const want = learnGraceWanted(c, spoken);
   if (!want.length) return;
+  if (graceMeaningClash((spoken.expected || []).join(" "), spoken.text)) return;
   const en = learnGraceEnglish(c);
   try { statsBump({ graceCalls: 1 }); } catch (e) {}
   let out;
@@ -28136,7 +28218,7 @@ async function learnGrace(c, spoken, askedAt) {
     try { statsBump({ graceErr: 1 }); } catch (e2) {}
     return;
   }
-  if (!out || out.fair !== true) return;      // declined, and an empty answer is a correct one
+  if (!graceVerdict(out)) return;             // declined, or named a change; empty is a correct answer
   /* Same staleness rule as the adjudicator: rewriting a card he has already left is
      worse than saying nothing. */
   if (!learnSession || learnSession.i !== askedAt || learnSpoken !== spoken) {
@@ -33455,6 +33537,59 @@ T("learnGrace: a fair answer softens the standing mark, and stops at nearly", as
                "the missed word softens to nearly — never to matched — and its neighbours stand");
       assertEq(learnMarks[0], 2, "and the mark he can see moves with it");
     });
+});
+T("graceMeaningClash: a different word from the same closed set is never a synonym", () => {
+  assertEq(graceMeaningClash("עכשיו הקפה קר", "אתמול הקפה קר"), "time",
+           "his flag: yesterday for now");
+  assertEq(graceMeaningClash("אפ פעמ", "אף אחד"), "never",
+           "nobody for never — and the stored phrase's missing finals do not hide it");
+  assertEq(graceMeaningClash("אני הולך הביתה", "אתה הולך הביתה"), "person");
+  assertEq(graceMeaningClash("יש לי שני כלבים", "יש לי שלושה כלבים"), "number");
+  assertEq(graceMeaningClash("איפה אבא", "מתי אבא"), "question");
+  assertEq(graceMeaningClash("זה לא קר", "זה קר"), "negation", "a negation lost");
+  assertEq(graceMeaningClash("זה קר", "זה לא קר"), "negation", "or gained");
+  assertEq(graceMeaningClash("ואני רוצה קפה", "אתה רוצה קפה"), "person", "ו read through");
+});
+T("graceMeaningClash: leaves real judgements to the model", () => {
+  assertEq(graceMeaningClash("נוסעים לעיר בבוקר", "אנחנו הולכים לעיר בבוקר"), "",
+           "a different verb is the case grace exists for");
+  assertEq(graceMeaningClash("עכשיו הקפה קר", "הקפה קר"), "", "dropping the time word is a judgement");
+  assertEq(graceMeaningClash("אני הולך הביתה", "הולך הביתה"), "", "a dropped pronoun changes nothing");
+  assertEq(graceMeaningClash("היום אני עייף", "אני עייף היום"), "", "same members, new order");
+  assertEq(graceMeaningClash("אני רוצה את הספר", "אני רוצה ספר"), "", "את is the object marker, not a person");
+});
+T("graceVerdict: a named change overrules fair", () => {
+  assertTrue(graceVerdict({ changes: "", fair: true }), "no change, fair");
+  assertTrue(graceVerdict({ changes: "nothing", fair: true }), "'nothing' is no change");
+  assertTrue(!graceVerdict({ changes: "yesterday instead of now", fair: true }),
+             "the coffee case: it said what changed and passed it anyway");
+  assertTrue(!graceVerdict({ changes: "", fair: false }), "unfair is unfair");
+  assertTrue(!graceVerdict(null), "no answer is no grace");
+});
+T("learnGrace: a clash is refused without a call", async () => {
+  let asked = 0;
+  await graceHarness({ changes: "", fair: true, note: "fine" }, async spoken => {
+    const realReq = geminiRequest;
+    geminiRequest = async () => { asked++; return "{\"fair\":true}"; };
+    try {
+      spoken.text = "אתמול לעיר בבוקר";
+      spoken.expected = ["עכשיו", "לעיר", "בבוקר"];
+      await learnGrace(GRACE_CARD, spoken, 3);
+    } finally { geminiRequest = realReq; }
+    assertEq(asked, 0, "no request made");
+    assertEq(spoken.status, ["missed", "matched", "matched"], "and the mark stands");
+  });
+});
+T("learnGrace: a fair verdict that names a change changes nothing", async () => {
+  await graceHarness({ changes: "a different verb", fair: true, note: "x" }, async spoken => {
+    await learnGrace(GRACE_CARD, spoken, 3);
+    assertEq(spoken.status, ["missed", "matched", "matched"]);
+  });
+});
+T("learnGracePrompt: asks for the change before the verdict", () => {
+  const p = learnGracePrompt(GRACE_CARD, GRACE_SPOKEN, [0], learnGraceEnglish(GRACE_CARD), SOUND_LIB);
+  assertTrue(p.indexOf('"changes"') !== -1 && p.indexOf('"changes"') < p.indexOf('"fair"'),
+             "changes comes first in the shape it is asked to return");
 });
 T("learnGrace: an unfair answer changes nothing at all", async () => {
   await graceHarness({ fair: false, note: "no" }, async spoken => {

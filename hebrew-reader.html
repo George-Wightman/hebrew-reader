@@ -297,6 +297,12 @@
   .ailogrow:first-child { border-top: none; }
   .ailoglab { font-weight: 600; }
   .flagreply { font-size: .8rem; color: var(--accent); margin: 4px 0 2px; }
+  .flagkinds { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+  .flagkind { border: 1px solid var(--border); background: transparent; color: var(--ink);
+              border-radius: 999px; padding: 5px 12px; font: inherit; font-size: .82rem;
+              cursor: pointer; }
+  .flagkind.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #flagKindHint:empty { display: none; }
   .flagdonehead { margin-top: 14px; font-weight: 600; }
   .flagdone .ailoglab { color: var(--muted); }
   .ailogrow.bad .ailoglab { color: var(--bad); }
@@ -3208,7 +3214,9 @@
   <div class="modal">
     <h2>Things to change</h2>
     <p class="note" id="flagWhere"></p>
+    <div class="flagkinds" id="flagKinds"></div>
     <textarea id="flagText" rows="3" placeholder="What would you change about this?"></textarea>
+    <p class="note" id="flagKindHint"></p>
     <div class="btnrow" style="justify-content:space-between">
       <span class="note" id="flagSaved"></span>
       <span><button class="btn" id="flagAddBtn">Save it</button>
@@ -8393,13 +8401,23 @@ document.getElementById("flagClose").onclick = () => flagModalOpen(false);
 wireModalBackdropClose(document.getElementById("flagModal"), () => flagModalOpen(false));
 document.getElementById("flagAddBtn").onclick = () => {
   const box = document.getElementById("flagText");
-  const text = box.value.trim();
+  const kind = flagKind;
+  const ctx = flagPending || flagContext();
+  /* Wrong Hebrew needs no words — choosing it says what is wrong. Anything else does. */
+  const text = box.value.trim() || (kind === "hebrew" ? "Wrong Hebrew" : "");
   if (!text) { box.focus(); return; }
-  flagAdd(text, flagPending || flagContext());
+  flagAdd(text, ctx, kind);
+  let saved = "Saved.";
+  if (kind === "hebrew" && ctx.retire) {
+    retiredAdd([ctx.retire], "Wrong Hebrew, flagged " + new Date().toISOString().slice(0, 10));
+    saved = "Saved — that one won't come up again.";
+  }
   box.value = "";
+  flagKind = "";
+  flagKindsPaint();
   /* Stays open. He is often three thoughts deep by the time he opens this, and closing
      the panel after each one would cost him the other two. */
-  document.getElementById("flagSaved").textContent = "Saved.";
+  document.getElementById("flagSaved").textContent = saved;
   flagRender();
   flagPaint();
   /* STRAIGHT TO GITHUB, mid-session or not. Without this a flag waits for the end of the
@@ -13576,9 +13594,10 @@ function flagSave(v) { try { lsSet(FLAG_KEY, JSON.stringify(v)); } catch (e) {} 
 function flagNewId() { return String(Date.now()) + "-" + Math.random().toString(36).slice(2, 7); }
 /* Oldest first, matching mergeFlags' output so the store and the merge agree on order.
    The panel reverses for display. */
-function flagAdd(text, ctx) {
+function flagAdd(text, ctx, kind) {
   const f = { id: flagNewId(), ts: Date.now(),
               text: String(text || "").trim().slice(0, 2000), ctx: ctx || {} };
+  if (kind && FLAG_KINDS[kind]) f.kind = kind;
   flagSave(flagTrim(flagAll().concat([f]), FLAG_MAX));
   return f;
 }
@@ -13633,6 +13652,67 @@ async function flagStatusIngest() {
   if (res.changed) { flagSave(res.flags); try { flagPaint(); } catch (e) {} }
   return res.changed;
 }
+
+/* ---- what kind of thing it is ---------------------------------------------------
+   George: "I feel like we can learn a little about how the dashboard has the flags, with
+   categories I can put" — and then, on the four the dashboard uses, "maybe 'change' and
+   'idea' are too similar, maybe just go with idea". Bug, Idea, and the one that acts.
+
+   WRONG HEBREW DOES SOMETHING, which is why it is a kind and not just a label. Two of the
+   five flags in the review that prompted this were a sentence no one would say, and the
+   sentence kept coming back because a flag only ever wrote a note. Choosing it retires
+   that sentence on the spot — through the same store the first-month clean-up used — and
+   still records the flag, so I see what was wrong with it.
+
+   Pure: what on this card could be retired. The Hebrew he was asked to produce, with the
+   question when there is one, because a reply can be wrong in its question alone. A word
+   card is a library word, not a sentence, and the coach has no target string — neither
+   offers it. */
+function flagRetireTarget(card) {
+  if (!card) return null;
+  if (card.kind === "chunk") return card.key ? { kind: "chunk", he: card.key } : null;
+  if (["sentence", "listen", "reply"].indexOf(card.kind) === -1 || !card.item || !card.item.he) return null;
+  const t = { kind: card.kind, he: card.item.he };
+  if (card.item.qhe) t.qhe = card.item.qhe;
+  return t;
+}
+/* Pure: open flags newest-first in, grouped for the panel out — bugs first because
+   they are the ones costing him something now, unfiled last. Within a group the order
+   is untouched. */
+const FLAG_GROUP_ORDER = ["bug", "hebrew", "idea", ""];
+function flagGroups(openNewestFirst) {
+  const groups = FLAG_GROUP_ORDER.map(k => ({ kind: k, flags: [] }));
+  (openNewestFirst || []).forEach(f => {
+    const k = (f && FLAG_KINDS[f.kind]) ? f.kind : "";
+    groups[FLAG_GROUP_ORDER.indexOf(k)].flags.push(f);
+  });
+  return groups.filter(g => g.flags.length);
+}
+let flagKind = "";
+function flagKindsPaint() {
+  const box = document.getElementById("flagKinds");
+  if (!box) return;
+  box.innerHTML = "";
+  Object.keys(FLAG_KINDS).forEach(k => {
+    if (k === "hebrew" && !(flagPending && flagPending.retire)) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "flagkind" + (flagKind === k ? " on" : "");
+    b.textContent = FLAG_KINDS[k];
+    b.setAttribute("aria-pressed", flagKind === k ? "true" : "false");
+    b.onclick = () => { flagKind = flagKind === k ? "" : k; flagKindsPaint(); };
+    box.append(b);
+  });
+  const hint = document.getElementById("flagKindHint");
+  if (!hint) return;
+  hint.textContent = "";
+  /* <bdi>, or the quotation marks bind to the wrong end of the Hebrew. */
+  if (flagKind === "hebrew") {
+    const he = document.createElement("bdi");
+    he.textContent = flagPending.retire.he;
+    hint.append("“", he, "” won't come up again.");
+  }
+}
 /* INERT, NOT DELETED — replacing what used to be flagDrop. Deleting a flag locally and
    then syncing brought it straight back: mergeFlags is a union, so "my copy is missing
    it" and "this never existed on my side" are indistinguishable, and George's own
@@ -13683,6 +13763,8 @@ function flagContext(report) {
                  he: learnExpectedHe(card) || "",
                  tr: (card.item && card.item.tr) || "",
                  en: (card.item && card.item.en) || "" };
+      const rt = flagRetireTarget(card);
+      if (rt) c.retire = rt;
     }
     if (s) c.session = { at: s.i + 1, of: (s.cards || []).length, got: s.got };
     if (s && s.path) c.lesson = s.path.id + " · lesson " + s.path.lesson;
@@ -13791,8 +13873,18 @@ function flagRender() {
   const open = flags.filter(f => !f.resolved);
   const resolvedCount = flags.length - open.length;
   list.innerHTML = "";
-  /* Newest first for reading; the store is oldest-first so it agrees with the merge. */
-  open.slice().reverse().forEach(f => {
+  /* Newest first for reading; the store is oldest-first so it agrees with the merge.
+     Grouped by kind, with a heading only once anything has been filed at all — a panel
+     of nothing but unfiled flags does not need to say so. */
+  const groups = flagGroups(open.slice().reverse());
+  const labelled = groups.some(g => g.kind);
+  groups.forEach(g => g.flags.forEach((f, gi) => {
+    if (labelled && gi === 0) {
+      const h = document.createElement("p");
+      h.className = "note flagdonehead";
+      h.textContent = g.kind ? FLAG_KINDS[g.kind] : "Not filed";
+      list.append(h);
+    }
     const row = document.createElement("div");
     row.className = "ailogrow";
     const head = document.createElement("div");
@@ -13835,7 +13927,7 @@ function flagRender() {
     done.onclick = () => { flagResolve(f.id); flagRender(); flagPaint(); };
     row.append(btn, done, more);
     list.append(row);
-  });
+  }));
   /* WHAT I DID, WHERE HE WILL SEE IT. A week of it, then it folds into the count below —
      long enough to notice, short enough not to become a second backlog. */
   const recent = flags.filter(f => f.resolved && f.resolvedBy === "claude" && f.note &&
@@ -13882,17 +13974,23 @@ function flagRender() {
    word bands and node word list flagContext used to assemble by hand: those were a
    second, thinner implementation of what the registry already answers properly, and two
    pieces of code answering the same question is how they drift apart. */
-function flagModalOpen(on, report) {
+function flagModalOpen(on, report, preset) {
   document.getElementById("flagModal").style.display = on ? "flex" : "none";
   if (!on) return;
   /* Captured on OPEN, not on save: he may spend a minute typing, and by then a card can
      have moved on underneath him. The moment being described is the one he reached for
-     the flag in. */
+     the flag in.
+
+     `preset` is for a flag raised FROM somewhere — the coach's "Not right" — which knows
+     what it is about better than the screen does. */
   flagPending = flagContext(report);
+  if (preset && preset.ctx) Object.assign(flagPending, preset.ctx);
+  flagKind = (preset && preset.kind && FLAG_KINDS[preset.kind]) ? preset.kind : "";
   document.getElementById("flagWhere").textContent = "About: " + flagContextLine(flagPending);
   document.getElementById("flagSaved").textContent = "";
+  flagKindsPaint();
   const box = document.getElementById("flagText");
-  box.value = "";
+  box.value = (preset && preset.text) || "";
   flagRender();
   try { box.focus(); } catch (e) {}
 }
@@ -37858,6 +37956,35 @@ T("flagApplyStatus: addressed resolves with my note; a question does not resolve
   assertEq(out.flags[3].kind, "idea");
   assertEq(out.changed, 3);
   assertEq(flagApplyStatus(out.flags, file).changed, 0, "applying twice changes nothing");
+});
+T("flagRetireTarget: the Hebrew he was asked for, and only where there is one", () => {
+  assertEq(flagRetireTarget({ kind: "sentence", item: { he: "קצת כלב" } }),
+           { kind: "sentence", he: "קצת כלב" });
+  assertEq(flagRetireTarget({ kind: "reply", item: { qhe: "אפו אתה הולך?", he: "אני הולך לעבודה" } }),
+           { kind: "reply", he: "אני הולך לעבודה", qhe: "אפו אתה הולך?" }, "a reply keeps its question");
+  assertEq(flagRetireTarget({ kind: "chunk", key: "אף פעם" }), { kind: "chunk", he: "אף פעם" });
+  assertEq(flagRetireTarget({ kind: "word", key: "כלב" }), null, "a library word is not a sentence");
+  assertEq(flagRetireTarget({ kind: "compose" }), null, "the coach has no target");
+});
+T("flagGroups: bugs first, unfiled last, newest first within each", () => {
+  const out = flagGroups([{ id: "5", kind: "idea" }, { id: "4" }, { id: "3", kind: "bug" },
+                          { id: "2", kind: "idea" }, { id: "1", kind: "nonsense" }]);
+  assertEq(out.map(g => g.kind), ["bug", "idea", ""]);
+  assertEq(out[1].flags.map(f => f.id), ["5", "2"]);
+  assertEq(out[2].flags.map(f => f.id), ["4", "1"], "an unknown kind is unfiled, not lost");
+});
+T("flagAdd: keeps a real kind and ignores an invented one", () => {
+  const saved = lsGet(FLAG_KEY);
+  try {
+    lsSet(FLAG_KEY, "[]");
+    flagAdd("x", {}, "bug");
+    flagAdd("y", {}, "whatever");
+    const out = flagAll();
+    assertEq(out[0].kind, "bug");
+    assertTrue(!("kind" in out[1]));
+  } finally {
+    if (saved === null) localStorage.removeItem(FLAG_KEY); else lsSet(FLAG_KEY, saved);
+  }
 });
 T("flagResolve: stays in the store, inert rather than gone", () => {
   /* PUTS THE REAL FLAGS BACK. This used to overwrite hvr_flags and then REMOVE it, so

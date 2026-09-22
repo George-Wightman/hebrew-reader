@@ -3120,6 +3120,46 @@
                        -webkit-mask: var(--ic-mic) center / contain no-repeat;
                        mask: var(--ic-mic) center / contain no-repeat; }
   #lSpeedMic.listening::before { -webkit-mask-image: var(--ic-pause); mask-image: var(--ic-pause); }
+
+  /* ---- Words ---- */
+  body.chrome-words { background: var(--bg); }
+  .viewboard { padding: 14px 14px 30px; }
+  .boardhead { margin-bottom: 12px; }
+  h3.sec { font-family: var(--display); font-size: 1.25rem; font-weight: 500; }
+  h3.sec #libCount { font-family: var(--ui); font-size: .82rem; }
+  .focuschip, .qbtn { border-radius: 16px; min-height: 30px; }
+  .libbar { gap: 8px; }
+  .libbar input[type=text] { min-height: 46px; border-radius: 23px; padding: 0 18px; font-size: .95rem;
+    background: var(--panel); border-color: var(--border); color: var(--ink); }
+  .libbar .btn { border-radius: 23px; min-height: 46px; padding: 0 18px; }
+  .zoomrow select { background: var(--panel); color: var(--ink); border-radius: 8px; }
+  .lensbtn { border-radius: 16px; min-height: 32px; padding: 4px 11px; font-size: .8rem; }
+  .fillforms { border-radius: 16px; min-height: 32px; }
+  .gridwrap { border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+  /* Block headings in the world's face: a category is a place words live, not a label. */
+  .gblock-head { font-family: var(--display); font-size: calc(var(--gfont) + 2px); font-weight: 500;
+                 text-transform: none; letter-spacing: 0; color: var(--ink);
+                 border-bottom-color: var(--border); }
+  .gblock.pending-block .gblock-head { color: var(--c-a3691f); }
+  .gblock-head .addall { font-family: var(--ui); border-radius: 12px; padding: 1px 10px; }
+  .grow-row .gtr { color: var(--accent); font-style: italic; font-weight: 500; }
+  .grow-row .ghe { color: var(--hebrew); opacity: .8; }
+  .archdrawer { border-radius: 12px; }
+  .archdrawer-head h4 { font-family: var(--display); font-size: 1.05rem; font-weight: 500; }
+  /* The voice-note reader, now at the foot of the page: a quiet row rather than the
+     first loud thing on it. Same bar, same panel, same Ctrl+V. */
+  .inboxbar { margin-top: 18px; border-style: dashed; background: transparent; box-shadow: none; }
+  .inboxbar .ib-lbl { font-weight: 500; }
+  .inboxpanel { margin-top: 10px; }
+  /* THE SENTENCE PAD, closed: a dark pill standing on the dock, the one thing on Words
+     that is for writing rather than reading. Open, its body sits above it as before. */
+  .padstrip-head { background: var(--ink); color: var(--panel); box-shadow: 0 8px 22px var(--c-34-48-60-22);
+                   padding: 10px 18px; min-height: 46px; }
+  .padstrip-head h4 { color: var(--panel); font-size: .92rem; }
+  .padstrip-head .padmeta, .padstrip-head .caret { color: var(--faint); }
+  .padstrip #padInput, .padstrip .padline, .padstrip #padDrafts:not(:empty) { border-radius: 12px; }
+  .padline { font-family: var(--he); font-size: 1.3rem; }
+  .ptile .phe { font-size: 1.45rem; }
 </style>
 </head>
 <body>
@@ -3281,6 +3321,73 @@
      you accept them, and the pad at the bottom is where you write back. -->
 <div class="viewboard" id="viewWords" style="display:none">
 
+  <div class="boardhead">
+    <h3 class="sec">Library <span id="libCount" style="color:var(--muted);font-weight:400"></span><button
+        id="focusChip" class="focuschip" style="display:none"></button><button
+        id="shelfChip" class="focuschip" style="display:none"></button><button
+        id="notesToggle" class="qbtn" title="Show/hide the reminders">?</button></h3>
+    <div class="libbar">
+      <input type="text" id="libSearch" placeholder="search Hebrew, pronunciation or English…">
+      <button class="btn secondary" id="libViewToggle" title="Switch between the focus grid and the map of every word">Map</button>
+      <span class="zoomrow">
+        <label for="zoomRange">zoom</label>
+        <input type="range" id="zoomRange" min="8" max="17" step="1" value="12">
+        <select id="heMode" title="Hebrew script size">
+          <option value="tiny">Hebrew: small</option>
+          <option value="full">Hebrew: full</option>
+          <option value="off">Hebrew: hidden</option>
+        </select>
+      </span>
+      <span class="lensrow" id="lensRow" role="radiogroup"
+            aria-label="Show words as you'd say them to"><span class="lenslbl"
+            aria-hidden="true">saying it to</span></span>
+      <span id="lensLive" class="visually-hidden" aria-live="polite"></span>
+      <button id="fillFormsBtn" class="fillforms" style="display:none"></button>
+      <span class="status" id="libStatus"></span>
+    </div>
+  </div>
+  <div class="gridwrap" id="gridwrap"><div id="grid" class="grid"></div></div>
+  <!-- The Word map: every word (focus, reserve, archive-only) laid out spatially,
+       categories as clusters. Pan by dragging empty space, zoom with the wheel;
+       zoomed out, clusters shrink to name-and-count bubbles. Same row builders as
+       the grid, so every per-word action works in both views. -->
+  <div class="mapwrap" id="mapwrap" style="display:none">
+    <div id="mapplane" class="mapplane"></div>
+    <div class="maphint" id="mapHint">drag to pan · scroll to zoom · drag a cluster by its heading · Enter flies to a search match</div>
+  </div>
+  <div class="libnote">New words are flagged in <strong>Pending</strong> for you to review, not added
+    automatically — ✓ to add one, ✕ to dismiss it, or "Add all" to accept everything at once.
+    Drag a block heading to move it anywhere; ▾ collapses a block to just its heading. Drag a word
+    into another block to recategorise it, or onto another word to pair them as opposites (↔ to
+    unpair). Hover a word for ✎/✕, ★ to mark it, ↓ to retire it to <strong>reserve</strong> — off
+    the grid but still drilled, searched and exported. Search looks through reserve too, and Enter
+    jumps between matches.
+    Use the <strong>Sentence pad</strong> below to build a reply — type the pronunciation and the
+    Hebrew fills itself in from your library. Words it doesn't know show as gaps you can ask about.</div>
+
+  <!-- Every word the app has ever seen. Occasional reference, so a drawer rather than
+       a tab — the Library above is the set actually being worked on. -->
+  <div class="archdrawer" id="archDrawer">
+    <div class="archdrawer-head" id="archToggle">
+      <h4>All words</h4>
+      <span class="archmeta" id="archCount"></span>
+      <span class="caret" id="archCaret">▸</span>
+    </div>
+    <div class="archdrawer-body" id="archBody">
+      <div class="archbar">
+        <input type="text" id="archSearch" placeholder="search Hebrew, pronunciation or English…">
+        <span class="status" id="archStatus"></span>
+      </div>
+      <div class="archnote">Everything that's come through the app, studied or not.
+        <strong>⊕</strong> moves one into your Library to work on.</div>
+      <div id="archList" class="archlist"></div>
+    </div>
+  </div>
+  <!-- VOICE NOTES, AT THE FOOT OF THE PAGE (Atlas, 2026-09-23). George: "its no longer
+       primarily/ at all about replying to voice notes, this is my primary learning app
+       now." The whole reader is kept and works exactly as it did — the same bar, the same
+       panel, Ctrl+V still lands here — but it is one scroll further in rather than the
+       first thing on the Words page. -->
   <!-- Resting state: the whole Translator, collapsed to a single bar. -->
   <button class="inboxbar" id="inboxBar">
     <span class="ib-ic">＋</span>
@@ -3353,68 +3460,6 @@
     </div>
   </div>
 
-  <div class="boardhead">
-    <h3 class="sec">Library <span id="libCount" style="color:var(--muted);font-weight:400"></span><button
-        id="focusChip" class="focuschip" style="display:none"></button><button
-        id="shelfChip" class="focuschip" style="display:none"></button><button
-        id="notesToggle" class="qbtn" title="Show/hide the reminders">?</button></h3>
-    <div class="libbar">
-      <input type="text" id="libSearch" placeholder="search Hebrew, pronunciation or English…">
-      <button class="btn secondary" id="libViewToggle" title="Switch between the focus grid and the map of every word">Map</button>
-      <span class="zoomrow">
-        <label for="zoomRange">zoom</label>
-        <input type="range" id="zoomRange" min="8" max="17" step="1" value="12">
-        <select id="heMode" title="Hebrew script size">
-          <option value="tiny">Hebrew: small</option>
-          <option value="full">Hebrew: full</option>
-          <option value="off">Hebrew: hidden</option>
-        </select>
-      </span>
-      <span class="lensrow" id="lensRow" role="radiogroup"
-            aria-label="Show words as you'd say them to"><span class="lenslbl"
-            aria-hidden="true">saying it to</span></span>
-      <span id="lensLive" class="visually-hidden" aria-live="polite"></span>
-      <button id="fillFormsBtn" class="fillforms" style="display:none"></button>
-      <span class="status" id="libStatus"></span>
-    </div>
-  </div>
-  <div class="gridwrap" id="gridwrap"><div id="grid" class="grid"></div></div>
-  <!-- The Word map: every word (focus, reserve, archive-only) laid out spatially,
-       categories as clusters. Pan by dragging empty space, zoom with the wheel;
-       zoomed out, clusters shrink to name-and-count bubbles. Same row builders as
-       the grid, so every per-word action works in both views. -->
-  <div class="mapwrap" id="mapwrap" style="display:none">
-    <div id="mapplane" class="mapplane"></div>
-    <div class="maphint" id="mapHint">drag to pan · scroll to zoom · drag a cluster by its heading · Enter flies to a search match</div>
-  </div>
-  <div class="libnote">New words are flagged in <strong>Pending</strong> for you to review, not added
-    automatically — ✓ to add one, ✕ to dismiss it, or "Add all" to accept everything at once.
-    Drag a block heading to move it anywhere; ▾ collapses a block to just its heading. Drag a word
-    into another block to recategorise it, or onto another word to pair them as opposites (↔ to
-    unpair). Hover a word for ✎/✕, ★ to mark it, ↓ to retire it to <strong>reserve</strong> — off
-    the grid but still drilled, searched and exported. Search looks through reserve too, and Enter
-    jumps between matches.
-    Use the <strong>Sentence pad</strong> below to build a reply — type the pronunciation and the
-    Hebrew fills itself in from your library. Words it doesn't know show as gaps you can ask about.</div>
-
-  <!-- Every word the app has ever seen. Occasional reference, so a drawer rather than
-       a tab — the Library above is the set actually being worked on. -->
-  <div class="archdrawer" id="archDrawer">
-    <div class="archdrawer-head" id="archToggle">
-      <h4>All words</h4>
-      <span class="archmeta" id="archCount"></span>
-      <span class="caret" id="archCaret">▸</span>
-    </div>
-    <div class="archdrawer-body" id="archBody">
-      <div class="archbar">
-        <input type="text" id="archSearch" placeholder="search Hebrew, pronunciation or English…">
-        <span class="status" id="archStatus"></span>
-      </div>
-      <div class="archnote">Everything that's come through the app, studied or not.
-        <strong>⊕</strong> moves one into your Library to work on.</div>
-      <div id="archList" class="archlist"></div>
-    </div>
-  </div>
 </div>
 
 <!-- decorative fade behind the dock so content scrolling under it softens out -->

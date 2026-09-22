@@ -39,7 +39,13 @@ const SHELL = [
   "./hebrew-reader.html",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
-  "./icons/icon.svg"
+  "./icons/icon.svg",
+  /* The Atlas type (2026-09-23). Without these the app still opens offline, but in
+     Georgia — a first launch on the Underground would look like a different app. */
+  "./assets/fonts/frank-ruhl-libre-hebrew.woff2",
+  "./assets/fonts/frank-ruhl-libre-latin.woff2",
+  "./assets/fonts/cormorant-garamond-italic-latin.woff2",
+  "./assets/fonts/instrument-sans-latin.woff2"
 ];
 
 self.addEventListener("install", (event) => {

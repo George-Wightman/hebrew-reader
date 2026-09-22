@@ -19002,13 +19002,89 @@ function bankUsesRefresh(bank, lib) {
   });
   return { bank: out, changed: changed };
 }
+/* ---- sentences that are out for good ------------------------------------------
+   George, on two sentences Gemini wrote before the stronger reviewer existed: "What does
+   this sentence mean, like that is not something anyone would say" and "This sentence
+   doesn't make sense". A flag recorded that, and the sentence kept coming back, because
+   nothing a flag does touches the bank.
+
+   KEYED BY THE HEBREW, NOT THE ID. Bank ids are made per device at ingest, so the same
+   sentence has a different id on his phone and his laptop; a retirement by id would hold
+   on one and not the other. The key is the question (for a reply) and the answer, both
+   through normHe, so punctuation and a missing final letter do not make a second key.
+   A key with no question retires that Hebrew wherever it appears — if the sentence is
+   wrong, it is wrong as an answer too.
+
+   A plain object, so the generic sync merge unions it and a retirement on either device
+   reaches both. Nothing ever un-retires; that is the point. */
+const RETIRED_KEY = "hvr_retired";
+function retiredKey(he, qhe) { return normHe(qhe || "") + "|" + normHe(he || ""); }
+function retiredAll() {
+  try { const o = JSON.parse(lsGet(RETIRED_KEY));
+        return (o && typeof o === "object" && !Array.isArray(o)) ? o : {}; }
+  catch (e) { return {}; }
+}
+/* Pure over `store` when one is passed, so the suite never writes his real one. */
+function retiredAdd(list, why, store) {
+  const own = !store;
+  const s = store || retiredAll();
+  let n = 0;
+  (list || []).forEach(x => {
+    if (!x || !normHe(x.he || "")) return;
+    const k = retiredKey(x.he, x.qhe);
+    if (s[k]) return;
+    s[k] = { ts: Date.now(), why: String(why || "") };
+    n++;
+  });
+  if (own && n) lsSet(RETIRED_KEY, JSON.stringify(s));
+  return n;
+}
+function isRetired(it, retired) {
+  if (!it) return false;
+  const r = retired || retiredAll();
+  return !!(r[retiredKey(it.he, it.qhe)] || r[retiredKey(it.he, "")]);
+}
+
+/* ---- final letters -------------------------------------------------------------
+   A "never" phrase card was sitting in his store as אפ פעמ: both words ending in the
+   ordinary form of a letter that has a final one. That is not a spelling variant, it
+   is not Hebrew, and he was being graded against it. A geresh after the letter (צ', a
+   borrowed sound) is the one legitimate way a word ends in these, so it is let through. */
+const HE_NONFINAL_TO_FINAL = { "כ": "ך", "מ": "ם", "נ": "ן", "פ": "ף", "צ": "ץ" };
+function heFinalFix(he) {
+  return String(he || "").replace(/([א-ת])([כמנפצ])(?=[^א-ת'׳\u0591-\u05C7]|$)/g,
+    (m, a, b) => a + HE_NONFINAL_TO_FINAL[b]);
+}
+function heFinalFormsBad(he) { return heFinalFix(he) !== String(he || ""); }
+
+/* ---- transliteration in the house scheme ---------------------------------------
+   He reads the transliteration — it is the line he produces from — and CLAUDE.md says a
+   second convention teaches two spellings for one sound. The writers are told the scheme
+   and do not always follow it: the old bank says achshav and nechmad, the coach wrote
+   me'harechov. So what a model writes is brought into line on the way in, rather than
+   trusting every prompt to hold.
+
+   kh for ch; the article and one-letter prepositions join without a hyphen, with an
+   apostrophe where the join meets a vowel; and no apostrophe where it meets a consonant.
+   Only ever for transliteration fields — "ch" is English in the coach's prose. */
+function trHouse(tr) {
+  let s = String(tr || "");
+  if (!s) return s;
+  s = s.replace(/ch/g, "kh").replace(/Ch/g, "Kh").replace(/CH/g, "KH");
+  s = s.replace(/\b(ha|he|be|ba|bi|le|la|li|me|mi|ve|va|she|ke|ka)-(?=[A-Za-z])/gi,
+    (m, p, off, str) => /[aeiou]/i.test(str[off + m.length]) ? p + "'" : p);
+  s = s.replace(/\b(ha|be|ba|le|la|me|mi|ve|she)'(?=[b-df-hj-np-tv-z])/gi, "$1");
+  return s;
+}
+
 /* Refreshed BEFORE the filter, and this order is the whole point: an item whose stored
    `uses` came out empty fails `.some(u => lib[u])` and would be thrown away by the very
    call that was supposed to rescue it. Every read path in the app goes through here, so
-   after this no reader can see a stale `uses`. */
-function bankPrune(bank, lib) {
+   after this no reader can see a stale `uses` — and none can see a retired sentence. */
+function bankPrune(bank, lib, retired) {
+  const ret = retired || retiredAll();
   return bankUsesRefresh(bank, lib).bank
-    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]));
+    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]) && !isRetired(it, ret));
 }
 
 /* ---- refusing the same sentence wearing a different hat ----------------------
@@ -19329,7 +19405,7 @@ function cleanGloss(raw) {
     if (!g || !g.he) return;
     const he = String(g.he).replace(/[^֐-׿]/g, "");
     if (!he) return;
-    out.push({ he: he, tr: String(g.tr || ""), en: String(g.en || ""), why: String(g.why || "") });
+    out.push({ he: he, tr: trHouse(g.tr), en: String(g.en || ""), why: String(g.why || "") });
   });
   return out;
 }
@@ -22737,9 +22813,9 @@ function composeNormalise(out) {
     /* heOnly on both, and on newWords below. say.he is what speakHe reads aloud; best.he
        is what gets BANKED for later practice, so a polluted one outlives the turn and
        comes back as a drill card weeks later. Same exposure, same guard. */
-    say: { he: heOnly(say.he), tr: String(say.tr || "").trim(),
+    say: { he: heOnly(say.he), tr: trHouse(String(say.tr || "").trim()),
            en: String(say.en || "").trim() },
-    best: { he: heOnly(best.he), tr: String(best.tr || "").trim(),
+    best: { he: heOnly(best.he), tr: trHouse(String(best.tr || "").trim()),
             en: String(best.en || "").trim() },
     /* Absent means "did not ask" — a reply that forgot the field is treated as one that
        owes him nothing, which errs towards ending cleanly rather than towards a turn
@@ -24002,9 +24078,11 @@ function chunksSave(v) { lsSet(CHUNKS_KEY, JSON.stringify(v)); }
 /* Everything the app can schedule as a chunk. Built-ins win a collision: their glosses
    were written for this app rather than read off one recording. */
 function chunkAll() {
-  const store = chunksStored(), out = {};
+  const store = chunksStored(), out = {}, ret = retiredAll();
   Object.keys(store).forEach(k => { out[k] = store[k]; });
   Object.keys(PHRASES).forEach(k => { out[k] = PHRASES[k]; });
+  /* A phrase he marked Wrong Hebrew stops being scheduled, built-in or harvested. */
+  Object.keys(out).forEach(k => { if (ret[retiredKey(k, "")]) delete out[k]; });
   return out;
 }
 /* Two to five words. Guarded because a model asked for "fixed expressions" will
@@ -24069,6 +24147,7 @@ function chunkHarvest(list) {
   let n = 0;
   list.forEach(c => {
     const e = chunkNormalise(c);
+    if (e) e.he = heFinalFix(e.he);
     if (!e || PHRASES[e.he] || store[e.he]) return;
     store[e.he] = [e.tr, e.en];
     n++;
@@ -24938,6 +25017,110 @@ async function sentenceCommission(spec) {
   return n;
 }
 
+/* ---- the clean-up of the first month -------------------------------------------
+   Every non-Claude sentence in his bank was read on 2026-09-22. The batch written from
+   2026-09-07 on is clean; the earlier one was written before the reviewer was rebuilt on
+   2026-09-03 and never went back through it, and about a dozen are wrong. These are
+   those, named — the two he flagged, and the rest from reading them. Retired through the
+   same store Wrong Hebrew uses, so they cannot come back on either device.
+
+   Then everything else from before the cutoff goes through today's reviewer once, and
+   what it will not keep is retired too. See 2026-09-22-five-flags-and-the-backlog-design.md. */
+const LEGACY_RETIRE = [
+  { he: "אני לומד לעבוד בעבודה לא אטי" },       // his flag, 12 Sep
+  { he: "אני רוצה קצת נחמד" },                   // his flag, 20 Sep
+  { he: "קצת כלב" },                             // a little (amount of) dog
+  { he: "אני בא עבודה היום" },                   // no ל
+  { he: "היום היה עבודה" },                      // עבודה is feminine
+  { he: "היה עבודה טוב היום" },
+  { he: "לא טוב עבודה" },
+  { he: "הכלב הקטן באביב" },                     // a fragment no one says
+  { he: "כן, כלב קטן באביב" },
+  { he: "זה לא אביב היום. אתמול היה גשם" },
+  { he: "אמא ואבא משפחה אבל חבר לא משפחה" },
+  { he: "אני חושב שזה טוב, אבל אני לא מדבר אנגלית." },
+  { qhe: "אתה מזיע", he: "כן יש רוח" },          // answers a different question
+  { qhe: "אתה בא היום", he: "לא עבודה היום" },
+  { qhe: "איפה הדירה?", he: "הדירה גדולה" },
+  { qhe: "אפו אתה הולך?", he: "אני הולך לעבודה" }, // the question is misspelt
+  { he: "טוב אתה הולך" },
+  { he: "אין פה בית." }
+];
+const LEGACY_CLEAN_KEY = "hvr_legacyclean_v1";
+const LEGACY_REVIEW_KEY = "hvr_legacyreview_v1";
+const LEGACY_CUTOFF = "2026-09-07";
+/* Pure: which bank items the reviewer should see. Sentences only — the listen and reply
+   items from that period were read by hand and the bad ones are in LEGACY_RETIRE. */
+function legacyReviewCandidates(bank, retired) {
+  return (bank || []).filter(it => it && it.he && it.src !== "claude" &&
+    (it.type || "sentence") === "sentence" && it.added && it.added < LEGACY_CUTOFF &&
+    !isRetired(it, retired));
+}
+/* Pure: the bank with every model-written transliteration in the house scheme, and how
+   many items changed. Claude's own content is left alone — it is written to the scheme
+   and comes back from the file anyway. */
+function legacyTrFix(bank) {
+  let changed = 0;
+  const out = (bank || []).map(it => {
+    if (!it || it.src === "claude") return it;
+    const tr = trHouse(it.tr), qtr = trHouse(it.qtr);
+    const gloss = Array.isArray(it.gloss) ? it.gloss.map(g => g ? Object.assign({}, g, { tr: trHouse(g.tr) }) : g) : it.gloss;
+    const same = tr === String(it.tr || "") && qtr === String(it.qtr || "") &&
+      JSON.stringify(gloss) === JSON.stringify(it.gloss);
+    if (same) return it;
+    changed++;
+    return Object.assign({}, it, { tr: tr, qtr: qtr, gloss: gloss });
+  });
+  return { bank: out, changed: changed };
+}
+/* Pure: harvested phrases whose last letters are in the wrong form, repaired in place,
+   and the SRS record moved with them so a repaired phrase keeps its history. */
+function legacyChunkFix(store, srs) {
+  const out = {}, moves = [];
+  Object.keys(store || {}).forEach(k => {
+    const fixed = heFinalFix(k);
+    if (fixed !== k) moves.push([k, fixed]);
+    if (!out[fixed]) out[fixed] = store[k];
+  });
+  const s = Object.assign({}, srs || {});
+  moves.forEach(([from, to]) => { if (s[from] && !s[to]) s[to] = s[from]; delete s[from]; });
+  return { store: out, srs: s, moved: moves.length };
+}
+async function legacyClean() {
+  if (!lsGet(LEGACY_CLEAN_KEY)) {
+    try {
+      const named = retiredAdd(LEGACY_RETIRE, "first-month clean-up, read by hand");
+      const bad = bankAll().filter(it => it && (heFinalFormsBad(it.he) || heFinalFormsBad(it.qhe)));
+      const finals = retiredAdd(bad, "a word ends in the wrong form of its last letter");
+      const tr = legacyTrFix(bankAll());
+      if (tr.changed) bankSave(tr.bank);
+      const ch = legacyChunkFix(chunksStored(), srsAll());
+      if (ch.moved) { chunksSave(ch.store); srsSave(ch.srs); }
+      lsSet(LEGACY_CLEAN_KEY, JSON.stringify({ at: new Date().toISOString(), named: named,
+        finals: finals, trFixed: tr.changed, chunksFixed: ch.moved }));
+    } catch (e) {}
+  }
+  /* The reviewer pass needs his key and spends the strong pool, so it waits for a load
+     that has both and is marked done only when it has actually run. A review that falls
+     back — no reply, a malformed one — returns its input untouched, and so retires
+     nothing: a review that did not happen must not cost him sentences. */
+  if (lsGet(LEGACY_REVIEW_KEY) || !geminiKeys().length) return;
+  const cand = legacyReviewCandidates(bankAll(), retiredAll());
+  let reviewed = 0, dropped = 0;
+  const budget = CONTENT_REVIEW_BATCHES * CONTENT_REVIEW_BATCH;
+  for (let i = 0; i < cand.length && i < budget; i += CONTENT_REVIEW_BATCH) {
+    const batch = cand.slice(i, i + CONTENT_REVIEW_BATCH);
+    let out = null;
+    try { out = await learnReviewItems({ items: batch }); } catch (e) { out = null; }
+    if (!out || !Array.isArray(out.items)) continue;
+    reviewed += batch.length;
+    const kept = new Set(out.items.map(it => it && it.he));
+    dropped += retiredAdd(batch.filter(it => !kept.has(it.he)), "failed the reviewer, 2026-09-22");
+  }
+  lsSet(LEGACY_REVIEW_KEY, JSON.stringify({ at: new Date().toISOString(),
+    candidates: cand.length, reviewed: reviewed, retired: dropped }));
+}
+
 /* ---- throwing away what's finished with -------------------------------------
    Topping up every session without ever retiring anything just grows a bigger pile
    of the same thing. George: "once Ive dont it once or twice, that should be enough
@@ -25418,8 +25601,14 @@ function learnIngest(data) {
      at the end — padIngest reads and rewrites the whole pending store, so calling it per
      item would be the same work repeated for every sentence. */
   const introduced = [];
+  const retired = retiredAll();
   items.forEach(it => {
     if (!it || !it.he || !it.tr) return;
+    /* Thrown out once is thrown out: a writer that produces the same bad line again
+       does not get to bring it back. And a word ending in the wrong form of its last
+       letter is not Hebrew, however it got written. */
+    if (isRetired(it, retired)) return;
+    if (heFinalFormsBad(it.he) || heFinalFormsBad(it.qhe)) return;
     const type = ["sentence", "listen", "reply"].indexOf(it.type) !== -1 ? it.type : "sentence";
     const uses = bankUses(it.he, lib);
     /* Drills none of his words — it'd be a reading comprehension puzzle, not
@@ -25477,8 +25666,8 @@ function learnIngest(data) {
     if (bankFrameFull(it.he, bank)) return;
     bank.push({
       id: "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      type: type, he: String(it.he), tr: String(it.tr), en: String(it.en || ""),
-      qhe: it.qhe ? String(it.qhe) : "", qtr: it.qtr ? String(it.qtr) : "",
+      type: type, he: String(it.he), tr: trHouse(it.tr), en: String(it.en || ""),
+      qhe: it.qhe ? String(it.qhe) : "", qtr: it.qtr ? trHouse(it.qtr) : "",
       qen: it.qen ? String(it.qen) : "",
       gloss: cleanGloss(it.gloss),
       /* The word this item was WRITTEN TO RESCUE, when it was commissioned for one.
@@ -27054,7 +27243,7 @@ function convoBubble(who, he, tr, en) {
   const b = document.createElement("div"); b.className = "lbub " + who;
   const h = document.createElement("div"); h.className = "lbub-he"; h.textContent = he || "";
   b.append(h);
-  if (tr) { const t = document.createElement("div"); t.className = "lbub-tr"; t.textContent = tr; b.append(t); }
+  if (tr) { const t = document.createElement("div"); t.className = "lbub-tr"; t.textContent = trHouse(tr); b.append(t); }
   if (en) { const e = document.createElement("div"); e.className = "lbub-en"; e.textContent = en; b.append(e); }
   return b;
 }
@@ -30502,6 +30691,9 @@ setTimeout(() => syncRun("open", { quiet: true }), 1200);
    something the other device already had. Late enough to be off the opening critical
    path either way — nothing on screen is waiting for it. */
 setTimeout(() => { contentCheck(true); }, 2600);
+/* After the content check for the same reason it waits for the sync: the bank should be
+   the merged one before anything is retired from it. */
+setTimeout(() => { if (location.search.indexOf("selftest") === -1) legacyClean(); }, 5200);
 /* Coming back to a resident app is the moment that matters — see contentCheck. Guarded
    because an old WebView may not have the event, and a missing re-check must degrade to
    the load-time one rather than throwing on boot. */
@@ -33590,6 +33782,68 @@ T("learnGracePrompt: asks for the change before the verdict", () => {
   const p = learnGracePrompt(GRACE_CARD, GRACE_SPOKEN, [0], learnGraceEnglish(GRACE_CARD), SOUND_LIB);
   assertTrue(p.indexOf('"changes"') !== -1 && p.indexOf('"changes"') < p.indexOf('"fair"'),
              "changes comes first in the shape it is asked to return");
+});
+T("retiredKey: one key for a sentence however it is punctuated or finalled", () => {
+  assertEq(retiredKey("אני רוצה קצת נחמד."), retiredKey("אני רוצה קצת נחמד"));
+  assertEq(retiredKey("אפ פעמ"), retiredKey("אף פעם"), "finals fold, so a repaired phrase stays retired");
+  assertTrue(retiredKey("אני הולך לעבודה", "אפו אתה הולך?") !== retiredKey("אני הולך לעבודה"),
+             "a reply is keyed with its question");
+});
+T("isRetired: a bare retirement covers the answer everywhere; a paired one only that pair", () => {
+  const store = {};
+  retiredAdd([{ he: "קצת כלב" }, { qhe: "אפו אתה הולך?", he: "אני הולך לעבודה" }], "t", store);
+  assertTrue(isRetired({ he: "קצת כלב" }, store));
+  assertTrue(isRetired({ qhe: "?מה זה", he: "קצת כלב" }, store), "wrong as a sentence is wrong as an answer");
+  assertTrue(isRetired({ qhe: "אפו אתה הולך?", he: "אני הולך לעבודה" }, store));
+  assertTrue(!isRetired({ he: "אני הולך לעבודה" }, store), "the good sentence the bad question was paired with survives");
+});
+T("bankPrune: a retired sentence is never served", () => {
+  const lib = { "כלב": { en: "dog" }, "קטן": { en: "small" } };
+  const bank = [{ id: "a", he: "קצת כלב", uses: ["כלב"] }, { id: "b", he: "כלב קטן", uses: ["כלב", "קטן"] }];
+  const store = {};
+  retiredAdd([{ he: "קצת כלב" }], "t", store);
+  assertEq(bankPrune(bank, lib, store).map(it => it.id), ["b"]);
+});
+T("heFinalFix: repairs a last letter in the wrong form, and nothing else", () => {
+  assertEq(heFinalFix("אפ פעמ"), "אף פעם");
+  assertEq(heFinalFix("מה נשמע?"), "מה נשמע?", "a correct phrase is untouched");
+  assertEq(heFinalFix("צ'יפס"), "צ'יפס", "a geresh is the legitimate exception");
+  assertEq(heFinalFix("מכונית"), "מכונית", "a letter inside a word is never touched");
+  assertTrue(heFinalFormsBad("אפ פעמ") && !heFinalFormsBad("אף פעם"));
+});
+T("trHouse: the house scheme, applied to what a model wrote", () => {
+  assertEq(trHouse("ani rotze ktzat nechmad"), "ani rotze ktzat nekhmad");
+  assertEq(trHouse("ha-kelev ha-katan be-aviv"), "hakelev hakatan be'aviv");
+  assertEq(trHouse("me'harechov sheli"), "meharekhov sheli", "the coach's own flagged line");
+  assertEq(trHouse("ha-ir"), "ha'ir");
+  assertEq(trHouse("me'od"), "me'od", "an apostrophe before a vowel is the scheme, kept");
+  assertEq(trHouse("ve'ani"), "ve'ani");
+  assertEq(trHouse("Etmol raiti kelev"), "Etmol raiti kelev", "nothing to do");
+});
+T("legacyReviewCandidates: old model-written sentences only", () => {
+  const bank = [
+    { he: "א", type: "sentence", src: "", added: "2026-09-02" },
+    { he: "ב", type: "sentence", src: "", added: "2026-09-08" },
+    { he: "ג", type: "sentence", src: "claude", added: "2026-09-02" },
+    { he: "ד", type: "reply", src: "", added: "2026-09-02" },
+    { he: "ה", type: "sentence", src: "" },
+    { he: "ו", type: "sentence", src: "", added: "2026-09-01" }];
+  const store = {}; retiredAdd([{ he: "ו" }], "t", store);
+  assertEq(legacyReviewCandidates(bank, store).map(it => it.he), ["א"]);
+});
+T("legacyChunkFix: a repaired phrase keeps its history", () => {
+  const out = legacyChunkFix({ "אפ פעמ": ["af pa'am", "never"], "מה נשמע": ["ma nishma", "how's it going"] },
+                             { "אפ פעמ": { prod: { n: 3 } } });
+  assertEq(Object.keys(out.store).sort(), ["אף פעם", "מה נשמע"].sort());
+  assertEq(out.srs["אף פעם"].prod.n, 3);
+  assertTrue(!out.srs["אפ פעמ"], "the broken key is gone");
+  assertEq(out.moved, 1);
+});
+T("legacyTrFix: Claude's content is left alone", () => {
+  const out = legacyTrFix([{ src: "", tr: "achshav" }, { src: "claude", tr: "achshav" }]);
+  assertEq(out.bank[0].tr, "akhshav");
+  assertEq(out.bank[1].tr, "achshav");
+  assertEq(out.changed, 1);
 });
 T("learnGrace: an unfair answer changes nothing at all", async () => {
   await graceHarness({ fair: false, note: "no" }, async spoken => {

@@ -91,9 +91,13 @@ Deferred: two parallel lite calls that must agree. Hold unless leniency still ge
 3. **Final letters.** `heFinalFormsBad(he)` — a non-final form (כ מ נ פ צ) at the end of a
    word. `learnIngest` and the chunk store refuse such items; the migration retires any
    already banked, and repairs a stored chunk's key if the fix is unambiguous.
-4. **Transliteration shown in the house scheme.** `trHouse(tr)` at display time for
-   model-written transliteration: `ch`→`kh`, the article and one-letter prepositions joined
-   without a hyphen, an apostrophe where a join meets a vowel. Stored data is untouched.
+4. **Transliteration in the house scheme.** `trHouse(tr)`: `ch`→`kh`, the article and
+   one-letter prepositions joined without a hyphen, an apostrophe where a join meets a
+   vowel and none where it meets a consonant. Applied where model-written transliteration
+   enters — `learnIngest`, `cleanGloss`, the coach's `say`/`best` — plus once over the
+   existing non-Claude bank (115 items on his data), rather than at every render site:
+   there are a dozen of those and one missed would show the old spelling. Never applied
+   to prose, where "ch" is English.
 
 ## Phase D — the backlog stops eating itself, and I can clear it
 

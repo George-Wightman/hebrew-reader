@@ -1494,6 +1494,8 @@
   .lbub-he { font-family: "David", "Times New Roman", serif; font-size: 1.05rem;
              color: var(--hebrew); line-height: 1.5; }
   .lbub-tr { font-size: .74rem; color: var(--muted); direction: ltr; text-align: right; }
+  .lbub-en { font-size: .78rem; color: var(--muted); direction: ltr; text-align: right;
+             font-style: italic; margin-top: 2px; }
   /* The app's existing "this needs your attention" colour, the same one Pending and
      unknown words use — a repair is exactly that, and reusing it means the colour
      keeps meaning one thing everywhere. */
@@ -2132,6 +2134,16 @@
   .coachdock-lang.he { border-color: var(--accent); color: var(--accent); }
   .coachdock-lang:disabled { opacity: .55; cursor: default; }
   .coachdock-mic svg { width: 20px; height: 20px; fill: currentColor; }
+  /* Quieter than the send arrow beside it — an outline, and smaller — because sending is
+     the thing the row is now waiting for and this is the aside. */
+  .coachdock-more {
+    flex: 0 0 auto; width: 38px; height: 38px; margin-bottom: 3px; border-radius: 50%;
+    cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,.93);
+    color: var(--muted); display: flex; align-items: center; justify-content: center;
+    padding: 0; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .coachdock-more svg { width: 18px; height: 18px; fill: currentColor; }
+  .coachdock-more:disabled { opacity: .55; cursor: default; }
   .coachdock-mic:disabled { opacity: .55; cursor: default; }
   /* Send: filled teal, because there is now something to do and §3 has teal meaning
      exactly that. */
@@ -2793,6 +2805,10 @@
            is the only thing that knows which he is about to speak. Text, not a flag or a
            globe — two letters say it and survive being 22px wide. -->
       <button class="coachdock-lang" id="coachDockLang" type="button"></button>
+      <!-- Speak more into what is already in the box. Shown only once there is text, when
+           the main circle has become the send arrow. -->
+      <button class="coachdock-more" id="coachDockMore" type="button" aria-label="Say more"
+              style="display:none"></button>
       <!-- The one control, and always "press this when you're done": pulsing while it
            listens, a mic when there is nothing to send, an arrow when there is. -->
       <button class="coachdock-mic" id="coachDockMic" type="button" aria-label="Listening"></button>
@@ -8371,6 +8387,7 @@ document.getElementById("aiStar").onclick = () => aiModalOpen(true);
 document.getElementById("uhBtn").onclick = () => coachDockOpen(!coachDockOn);
 document.getElementById("coachDockMic").onclick = () => coachDockMicPress();
 document.getElementById("coachDockLang").onclick = () => coachLangToggle();
+document.getElementById("coachDockMore").onclick = () => coachDockListen();
 (function wireCoachDockBox() {
   const q = document.getElementById("coachDockQ");
   if (!q) return;
@@ -15544,7 +15561,6 @@ let coachDockOn = false;
 let coachPastOpen = false;      // earlier sittings, reset closed each time it opens
 let coachDockListening = false;
 let coachDockStopped = false;   // did WE stop it, or did the endpointer decide?
-let coachDockSendOnEnd = true;  // an unattended end means he finished talking
 let coachDockMsg = "";          // a mic failure, shown until the next thing he does
 let coachDockVoiceLang = "";    // "en"/"he" if the box holds a transcript; "" once he types
 let coachDockRelisten = false;  // he changed language mid-listen; start again when this one ends
@@ -15639,8 +15655,18 @@ function coachDockPaintMic() {
   b.classList.toggle("send", !coachDockListening && hasText);
   b.disabled = !!coachBusy;
   b.innerHTML = coachDockListening ? COACH_STOP_SVG : hasText ? COACH_SEND_SVG : COACH_MIC_SVG;
-  b.setAttribute("aria-label", coachDockListening ? "Finished talking — send to the coach"
+  b.setAttribute("aria-label", coachDockListening ? "Finished talking"
                              : hasText ? "Send to the coach" : "Speak to the coach");
+  /* SPEAK SOME MORE. Once there are words in the box the main control is the send arrow,
+     so adding to them by voice needs its own way in — the half he wants to say in Hebrew
+     after asking in English is the case this exists for. Only there when there is
+     something to add to; an empty box already has the mic. */
+  const m = document.getElementById("coachDockMore");
+  if (m) {
+    m.style.display = (!coachDockListening && hasText) ? "" : "none";
+    m.disabled = !!coachBusy;
+    if (!m.innerHTML) m.innerHTML = COACH_MIC_SVG;
+  }
   const L = document.getElementById("coachDockLang");
   if (L) {
     const he = coachLangGet() === "he";
@@ -15729,7 +15755,6 @@ function coachDockOpen(on) {
 function coachDockHush() {
   if (!coachDockListening) return;
   coachDockStopped = true;
-  coachDockSendOnEnd = false;
   micStop();
 }
 
@@ -15749,7 +15774,6 @@ async function coachDockListen() {
   const prefix = base ? base + " " : "";
   coachDockListening = true;
   coachDockStopped = false;
-  coachDockSendOnEnd = true;
   coachDockMsg = "";
   coachDockRender();
   let res;
@@ -15757,9 +15781,9 @@ async function coachDockListen() {
     /* HIS CHOICE, not a constant — see coachLangGet for why neither language works as
        one. Both were tried as the fixed answer on 2026-09-08 and both failed in real use.
 
-       NOT continuous, unlike the drill card. An unattended end here means he finished
-       asking — coachDockSendOnEnd sends on it, which is what "dash a quick question" is
-       for and what a hold would break. */
+       NOT continuous. An end here — his tap or the endpointer's — only ever puts the
+       words in the box; see the note at the foot of this function for why it no longer
+       sends. */
     res = await micListen({ lang: coachLangCode(),
                             onInterim: t => { q.value = prefix + t; coachDockAutoGrow(); coachDockPaintMic(); } });
   } finally {
@@ -15801,11 +15825,17 @@ async function coachDockListen() {
      transcript of a Hebrew word. Cleared the moment he types, because then it is his
      spelling and means what it says. */
   coachDockVoiceLang = coachLangGet();
-  /* An end he did not ask for is the endpointer deciding he stopped talking, and "dash a
-     quick question" means not needing a second tap to confirm it. Reaching for the
-     keyboard clears the flag, so what was heard stays put and waits to be edited. */
-  if (coachDockSendOnEnd) coachDockSend();
-  else { coachDockRender(); try { q.focus(); } catch (e) {} }
+  /* NOTHING SENDS UNTIL HE PRESSES THE ARROW. This used to send the moment the endpointer
+     decided he had stopped — "dash a quick question" — and the coach stopped being a
+     quick-question tool. George: "the messages send instantly, theres no time for me to
+     add or edit so can we have a send stage, I stop talking or go the read what I put/
+     add more in hebrew, and have to press a send/ enter arrow to send it to coach."
+
+     So an end, however it came, leaves the words in the box: he can read them, type into
+     them, switch language and speak more (coachDockMore appends, because coachDockListen
+     reads the box as its prefix), and the arrow sends. Not focused, on purpose — on a
+     phone that raises the keyboard over the thread he is about to read. */
+  coachDockRender();
 }
 
 function coachDockSend() {
@@ -15834,7 +15864,6 @@ function coachDockSend() {
 function coachDockMicPress() {
   if (coachDockListening) {
     coachDockStopped = true;
-    coachDockSendOnEnd = true;
     micStop();
     return;
   }
@@ -23097,7 +23126,7 @@ function composeAdvance(s, c, out) {
      replay them from and quoting anything else would be fiction. */
   c.turns = c.turns || [];
   c.turns.push({ qhe: (c.item && c.item.qhe) || "", qtr: (c.item && c.item.qtr) || "",
-                 said: c._said || "", out: out });
+                 qen: (c.item && c.item.qen) || "", said: c._said || "", out: out });
 
   const clean = out.ok !== "wrong";
   if (composeEnds(c, out)) {
@@ -27016,11 +27045,17 @@ function composeSpeakNew(c) {
    cards wearing a different hat — the point is that it accumulates. RTL, newest at
    the bottom, capped in height so a six-turn exchange never pushes the answer
    controls off a laptop screen. */
-function convoBubble(who, he, tr) {
+/* The English sits INSIDE the bubble, under the transliteration, for the same reason the
+   transliteration does: it belongs to that line and nothing else. It used to be a loose
+   line drawn after the whole thread, centred on the card — George: "The English response
+   from the coach is like not in line with their message. It's just in the middle of the
+   screen which is a bit confusing". */
+function convoBubble(who, he, tr, en) {
   const b = document.createElement("div"); b.className = "lbub " + who;
   const h = document.createElement("div"); h.className = "lbub-he"; h.textContent = he || "";
   b.append(h);
   if (tr) { const t = document.createElement("div"); t.className = "lbub-tr"; t.textContent = tr; b.append(t); }
+  if (en) { const e = document.createElement("div"); e.className = "lbub-en"; e.textContent = en; b.append(e); }
   return b;
 }
 /* ---- the stretch of road ------------------------------------------------------
@@ -27359,7 +27394,7 @@ function learnRenderCompose(card, c, s) {
     const wrap = document.createElement("div"); wrap.className = "lthread";
     const list = document.createElement("div"); list.className = "lbubbles";
     turns.forEach(t => {
-      if (t.qhe) list.append(convoBubble("them", t.qhe, t.qtr));
+      if (t.qhe) list.append(convoBubble("them", t.qhe, t.qtr, t.qen));
       if (t.said) list.append(convoBubble("you", t.said, ""));
     });
     /* At "reply" the coach's newest line is drawn BELOW the correction instead, so the
@@ -27368,7 +27403,7 @@ function learnRenderCompose(card, c, s) {
        thread — except at "heard", where his sentence is sitting in the confirmation box
        and printing it twice would make that box look like part of the transcript. */
     if (answering) {
-      const b = convoBubble("them", c.item.qhe, c.item.qtr);
+      const b = convoBubble("them", c.item.qhe, c.item.qtr, c.item.qen);
       if (stage === "ask") b.classList.add("live");
       list.append(b);
     }
@@ -27388,10 +27423,6 @@ function learnRenderCompose(card, c, s) {
        reflow after the bubbles have their final metrics. */
     list.scrollTop = list.scrollHeight;
     requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
-  }
-  if (answering && c.item.qen && stage === "ask") {
-    const en = document.createElement("div"); en.className = "lask lquiet";
-    en.textContent = c.item.qen; card.append(en);
   }
 
   /* Both places he can speak from — the opening turn, and every turn after it, where
@@ -27566,13 +27597,9 @@ function learnRenderCompose(card, c, s) {
     card.append(b);
   }
   if (c.item && c.item.qhe) {
-    const bub = convoBubble("them", c.item.qhe, c.item.qtr);
+    const bub = convoBubble("them", c.item.qhe, c.item.qtr, c.item.qen);
     bub.classList.add("live");
     card.append(bub);
-    if (c.item.qen) {
-      const en = document.createElement("div"); en.className = "lask lquiet";
-      en.textContent = c.item.qen; card.append(en);
-    }
     /* Read out as it lands, which is what he asked for — "I would alos like the reponse
        from coach ot be automatically read aloud". Once per turn, not once per render. */
     composeSpeakNew(c);
@@ -36043,30 +36070,56 @@ T("the mic circle: one control, and it says which of the three things it will do
     coachDockListening = true; coachDockPaintMic();
     assertTrue(b.classList.contains("listening"), "listening wins over both");
     assertTrue(!b.classList.contains("send"), "and is never also the send arrow");
-    assertEq(b.getAttribute("aria-label"), "Finished talking — send to the coach");
+    assertEq(b.getAttribute("aria-label"), "Finished talking", "stopping no longer sends");
   } finally { coachDockListening = wasListening; q.value = savedQ; coachDockPaintMic(); }
 });
 T("coachDockHush: reaching for the keyboard keeps what the mic already heard", () => {
   /* "if I need to type I can press the box" — pressing it must not cost him the half of
      the question he had already said out loud. */
   const realStop = micStop;
-  const wasListening = coachDockListening, wasSend = coachDockSendOnEnd;
+  const wasListening = coachDockListening;
   const q = document.getElementById("coachDockQ"), savedQ = q.value;
   let stopped = 0;
   try {
     micStop = () => { stopped++; };
-    coachDockListening = true; coachDockSendOnEnd = true;
+    coachDockListening = true;
     q.value = "how do I say";
     coachDockHush();
     assertEq(stopped, 1, "the recogniser is stopped");
-    assertEq(coachDockSendOnEnd, false, "but this end must not send");
     assertEq(q.value, "how do I say", "and what it heard is still there to be finished");
     coachDockListening = false;
     coachDockHush();
     assertEq(stopped, 1, "hushing something already quiet does nothing");
   } finally {
     micStop = realStop;
-    coachDockListening = wasListening; coachDockSendOnEnd = wasSend; q.value = savedQ;
+    coachDockListening = wasListening; q.value = savedQ;
+  }
+});
+T("coachDockListen: the end of speech fills the box and never sends", async () => {
+  /* George: "have to press a send/ enter arrow to send it to coach". Both ends — the
+     endpointer deciding he stopped, and his own tap on the pulsing circle — used to send. */
+  const realListen = micListen, realAsk = uhAsk, wasOn = coachDockOn;
+  const q = document.getElementById("coachDockQ"), savedQ = q.value;
+  const wasListening = coachDockListening, wasLang = coachDockVoiceLang;
+  let asked = 0;
+  try {
+    uhAsk = () => { asked++; };
+    coachDockOn = true; coachDockListening = false;
+    micListen = async () => ({ ok: true, text: "how do I say office" });
+    q.value = "";
+    await coachDockListen();
+    assertEq(asked, 0, "an unattended end sends nothing");
+    assertEq(q.value, "how do I say office", "it is waiting in the box");
+    const more = document.getElementById("coachDockMore");
+    assertTrue(more.style.display !== "none", "and the say-more mic is offered");
+    micListen = async () => ({ ok: true, text: "משרד" });
+    await coachDockListen();
+    assertEq(q.value, "how do I say office משרד", "speaking again adds to it rather than replacing it");
+    assertEq(asked, 0, "still nothing sent");
+  } finally {
+    micListen = realListen; uhAsk = realAsk; coachDockOn = wasOn;
+    coachDockListening = wasListening; coachDockVoiceLang = wasLang; q.value = savedQ;
+    coachDockPaintMic();
   }
 });
 T("uhSearch: matches Hebrew, transliteration and English alike", () => {

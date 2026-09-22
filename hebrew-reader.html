@@ -2297,8 +2297,10 @@
   .pnode.walked .pnmbox { fill: var(--c-fbf3e2); stroke: var(--c-e0c48c); }
   .pnode.walked .phe { fill: var(--c-8a6520); }
   .pstale { fill: var(--warn); font-weight: 700; }
-  .pfrom { fill: var(--accent); }
-  .pauto { fill: var(--gold); }
+  .pfrom rect, .pfrom path { fill: var(--panel); stroke: var(--accent); stroke-width: 1.6;
+                             stroke-linejoin: round; }
+  .pauto path { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linecap: round;
+                stroke-linejoin: round; }
   /* The fog sheet must never eat a tap meant for the map underneath it. */
   .pfog { pointer-events: none; }
   /* The planner's one-line reason for a node, under its name in the live chapter
@@ -23441,13 +23443,18 @@ function campRender() {
              '" text-anchor="middle" font-size="21">↻</text>';
     /* A node that grew out of a real voice note. The only mark on this map that means
        "your grandad put this here", and worth being able to see at a glance. */
-    else if (n.fromNote) svg += '<text class="pfrom" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
-                                '" text-anchor="middle" font-size="18">✉</text>';
+    /* Drawn, not the envelope character — Android draws that as a coloured emoji, a
+       sticker on the paper (style guide §2). Same place, same colour as before. */
+    else if (n.fromNote) svg += '<g class="pfrom" transform="translate(' + (n.x - 33) + ' ' + (n.y - 32) +
+                                ')"><title>Grew out of a voice note</title>' +
+                                '<rect x="-8" y="-5.5" width="16" height="11" rx="1.5"/>' +
+                                '<path d="M-7.5-4.5L0 1.5 7.5-4.5"/></g>';
     /* Gold he was given rather than gold he earned. Shown, not hidden: skipping past
        something is worth being able to see. */
     if (state === "done" && campNodeAuto(n.id))
-      svg += '<text class="pauto" x="' + (n.x - 33) + '" y="' + (n.y - 26) +
-             '" text-anchor="middle" font-size="17">⏭</text>';
+      svg += '<g class="pauto" transform="translate(' + (n.x - 33) + ' ' + (n.y - 32) +
+             ')"><title>Passed by skipping ahead</title>' +
+             '<path d="M-8-6L-1 0-8 6M-1-6L6 0-1 6M8-6V6"/></g>';
     /* RUNNING SHORT, SAID BY THE MAP. This used to be a banner over the sea naming the
        towns — the app talking, first thing on the screen. Now it is a small pen at the
        town itself: terrain, not instruction (style guide §4), and the sentence that
@@ -41629,10 +41636,13 @@ T("map: every town running short of sentences carries the pen, and no other town
    card and everything it builds are the world. Checked against the source of the
    functions that draw it, so a new branch cannot quietly bring a sticker back.
    Pictographs only: plain marks like a tick or a cross are type, not stickers. */
-T("cards: nothing the drill draws is an emoji", () => {
-  const src = [learnRenderCard, learnRenderCompose, learnReveal, learnSpeakAttempt, learnHearSpeakAttempt]
+T("world: nothing the drill or the map draws is an emoji", () => {
+  const src = [learnRenderCard, learnRenderCompose, learnReveal, learnSpeakAttempt, learnHearSpeakAttempt,
+               campRender]
     .map(String).join("\n");
-  const hits = src.match(/[\u{1F300}-\u{1FAFF}\u{23F8}-\u{23FA}]/gu) || [];
+  /* The envelope and the skip mark named explicitly: Android draws both as coloured emoji,
+     which is how they sat on the map as stickers until 2026-09-23. */
+  const hits = src.match(/[\u{1F300}-\u{1FAFF}\u{23E9}-\u{23FA}\u{2709}]/gu) || [];
   assertEq(hits, [], "emoji in the drill's rendering code");
 });
 

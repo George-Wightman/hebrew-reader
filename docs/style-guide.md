@@ -236,3 +236,62 @@ valuable thing in the message. Chase them.
 When he sets a constraint on a change (*"so long as it doesnt reduce the strength of
 those words to"*), check whether the current code already violates it. Both times, it
 did.
+
+---
+
+## 9. Atlas: the whole app in the map's clothes (September 2026)
+
+The redesign that took the map's paper, ink and type out to every screen. Spec:
+`superpowers/specs/2026-09-23-atlas-redesign-design.md`. What it settled:
+
+**Type is three faces, and they ship with the app.** Frank Ruhl Libre for every word of
+Hebrew and for the world's display voice (`--he`, `--display`, `--map-display`);
+Cormorant Garamond italic for the world's asides (`--aside`: why lines, the card's one
+ask, "Stuck?"); Instrument Sans for the interface (`--ui`). They live in `assets/fonts`
+with their OFL texts and are in `sw.js`'s shell list, so the app still opens offline in
+its own type. §1 is unchanged by this: the world speaks in serif, the app in sans.
+
+**The chrome dresses for the screen.** `chromeSync()` sets `body.chrome-{home, lesson,
+words, progress}`, and that one class decides the furniture:
+
+- *home* — no bar. The map is full-bleed and only the profile button floats on it.
+  George: *"on the home screen im not using coach very much."*
+- *lesson* — a way out on the left, the coach and the flag on the right, the paper
+  running up behind them. *"when in lessons/ any other page, the coach and flags should
+  be at the top."*
+- *words, progress* — the page's name, then coach, flag, profile.
+
+The dock at the bottom is **Walk · Words · Progress**, three not four; the coach is at
+the top instead. Everything else the old bar carried is in the profile sheet, and every
+row there presses the button that already existed, so no handler exists twice. A test
+fails if anything the old bar carried stops being reachable.
+
+**Night is by the clock, 19:00 to 07:00.** Never `prefers-color-scheme`: his phone is
+dark all day, so that would mean night at noon. The setting is Auto · Day · Night in the
+profile sheet. The mechanism is the thing to know before touching colour:
+
+- Every colour in a rule is a `--c-<day hex>` token, defined in the LITERAL PALETTE
+  `:root` block and again in the `html[data-theme="night"]` block after it. The day sheet
+  reads exactly as it did; night remaps each token.
+- **A new colour in a rule needs a night value.** Run `python tools/night-palette.py`,
+  which tokenises it and generates one. The self-test *"every stylesheet colour goes
+  through a token"* fails otherwise, because that rule would be the one thing still in
+  day at midnight.
+- The map's gradients are overridden from CSS (a stylesheet beats an SVG presentation
+  attribute); the road's ink is mixed per mark in JS, so it takes a night pair from
+  `campTrailInk` and the map re-renders on a flip.
+
+**No emoji anywhere the world draws — now tested.** The last stickers came off: the mic,
+speaker and turtle on the cards, and the envelope and skip marks on the map, which
+Android draws as coloured emoji. A self-test reads the source of the drill's and the
+map's renderers and fails on any pictograph. Drawn icons are CSS masks (`--ic-mic`,
+`--ic-play`, `--ic-pause`) so they take the colour of the text they sit in, day or night.
+
+**Running short is terrain.** The banner over the sea naming the towns that need
+sentences became a small pen drawn at each such town, with the sentence itself moved
+into the profile sheet (§4: terrain, not instruction).
+
+**Where the new rules live.** The ATLAS section at the end of the stylesheet, one block
+per screen. It is last on purpose: it wins over the older rules at equal specificity, so
+each earlier section still reads as it was written, and this is the one place that says
+what the redesign changed.

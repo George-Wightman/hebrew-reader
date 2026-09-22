@@ -2097,6 +2097,11 @@
   }
   .coachdock-thread .uh-ans.past { background: rgba(255,255,255,.62); box-shadow: none; }
   .coachdock-empty { font-size: .8rem; color: var(--muted); padding: 2px 2px 6px; }
+  .coachdock-starters { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 2px 8px; }
+  .coachdock-starter { border: 1px solid var(--border); background: rgba(255,255,255,.93);
+                       color: var(--ink); border-radius: 999px; padding: 5px 11px;
+                       font: inherit; font-size: .8rem; cursor: pointer; }
+  .uh-notright { font-size: .74rem; margin-top: 4px; color: var(--muted); }
 
   /* flex-end, not center: the box grows upward as it wraps and the two round controls
      have to stay level with its LAST line, or they drift into the middle of a tall
@@ -15306,10 +15311,27 @@ function uhTurnBlock(turn, past) {
   box.append(q);
   const a = document.createElement("div");
   a.className = "uh-ansa" + (turn.err ? " bad" : "");
-  a.textContent = turn.busy ? "Reading the code that decided this…"
+  a.textContent = turn.busy ? "Thinking…"
                 : turn.err ? "Could not ask: " + turn.err
                 : turn.a;
   box.append(a);
+  /* NOT RIGHT, on the answer it is about. George: "the answers its been giving seem to be
+     kinda poop aswell". Tuning the prompt needs the actual bad answers, and they never
+     leave his phone — the coach thread is not synced. This puts one in a flag, with the
+     question and the answer attached, in one tap. */
+  if (!past && !turn.busy && !turn.err && turn.a) {
+    const nr = document.createElement("button");
+    nr.type = "button";
+    nr.className = "linkbtn uh-notright";
+    nr.textContent = "Not right";
+    nr.onclick = () => {
+      try { coachDockOpen(false); } catch (e) {}
+      flagModalOpen(true, "", { kind: "bug", text: "The coach's answer wasn't right: ",
+        ctx: { coach: { q: turn.q, a: String(turn.a).slice(0, 1500),
+                        subject: turn.subject || "" } } });
+    };
+    box.append(nr);
+  }
   return box;
 }
 /* The whole transcript, oldest first, with a seam where each earlier sitting ended. Past
@@ -15357,8 +15379,7 @@ function uhThreadBlock() {
      it — not the whole app", after every live turn, forever. Two things killed it: it is
      no longer true, since the coach answers Hebrew from what it knows; and it was already
      what style guide §4 calls wallpaper — a line rendered three hundred times is not read
-     the three hundred and first. coachUncited's caveat replaces it, and that one is rare
-     and names the actual figure. */
+     the three hundred and first. */
   return wrap;
 }
 /* Everything he can see, for the clipboard and for the flag. Past sittings included: they
@@ -15422,69 +15443,16 @@ function uhRenderResults(wrap, st) {
   });
 }
 
-/* =====================  ASKING IT A QUESTION  =====================
-   George: "if i hada quick questions I could press a pop up ask it and it would ping it
-   to the API along with the segment of code. that way I can have live answers to the
-   things Im thinking and come to you more informed".
+/* =====================  ASKING THE COACH  =====================
+   This began as a way to ask the inspector why it had decided something, and the prompt
+   carried the source of every rule on screen so the answer could be grounded in it.
+   George, 2026-09-22: "although the coach was born out of the 'under the hood' I have
+   never used it for that and dont forsee me using it for that, it is primarily and at its
+   core now a aid for me to learn words and phrasing, so cut the fluff and streamline it".
 
-   THE APP CAN READ ITS OWN SOURCE. sw.js caches the shell under its own path, so
-   fetch("./hebrew-reader.html") is served from cache — instantly, offline, at no network
-   cost. And every WHY result already names the function that made the judgement, so this
-   does not have to send a guessed excerpt: it sends the real body of the rule the panel
-   is currently explaining, with the constants that rule reads.
-
-   Not the whole file. It is over a megabyte, and a targeted extract is not merely cheaper
-   — it is better, because the answer is grounded in the function that actually decided
-   the thing he is asking about rather than diluted across the whole app.
-
-   THE ANSWER IS NOT TRUSTED, AND THE DESIGN SAYS SO. A model handed a fragment will
-   invent confidently, and him arriving at a conversation with a wrong theory is worse
-   than arriving with none. So: the answer renders above the report it was given, and is
-   checkable against the numbers on the same screen; the call is in the AI log like every
-   other; and the question and answer both ride the flag. When he does bring it to me I
-   see what he was told and can correct it in a line, instead of arguing against a prior
-   I cannot see. That last one is what turns the risk into a channel. */
-let uhSrcCache = null;
-async function uhSourceText() {
-  if (uhSrcCache !== null) return uhSrcCache;
-  try {
-    const r = await fetch("./hebrew-reader.html", { cache: "force-cache" });
-    uhSrcCache = r.ok ? await r.text() : "";
-  } catch (e) { uhSrcCache = ""; }
-  return uhSrcCache;
-}
-/* Reliable because the file is LF throughout and every declaration in it sits at column
-   zero — the same fact CLAUDE.md's duplicate-definition grep depends on. Stops at the
-   next top-level declaration or comment banner. */
-function uhSourceOf(src, name) {
-  if (!src || !name) return "";
-  let m = new RegExp("^(?:async )?function " + name + "\\s*\\(", "m").exec(src);
-  if (!m) m = new RegExp("^const " + name + "\\s*=", "m").exec(src);
-  if (!m) return "";
-  const rest = src.slice(m.index + 1);
-  const next = /^(?:\/\*|(?:async )?function |const |let |window\.|document\.)/m.exec(rest);
-  const body = src.slice(m.index, next ? m.index + 1 + next.index : src.length);
-  return body.replace(/\s+$/, "").slice(0, 6000);
-}
-/* The constants each rule reads, which are the numbers he is most likely to be asking
-   about and which do not appear in the function body as anything but a name. */
-const UH_RULE_CONSTS = {
-  srsStrength: ["RECENT_STRONG_MAX", "srsRecentRatio"],
-  wordReady: ["srsStrengthOf"],
-  bankServable: ["bankContentWords", "CAMP_SERVE", "CAMP_MAX_CARRIED"],
-  campNodeWordsReady: ["wordReady", "STOPLIST"]
-};
-/* Which rules the level on screen actually invoked. Walking the report rather than
-   keeping a per-subject list means a subject added later carries its own sources in
-   with it and nothing here has to be remembered. */
-function uhRulesOn(rep) {
-  const names = [];
-  (((rep || {}).sections) || []).forEach(sec => (sec.rows || []).forEach(r => {
-    const n = (r.why && r.why.rule) || (r.to && r.to.kind === "rule" && r.to.id);
-    if (n && names.indexOf(n) === -1) names.push(n);
-  }));
-  return names;
-}
+   So the code extraction, the app-question half of the prompt and the figure guard that
+   existed to police it are gone. What is left is a Hebrew coach. The inspector itself
+   stays — flags still carry its report — it just is not what the coach reads. */
 /* ---- the thread ---------------------------------------------------------------
    George: "I would like 1 thread that follows, but more jsut for my viewing ... if it was
    a conversation from a different thread it goes to a lighter/ faded colour, then after
@@ -15554,40 +15522,6 @@ function coachBoot() {
   } catch (e) {}
 }
 
-/* ---- the one guard on a cheap model ------------------------------------------
-   George: "I think we only use the cheap model for this ... use multiple calls to verify
-   it." The model choice is taken; the verification is not, and deliberately.
-
-   A second lite call grading the first is the exact shape
-   2026-09-03-the-judge-was-weaker-than-the-writer-design.md named as the bug — two models
-   of the same weight on the same fragment share their failure modes and agree confidently
-   when both are wrong. So the app checks the figures itself instead of asking again.
-
-   SUBSTRING, and high-precision by design. What it catches is a distinctive invented
-   figure — a threshold, a stability, a difficulty — which is the failure that actually
-   misleads him. Same principle as composeCredit: the app derives, the model only points.
-
-   ONLY FIGURES SHAPED LIKE A METRIC: a decimal, or an integer of two or more digits. The
-   old rule was "any number not in the payload", which was right while every answer was
-   about app state and became wrong the moment the coach started answering Hebrew. The
-   payload on a compose card is nearly empty — that is exactly the card the flag was
-   raised from — so "there are 2 ways to say it" would have burned a second call and then
-   told him to check "2" against a report that never mentions it.
-
-   The trade, taken deliberately: an invented single-digit metric ("your stability is 4
-   days") now passes unflagged. That is a real if narrow loss, bought against the guard
-   firing on ordinary prose, which is now most of what the coach says. */
-function coachUncited(answer, payload) {
-  const hay = String(payload || "");
-  const seen = {}, out = [];
-  String(answer || "").replace(/\d+(?:\.\d+)?/g, m => {
-    if (m.indexOf(".") === -1 && m.length < 2) return m;
-    if (!seen[m] && hay.indexOf(m) === -1) { seen[m] = 1; out.push(m); }
-    return m;
-  });
-  return out;
-}
-
 /* Who he is, for a prompt that now hands him Hebrew to say. A parameter with a default
    rather than a read inside the string builder, so a test can pin an answer without
    depending on whichever way his real settings happen to be set today. */
@@ -15598,61 +15532,60 @@ function coachWho() {
   return { gender: gender, level: level };
 }
 
-/* What actually goes to the model. The CURRENT subject's report in full, and every earlier
-   turn in this sitting as its text only — so a sitting that walks six words is one report
-   plus twelve short exchanges, not six reports. Past sittings are not here at all.
+/* WHAT ON HIS SCREEN THE COACH NEEDS: the card and the conversation. Not the words'
+   bands, not what answering would do to the schedule — those are the inspector's, and a
+   Hebrew question does not get better for having a stability figure next to it. A
+   subject with neither section (a word, a node) is named by its title alone. */
+const COACH_SCREEN_SECTIONS = ["This card", "The conversation"];
+function coachScreenText(rep) {
+  if (!rep) return "";
+  const keep = (rep.sections || []).filter(sec => COACH_SCREEN_SECTIONS.indexOf(sec.name) !== -1);
+  return uhText({ title: rep.title, subtitle: rep.subtitle, sections: keep });
+}
 
-   THE PROMPT THAT REFUSED TO SAY "OFFICE". This used to open by telling the model it was
-   looking at "a fragment of a much larger single-file app" and to answer "from the panel
-   and code below and NOTHING else" — so "how do I say office" came back as a request for
-   the vocabulary file, twice, in under a second, with both calls reporting success. See
-   2026-09-06-the-coach-that-would-not-answer-design.md.
+/* What actually goes to the model: who he is, how to answer the four things he asks, the
+   scheme his transliteration follows, this sitting so far, and what is on his screen.
 
-   The rewrite splits a rule the old text had welded together. "Never invent a figure about
-   his state" is the one worth having, and coachUncited enforces it in code either way.
-   "You know nothing except this panel" is the one that made him unanswerable, and it is
-   gone. A model permitted both kinds of answer picks the right one from the question
-   itself, which is why there is no routing call here — see the spec's deferred list. */
-function coachPrompt(rep, code, thread, subject, question, retryOn, who, asr) {
+   THE PROMPT THAT REFUSED TO SAY "OFFICE" is still the reason for the one flat
+   instruction in here — see 2026-09-06-the-coach-that-would-not-answer-design.md. A coach
+   told it knew only the panel asked for a vocabulary file, twice. It is told the opposite.
+
+   And one line from the flag that prompted this rewrite: the compose card's report says
+   "You have just said, and he is answering: ...", and the coach read that as someone
+   else's line and talked about "the coach's question". It is told the line is its own. */
+function coachPrompt(rep, thread, subject, question, who, asr) {
   const hist = (thread || []).filter(t => t && t.a && !t.err);
   const w = who || coachWho();
-  return "You are a warm, brisk Hebrew coach sitting beside an English speaker who is " +
+  return "You are a warm, brisk Hebrew coach. The person asking you is an English speaker " +
     "learning conversational Hebrew to talk with his partner's grandfather. Everyday " +
     "spoken Hebrew, never textbook.\n\n" +
-    "You are the SAME coach who runs his sentence-building sessions. One voice: warm, " +
-    "direct, never padded, never congratulatory about nothing.\n\n" +
-    "He asks you two different kinds of thing and you answer both.\n\n" +
-    "ABOUT HEBREW — how to say something, what a word means, why a form is what it is, " +
-    "how a native would really put it. ANSWER IT, from what you know, in full. This is " +
-    "the main thing he asks you and the reason you are here. He may be mid-session with " +
-    "a card on screen, or he may just have been asked something by his partner's " +
-    "grandfather and want to know how to reply. NEVER tell him you would need a file, a " +
-    "database, a dictionary or more of the app to answer a Hebrew question. You are his " +
-    "coach. You know Hebrew. Answer him.\n\n" +
-    "ABOUT THE APP — what it decided, why this card, why that word came up. Answer from " +
-    "the material below and only from it. This is where you must not guess: every figure " +
-    "you state about HIS words, HIS schedule or HIS progress has to appear in what you " +
-    "were given. Do not compute new figures, do not estimate, and do not round. If the " +
-    "material does not answer him, say so plainly and say what you would need. Never " +
-    "guess at code you cannot see, and do not suggest edits to the app.\n" +
-    /* THIS SENTENCE IS PINNED BY A TEST, and rightly — uhAskParts asserts it, which is
-       why the rewrite that dropped it failed the suite rather than shipping. Without it a
-       model asked an app question answers about the app it imagines instead of the one he
-       is holding. What changed is its SCOPE: it qualifies the app answer, where it was
-       written to belong, instead of standing at the top of the prompt fencing off Hebrew
-       as well. That framing is what refused to say "office"; this sentence never was. */
-    "What you are given of the app is a fragment of a much larger single-file program: a " +
-    "diagnostic panel he is reading, and the source of the functions that produced it. " +
-    "It is not the whole app, so do not describe machinery you cannot see.\n\n" +
+    "YOUR WHOLE JOB IS HIS HEBREW: how to say something, what a word or phrase means, " +
+    "whether what he said is right, why a form is what it is, how a native would really " +
+    "put it. Answer from what you know, in full. NEVER tell him you would need a file, a " +
+    "dictionary, a database or more of the app to answer. You are his coach. You know " +
+    "Hebrew. Answer him.\n\n" +
+    "Talk to him as \"you\". You are the same coach who runs his practice conversations: " +
+    "a line on his screen that the coach said to him is YOURS — call it \"my question\" " +
+    "or \"what I asked\", never \"the coach's question\".\n\n" +
+    "HOW TO ANSWER\n" +
+    "- How do I say X: the Hebrew, how it is said, what it literally says. If a more " +
+    "natural everyday way exists, give that one first. Add one alternative only if it is " +
+    "genuinely common.\n" +
+    "- What does X mean: the meaning in a few words, then one short sentence he could use " +
+    "it in.\n" +
+    "- Is this right, or he just gives you a sentence: yes or no first. If no, the " +
+    "corrected sentence and one line on why.\n" +
+    "- Why is it X and not Y: the rule in a sentence or two, shown on his own example.\n" +
+    "- If the question is unclear, answer the likeliest reading and say which you took.\n" +
+    "You cannot see his progress, his schedule or how the app works, so say nothing about " +
+    "them.\n\n" +
     "HE IS SPEAKING AS A " + (w.gender === "f" ? "WOMAN" : "MAN") + ". Anything you hand " +
     "him to say agrees with that — ani rotze from a man, ani rotza from a woman.\n\n" +
     "HIS LEVEL IS " + w.level + " OF 5.\n" + LEVEL_RUBRIC + "\n" +
     "Pitch what you give him there or a little above it.\n\n" +
     /* He READS the transliteration — it is the line he actually produces from — so a
        second convention here teaches two spellings for one sound. CLAUDE.md calls this
-       non-negotiable and content/nodes.json carried both schemes until v4 because the
-       writer prompt says only "plain English letters the way he would type them". The
-       coach hands him transliteration straight into a chat, so it gets the scheme whole. */
+       non-negotiable. */
     "WHEN YOU GIVE HIM HEBREW: the Hebrew, then how it is said, then what it literally " +
     "says. The written-out pronunciation follows this scheme exactly, because it is the " +
     "line he reads aloud from:\n" +
@@ -15664,29 +15597,15 @@ function coachPrompt(rep, code, thread, subject, question, retryOn, who, asr) {
     "- ve- for ו as it is really spoken, not the formal u- or va-: ve'ani, vegvina.\n" +
     "- No diacritics, and no nikud on the Hebrew.\n\n" +
     "Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
-    (retryOn && retryOn.length
-      ? "\nYOUR LAST ANSWER USED FIGURES THAT ARE NOT IN THE MATERIAL: " +
-        retryOn.join(", ") + ". Answer again using only figures that are present.\n"
-      : "") +
     (hist.length ? "\n=== EARLIER IN THIS CONVERSATION ===\n" + hist.map(t =>
         (t.subject ? "(about " + t.subject + ")\n" : "") +
         "He asked: " + t.q + "\nYou said: " + t.a).join("\n\n") + "\n" : "") +
-    /* CONTEXT, NOT THE LIMIT OF WHAT YOU KNOW — and it has to say so, because a section
-       header this emphatic is the whole reason the old prompt read as a wall. Asked from
-       the coach sheet with nothing open there may be no report at all; a bare header over
-       an empty string invites exactly the "I would need the file" answer again. */
     "\n=== WHAT IS ON HIS SCREEN" + (subject ? " (" + subject + ")" : "") +
     " ===\nBackground, so you know where he is. It is not the limit of what you know " +
-    "about Hebrew.\n" + (uhText(rep) || "(nothing in particular)") +
-    (code ? "\n\n=== THE CODE THAT PRODUCED IT ===\n" + code : "") +
+    "about Hebrew.\n" + (coachScreenText(rep) || "(nothing in particular)") +
     /* THE SAFETY NET FOR WHEN HE FORGETS THE SWITCH. Only ever set for a question he
        DICTATED under the English recogniser — typed text means what it says, and a
-       Hebrew-set mic transcribes Hebrew correctly by definition.
-
-       The failure it exists for is specific and was the original flag: an English
-       recogniser hearing a Hebrew word writes down whichever English words sound like it,
-       so the coach was answering a question about a man called Adam. He can now switch the
-       mic to Hebrew, and this is what covers the turn where he did not. */
+       Hebrew-set mic transcribes Hebrew correctly by definition. */
     (asr === "en"
       ? "\n\n=== HOW THIS QUESTION REACHED YOU ===\nHe DICTATED it through an ENGLISH " +
         "speech recogniser. If he spoke a Hebrew word inside it, that word was not " +
@@ -15699,16 +15618,8 @@ function coachPrompt(rep, code, thread, subject, question, retryOn, who, asr) {
     "\n\n=== HIS QUESTION ===\n" + question;
 }
 
-async function uhAskParts(rep, question, thread, subject, retryOn, asr) {
-  const src = await uhSourceText();
-  const rules = uhRulesOn(rep);
-  const wanted = [];
-  rules.forEach(r => {
-    if (wanted.indexOf(r) === -1) wanted.push(r);
-    (UH_RULE_CONSTS[r] || []).forEach(c => { if (wanted.indexOf(c) === -1) wanted.push(c); });
-  });
-  const code = wanted.map(n => uhSourceOf(src, n)).filter(Boolean).join("\n\n");
-  return [{ text: coachPrompt(rep, code, thread, subject, question, retryOn, null, asr) }];
+function uhAskParts(rep, question, thread, subject, asr) {
+  return [{ text: coachPrompt(rep, thread, subject, question, null, asr) }];
 }
 
 let coachBusy = null;     // { q, subject } while a call is in flight; the thread holds the rest
@@ -15731,25 +15642,9 @@ async function uhAsk(rep, question, at, asr) {
        thing he asks all day. The fast pool is 500 and is lite-first with flash as its own
        fallback, so a lite failure already escalates without new code. His call, and the
        reasoning is in the spec so nobody restores it by accident. */
-    const parts = await uhAskParts(rep, question, store.live, subject, null, asr);
-    let out = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
-                                         { label: "The coach — a question" }) || "").trim();
-    let bad = coachUncited(out, parts[0].text);
-    if (bad.length) {
-      /* ONE retry, naming what was wrong. Not a verify pass — the check is mechanical and
-         has already found the fault; this is giving him a second chance at the same
-         question, which is the only thing another call can honestly buy here. */
-      const again = await uhAskParts(rep, question, store.live, subject, bad, asr);
-      const out2 = String(await geminiRequest(again, GEMINI_MODELS_FAST,
-                                              { label: "The coach — again, with the figures" }) || "").trim();
-      if (out2) { out = out2; bad = coachUncited(out2, again[0].text); }
-    }
-    a = out;
-    /* It still renders. The evidence is on the same screen underneath, which is this
-       panel's own argument for why showing a model's reading of a fragment is safe — so
-       a flagged figure is a caveat, never a swallowed answer. */
-    if (a && bad.length) a += "\n\n(Some figures here — " + bad.join(", ") +
-      " — are not in what the app gave me. Check them against the report below.)";
+    const parts = uhAskParts(rep, question, store.live, subject, asr);
+    a = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
+                                   { label: "The coach — a question" }) || "").trim();
   } catch (e) {
     err = (e && e.message) || String(e);
   }
@@ -15909,6 +15804,19 @@ function coachDockRender() {
     e.className = "coachdock-empty";
     e.textContent = "Ask how to say something — or just start talking.";
     thread.append(e);
+    /* The four things he actually asks, as openings. A tap puts the words in the box and
+       the mic carries on from them, so the question is half-asked before he speaks. */
+    const st = document.createElement("div");
+    st.className = "coachdock-starters";
+    COACH_STARTERS.forEach(([label, opening]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "coachdock-starter";
+      b.textContent = label;
+      b.onclick = () => coachDockStarter(opening);
+      st.append(b);
+    });
+    thread.append(st);
   }
   if (coachDockMsg) {
     const m = document.createElement("div");
@@ -15928,11 +15836,6 @@ function coachDockRender() {
     earlier.onclick = () => { coachPastOpen = !coachPastOpen; coachDockRender(); };
     top.append(earlier);
   }
-  const uh = document.createElement("button");
-  uh.type = "button";
-  uh.textContent = "What the app is doing";
-  uh.onclick = () => { coachDockOpen(false); uhModalOpen(true); };
-  top.append(uh);
   const x = document.createElement("button");
   x.type = "button";
   x.className = "coachdock-x";
@@ -16049,6 +15952,22 @@ async function coachDockListen() {
      reads the box as its prefix), and the arrow sends. Not focused, on purpose — on a
      phone that raises the keyboard over the thread he is about to read. */
   coachDockRender();
+}
+
+/* What the chip says, and the words it puts in the box for him to finish out loud. */
+const COACH_STARTERS = [["How do I say…", "How do I say"], ["What does … mean?", "What does"],
+                        ["Is this right?", "Is this right:"], ["Why is it…", "Why is it"]];
+function coachDockStarter(t) {
+  const q = document.getElementById("coachDockQ");
+  if (!q) return;
+  q.value = t + " ";
+  coachDockVoiceLang = "";
+  coachDockAutoGrow();
+  coachDockPaintMic();
+  /* Listening already (the dock opens with the mic on): restart it so it reads the box
+     afresh as its prefix — otherwise its next interim overwrites the opening. */
+  if (coachDockListening) { coachDockRelisten = true; coachDockHush(); }
+  else coachDockListen();
 }
 
 function coachDockSend() {
@@ -34369,13 +34288,13 @@ T("coachDockAutoGrow: the box wraps and grows with the question, then shrinks ba
 });
 T("coachPrompt: warns the coach only about a question dictated in English", () => {
   const rep = { title: "x", sections: [] };
-  const en = coachPrompt(rep, "", [], "", "how do I say Adam", null, null, "en");
+  const en = coachPrompt(rep, [], "", "how do I say Adam", null, "en");
   assertTrue(en.indexOf("ENGLISH") !== -1 && en.indexOf("HOW THIS QUESTION REACHED YOU") !== -1,
              "an English transcript says so, since adom prints as Adam");
-  const he = coachPrompt(rep, "", [], "", "how do I say adom", null, null, "he");
+  const he = coachPrompt(rep, [], "", "how do I say adom", null, "he");
   assertTrue(he.indexOf("HOW THIS QUESTION REACHED YOU") === -1,
              "a Hebrew-set mic transcribes Hebrew correctly, so there is nothing to warn about");
-  const typed = coachPrompt(rep, "", [], "", "how do I say adom", null, null, null);
+  const typed = coachPrompt(rep, [], "", "how do I say adom", null, null);
   assertTrue(typed.indexOf("HOW THIS QUESTION REACHED YOU") === -1,
              "and typed text means what it says — never tell the coach to reinterpret it");
 });
@@ -36361,88 +36280,6 @@ T("uhReportFor: renderer and flag build the same report from the same place", ()
     "an unregistered kind reports nothing rather than inventing a panel");
   assertEq(uhText(null), "", "and nothing serialises to nothing, not a crash");
 });
-T("uhSourceOf: pulls one whole function and stops at the next declaration", () => {
-  /* The extraction rests on the file being LF throughout with every declaration at
-     column zero — the same fact CLAUDE.md's duplicate grep depends on. If that ever
-     stops being true this is where it shows up, rather than as a silently truncated
-     prompt that produces a confidently wrong answer. */
-  const src = [
-    "function alpha(a) {",
-    "  return a + 1;",
-    "}",
-    "const BETA = 7;",
-    "async function gamma() {",
-    "  return await Promise.resolve(1);",
-    "}"
-  ].join("\n");
-  const a = uhSourceOf(src, "alpha");
-  assertTrue(/^function alpha/.test(a), "starts at the declaration: " + a);
-  assertTrue(a.indexOf("return a + 1") !== -1, "and includes the body");
-  assertTrue(a.indexOf("BETA") === -1, "and stops before the next declaration");
-  assertEq(uhSourceOf(src, "BETA"), "const BETA = 7;", "a const is extractable too");
-  assertTrue(/^async function gamma/.test(uhSourceOf(src, "gamma")), "async is handled");
-  assertEq(uhSourceOf(src, "nosuchthing"), "", "a name that isn't there yields nothing");
-  assertEq(uhSourceOf("", "alpha"), "", "and so does no source at all");
-});
-T("uhSourceOf: finds the real rules in the real file", () => {
-  /* The synthetic case above proves the parser; this proves it against the actual file,
-     which is the thing that will drift. A rule whose source cannot be found sends the
-     model a prompt with no code in it and no sign that anything is missing. */
-  const src = document.documentElement.outerHTML;
-  Object.keys(UH_RULES).forEach(name => {
-    const body = uhSourceOf(src, name);
-    assertTrue(body.length > 0, "no source found for the rule " + name);
-    assertTrue(body.indexOf(name) !== -1, name + " extracted something that is not it");
-  });
-  Object.keys(UH_RULE_CONSTS).forEach(rule =>
-    UH_RULE_CONSTS[rule].forEach(c =>
-      assertTrue(uhSourceOf(src, c).length > 0,
-        rule + " asks for " + c + ", which does not exist")));
-});
-T("uhRulesOn: collects the rules a level actually invoked", () => {
-  /* Walked off the report rather than kept in a per-subject list, so a subject added
-     later brings its own sources with it and nothing here has to be remembered. */
-  const st = { lib: { "בית": { en: "house" } },
-               srs: { "בית": { prod: srsBandRecord("progressing") } },
-               camp: { chapters: [] }, bank: [], session: null };
-  const rules = uhRulesOn(UH.word("בית", st));
-  assertTrue(rules.indexOf("srsStrength") !== -1, "the banding rule is named");
-  assertTrue(rules.indexOf("wordReady") !== -1, "and so is the serving rule");
-  assertEq(rules.length, new Set(rules).size, "each named once, however many rows use it");
-  assertEq(uhRulesOn(null), [], "no report names no rules rather than throwing");
-});
-T("uhAskParts: sends the panel, the real code, and says it is a fragment", async () => {
-  /* The three things that stop a confident invention: the actual state, the actual rule,
-     and an instruction to admit when the fragment is not enough. */
-  const st = { lib: { "בית": { en: "house" } },
-               srs: { "בית": { prod: srsBandRecord("weak") } },
-               camp: { chapters: [] }, bank: [], session: null };
-  const rep = UH.word("בית", st);
-  const saved = uhSrcCache;
-  try {
-    uhSrcCache = document.documentElement.outerHTML;
-    const parts = await uhAskParts(rep, "why is this weak");
-    const text = parts[0].text;
-    assertTrue(text.indexOf("why is this weak") !== -1, "his question is in there");
-    assertTrue(text.indexOf("function srsStrength") !== -1,
-      "and the real body of the rule that decided it");
-    assertTrue(text.indexOf("RECENT_STRONG_MAX") !== -1,
-      "along with the constants that rule reads");
-    assertTrue(/fragment of a much larger/.test(text),
-      "and it is told plainly that it cannot see the whole app");
-    assertTrue(/say so plainly/.test(text), "and told to admit when that is not enough");
-  } finally { uhSrcCache = saved; }
-});
-T("uhAskParts: a report naming no rules still asks, without empty code headings", async () => {
-  const saved = uhSrcCache;
-  try {
-    uhSrcCache = "function nothing() {}";
-    const parts = await uhAskParts({ title: "Raw state", sections: [] }, "what is this");
-    assertTrue(parts[0].text.indexOf("THE CODE THAT PRODUCED IT") === -1,
-      "no code found means no heading claiming there is some");
-    assertTrue(parts[0].text.indexOf("what is this") !== -1, "the question still goes");
-  } finally { uhSrcCache = saved; }
-});
 T("uhAnswerText: the whole transcript rides the flag, past sittings included", () => {
   /* THE MITIGATION THAT MATTERS. A wrong answer he acts on is worse than no answer — but
      if I can see what he was told, I correct it in a line instead of arguing against a
@@ -36464,31 +36301,6 @@ T("uhAnswerText: the whole transcript rides the flag, past sittings included", (
     assertTrue(/failed: no key configured/.test(uhAnswerText()),
       "a failure is reported as one, not as silence");
   } finally { lsSet(COACH_KEY, saved === null ? JSON.stringify(coachBlank()) : saved); }
-});
-T("coachUncited: catches an invented figure and not a counted one", () => {
-  /* THE ONLY GUARD ON A CHEAP MODEL, and deliberately not a second model grading the
-     first — that is the judge-weaker-than-the-writer trap. Substring, and high-precision
-     on purpose: it must not fire on "2 words left". */
-  const payload = "difficulty 6.5 · stability 21d · miss rate 0.40 · 2 of 6 words";
-  assertEq(coachUncited("it is weak because difficulty is 6.5, over the 0.40 line", payload), [],
-    "figures that are in the material pass");
-  assertEq(coachUncited("its stability is 8.3 days", payload), ["8.3"],
-    "one that is not is caught");
-  assertEq(coachUncited("you have 2 words left of 6", payload), [],
-    "counting with small integers present in the material does not fire");
-  assertEq(coachUncited("difficulty 6.5 and again 6.5 and also 9.9", payload), ["9.9"],
-    "each uncited figure is reported once");
-  assertEq(coachUncited("no numbers at all", payload), [], "prose alone is clean");
-  /* THE NARROWING, and the case that forced it. The flag was raised from a compose card,
-     whose report is three dashes — so an ordinary Hebrew answer counting on its fingers
-     had nothing to match against and would have burned a retry to caveat the word "2". */
-  assertEq(coachUncited("there are 2 ways to say it, and the 3rd is rarer", "(nothing in particular)"), [],
-    "a single digit in prose is not a metric, even with an empty payload");
-  assertEq(coachUncited("its stability is 8.3 days", "(nothing in particular)"), ["8.3"],
-    "a decimal still is, however empty the payload");
-  assertEq(coachUncited("it waits 21 days", "(nothing in particular)"), ["21"],
-    "and so is a two-digit figure — that is the shape an invented threshold takes");
-  assertEq(coachUncited("", payload), [], "and so is nothing");
 });
 T("coach: a sitting ends on idle and on load, but not on navigation", () => {
   /* George: "after the app is closed and opened it resets ... Maybe after like 30 mins."
@@ -36521,68 +36333,65 @@ T("coach: the sitting and the history are both bounded", () => {
     t = coachArchive(coachAppend(t, { q: "q" + i, a: "a", err: "", subject: "", ts: 1 }, 1));
   assertEq(t.past.length, COACH_PAST_MAX, "and neither can the history");
 });
-T("coachPrompt: sends the live thread and this subject's report, not past ones", () => {
-  /* The bound that keeps a long sitting cheap: one report, plus every earlier turn as
-     text. Six words walked is one report and twelve exchanges, not six reports. */
-  const rep = { title: "רכבת", subtitle: "train", sections: [
-    { name: "Say — production", rows: [{ label: "Stability", value: "4.2 days" }] }] };
-  const thread = [{ q: "why is this weak", a: "its miss rate is high", err: "", subject: "מטוס", ts: 1 },
-                  { q: "and this one", a: "", err: "no key", subject: "רכבת", ts: 2 }];
-  const p = coachPrompt(rep, "function wordReady() {}", thread, "רכבת", "why that one and not this", null);
-  assertTrue(p.indexOf("why is this weak") !== -1, "an earlier turn is in the prompt");
-  assertTrue(p.indexOf("its miss rate is high") !== -1, "with what was said back");
-  assertTrue(p.indexOf("about מטוס") !== -1, "and the subject it was about");
+T("coachPrompt: sends the live thread and the card, not the scheduler's numbers", () => {
+  const rep = { title: "Say the whole sentence", sections: [
+    { name: "This card", rows: [{ label: "Hebrew", value: "אני נוסע לעיר" }] },
+    { name: "What answering it will do", rows: [{ label: "נוסע", value: "stays strong · 36.6d" }] },
+    { name: "The conversation", rows: [{ note: "You have just said, and he is answering: איזה קו זה?" }] }] };
+  const thread = [{ q: "how do I say bus", a: "otobus", err: "", subject: "card 1", ts: 1 },
+                  { q: "and this one", a: "", err: "no key", subject: "card 2", ts: 2 }];
+  const p = coachPrompt(rep, thread, "card 2", "why meharekhov", { gender: "m", level: 2 });
+  assertTrue(p.indexOf("how do I say bus") !== -1 && p.indexOf("otobus") !== -1,
+    "an earlier turn and its answer are in the prompt");
   assertTrue(p.indexOf("and this one") === -1, "a turn that failed carries nothing forward");
-  assertTrue(p.indexOf("4.2 days") !== -1, "the current subject's report goes in full");
-  assertTrue(p.indexOf("function wordReady") !== -1, "and the code that produced it");
-  assertTrue(p.indexOf("why that one and not this") !== -1, "and the question");
-  const first = coachPrompt(rep, "", [], "רכבת", "why", null);
-  assertTrue(first.indexOf("EARLIER IN THIS CONVERSATION") === -1,
+  assertTrue(p.indexOf("אני נוסע לעיר") !== -1, "the card is there");
+  assertTrue(p.indexOf("איזה קו זה") !== -1, "and the conversation");
+  assertTrue(p.indexOf("36.6d") === -1, "and not what answering would do to the schedule");
+  assertTrue(p.indexOf("why meharekhov") !== -1, "and the question");
+  assertTrue(coachPrompt(rep, [], "", "why", { gender: "m", level: 2 })
+    .indexOf("EARLIER IN THIS CONVERSATION") === -1,
     "an empty thread means no heading claiming there is one");
-  const retry = coachPrompt(rep, "", [], "רכבת", "why", ["8.3"]);
-  assertTrue(retry.indexOf("8.3") !== -1, "a retry names the figures it must not repeat");
 });
-T("coachPrompt: a Hebrew question is answerable, and the old wall is not there", () => {
-  /* THE FLAGGED BUG, as a test. He asked "How do I say office" on a compose card and got
-     "I would need the vocabulary database ... not in this fragment" — twice, both calls
-     ok, because the prompt said answer from the panel and NOTHING else. A prompt that
-     scopes the model to the material cannot answer him, so the scoping is what is
-     asserted against, not the wording that happened to carry it. */
+T("coachPrompt: one job, his Hebrew", () => {
+  /* George: "it is primarily and at its core now a aid for me to learn words and
+     phrasing, so cut the fluff". */
   const empty = { title: "The coach", sections: [] };
-  const p = coachPrompt(empty, "", [], "", "How do I say office", null,
-                        { gender: "m", level: 2 });
-  assertTrue(p.indexOf("NOTHING else") === -1,
-    "the model is no longer told the panel is all it knows");
-  /* The fragment sentence STAYS — uhAskParts pins it and it earns that, or an app answer
-     describes machinery the model never saw. What moved is its scope: it qualifies the
-     app branch now instead of framing the whole prompt, which is the difference between
-     "this slice of code is partial" and "you know nothing but this slice". */
-  assertTrue(p.indexOf("fragment of a much larger") > p.indexOf("ABOUT THE APP"),
-    "the fragment caveat sits inside the app branch, not over the whole prompt");
-  assertTrue(p.indexOf("ABOUT HEBREW") < p.indexOf("fragment of a much larger"),
-    "so it is not the first thing the model reads about what it may answer");
+  const p = coachPrompt(empty, [], "", "How do I say office", { gender: "m", level: 2 });
+  assertTrue(p.indexOf("ABOUT THE APP") === -1 && p.indexOf("fragment of a much larger") === -1,
+    "the inspector's half of the prompt is gone");
+  assertTrue(p.indexOf("THE CODE THAT PRODUCED IT") === -1, "and so is the code");
   assertTrue(/NEVER tell him you would need a file/.test(p),
-    "it is told outright not to ask for a file — that is the answer he actually got");
-  assertTrue(p.indexOf("ABOUT HEBREW") !== -1 && p.indexOf("ABOUT THE APP") !== -1,
-    "both kinds of question are permitted, which is what removes the need for a router");
-  /* The honesty rule survives the rewrite — it is a different rule from the wall, and
-     losing it with the wall is the way this change could quietly go wrong. */
-  assertTrue(/has to appear in what you were given/.test(p),
-    "figures about his own state are still fenced to the material");
-  /* He READS the transliteration. Two schemes teach two spellings for one sound. */
-  assertTrue(p.indexOf("kh for") !== -1 && p.indexOf("la'avoda") !== -1,
-    "the transliteration scheme goes with any Hebrew it hands him");
-  assertTrue(/SPEAKING AS A MAN/.test(p), "and who is speaking, so the Hebrew agrees");
-  assertTrue(p.indexOf("HIS LEVEL IS 2 OF 5") !== -1, "and where to pitch it");
-  const her = coachPrompt(empty, "", [], "", "q", null, { gender: "f", level: 4 });
-  assertTrue(/SPEAKING AS A WOMAN/.test(her), "the other setting reaches the prompt too");
-  /* Asked from the sheet with nothing open, uhText(null) is "". A bare header over an
-     empty string is the same invitation to go looking for a file. */
-  const bare = coachPrompt(null, "", [], "", "How do I say office", null,
-                           { gender: "m", level: 1 });
+    "the 'office' fix stays — it is told outright not to ask for a file");
+  assertTrue(/How do I say X/.test(p) && /Is this right/.test(p) && /Why is it X and not Y/.test(p),
+    "and how to answer the things he actually asks");
+  assertTrue(/my question/.test(p), "the coach's line on his screen is its own");
+  assertTrue(p.indexOf("kh for") !== -1 && p.indexOf("la'avoda") !== -1, "the scheme goes with it");
+  assertTrue(/SPEAKING AS A MAN/.test(p) && p.indexOf("HIS LEVEL IS 2 OF 5") !== -1);
+  assertTrue(/SPEAKING AS A WOMAN/.test(coachPrompt(empty, [], "", "q", { gender: "f", level: 4 })));
+  const bare = coachPrompt(null, [], "", "How do I say office", { gender: "m", level: 1 });
   assertTrue(bare.indexOf("(nothing in particular)") !== -1,
     "an empty report says so rather than trailing off into nothing");
-  assertTrue(bare.indexOf("How do I say office") !== -1, "and the question still arrives");
+});
+T("coachDockStarter: the opening goes in the box, ready to be finished", () => {
+  const realListen = coachDockListen, wasListening = coachDockListening;
+  const q = document.getElementById("coachDockQ"), savedQ = q.value;
+  let listened = 0;
+  try {
+    coachDockListen = () => { listened++; };
+    coachDockListening = false;
+    coachDockStarter(COACH_STARTERS[1][1]);
+    assertEq(q.value, "What does ", "the words, with room after them");
+    assertEq(listened, 1, "and the mic carries on from there");
+  } finally {
+    coachDockListen = realListen; coachDockListening = wasListening; q.value = savedQ;
+    coachDockPaintMic();
+  }
+});
+T("uhAskParts: one request, no code in it", () => {
+  const parts = uhAskParts({ title: "Raw state", sections: [] }, "what is this", [], "", null);
+  assertEq(parts.length, 1);
+  assertTrue(parts[0].text.indexOf("what is this") !== -1, "the question goes");
+  assertTrue(parts[0].text.indexOf("function ") === -1, "and no source does");
 });
 T("coachWho: reads his real settings, and never throws instead of answering", () => {
   const w = coachWho();

@@ -262,9 +262,9 @@
   }
   html[data-theme="night"] {
     --c-0-0-0-06: rgba(0,0,0,0.18);
-    --c-0a5551: #beecea;
-    --c-13-110-110-22: rgba(182,234,234,0.22);
-    --c-13-110-110-25: rgba(182,234,234,0.25);
+    --c-0a5551: #1fd9cf;
+    --c-13-110-110-22: rgba(50,226,226,0.22);
+    --c-13-110-110-25: rgba(50,226,226,0.25);
     --c-176-137-74-10: rgba(207,179,135,0.1);
     --c-176-137-74-28: rgba(207,179,135,0.28);
     --c-176-137-74-42: rgba(207,179,135,0.42);
@@ -283,7 +283,7 @@
     --c-255-255-255-86: rgba(37,33,27,.86);
     --c-255-255-255-93: rgba(37,33,27,.93);
     --c-2c5f9e: #538cd3;
-    --c-2e7d5b: #b6d9ca;
+    --c-2e7d5b: #79cba8;
     --c-34-48-60-10: rgba(0,0,0,0.27);
     --c-34-48-60-12: rgba(0,0,0,0.31);
     --c-34-48-60-16: rgba(0,0,0,0.4);
@@ -297,20 +297,20 @@
     --c-5f9a6c: #95bf9f;
     --c-60-45-20-42: rgba(0,0,0,0.85);
     --c-6a6355: #9b9280;
-    --c-6d2a22: #dfbeba;
-    --c-6d5836: #d6ccbc;
+    --c-6d2a22: #c96a5f;
+    --c-6d5836: #bda57f;
     --c-6d8683: #9eb1af;
     --c-6fae8b: #a9d0ba;
     --c-70-55-30-11: rgba(0,0,0,0.29);
     --c-7d3b32: #bc5c4f;
-    --c-7d5d1f: #e0d1b4;
+    --c-7d5d1f: #d4ad61;
     --c-7d6a4a: #af9974;
     --c-7fc0bb: #426461;
-    --c-8a6520: #e0cfb0;
+    --c-8a6520: #d9b26a;
     --c-8a7148: #b99f75;
     --c-8b7350: #b8a17f;
     --c-8b8271: #b5afa3;
-    --c-8c5a1a: #e3ccae;
+    --c-8c5a1a: #dea761;
     --c-8d8778: #b7b3a9;
     --c-8fa39d: #525c59;
     --c-93a7a3: #4f5957;
@@ -443,11 +443,14 @@
   textarea#input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  /* Atlas: pill-shaped and a thumb tall. Written here rather than overridden later so
+     every button that sets its own size at class level (the map's small Go, the word
+     panel's row, the sync pill) still wins as it did. */
   button.btn {
     border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent);
-    padding: 8px 16px; border-radius: 8px; font-size: .95rem; cursor: pointer;
+    padding: 8px 18px; border-radius: 22px; min-height: 42px; font-size: .95rem; cursor: pointer;
   }
-  button.btn.secondary { background: var(--c-ffffff); color: var(--accent); }
+  button.btn.secondary { background: var(--panel); color: var(--accent); }
   button.btn:hover { filter: brightness(1.08); }
   button.btn:disabled { opacity: .5; cursor: wait; }
   .status { font-size: .85rem; color: var(--muted); }
@@ -3160,6 +3163,54 @@
   .padstrip #padInput, .padstrip .padline, .padstrip #padDrafts:not(:empty) { border-radius: 12px; }
   .padline { font-family: var(--he); font-size: 1.3rem; }
   .ptile .phe { font-size: 1.45rem; }
+
+  /* ---- the rooms behind the menu ---- */
+  /* Progress. The page's name is in the bar now, so the hairline that stood in for a
+     title goes, and the section heads take the world's face like every other heading. */
+  .lstats::before { display: none; }
+  .lstats.open { padding-top: 6px; }
+  .lstats-sub { font-family: var(--display); font-size: 1.2rem; font-weight: 500; letter-spacing: 0;
+                text-transform: none; color: var(--ink); margin: 26px 0 10px; }
+  .lstatshead .lstats-sub { margin-top: 12px; }
+  .lstat, .lbars { background: var(--panel); border-radius: 12px; }
+  .lstat b { font-family: var(--display); font-weight: 500; font-size: 2rem; }
+  .lobs { border-radius: 14px; }
+  .lobs-k { font-family: var(--display); font-size: .95rem; letter-spacing: 0; text-transform: none; }
+
+  /* Every modal: the world's heading, the app's body. On a phone, a sheet from the
+     bottom — where the thumb already is and where the profile sheet and the place sheet
+     already come from — rather than a box floating in the middle. */
+  .modal-backdrop { background: var(--scrim); }
+  .modal, .strengthPanel { background: var(--panel); color: var(--ink); border-radius: 16px; }
+  .modal h2, .strengthHead h2 { font-family: var(--display); font-size: 1.5rem; font-weight: 500; }
+  .modal textarea, .modal input[type=password], .modal input[type=text], .setfilterbar input,
+  .strengthBar input, .wpanel-edit input, .wpanel-edit select {
+    background: var(--bg); color: var(--ink); border-color: var(--border); border-radius: 10px;
+    min-height: 44px; }
+  .modal textarea { min-height: 120px; }
+  #flagText { min-height: 88px; }
+  .flagkind { min-height: 36px; border-radius: 18px; }
+  .setgroup { border-top-color: var(--hair); }
+  .setgroup-title { font-family: var(--display); font-size: 1.2rem; font-weight: 500; letter-spacing: 0;
+                    text-transform: none; }
+  .setgroup-sub { font-family: var(--ui); }
+  .setrow-text b { font-size: .92rem; }
+  .setreassure { border-radius: 12px; }
+  .wpanel { background: var(--scrim); }
+  .wpanel-box { border-radius: 16px; }
+  .wpanel-head h2 { font-family: var(--he); font-size: 2rem; }
+  .uh-title { font-family: var(--display); font-size: 1.25rem; font-weight: 500; }
+  @media (max-width: 620px) {
+    .modal-backdrop { align-items: flex-end; }
+    .modal, .strengthPanel { width: 100vw; max-height: 90vh; border-radius: 18px 18px 0 0;
+      padding: 20px 18px calc(22px + env(safe-area-inset-bottom, 0px)); }
+    .modal.uh { width: 100vw; height: 92vh; }
+    .wpanel { align-items: flex-end; padding: 0; }
+    .wpanel-box { border-radius: 18px 18px 0 0; max-height: 88vh; }
+  }
+  /* The bars that interrupt: alarm and update offer keep their colours and jobs, with the
+     app's type and a softer edge. */
+  .updatebar, .alarm { font-family: var(--ui); }
 </style>
 </head>
 <body>

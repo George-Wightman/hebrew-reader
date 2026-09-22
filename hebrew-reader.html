@@ -3009,6 +3009,117 @@
   .lnotes { border-radius: 10px; background: var(--bg); font-size: 1rem; }
   .lamend-opt { border-radius: 10px; }
   .lamend-said, .lcoach, .lfc-line, .lfc-say, .lretract { font-family: var(--display); }
+
+  /* ---- a place, opened ---- */
+  .pathsheet { border-radius: 18px 18px 0 0; border-top: 0; max-height: 84vh;
+               box-shadow: 0 -12px 34px var(--c-34-48-60-22);
+               padding: 10px 18px calc(22px + env(safe-area-inset-bottom, 0px)); }
+  .pathsheet-inner::before { content: ""; display: block; width: 40px; height: 4px;
+    border-radius: 2px; background: var(--border); margin: 0 auto 14px; }
+  #pathSheetBackdrop { background: var(--scrim); }
+  .pp-head { align-items: center; gap: 10px; }
+  .pp-head h3 { font-family: var(--display); font-size: 1.75rem; font-weight: 500; line-height: 1.15; }
+  .pp-tier { font-size: .66rem; border: 1px solid var(--c-e0c48c); padding: 3px 9px; }
+  .pp-x { font-size: .86rem; color: var(--muted); text-decoration: none; min-height: 40px; }
+  .pp-why { font-family: var(--aside); font-size: 1.12rem; font-weight: 500; color: var(--muted); margin-top: 2px; }
+  .pp-sit { font-size: .86rem; }
+  /* The place's words as tiles: Hebrew first and large, its sound, then its meaning, with
+     the strength dot in the corner — the arrangement is the word, not a row of pills. */
+  .pp-words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 14px 0 0; }
+  .cw { position: relative; flex-direction: column; justify-content: center; gap: 1px;
+        border-radius: 10px; padding: 9px 6px 8px; background: var(--bg); text-align: center;
+        min-width: 0; }
+  .cw .sdot { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; }
+  .cw b { font-size: 1.3rem; color: var(--hebrew); line-height: 1.2; }
+  .cw .cwtr { font-size: .8rem; }
+  .cw u { font-size: .72rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-carry { font-size: .82rem; margin-top: 10px; }
+  .pp-carry b { font-size: 1.02rem; color: var(--hebrew); }
+  .pp-prog { font-size: .86rem; color: var(--ink); margin-top: 12px; }
+  .pp-acts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+  .pp-acts .btn { min-height: 48px; border-radius: 24px; font-size: .96rem; font-weight: 600; }
+  /* Practise first and full width: it is what the sheet is opened for most days. The
+     coach is the gold gate, so it wears the gate's colour. */
+  .pp-acts #campPractise { grid-column: 1 / -1; order: -1; }
+  .pp-acts #campCompose { border-color: var(--gold); color: var(--c-8a6520); }
+  .pp-gold { border-left: 0; background: var(--gold-soft); border: 1px solid var(--c-e0c48c);
+             border-radius: 12px; padding: 12px 14px 8px; margin-top: 14px; }
+  .pp-goldh { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0;
+              text-transform: none; color: var(--c-8a6520); }
+  .pp-goldsay b[dir="rtl"], .pp-goldlist b { font-size: 1.1rem; }
+
+  /* ---- the coach's table (compose) ---- */
+  .lgive { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px;
+           width: 100%; margin-bottom: 16px; }
+  .lgiveword { border-radius: 9px; padding: 7px 4px 6px; background: var(--bg); }
+  .lgiveword b { font-size: 1.3rem; font-weight: 500; }
+  .lgiveword span { font-size: .72rem; }
+  .lgiveword.done { background: var(--gold); border-color: var(--gold); }
+  .lgiveword.done b, .lgiveword.done span { color: var(--on-gold); opacity: 1; }
+  /* The thread has the whole lesson screen to use now; three turns without scrolling. */
+  .lbubbles { max-height: 44vh; }
+  .lbub { border-radius: 16px; padding: 9px 13px; margin-bottom: 8px; max-width: 88%; }
+  .lbub.them { background: var(--panel); border: 1px solid var(--border); border-radius: 4px 16px 16px 16px;
+               box-shadow: var(--shadow); }
+  .lbub.you { border-radius: 16px 4px 16px 16px; }
+  .lbub-he { font-size: 1.3rem; line-height: 1.4; }
+  /* The coach's line is one unit: Hebrew, then how it sounds, then what it means, all
+     inside the same bubble — the 22 September flag was the English floating free. */
+  .lbub-tr { font-size: .86rem; font-style: italic; color: var(--accent); margin-top: 2px; }
+  .lbub-en { font-size: .84rem; font-style: normal; color: var(--muted); }
+  .lheardlab { font-size: .68rem; }
+  .lheardhe { font-size: 1.3rem; }
+
+  /* ---- the coach, popping in ---- */
+  .coachhaze { background: linear-gradient(to bottom, var(--c-245-240-231-0) 0%,
+               var(--c-245-240-231-55) 45%, var(--c-245-240-231-9) 100%); height: 240px; }
+  .coachdock-thread .uh-ans { background: var(--panel); border: 1px solid var(--border);
+    border-left: 1px solid var(--border); border-radius: 4px 16px 16px 16px;
+    box-shadow: 0 10px 26px var(--c-34-48-60-16); padding: 11px 14px; }
+  .coachdock-thread .uh-ans.past { background: var(--bg); }
+  .coachdock-thread .uh-ansq { font-family: var(--ui); font-size: .84rem; color: var(--ink);
+    background: var(--accent-soft); display: inline-block; border-radius: 14px 14px 4px 14px;
+    padding: 6px 12px; margin-bottom: 8px; }
+  .coachdock-row textarea { border-radius: 26px; min-height: 52px; padding: 14px 16px;
+    background: var(--panel); border: 1.5px solid var(--accent); font-size: .96rem; }
+  .coachdock-mic { width: 52px; height: 52px; background: var(--accent); color: var(--on-accent);
+    border-color: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); }
+  .coachdock-lang { height: 52px; border-radius: 26px; background: var(--panel); }
+  .coachdock-top button { background: var(--panel); border-color: var(--border); }
+  .coachdock-starter { background: var(--panel); border-radius: 16px; }
+  /* Two floating panels were landing on each other: with the sentence pad open, the
+     coach popped in over its buttons. The coach is the one he just asked for, so the pad
+     steps aside while it is there and comes back, exactly as it was, when it goes. */
+  body:has(.coachdock.open) .padstrip, body:has(.coachdock.open) .padhaze { visibility: hidden; }
+  body.chrome-home .coachdock, body.chrome-words .coachdock, body.chrome-progress .coachdock { bottom: var(--dockh); }
+  body.chrome-home .coachhaze, body.chrome-words .coachhaze, body.chrome-progress .coachhaze { bottom: var(--dockh); }
+
+  /* ---- the end of a walk ---- */
+  .lend { text-align: left; }
+  .lend .lbig { font-size: 2.6rem; font-weight: 500; color: var(--ink); }
+  .lend .lsub { font-family: var(--aside); font-style: italic; font-size: 1.15rem; font-weight: 500; }
+  .lwhead { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0; text-transform: none;
+            color: var(--ink); }
+  .lwrow { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 9px 12px; margin-bottom: 6px; }
+  .lwname b { font-size: 1rem; }
+  .lfacts { background: var(--gold-soft); border: 1px solid var(--c-e0c48c); border-radius: 12px;
+            padding: 12px 14px; }
+  #lEnd .lactions { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  #lEnd .lactions .btn { width: 100%; }
+
+  /* ---- the walk home ---- */
+  .lspeedlab { font-family: var(--display); font-size: 1.7rem; }
+  .lspeedask { font-family: var(--aside); font-style: italic; font-size: 1.05rem; font-weight: 500; }
+  .lspeedhe { font-family: var(--he); font-size: 2.6rem; color: var(--hebrew); }
+  .lspeedtr { font-style: italic; color: var(--accent); font-size: 1.05rem; }
+  .lspeedtrack { height: 4px; }
+  .lspeed .lactions .btn { min-height: 58px; border-radius: 29px; padding: 0 40px 0 32px; font-size: 1.05rem;
+                           display: inline-flex; align-items: center; gap: 10px; }
+  #lSpeedMic::before { content: ""; width: 22px; height: 22px; background: currentColor;
+                       -webkit-mask: var(--ic-mic) center / contain no-repeat;
+                       mask: var(--ic-mic) center / contain no-repeat; }
+  #lSpeedMic.listening::before { -webkit-mask-image: var(--ic-pause); mask-image: var(--ic-pause); }
 </style>
 </head>
 <body>

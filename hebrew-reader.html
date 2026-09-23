@@ -19856,6 +19856,29 @@ function srsStrengthOf(srs, key, side) {
   const r = srs[key];
   return r ? srsStrength(r[side || "prod"]) : "new";
 }
+/* ---- a band the app ASSUMED, not one it saw ------------------------------------
+   The Duolingo import (2026-09-02) and the earlier batch importer wrote whole records
+   with srsBandRecord so 240-odd words could join the queue at a sensible band rather
+   than as never-met. Right for scheduling, and wrong the moment the band is treated as
+   evidence: "progressing" on one of those means "Duolingo taught it around unit 15", not
+   "he has said it". George chose to have them TESTED GENTLY — through sentences, one at a
+   time, beside words he has actually answered — so the picker has to be able to tell the
+   two apart.
+
+   A fingerprint rather than a stored flag, so nothing migrates. A seeded record has none
+   of the fields a real answer writes (`lastAt`, `streak`, `rn`, `ms`), no misses and no
+   lapses, and its stab/diff are exactly one of the shapes the seeders wrote. Keying on
+   `lastAt` alone was the obvious draft and is wrong: "month" was answered ten times in
+   August, before lastAt existed, and has no lastAt either — but its stab and diff were
+   moved by those answers, so it matches no seeded shape. The first real answer writes
+   lastAt, so a word stops being unproven the moment he has said it once. */
+const SRS_SEEDED_SHAPES = [[3, 7], [8, 4], [30, 2]];
+function srsUnproven(rec) {
+  if (!rec || !rec.n) return false;
+  if (["lastAt", "streak", "rn", "ms"].some(f => f in rec)) return false;
+  if (rec.miss || rec.lapses) return false;
+  return SRS_SEEDED_SHAPES.some(s => rec.stab === s[0] && rec.diff === s[1]);
+}
 const SRS_BANDS = ["new", "weak", "progressing", "strong"];
 /* How well he knows a word FULL STOP — both sides averaged, which is what a single
    dot beside a word ought to mean. George: "this should reflect the average strength
@@ -20802,6 +20825,11 @@ const CHUNK_CARDS = 2;
    eight: enough that a stuck word turns up more than once in different company, few
    enough that most of the session is still material entirely within reach. */
 const CARRY_CARDS = 3;
+/* Word cards a Full session may give to due words no sentence can carry — see the
+   flexible slot in learnBuild. Two of fifteen: enough that a stuck word is reached
+   within days, few enough that isolated recall stays the exception. Quick gets one, and
+   only in place of its phrase. */
+const FLEX_DUE_CARDS = 2;
 /* The most of a session that review material may occupy. The rest is always kept
    for words he hasn't drilled yet, so no amount of accumulated failure can stop
    new words appearing. */
@@ -25315,11 +25343,16 @@ function learnTargets(limit, only) {
      forever and nothing new could get in.
 
      Now ordered by reachability. `wordFamiliarity` already subtracts for misses, so
-     a word he keeps failing sinks on its own rather than being promoted for it. */
+     a word he keeps failing sinks on its own rather than being promoted for it.
+
+     That ordering now LIVES in practiceNeeds and is read from there, so the session's
+     targets, the flexible slot and the writer can never again disagree about which due
+     word comes first. */
   const famAll = {};
   const famOf = k => (famAll[k] !== undefined ? famAll[k] : (famAll[k] = wordFamiliarity(k, lib, srs, arch)));
-  overdue.sort((a, b) => (famOf(b) - famOf(a)) ||
-                          String(srs[a].prod.due).localeCompare(String(srs[b].prod.due)));
+  const dueRank = {};
+  practiceNeeds(lib, srs, today, arch).due.forEach((k, i) => { dueRank[k] = i; });
+  overdue.sort((a, b) => dueRank[a] - dueRank[b]);
   /* LONGEST-SINCE-SHOWN first, familiarity only as a tie-break. Familiarity used to
      be the whole sort — MOST FAMILIAR first, the reverse of an earlier bug that sorted
      newest-first and served the words he had least chance with. That fixed which word
@@ -25552,6 +25585,137 @@ function learnBankRoom(size, placed, chunks, notes, reply, shape) {
   return Math.max(floor, size - reply - placed - chunks - notes);
 }
 
+/* =====================  ONE LIST  =====================
+   George, 2026-09-23: "the algorythm for picking what words will be in hte daily
+   practice seems to keep selecting hte same words day after day", and then, of the
+   writers: "I feel like these systems should almost be one, why is it making sentences
+   for somehting hte app hasnt been using?"
+
+   Measured against his real state, three lists were deciding "what matters today" and
+   none of them agreed. learnTargets led with seven words overdue since August that no
+   sentence contained and no card slot could reach, so they were never shown and led
+   again the next day. The bank sort, finding nothing that hit those targets, fell back
+   to least-seen-then-easiest. And the background writer built every batch from his 25
+   most STABLE words, so each new item was today/coffee/cold, arrived unseen, and won.
+
+   So every word gets one number for today, and the picker, the word cards and the
+   writer all read it. Positive is "this word wants practice", negative is "he said this
+   yesterday and it is not due", zero is support. The negative is the half that answers
+   the complaint: "today" is due in December, and answered yesterday it now counts
+   AGAINST a sentence rather than for it.
+
+   See docs/superpowers/specs/2026-09-23-one-list-and-a-bank-that-covers-it-design.md. */
+const NEED_DUE = 10, NEED_OVERDUE_MAX = 5;
+const NEED_RECENT_DAYS = 2, NEED_RECENT = -4, NEED_WEEK = -1;
+function practiceNeeds(lib, srs, today, arch) {
+  const need = {}, due = [], unproven = new Set(), late = {};
+  Object.keys(lib || {}).forEach(k => {
+    if (!srsGradable(k, lib)) return;
+    const r = srs && srs[k] && srs[k].prod;
+    if (!r || !r.n) return;
+    if (srsUnproven(r)) unproven.add(k);
+    if (r.due && r.due <= today) {
+      late[k] = srsDaysSince(r.due, today) || 0;
+      need[k] = NEED_DUE + Math.min(NEED_OVERDUE_MAX, Math.floor(late[k] / 7));
+      due.push(k);
+      return;
+    }
+    const ago = srsDaysSince(r.last, today);
+    if (ago === null) return;
+    if (ago < NEED_RECENT_DAYS) need[k] = NEED_RECENT;
+    else if (ago < 7) need[k] = NEED_WEEK;
+  });
+  /* THE order for due words, and the only one. learnTargets used to sort its own copy
+     (by reachability — see the comment there) while this sorted by lateness, and the
+     first simulation of the flexible slot showed what two orders cost: the slot rescued
+     "opposites", due since 11 August, while the seven words the session was actually
+     leading with stayed untouched for fourteen days. So learnTargets now reads this.
+
+     Reachability first, exactly as learnTargets had it — wordFamiliarity already
+     subtracts for misses, so a word he keeps failing sinks rather than being promoted
+     for it — then the older due date. Key order last, so the list is stable. */
+  const fam = {};
+  due.forEach(k => { fam[k] = wordFamiliarity(k, lib, srs, arch); });
+  due.sort((a, b) => (fam[b] - fam[a]) ||
+                     String(srs[a].prod.due).localeCompare(String(srs[b].prod.due)) ||
+                     (a < b ? -1 : a > b ? 1 : 0));
+  return { need: need, due: due, unproven: unproven };
+}
+
+/* ---- picking sentences by what they cover ------------------------------------
+   Replaces "sort by target hits, then pickByLevel". Hits were a count against a
+   fifteen-word target list that, in his real state, no sentence touched at all — so
+   every candidate scored zero and the choice fell through to seen, then difficulty,
+   which is exactly the ratchet that kept serving the newest easy item.
+
+   Greedy over the level quota: each slot takes the highest-scoring candidate at the
+   level it wants (nearest level on a miss, as pickByLevel does), then its words count
+   as covered for the slots after it. So the second sentence goes looking for DIFFERENT
+   due words rather than a second helping of the first one's.
+
+   Positive first. Every slot is offered only candidates that cover something; a slot
+   that finds none at any level is filled afterwards from the best of the rest. A
+   sentence of nothing but words he said yesterday therefore appears only when there is
+   genuinely nothing else — and being unseen no longer beats covering something.
+
+   TESTED GENTLY (George's call on the Duolingo imports): a candidate with two words the
+   app has only assumed he knows is never eligible here, and the session spends at most
+   `unprovenLeft` of them. The first time an imported word is tested, the frame around it
+   is made of words he has actually said.
+
+   Pure. `pool` entries are {it, recent, carry?}; nothing is read from storage. */
+const PICK_COVERED = -2, PICK_RECENT = -3;
+const UNPROVEN_PER_SESSION = { quick: 2, balanced: 5 };
+function learnPickBank(pool, room, level, needs, opts) {
+  opts = opts || {};
+  const lib = opts.lib || {};
+  const need = (needs && needs.need) || {};
+  const unproven = (needs && needs.unproven) || new Set();
+  const covered = new Set(opts.covered || []);
+  let unprovenLeft = opts.unprovenLeft === undefined ? Infinity : opts.unprovenLeft;
+  const wordsOf = new Map(), unpOf = new Map();
+  (pool || []).forEach(x => {
+    const ws = bankContentWords(x.it, lib);
+    wordsOf.set(x, ws);
+    unpOf.set(x, ws.filter(w => unproven.has(w)).length);
+  });
+  const eligible = (pool || []).filter(x => unpOf.get(x) <= 1);
+  const scoreOf = x => wordsOf.get(x).reduce((s, w) =>
+    s + (covered.has(w) ? PICK_COVERED : (need[w] || 0)), 0) + (x.recent ? PICK_RECENT : 0);
+  const used = new Set(), out = [];
+  const takeAt = (L, positiveOnly) => {
+    let best = null, bestScore = -Infinity;
+    eligible.forEach(x => {
+      if (used.has(x) || bankLevel(x.it) !== L || unpOf.get(x) > unprovenLeft) return;
+      const s = scoreOf(x);
+      if (positiveOnly && s <= 0) return;
+      /* Ties: least seen, then easiest — the old sort's keys, kept as tie-breaks. */
+      if (!best || s > bestScore ||
+          (s === bestScore && ((x.it.seen || 0) - (best.it.seen || 0) ||
+                               (bankDifficulty(x.it, lib, opts.srs || {}) -
+                                bankDifficulty(best.it, lib, opts.srs || {}))) < 0)) {
+        best = x; bestScore = s;
+      }
+    });
+    return best;
+  };
+  const fill = (L, positiveOnly) => {
+    let got = takeAt(L, positiveOnly);
+    for (let d = 1; !got && d <= LEVEL_MAX; d++) {
+      got = takeAt(L - d, positiveOnly) || takeAt(L + d, positiveOnly);
+    }
+    if (!got) return false;
+    used.add(got);
+    out.push(got);
+    wordsOf.get(got).forEach(w => covered.add(w));
+    unprovenLeft -= unpOf.get(got);
+    return true;
+  };
+  const unfilled = levelQuota(room, level).filter(L => !fill(L, true));
+  unfilled.forEach(L => fill(L, false));
+  return out;
+}
+
 function learnBuild(opts) {
   const lib = libAll();
   const only = (opts && opts.only) || null;
@@ -25572,7 +25736,6 @@ function learnBuild(opts) {
 
   const voice = hasHeVoice();
   const bank = bankPrune(bankAll(), lib);
-  const isTarget = {}; targets.forEach(k => { isTarget[k] = true; });
 
   /* Hear-and-answer needs a voice to hear. Nothing else gates it any more — the
      shape that used to suppress it was removing comprehension practice, not adding
@@ -25593,6 +25756,9 @@ function learnBuild(opts) {
      already only his three worst words in the whole library; there is nothing in it
      that is not worth carrying on any day it can be. */
   const carry = new Set(rescueWords(lib, srsNow));
+  /* The one list — see practiceNeeds. Everything below that chooses a sentence or a
+     word reads this, and so does learnTopUp's writer. */
+  const needs = practiceNeeds(lib, srsNow, todayISO(), archiveAll());
   const rankedAll = bank
     /* Without a Hebrew voice, "hear and answer" isn't a degraded listening drill,
        it's a reading drill wearing its coat. Withhold it rather than fake it. */
@@ -25606,7 +25772,7 @@ function learnBuild(opts) {
        out. Without that the gate is absolute and a sentence can only ever rehearse
        vocabulary learned elsewhere — which is why a weak word had no way back. */
     .filter(it => bankServable(it, lib, srsNow, carry))
-    .map(it => ({ it: it, hits: (it.uses || []).filter(u => isTarget[u]).length,
+    .map(it => ({ it: it, need: bankContentWords(it, lib).reduce((s, w) => s + (needs.need[w] || 0), 0),
                   carry: bankCarried(it, lib, srsNow, carry),
                   diff: bankDifficulty(it, lib, srsNow) }))
     /* THEN THE GRADE. This used to be `diff` ascending — EASIEST FIRST — and that
@@ -25616,11 +25782,11 @@ function learnBuild(opts) {
        strongest words wins every session, forever, and nothing about answering it
        correctly changes that.
 
-       Level now decides the MIX (see the quota below) and this sort decides only
-       which item wins WITHIN a level: the one covering most of today's target
-       words, then the one he has seen least, with `diff` surviving as a sensible
-       last tie-break. */
-    .sort((a, b) => (b.hits - a.hits) || ((a.it.seen || 0) - (b.it.seen || 0)) || (a.diff - b.diff));
+       Level decides the MIX and learnPickBank decides the sentences, by what they
+       cover. This order is only what the shadow pick and the review drill see first:
+       most need, then least seen, then easiest. It used to lead with target HITS,
+       which in his real state were zero for every item in the bank. */
+    .sort((a, b) => (b.need - a.need) || ((a.it.seen || 0) - (b.it.seen || 0)) || (a.diff - b.diff));
 
   /* Rotation, applied AFTER the sort and without disturbing it: anything served in
      the last few sessions moves to the back of the queue, keeping its relative order.
@@ -25630,6 +25796,10 @@ function learnBuild(opts) {
   const bankSeq = parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0;
   const bankSplit = bankCooldownSplit(rankedAll, recencyAll(), bankSeq,
                                       BANK_COOLDOWN_SESSIONS, x => x.it && x.it.id);
+  /* Still the order the shadow pick reads. For the sentences themselves the cooldown is
+     now a weight inside learnPickBank rather than a wall, so a recent sentence covering
+     three due words can still beat a fresh one covering none. */
+  bankSplit.recent.forEach(x => { x.recent = true; });
   const ranked = bankSplit.fresh.concat(bankSplit.recent);
 
   /* "Answer them" no longer runs in ordinary practice. George: "Remove the 'say your
@@ -25682,6 +25852,26 @@ function learnBuild(opts) {
   const launching = newWords.slice(0, newRoom);
   launching.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
 
+  /* ---- the flexible slot ---------------------------------------------------
+     A due word no sentence can carry used to have no way in at all. Sentences need
+     every word ready and there were none for it; a word card was the fill slice, and
+     with the bank taking the residual the fill had no room. So "month", due since
+     24 August, led the target list every day for a month and was never shown once.
+
+     `stuck` is due words, most overdue first, that no servable sentence in this pool
+     contains. Quick: one takes the phrase's place (George's call — the sentences are
+     what move the most words, so they keep their three). Full: up to FLEX_DUE_CARDS,
+     placed before learnBankRoom runs so the sentence share pays for them. As the bank
+     grows to cover his vocabulary, fewer words are stuck and the phrase comes back on
+     its own — this is a stopgap by design, not the mechanism. */
+  const unpCount = x => bankContentWords(x.it, lib).filter(w => needs.unproven.has(w)).length;
+  const carried = new Set();
+  rankedAll.forEach(x => { if (unpCount(x) <= 1) bankContentWords(x.it, lib).forEach(w => carried.add(w)); });
+  const stuck = needs.due.filter(k => !carried.has(k) && launching.indexOf(k) === -1 &&
+                                      (!only || only.indexOf(k) !== -1));
+  const stuckPicks = stuck.slice(0, shape === "quick" ? 1 : FLEX_DUE_CARDS);
+  stuckPicks.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
+
   /* Chunks and notes are chosen HERE, before the bank room is worked out, though they
      are not pushed until below. They used to be picked afterwards, which meant the
      bank took a fixed allocation and everything else was added on top — and whatever
@@ -25692,7 +25882,7 @@ function learnBuild(opts) {
      than by a shuffle and a truncation. That is what actually delivers the doubling
      the constants above describe — a bank ceiling on its own would have been eaten by
      the fill loop padding the session back out with isolated word cards. */
-  const chunkPicks = learnChunkTargets(shape === "quick" ? 1 : CHUNK_CARDS);
+  const chunkPicks = learnChunkTargets(shape === "quick" ? (stuckPicks.length ? 0 : 1) : CHUNK_CARDS);
   const notePicks = noteTargets(shape === "quick" ? 0 : NOTES_PER_SESSION, only);
 
   /* Paid for out of the bank's allocation rather than out of chunks or notes, and
@@ -25727,16 +25917,25 @@ function learnBuild(opts) {
      carrying an unknown is by construction not one of the strongest matches. Capped
      because a session of nothing but sentences containing a word he cannot say is the
      impossible-card problem rebuilt from the other end. */
-  const bankCarrying = bankPool.filter(x => x.carry);
-  const bankHits = bankPool.filter(x => !x.carry && x.hits > 0);
-  const bankRest = bankPool.filter(x => !x.carry && x.hits === 0);
-  const bankTake = pickByLevel(bankCarrying,
-                               levelQuota(Math.min(CARRY_CARDS, bankRoom), level));
-  [bankHits, bankRest].forEach(pool => {
-    if (bankTake.length >= bankRoom) return;
-    pickByLevel(pool, levelQuota(bankRoom - bankTake.length, level))
-      .forEach(x => bankTake.push(x));
+  /* COVERAGE, THEN LEVEL — now one step rather than two pools. learnPickBank scores
+     each candidate by the need it covers (practiceNeeds) and honours the level quota
+     slot by slot, which is what the hits/rest split was approximating. Carried items
+     still go first and still cap at CARRY_CARDS; they now also draw down the same
+     unproven budget and count as covered for what follows. */
+  const pickOpts = { lib: lib, srs: srsNow, covered: [],
+                     unprovenLeft: (UNPROVEN_PER_SESSION[shape] || UNPROVEN_PER_SESSION.balanced) -
+                                   stuckPicks.filter(k => needs.unproven.has(k)).length };
+  cards.forEach(c => (c.words || []).forEach(w => pickOpts.covered.push(w)));
+  const bankTake = learnPickBank(bankPool.filter(x => x.carry),
+                                 Math.min(CARRY_CARDS, bankRoom), level, needs, pickOpts);
+  bankTake.forEach(x => {
+    bankContentWords(x.it, lib).forEach(w => pickOpts.covered.push(w));
+    pickOpts.unprovenLeft -= unpCount(x);
   });
+  if (bankTake.length < bankRoom) {
+    learnPickBank(bankPool.filter(x => !x.carry), bankRoom - bankTake.length, level, needs, pickOpts)
+      .forEach(x => bankTake.push(x));
+  }
   bankTake.forEach(x => cards.push({ kind: x.it.type, item: x.it,
                                      carry: x.carry || "", words: x.it.uses || [] }));
 
@@ -39627,6 +39826,101 @@ T("bankCooldownSplit: a bank smaller than the cooldown still yields everything",
 });
 T("bankCooldownSplit: junk inputs are empty pools, not a crash", () => {
   assertEq(bankCooldownSplit(null, null, 0, 3), { fresh: [], recent: [] });
+});
+
+/* ---- One list: srsUnproven, practiceNeeds, learnPickBank (2026-09-23) ----
+   All driven with plain objects — nothing here may touch his real stores. */
+T("srsUnproven: a seeded band is assumed, not observed", () => {
+  assertTrue(srsUnproven(srsBandRecord("progressing")), "the Duolingo import's shape");
+  assertTrue(srsUnproven(srsBandRecord("strong")));
+  assertTrue(srsUnproven({ due: "2026-09-10", last: "2026-09-02", stab: 30, diff: 2, n: 3, miss: 0, lapses: 0 }),
+             "the older batch importer's shape");
+  assertTrue(!srsUnproven(srsBlank()), "never met is new, not unproven");
+});
+T("srsUnproven: one real answer proves it", () => {
+  const srs = { "מילה": { prod: srsBandRecord("progressing"), recv: srsBlank() } };
+  srsApply(srs, "מילה", 2, "prod", "2026-09-20");
+  assertTrue(!srsUnproven(srs["מילה"].prod), "srsApply writes lastAt");
+});
+T("srsUnproven: an August word with no lastAt is still proven by its moved numbers", () => {
+  /* "month": answered ten times before lastAt existed. Keying on lastAt alone would
+     have called it unproven. */
+  assertTrue(!srsUnproven({ due: "2026-08-24", last: "2026-08-23", stab: 1, diff: 7.88, n: 10,
+                            miss: 3.2, lapses: 2 }));
+});
+const NDS = () => {
+  const lib = { "דוא": { en: "due" }, "ישן1": { en: "late" }, "אתמ": { en: "yesterday" },
+                "שבו": { en: "this week" }, "רחו": { en: "far off" }, "מדו": { en: "import" } };
+  const rec = (due, last, extra) => Object.assign({ due: due, last: last, stab: 10, diff: 5, n: 3,
+                                                    miss: 0, lapses: 0, lastAt: 1 }, extra || {});
+  const srs = {
+    "דוא":  { prod: rec("2026-01-09", "2025-12-30") },
+    "ישן1": { prod: rec("2025-12-01", "2025-11-20") },
+    "אתמ":  { prod: rec("2026-03-01", "2026-01-09") },
+    "שבו":  { prod: rec("2026-03-01", "2026-01-05") },
+    "רחו":  { prod: rec("2026-03-01", "2025-12-01") },
+    "מדו":  { prod: Object.assign(srsBandRecord("progressing"), { due: "2026-01-08" }) }
+  };
+  return { lib: lib, srs: srs, today: "2026-01-10" };
+};
+T("practiceNeeds: due words want practice, more overdue wants more", () => {
+  const c = NDS(), n = practiceNeeds(c.lib, c.srs, c.today);
+  assertTrue(n.need["דוא"] >= NEED_DUE, "due");
+  assertTrue(n.need["ישן1"] > n.need["דוא"], "forty days late outranks one");
+  assertEq(n.due.slice().sort(), ["דוא", "ישן1", "מדו"].sort(), "exactly the due words");
+});
+T("practiceNeeds: said yesterday and not due counts against a sentence", () => {
+  const c = NDS(), n = practiceNeeds(c.lib, c.srs, c.today);
+  assertEq(n.need["אתמ"], NEED_RECENT, "answered yesterday");
+  assertEq(n.need["שבו"], NEED_WEEK, "answered five days ago");
+  assertEq(n.need["רחו"] || 0, 0, "answered long ago and not due is support, neither for nor against");
+});
+T("practiceNeeds: reports the words the app only assumed", () => {
+  const c = NDS(), n = practiceNeeds(c.lib, c.srs, c.today);
+  assertTrue(n.unproven.has("מדו"));
+  assertTrue(!n.unproven.has("דוא"));
+});
+const PKI = (id, uses, extra) => ({ it: Object.assign({ id: id, he: id, uses: uses, lvl: 2, seen: 0 }, extra || {}) });
+const PKLIB = { "א1": {}, "ב1": {}, "ג1": {}, "ד1": {}, "ה1": {}, "ו1": {} };
+T("learnPickBank: a sentence covering a due word beats one of words he just said", () => {
+  const needs = { need: { "א1": 10, "ב1": -4, "ג1": -4 }, unproven: new Set() };
+  const got = learnPickBank([PKI("stale", ["ב1", "ג1"]), PKI("due", ["א1", "ב1"])], 1, 2, needs, { lib: PKLIB });
+  assertEq(got.map(x => x.it.id), ["due"]);
+});
+T("learnPickBank: the second sentence goes looking for a different due word", () => {
+  const needs = { need: { "א1": 10, "ב1": 10 }, unproven: new Set() };
+  const pool = [PKI("a-again", ["א1", "ג1"]), PKI("a", ["א1"]), PKI("b", ["ב1"])];
+  const got = learnPickBank(pool, 2, 1, needs, { lib: PKLIB }).map(x => x.it.id);
+  assertTrue(got.indexOf("b") !== -1, "the second due word is covered: " + got.join(","));
+});
+T("learnPickBank: never two assumed words in one sentence, and the session budget holds", () => {
+  const needs = { need: { "א1": 10, "ב1": 10, "ג1": 10 }, unproven: new Set(["א1", "ב1", "ג1"]) };
+  const two = learnPickBank([PKI("two", ["א1", "ב1"])], 1, 2, needs, { lib: PKLIB });
+  assertEq(two.length, 0, "a two-unproven sentence is not eligible at all");
+  const one = learnPickBank([PKI("a", ["א1"]), PKI("b", ["ב1"]), PKI("c", ["ג1"])], 3, 2, needs,
+                            { lib: PKLIB, unprovenLeft: 2 });
+  assertEq(one.length, 2, "budget of two unproven words across the session");
+});
+T("learnPickBank: rotation is a weight, not a wall", () => {
+  const needs = { need: { "א1": 10 }, unproven: new Set() };
+  const fresh = PKI("fresh", ["א1"]), recent = Object.assign(PKI("recent", ["א1"]), { recent: true });
+  assertEq(learnPickBank([recent, fresh], 1, 2, needs, { lib: PKLIB }).map(x => x.it.id), ["fresh"],
+           "equal coverage: the fresh one wins");
+  const recentDue = Object.assign(PKI("recentDue", ["א1"]), { recent: true });
+  assertEq(learnPickBank([PKI("nothing", ["ד1"]), recentDue], 1, 2, needs, { lib: PKLIB }).map(x => x.it.id),
+           ["recentDue"], "a recent sentence covering a due word beats a fresh one covering nothing");
+});
+T("learnPickBank: a slot with nothing positive is still filled from the rest", () => {
+  const needs = { need: { "ב1": -4 }, unproven: new Set() };
+  const got = learnPickBank([PKI("stale", ["ב1"]), PKI("plain", ["ד1"])], 2, 2, needs, { lib: PKLIB });
+  assertEq(got.length, 2, "the session is not left short");
+  assertEq(got[0].it.id, "plain", "but the least-bad goes first");
+});
+T("learnPickBank: honours the level quota", () => {
+  const needs = { need: { "א1": 10, "ב1": 10, "ג1": 10 }, unproven: new Set() };
+  const pool = [PKI("l2a", ["א1"]), PKI("l2b", ["ב1"]), PKI("l3", ["ג1"], { lvl: 3 })];
+  const got = learnPickBank(pool, 2, 2, needs, { lib: PKLIB });
+  assertEq(got.map(x => bankLevel(x.it)).sort(), [2, 3], "one at his level, one above");
 });
 
 /* ====================  THE MAP IS THE FRONT DOOR  ====================

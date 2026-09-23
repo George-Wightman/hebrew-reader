@@ -9852,6 +9852,9 @@ function SYNC_LOCAL_SET() {
        local: what actually needs to reach me is already snapshotted into whichever flag
        was raised about it. */
     AI_LOG_KEY, AI_ACK_KEY,
+    /* How many breadth runs THIS device has spent today — the cap is per device, like
+       the requests it limits, and a counter under newer-wins could go backwards. */
+    BREADTH_DAY_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY,
     /* NOTHING IN THIS FILE READS THESE. They are residue from features that were
@@ -26710,6 +26713,56 @@ function learnHasServable() {
 /* `quiet` is for the background call fired during a running session: same work,
    no spinner. A ring appearing over a card he is mid-answer on reads as the app
    doing something to HIM, which it isn't. */
+/* ---- what the breadth writer is for --------------------------------------------
+   The writer's half of practiceNeeds. `write` is due words — in the one due order — that
+   are ready for a sentence and that no servable, daily-eligible sentence contains yet:
+   exactly the words the session's flexible slot is having to rescue one at a time. A due
+   word that is not ready (weak) is left to the rescue pass above, which carries it; this
+   pass writes fully-reachable material only.
+
+   `overused` is the bank's own most frequent words, named so the prompt can steer away
+   from them. `support` is what the old prompt called "words he can already say" — most
+   stable first — minus the over-used and minus anything only assumed, so the frame
+   around a word being tested is made of words he has actually said.
+
+   Pure: plain objects in, plain lists out. */
+const BREADTH_WRITE_FOR = 8, BREADTH_OVERUSED = 10, BREADTH_SUPPORT = 25;
+function breadthBrief(lib, srs, bank, needs) {
+  const unproven = (needs && needs.unproven) || new Set();
+  const reached = new Set(), uses = {};
+  (bank || []).forEach(it => {
+    const ws = bankContentWords(it, lib);
+    ws.forEach(w => { uses[w] = (uses[w] || 0) + 1; });
+    if (ws.filter(w => unproven.has(w)).length <= 1 && bankServable(it, lib, srs)) {
+      ws.forEach(w => reached.add(w));
+    }
+  });
+  const write = ((needs && needs.due) || [])
+    .filter(k => wordReady(k, srs) && !reached.has(k)).slice(0, BREADTH_WRITE_FOR);
+  const overused = Object.keys(uses)
+    .sort((a, b) => (uses[b] - uses[a]) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, BREADTH_OVERUSED);
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  const support = Object.keys(lib || {})
+    .filter(k => srsGradable(k, lib) && wordReady(k, srs) && !unproven.has(k) &&
+                 overused.indexOf(k) === -1 && write.indexOf(k) === -1)
+    .sort((a, b) => (stabOf(b) - stabOf(a)) || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, BREADTH_SUPPORT);
+  return { write: write, support: support, overused: overused };
+}
+/* Three breadth runs a day, per device. A dated counter in its own key rather than the
+   AI ledger: the ledger counts requests by pool, and one run is a write and a review. */
+const BREADTH_RUNS_PER_DAY = 3, BREADTH_DAY_KEY = "hvr_breadthday";
+function breadthRunClaim() {
+  const today = todayISO();
+  let st;
+  try { st = JSON.parse(lsGet(BREADTH_DAY_KEY)) || {}; } catch (e) { st = {}; }
+  if (st.day !== today) st = { day: today, n: 0 };
+  if (st.n >= BREADTH_RUNS_PER_DAY) return false;
+  st.n++;
+  lsSet(BREADTH_DAY_KEY, JSON.stringify(st));
+  return true;
+}
+
 async function learnTopUp(quiet) {
   const lib = libAll();
   const srs = srsAll();
@@ -26768,12 +26821,24 @@ async function learnTopUp(quiet) {
   }
 
   /* ---- pass two: breadth -----------------------------------------------------
-     Unchanged in purpose: keep enough ordinary, fully-reachable material on the shelf
-     that a session is never short. Counts only what he could actually be SERVED —
-     counting gated sentences would let a bank full of unreachable ones convince the
-     app it had plenty. */
+     Two questions now, not one. The old one — is the shelf low — stays: counts only
+     what he could actually be SERVED, since counting gated sentences would let a bank
+     full of unreachable ones convince the app it had plenty.
+
+     The new one is George's: "why is it making sentences for somehting hte app hasnt
+     been using?" It was. This pass wrote from his 25 most stable words while the
+     session led with seven due words no sentence contained, and with 282 prebaked
+     items unseen the shelf never read as low, so it never wrote for them either. Now
+     it asks the same list the session reads: is anything due with nothing written
+     for it? See breadthBrief. */
+  const aim = breadthBrief(lib, srs, bank, practiceNeeds(lib, srs, todayISO(), archiveAll()));
   const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
-  if (unseen >= BANK_MIN_UNSEEN) return made;   // already have material he can reach
+  if (unseen >= BANK_MIN_UNSEEN && !aim.write.length) return made;
+  /* With ~280 due words uncovered on the day this shipped, "anything uncovered" is
+     true on every session start for weeks. Capped so that is three runs a day rather
+     than two calls behind every session. Spent before the request, so a failing call
+     cannot retry itself into the strong pool. */
+  if (!breadthRunClaim()) return made;
 
   /* Built from what he can already SAY, not from what arrived most recently. The
      old prompt sent the target list as "words he is working on", which by then meant
@@ -26790,7 +26855,10 @@ async function learnTopUp(quiet) {
      exactly that claim, measured. */
   const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
   const readyRanked = ready.slice().sort((a, b) => stabOf(b) - stabOf(a));
-  const working = readyRanked.slice(0, 25)
+  /* aim.support, not the top 25 by stability: the same idea with the ten words the
+     bank already over-uses taken out, and nothing the app has only assumed. Left in,
+     the model reaches for today/coffee/cold every time, which is the repetition. */
+  const working = aim.support
     .map(k => k + " (" + (lib[k].tr || "") + ") = " + (lib[k].en || "")).join("\n");
   const vocab = readyRanked.map(k => k + " (" + (lib[k].tr || "") + ")").join(", ");
   /* The other end of the same list: words that only just became eligible, which
@@ -26842,13 +26910,25 @@ async function learnTopUp(quiet) {
     /* The other half of the soft launch. A word gets one isolated card, becomes
        eligible for sentences the next session, and would then sit unused forever
        because the model has more to work with elsewhere — unless it is told. */
-    "JUST LEARNED — he met these very recently and needs them in context. Use them " +
-    "wherever it is natural to; that is the whole point of this batch:\n" + fresh + "\n\n" +
+    (aim.write.length
+      ? "WRITE FOR THESE — each is due for review and has NO sentence yet, which is the " +
+        "whole reason this batch exists. Write one or two items built around each, and put " +
+        "that word in the item's \"for\" field. If a word will not go into something a " +
+        "person would really say, SKIP IT — a forced sentence is worse than none:\n" +
+        aim.write.map(k => k + " (" + (lib[k].tr || "") + ") = " + (lib[k].en || "")).join("\n") +
+        "\n\n"
+      : "JUST LEARNED — he met these very recently and needs them in context. Use them " +
+        "wherever it is natural to; that is the whole point of this batch:\n" + fresh + "\n\n") +
+    (aim.overused.length
+      ? "DO NOT LEAN ON THESE — they are already in almost every sentence he has, and " +
+        "hearing them again is exactly what makes his practice feel repetitive. Use one only " +
+        "where the sentence genuinely needs it: " + aim.overused.join(", ") + "\n\n"
+      : "") +
     "EVERY WORD HE IS READY FOR — use ONLY these, plus basic grammar words " +
     "(אני, אתה, זה, של, את, לא, כן, יש):\n" + vocab + "\n\n" +
     "Return JSON only, no markdown:\n" +
     '{"items":[' +
-    '{"type":"sentence","he":"","tr":"","en":"","gloss":[{"he":"","tr":"","en":"","why":""}]},' +
+    '{"type":"sentence","he":"","tr":"","en":"","for":"","gloss":[{"he":"","tr":"","en":"","why":""}]},' +
     '{"type":"listen","he":"","tr":"","en":"","gloss":[]}' +
     '],"newWords":[{"hebrew":"","translit":"","english":"","category":""}]}\n\n' +
     /* THE BAR THAT WAS MISSING. Every constraint in this prompt used to be about
@@ -39921,6 +40001,38 @@ T("learnPickBank: honours the level quota", () => {
   const pool = [PKI("l2a", ["א1"]), PKI("l2b", ["ב1"]), PKI("l3", ["ג1"], { lvl: 3 })];
   const got = learnPickBank(pool, 2, 2, needs, { lib: PKLIB });
   assertEq(got.map(x => bankLevel(x.it)).sort(), [2, 3], "one at his level, one above");
+});
+T("breadthBrief: writes for due words nothing covers, and only ready ones", () => {
+  const lib = { "כסה": {}, "חסר": {}, "חלש1": {}, "יסוד": {} };
+  const ok = { due: "2026-01-01", last: "2025-12-01", stab: 30, diff: 3, n: 5, miss: 0, lapses: 0, lastAt: 1 };
+  const srs = { "כסה": { prod: ok }, "חסר": { prod: ok }, "יסוד": { prod: Object.assign({}, ok, { due: "2026-06-01" }) },
+                "חלש1": { prod: { due: "2026-01-01", last: "2025-12-01", stab: 1, diff: 8, n: 5, miss: 3, lapses: 2, lastAt: 1 } } };
+  const bank = [{ id: "a", he: "x", uses: ["כסה", "יסוד"] }];
+  const needs = { due: ["כסה", "חסר", "חלש1"], unproven: new Set(), need: {} };
+  const b = breadthBrief(lib, srs, bank, needs);
+  assertEq(b.write, ["חסר"], "covered and weak words are not this pass's job");
+});
+T("breadthBrief: support leaves out the over-used and the assumed", () => {
+  const lib = {}, srs = {}, bank = [];
+  const ok = { due: "2027-01-01", last: "2025-12-01", stab: 30, diff: 3, n: 5, miss: 0, lapses: 0, lastAt: 1 };
+  for (let i = 0; i < 14; i++) { lib["מ" + i] = {}; srs["מ" + i] = { prod: Object.assign({}, ok, { stab: 30 + i }) }; }
+  for (let i = 0; i < BREADTH_OVERUSED; i++) bank.push({ id: "b" + i, he: "x", uses: ["מ13", "מ" + i] });
+  const b = breadthBrief(lib, srs, bank, { due: [], unproven: new Set(["מ12"]), need: {} });
+  assertTrue(b.overused.indexOf("מ13") === 0, "the word in everything leads the over-used list");
+  assertTrue(b.support.indexOf("מ13") === -1, "and is not offered as support");
+  assertTrue(b.support.indexOf("מ12") === -1, "nor is a word the app only assumed");
+});
+T("breadthRunClaim: three a day, then no", () => {
+  const keep = lsGet(BREADTH_DAY_KEY);
+  try {
+    localStorage.removeItem(BREADTH_DAY_KEY);
+    const got = [1, 2, 3, 4].map(() => breadthRunClaim());
+    assertEq(got, [true, true, true, false]);
+    lsSet(BREADTH_DAY_KEY, JSON.stringify({ day: "2000-01-01", n: 3 }));
+    assertTrue(breadthRunClaim(), "a new day starts a new count");
+  } finally {
+    if (keep !== null) lsSet(BREADTH_DAY_KEY, keep); else localStorage.removeItem(BREADTH_DAY_KEY);
+  }
 });
 
 /* ====================  THE MAP IS THE FRONT DOOR  ====================

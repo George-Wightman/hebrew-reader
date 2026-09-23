@@ -227,6 +227,33 @@ Re-run the 14-day simulation on his real state with v5 ingested. Passes only if:
 - distinct words practised roughly doubles (Quick 79, Full 143 before);
 - the self-test suite passes.
 
+### Results, measured 2026-09-23
+
+Fourteen simulated days on his real state, v5 ingested, every answer right:
+
+| | before | after |
+|---|---|---|
+| distinct words practised, Quick | 79 | 114 |
+| distinct words practised, Full | 143 | 217 |
+| most days a not-due word appeared, Quick | "want" 6 | 3 |
+| most days a not-due word appeared, Full | "today" 14 | 5 ("comes", "was") |
+| the seven stuck words, first practised (Quick) | never | days 1, 2, 3, 4, 6, 7; "tall" not in 14 |
+| the seven stuck words, first practised (Full) | never | days 1, 1, 2, 2, 3, 3; "tall" day 10 |
+
+Two targets missed, recorded rather than rounded. Distinct words rose about 1.5×, not
+2×: a Quick session touches ~11 words, so fourteen of them cannot reach 158 distinct
+whatever the bank holds. And "within 3 days" does not hold for every stuck word once it
+has a sentence: "tall" now competes on coverage with ~330 other due words, and sentences
+carrying two due words outrank it. That is the picker doing what it was designed to do;
+it is a slower route than a guaranteed card, not a missing one.
+
+Coverage: servable daily sentences reached 362 of 393 single-word ready entries (from
+116). The 31 left are deliberate — female animal forms and rare nouns (hare, she-bear,
+crab...), entries the tokenizer can never match (ג'ינס and ז'קט use an ASCII apostrophe,
+ברוזה is a misspelling, תות's plural is stored as תויות and מיץ's as תפוזים), the six
+wearing-verbs that only take clothing nouns which are themselves untested, and a handful
+of numbers that need בן/בת for age. שמונים has one sentence waiting on בן in Pending.
+
 ## Testing
 
 - `srsUnproven`: a `srsBandRecord("progressing")` record is unproven; the same after one

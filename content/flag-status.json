@@ -26,6 +26,8 @@
       "note": "Yesterday can no longer pass for now: time words, people, numbers and never-words are refused outright, and the judge must say what changed before it rules (f597440)." },
     "1789940987901-5i18u": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
       "note": "Fixed on your phone. A web page can't switch Android's mic beep off." },
+    "1790148024690-m3mj8": { "status": "addressed", "kind": "bug", "at": "2026-09-23T08:00:00Z",
+      "note": "The paused card shows just Start over, Submit and Keep going now; Say it no longer hangs around beside them (e9cceb0)." },
     "1790070083381-msl2f": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
       "note": "The English sits inside the coach's bubble now (4b2b748). The coach also waits for the arrow before sending, and is Hebrew-only (fd88fb8)." }
   }

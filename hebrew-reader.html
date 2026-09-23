@@ -2747,6 +2747,13 @@
      colour test covers this section too.
      ===================================================================== */
 
+  /* THE HIDDEN ATTRIBUTE MUST WIN. The UA's own [hidden]{display:none} loses to any author
+     rule that sets display, and this section sets display on a lot of buttons. The first
+     casualty was the mic: learnMicPaused hides "Say it" with btn.hidden while Start over /
+     Submit / Keep going take its place, and .lmic's inline-flex put it straight back —
+     George, on the flag that found it: "It should just be those three buttons". */
+  [hidden] { display: none !important; }
+
   /* ---- the chrome ---- */
   :root { --dockh: 0px; }
   body.chrome-home, body.chrome-words, body.chrome-progress {
@@ -2952,6 +2959,13 @@
                   mask: var(--ic-mic) center / contain no-repeat; flex: 0 0 auto; }
   .lmic.listening::before { -webkit-mask-image: var(--ic-pause); mask-image: var(--ic-pause); }
   .lmic.lmicpause::before { display: none; }
+  /* The paused card's three ways on, as one row of equal pills: Start over, Submit (the
+     loud one), Keep going. Nothing else on the row while it is paused. */
+  .lactions:has(.lmicpause) { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+                              gap: 8px; width: 100%; align-items: stretch; }
+  .lactions .lmicpause { min-height: 52px; border-radius: 26px; padding: 0 8px; font-size: .92rem;
+                         justify-content: center; white-space: nowrap; }
+  .lactions .lmic.lmicpause { box-shadow: 0 0 0 5px var(--accent-soft); }
   .lmicinline { display: inline-flex; align-items: center; gap: 6px; border-radius: 16px;
                 padding: 6px 12px; background: transparent; }
   .lmicinline::before { content: ""; width: 14px; height: 14px; background: currentColor;
@@ -41624,6 +41638,18 @@ T("chrome: the way out of a lesson is the button that screen already had", () =>
   ["lQuitBtn", "lSpeedDone", "lDoneBtn"].forEach(id => assertTrue(!!document.getElementById(id), id));
 });
 
+/* Flag 1790148024690-m3mj8: the paused card showed "Say it" beside Start over / Submit /
+   Keep going, because .lmic's display beat the hidden attribute learnMicPaused sets. */
+T("paused mic: a hidden Say it stays hidden, whatever the redesign's CSS says", () => {
+  const row = document.createElement("div"); row.className = "lactions";
+  const mic = document.createElement("button"); mic.className = "lmic"; mic.textContent = "Say it";
+  row.append(mic); document.body.append(row);
+  try {
+    assertTrue(getComputedStyle(mic).display !== "none", "visible before the pause");
+    mic.hidden = true;
+    assertEq(getComputedStyle(mic).display, "none");
+  } finally { row.remove(); }
+});
 T("map: every town running short of sentences carries the pen, and no other town does", () => {
   campRender();
   const want = new Set(contentThinNow());

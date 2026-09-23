@@ -9852,9 +9852,10 @@ function SYNC_LOCAL_SET() {
        local: what actually needs to reach me is already snapshotted into whichever flag
        was raised about it. */
     AI_LOG_KEY, AI_ACK_KEY,
-    /* How many breadth runs THIS device has spent today — the cap is per device, like
-       the requests it limits, and a counter under newer-wins could go backwards. */
-    BREADTH_DAY_KEY,
+    /* How many breadth runs and content-review batches THIS device has spent today — the
+       caps are per device, like the requests they limit, and a counter under newer-wins
+       could go backwards. */
+    BREADTH_DAY_KEY, CONTENT_REVIEW_DAY_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY,
     /* NOTHING IN THIS FILE READS THESE. They are residue from features that were
@@ -20162,8 +20163,14 @@ const BANK_MIN_UNSEEN = 18;
    FOUR HUNDRED would have broken sync outright. Phase 0 removed that ceiling and the
    claude-sourced items below no longer ride the sync at all, which is what makes this
    affordable. Eviction is unchanged and is already the right rule: lowest level first,
-   then most-seen within a level. */
-const BANK_MAX = 900;
+   then most-seen within a level.
+
+   1600 since 2026-09-23. The v5 batch is ~450 items written to cover his whole ready
+   vocabulary, landing on a bank of ~600 — and measured against his real state, 900 made
+   bankSave quietly evict level-1 items the moment it arrived, which took five words'
+   ONLY sentence with it (cat, dog, horse, jumper, pot). The claude items sync as ~40-byte
+   stubs, so the sync payload grows by ~20KB; localStorage by ~200KB. */
+const BANK_MAX = 1600;
 function bankAll() {
   try { const a = JSON.parse(lsGet(BANK_KEY)); return Array.isArray(a) ? a : []; }
   catch (e) { return []; }
@@ -26737,8 +26744,14 @@ function breadthBrief(lib, srs, bank, needs) {
       ws.forEach(w => reached.add(w));
     }
   });
+  /* Never a multi-word entry. bankUses matches one token at a time, so "בזמן האחרון"
+     can never be credited to any sentence — asked for it, the writer would spend a run
+     on material that leaves it exactly as uncovered as before, three times a day,
+     forever. The first version did precisely that: four of its eight words on his real
+     state were phrases. They reach him as word cards through the flexible slot. */
   const write = ((needs && needs.due) || [])
-    .filter(k => wordReady(k, srs) && !reached.has(k)).slice(0, BREADTH_WRITE_FOR);
+    .filter(k => wordReady(k, srs) && !reached.has(k) && k.indexOf(" ") === -1)
+    .slice(0, BREADTH_WRITE_FOR);
   const overused = Object.keys(uses)
     .sort((a, b) => (uses[b] - uses[a]) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, BREADTH_OVERUSED);
   const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
@@ -26749,19 +26762,23 @@ function breadthBrief(lib, srs, bank, needs) {
     .slice(0, BREADTH_SUPPORT);
   return { write: write, support: support, overused: overused };
 }
-/* Three breadth runs a day, per device. A dated counter in its own key rather than the
-   AI ledger: the ledger counts requests by pool, and one run is a write and a review. */
-const BREADTH_RUNS_PER_DAY = 3, BREADTH_DAY_KEY = "hvr_breadthday";
-function breadthRunClaim() {
+/* One claim against a dated per-device counter: true and counted if today still has room
+   under `cap`, false otherwise. A counter in its own key rather than the AI ledger, because
+   the ledger counts requests by pool and the things capped here are runs — one breadth run
+   is a write and a review. */
+function dayClaim(key, cap) {
   const today = todayISO();
   let st;
-  try { st = JSON.parse(lsGet(BREADTH_DAY_KEY)) || {}; } catch (e) { st = {}; }
+  try { st = JSON.parse(lsGet(key)) || {}; } catch (e) { st = {}; }
   if (st.day !== today) st = { day: today, n: 0 };
-  if (st.n >= BREADTH_RUNS_PER_DAY) return false;
+  if (st.n >= cap) return false;
   st.n++;
-  lsSet(BREADTH_DAY_KEY, JSON.stringify(st));
+  lsSet(key, JSON.stringify(st));
   return true;
 }
+/* Three breadth runs a day, per device. */
+const BREADTH_RUNS_PER_DAY = 3, BREADTH_DAY_KEY = "hvr_breadthday";
+function breadthRunClaim() { return dayClaim(BREADTH_DAY_KEY, BREADTH_RUNS_PER_DAY); }
 
 async function learnTopUp(quiet) {
   const lib = libAll();
@@ -27518,6 +27535,14 @@ async function contentIngest() {
       const kept = (out && Array.isArray(out.items)) ? out.items : batch;
       reviewed += batch.length;
       kept.forEach(it => checked.push(it));
+      /* A review that genuinely happened is a verdict worth keeping on both sides — see
+         contentReviewTick. Handed back its own input means it did not happen. */
+      if (out && out.items !== batch) {
+        contentOkAdd(kept);
+        retiredAdd(batch.filter(it => kept.indexOf(it) === -1 &&
+                                      !kept.some(k => k && k.he === it.he))
+                        .map(it => ({ he: it.he, qhe: it.qhe })), "reviewer");
+      }
     }
     const spare = fresh.slice(Math.min(fresh.length, budget));
     unreviewed = spare.length;
@@ -27590,7 +27615,89 @@ function contentCheck(force) {
   /* Same moment, same throttle, and never waited on — see flagStatusIngest. */
   try { flagStatusIngest().catch(() => {}); } catch (e) {}
   return Promise.resolve(contentIngest())
-    .catch(e => { contentNote("check-threw", { err: (e && e.message) || String(e) }); return 0; });
+    .catch(e => { contentNote("check-threw", { err: (e && e.message) || String(e) }); return 0; })
+    .then(n => {
+      /* Never waited on, same as flagStatusIngest: a review is background spend. */
+      try { Promise.resolve(contentReviewTick()).catch(() => {}); } catch (e) {}
+      return n;
+    });
+}
+
+/* ---- reviewing the shelf a batch at a time ------------------------------------
+   contentIngest reviews at most CONTENT_REVIEW_BATCHES × CONTENT_REVIEW_BATCH (48) items
+   on arrival and takes the rest on trust. That was a reasonable cap for a top-up. For the
+   v5 batch — ~450 items — it would leave ~400 never looked at by anyone but their author,
+   and the September batch is worse: 330 items, a review step skipped three times, and a
+   native speaker retiring or correcting one in six.
+
+   So the rest is reviewed after the fact, one batch per content check, at most
+   CONTENT_REVIEW_BATCHES a day per device: ~500 items clears in about ten days on four of
+   the day's twenty strong requests. Servable items first, since those are the ones he is
+   about to be shown.
+
+   What the reviewer drops is RETIRED, not merely deleted — keyed by the Hebrew, synced, so
+   it leaves both devices and a re-ingest cannot bring it back. What it keeps is recorded
+   the same way in CONTENT_OK_KEY, so the second device does not pay for the same verdict.
+   Ids are per device and would not do for either.
+
+   A review that did not happen changes nothing. learnReviewItems hands back its own input
+   on any failure — no key, a malformed reply, and also "kept nothing", which it cannot
+   tell apart from failing — and that is treated as "try another day", never as "throw the
+   batch away". Twelve of these sentences all being wrong is far less likely than a
+   network hiccup, and the cost of guessing wrong the other way is losing good material. */
+const CONTENT_OK_KEY = "hvr_contentok", CONTENT_REVIEW_DAY_KEY = "hvr_contentrvday";
+function contentOkAll() {
+  try { const o = JSON.parse(lsGet(CONTENT_OK_KEY));
+        return (o && typeof o === "object" && !Array.isArray(o)) ? o : {}; }
+  catch (e) { return {}; }
+}
+/* Pure over `store` when one is passed, like retiredAdd. */
+function contentOkAdd(list, store) {
+  const own = !store;
+  const s = store || contentOkAll();
+  let n = 0;
+  (list || []).forEach(x => {
+    if (!x || !normHe(x.he || "")) return;
+    const k = retiredKey(x.he, x.qhe);
+    if (s[k]) return;
+    s[k] = 1;
+    n++;
+  });
+  if (own && n) lsSet(CONTENT_OK_KEY, JSON.stringify(s));
+  return n;
+}
+/* Claude-written items no reviewer has passed yet, servable ones first. Pure. */
+function contentNeedsReview(bank, ok, lib, srs) {
+  const todo = (bank || []).filter(it => it && it.src === "claude" && it.he &&
+                                         !(ok || {})[retiredKey(it.he, it.qhe)]);
+  const serves = new Map(todo.map(it => [it, bankServable(it, lib, srs) ? 1 : 0]));
+  return todo.map((it, i) => ({ it: it, i: i }))
+    .sort((a, b) => (serves.get(b.it) - serves.get(a.it)) || (a.i - b.i))
+    .map(x => x.it);
+}
+async function contentReviewTick() {
+  if (!geminiKeys().length) return 0;
+  const todo = contentNeedsReview(bankAll(), contentOkAll(), libAll(), srsAll())
+    .slice(0, CONTENT_REVIEW_BATCH);
+  if (todo.length < 2) return 0;               // learnReviewItems will not review fewer
+  if (!dayClaim(CONTENT_REVIEW_DAY_KEY, CONTENT_REVIEW_BATCHES)) return 0;
+  const sent = todo.map(it => ({ _bankId: it.id, type: it.type, he: it.he, tr: it.tr, en: it.en,
+                                 qhe: it.qhe || "", qtr: it.qtr || "", qen: it.qen || "" }));
+  const out = await learnReviewItems({ items: sent });
+  if (!out || !Array.isArray(out.items) || out.items === sent) return 0;
+  const keptIds = new Set(out.items.map(x => x && x._bankId));
+  const levels = {};
+  out.items.forEach(x => { if (x && x._bankId && x.lvl) levels[x._bankId] = x.lvl; });
+  const rejected = todo.filter(it => !keptIds.has(it.id));
+  contentOkAdd(todo.filter(it => keptIds.has(it.id)));
+  retiredAdd(rejected.map(it => ({ he: it.he, qhe: it.qhe })), "reviewer");
+  /* Re-read: there was an await, and the bank may have moved underneath it. */
+  const gone = new Set(rejected.map(it => it.id));
+  const bank = bankAll();
+  bank.forEach(it => { if (levels[it.id]) it.lvl = levels[it.id]; });
+  bankSave(bank.filter(it => !gone.has(it.id)));
+  rebuildTrIndex();
+  return rejected.length;
 }
 /* One line saying where the pre-baked content stands, for the Settings pane and for the
    flag context. Deliberately plain: it is read by someone trying to work out why a batch
@@ -40003,14 +40110,15 @@ T("learnPickBank: honours the level quota", () => {
   assertEq(got.map(x => bankLevel(x.it)).sort(), [2, 3], "one at his level, one above");
 });
 T("breadthBrief: writes for due words nothing covers, and only ready ones", () => {
-  const lib = { "כסה": {}, "חסר": {}, "חלש1": {}, "יסוד": {} };
+  const lib = { "כסה": {}, "חסר": {}, "חלש1": {}, "יסוד": {}, "שתי מילים": {} };
   const ok = { due: "2026-01-01", last: "2025-12-01", stab: 30, diff: 3, n: 5, miss: 0, lapses: 0, lastAt: 1 };
   const srs = { "כסה": { prod: ok }, "חסר": { prod: ok }, "יסוד": { prod: Object.assign({}, ok, { due: "2026-06-01" }) },
+                "שתי מילים": { prod: ok },
                 "חלש1": { prod: { due: "2026-01-01", last: "2025-12-01", stab: 1, diff: 8, n: 5, miss: 3, lapses: 2, lastAt: 1 } } };
   const bank = [{ id: "a", he: "x", uses: ["כסה", "יסוד"] }];
-  const needs = { due: ["כסה", "חסר", "חלש1"], unproven: new Set(), need: {} };
+  const needs = { due: ["שתי מילים", "כסה", "חסר", "חלש1"], unproven: new Set(), need: {} };
   const b = breadthBrief(lib, srs, bank, needs);
-  assertEq(b.write, ["חסר"], "covered and weak words are not this pass's job");
+  assertEq(b.write, ["חסר"], "covered, weak and multi-word entries are not this pass's job");
 });
 T("breadthBrief: support leaves out the over-used and the assumed", () => {
   const lib = {}, srs = {}, bank = [];
@@ -40021,6 +40129,25 @@ T("breadthBrief: support leaves out the over-used and the assumed", () => {
   assertTrue(b.overused.indexOf("מ13") === 0, "the word in everything leads the over-used list");
   assertTrue(b.support.indexOf("מ13") === -1, "and is not offered as support");
   assertTrue(b.support.indexOf("מ12") === -1, "nor is a word the app only assumed");
+});
+T("contentOkAdd: a verdict is keyed by the Hebrew, once", () => {
+  const store = {};
+  assertEq(contentOkAdd([{ he: "אני בבית" }, { he: "אני בבית." }, { he: "" }], store), 1,
+           "punctuation does not make a second verdict, and blank is not one");
+  assertTrue(!!store[retiredKey("אני בבית", "")]);
+});
+T("contentNeedsReview: only unreviewed claude items, servable first", () => {
+  const lib = { "טוב1": {}, "קשה1": {} };
+  const ok = { due: "2027-01-01", last: "2026-01-01", stab: 30, diff: 3, n: 5, miss: 0, lapses: 0, lastAt: 1 };
+  const srs = { "טוב1": { prod: ok }, "קשה1": { prod: { due: "2026-01-01", last: "2026-01-01", stab: 1, diff: 8, n: 4, miss: 3, lapses: 2, lastAt: 1 } } };
+  const bank = [
+    { id: "blocked", src: "claude", he: "קשה1 טוב1", uses: ["קשה1", "טוב1"] },
+    { id: "serves",  src: "claude", he: "טוב1 מאוד", uses: ["טוב1"] },
+    { id: "mine",    src: "",       he: "טוב1 כן",   uses: ["טוב1"] },
+    { id: "done",    src: "claude", he: "טוב1 גם",   uses: ["טוב1"] }
+  ];
+  const got = contentNeedsReview(bank, { [retiredKey("טוב1 גם", "")]: 1 }, lib, srs).map(it => it.id);
+  assertEq(got, ["serves", "blocked"], "his own items and reviewed ones are skipped; servable leads");
 });
 T("breadthRunClaim: three a day, then no", () => {
   const keep = lsGet(BREADTH_DAY_KEY);

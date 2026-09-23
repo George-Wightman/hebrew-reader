@@ -19106,6 +19106,71 @@ function normHe(s) {
 }
 function heWords(s) { return normHe(s).split(" ").filter(Boolean); }
 
+/* ---- the recogniser writes numbers as digits -----------------------------------
+   George, 2026-09-23: "the mic auto sets it to the literaly number in arabic form, there
+   is nothing that can be done its an android standard setting". So he says בארבע and the
+   transcript reads ב4 — and normHe, which keeps only Hebrew letters, turns that into a
+   bare ב. The number he said perfectly simply vanishes, and every number card marks him
+   wrong on the one word it exists to test.
+
+   Fixed on the transcript side, before any comparison: a digit becomes the number WORD
+   the card was expecting, when the card has one of that value. Reading the form off the
+   expected sentence is what makes this honest rather than generous — Hebrew numbers
+   carry gender (שלוש שעות, שלושה ילדים) and a digit carries none, so a digit cannot be
+   wrong about gender and must not be marked as if it were. With no match on the card the
+   first listed form is used, which is only ever a display choice.
+
+   A leading prefix (ב4, ל-10, ו5) is kept and must match too, so leaving out the ב is
+   still the mistake it always was. Times the recogniser formats as 4:00 read as 4.
+   Anything it cannot place — 120, 3.5 — is left exactly as it was. */
+const HE_NUM_UNITS = {
+  1: ["אחד", "אחת"], 2: ["שתיים", "שניים", "שני", "שתי"], 3: ["שלוש", "שלושה", "שלושת"],
+  4: ["ארבע", "ארבעה", "ארבעת"], 5: ["חמש", "חמישה", "חמשת"], 6: ["שש", "שישה", "ששת"],
+  7: ["שבע", "שבעה", "שבעת"], 8: ["שמונה", "שמונת"], 9: ["תשע", "תשעה", "תשעת"],
+  10: ["עשר", "עשרה", "עשרת"]
+};
+const HE_NUM_TENS = { 20: "עשרים", 30: "שלושים", 40: "ארבעים", 50: "חמישים",
+                      60: "שישים", 70: "שבעים", 80: "שמונים", 90: "תשעים" };
+function heNumberForms(n) {
+  if (n === 0) return ["אפס"];
+  if (n === 100) return ["מאה"];
+  if (HE_NUM_UNITS[n]) return HE_NUM_UNITS[n].slice();
+  if (n > 10 && n < 20) {
+    const u = n - 10;
+    /* Feminine teens take עשרה, masculine take עשר; twelve has its own spellings. */
+    const fem = u === 2 ? ["שתים", "שתיים"] : [HE_NUM_UNITS[u][0]];
+    const mas = u === 2 ? ["שנים", "שניים"] : [HE_NUM_UNITS[u][1] || HE_NUM_UNITS[u][0]];
+    return fem.map(w => w + " עשרה").concat(mas.map(w => w + " עשר"));
+  }
+  if (HE_NUM_TENS[n]) return [HE_NUM_TENS[n]];
+  if (n > 20 && n < 100 && HE_NUM_TENS[n - n % 10]) {
+    return HE_NUM_UNITS[n % 10].slice(0, 2).map(u => HE_NUM_TENS[n - n % 10] + " ו" + u);
+  }
+  return [];
+}
+function heDigitsSpoken(text, expectedHe) {
+  const E = heWords(expectedHe || "");
+  const runAt = words => {
+    for (let i = 0; i + words.length <= E.length; i++) {
+      if (words.every((w, j) => E[i + j] === w)) return true;
+    }
+    return false;
+  };
+  return String(text || "").split(/(\s+)/).map(tok => {
+    const m = /^([ובהלמשכ]*)-?(\d{1,3})(?::00)?([.,!?]*)$/.exec(tok);
+    if (!m) return tok;
+    const forms = heNumberForms(parseInt(m[2], 10));
+    if (!forms.length) return tok;
+    const pre = m[1];
+    const hit = forms.filter(f => {
+      const w = heWords(f);
+      w[0] = normHe(pre) + w[0];
+      return runAt(w);
+    })[0];
+    return pre + (hit || forms[0]) + m[3];
+  }).join("");
+}
+
 function editDistance(a, b) {
   if (a === b) return 0;
   const m = a.length, n = b.length;
@@ -30468,6 +30533,17 @@ function micUnsure(conf) {
 }
 
 function learnScoreSpoken(c, text, res) {
+  /* Digits back into the number words the card wanted — see heDigitsSpoken. Before
+     anything reads the transcript, so the chips, the grace check and the adjudicator all
+     see "בארבע" where the recogniser wrote "ב4". Compose has no expected sentence and the
+     coach reads digits fine, so it is left as heard. */
+  if (c && c.kind !== "compose") {
+    const want = learnExpectedHe(c);
+    text = heDigitsSpoken(text, want);
+    if (res && Array.isArray(res.alts)) {
+      res = Object.assign({}, res, { alts: res.alts.map(s => heDigitsSpoken(s, want)) });
+    }
+  }
   const said = heWords(text);
   const lib = libAll();
   let expected, a;
@@ -31835,10 +31911,11 @@ function learnSpeedMarks() {
    nothing here and the parameter is simply empty then. */
 function learnSpeedHeard(he, text, alts) {
   const exp = heWords(he || "");
-  const said = heWords(text || "");
+  const said = heWords(heDigitsSpoken(text || "", he));
   if (!exp.length || !said.length) return false;
   const a = alignSpoken(exp, said);
-  return exp.every((w, i) => a.status[i] !== "missed" || micHeardIn(w, alts || []));
+  const alt = (alts || []).map(s => heDigitsSpoken(s, he));
+  return exp.every((w, i) => a.status[i] !== "missed" || micHeardIn(w, alt));
 }
 /* Drains by transform, not width: a width transition relays out the card sixty times a
    second on a phone, which is the one thing this screen cannot afford while the
@@ -34299,6 +34376,33 @@ T("learnSpeedHeard: lands the phrase, and only the whole phrase", () => {
   assertTrue(!learnSpeedHeard(he, "", null), "and nothing heard is nothing");
   assertTrue(!learnSpeedHeard(he, null, null));
   assertTrue(!learnSpeedHeard("", "\u05d0\u05e0\u05d9", null), "no phrase, nothing to land");
+});
+/* Android writes spoken numbers as digits and it cannot be turned off (George,
+   2026-09-23). Every one of these was a correct answer marked wrong before. */
+T("heDigitsSpoken: a digit becomes the number word the card wanted", () => {
+  assertEq(heDigitsSpoken("\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d14", "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2"), "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2", "prefix kept");
+  assertEq(heDigitsSpoken("\u05d9\u05e9 \u05dc\u05d4\u05dd 3 \u05d9\u05dc\u05d3\u05d9\u05dd", "\u05d9\u05e9 \u05dc\u05d4\u05dd \u05e9\u05dc\u05d5\u05e9\u05d4 \u05d9\u05dc\u05d3\u05d9\u05dd"), "\u05d9\u05e9 \u05dc\u05d4\u05dd \u05e9\u05dc\u05d5\u05e9\u05d4 \u05d9\u05dc\u05d3\u05d9\u05dd",
+           "the card's gender, not a guess");
+  assertEq(heDigitsSpoken("\u05d4\u05d7\u05d1\u05e8 \u05e9\u05dc\u05d9 \u05d2\u05e8 \u05e4\u05d4 3 \u05e9\u05e0\u05d9\u05dd", "\u05d4\u05d7\u05d1\u05e8 \u05e9\u05dc\u05d9 \u05d2\u05e8 \u05e4\u05d4 \u05e9\u05dc\u05d5\u05e9 \u05e9\u05e0\u05d9\u05dd"),
+           "\u05d4\u05d7\u05d1\u05e8 \u05e9\u05dc\u05d9 \u05d2\u05e8 \u05e4\u05d4 \u05e9\u05dc\u05d5\u05e9 \u05e9\u05e0\u05d9\u05dd", "and the feminine when that is what the card has");
+  assertEq(heDigitsSpoken("\u05d4\u05e9\u05e2\u05d4 2:00", "\u05d4\u05e9\u05e2\u05d4 \u05e9\u05ea\u05d9\u05d9\u05dd"), "\u05d4\u05e9\u05e2\u05d4 \u05e9\u05ea\u05d9\u05d9\u05dd", "a time reads as its hour");
+  assertEq(heDigitsSpoken("\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d1\u05d0 \u05d1\u05e2\u05d5\u05d3 10 \u05d3\u05e7\u05d5\u05ea", "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d1\u05d0 \u05d1\u05e2\u05d5\u05d3 \u05e2\u05e9\u05e8 \u05d3\u05e7\u05d5\u05ea"),
+           "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d1\u05d0 \u05d1\u05e2\u05d5\u05d3 \u05e2\u05e9\u05e8 \u05d3\u05e7\u05d5\u05ea");
+  assertEq(heDigitsSpoken("40 \u05d3\u05e7\u05d5\u05ea \u05d1\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1", "\u05d0\u05e8\u05d1\u05e2\u05d9\u05dd \u05d3\u05e7\u05d5\u05ea \u05d1\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1"), "\u05d0\u05e8\u05d1\u05e2\u05d9\u05dd \u05d3\u05e7\u05d5\u05ea \u05d1\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1");
+  assertEq(heDigitsSpoken("\u05d1-4", "\u05d1\u05d0\u05e8\u05d1\u05e2"), "\u05d1\u05d0\u05e8\u05d1\u05e2", "the hyphen some engines add");
+  assertEq(heDigitsSpoken("\u05d9\u05e9 \u05dc\u05d9 12 \u05e9\u05d0\u05dc\u05d5\u05ea", "\u05d9\u05e9 \u05dc\u05d9 \u05e9\u05ea\u05d9\u05dd \u05e2\u05e9\u05e8\u05d4 \u05e9\u05d0\u05dc\u05d5\u05ea"),
+           "\u05d9\u05e9 \u05dc\u05d9 \u05e9\u05ea\u05d9\u05dd \u05e2\u05e9\u05e8\u05d4 \u05e9\u05d0\u05dc\u05d5\u05ea", "a two-word teen");
+});
+T("heDigitsSpoken: honest where it cannot help", () => {
+  assertEq(heDigitsSpoken("\u05d9\u05e9 \u05dc\u05d9 5", ""), "\u05d9\u05e9 \u05dc\u05d9 \u05d7\u05de\u05e9", "no card to read: first form, display only");
+  assertEq(heDigitsSpoken("\u05d0\u05e0\u05d9 \u05d1\u05d0 4", "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2"), "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d0\u05e8\u05d1\u05e2",
+           "leaving out the \u05d1 is still leaving out the \u05d1");
+  assertEq(heDigitsSpoken("\u05e2\u05d5\u05dc\u05d4 120", "\u05e2\u05d5\u05dc\u05d4 \u05de\u05d0\u05d4 \u05d5\u05e2\u05e9\u05e8\u05d9\u05dd"), "\u05e2\u05d5\u05dc\u05d4 120", "out of range is left alone");
+  assertEq(heDigitsSpoken("\u05d0\u05e0\u05d9 \u05d1\u05d1\u05d9\u05ea", "\u05d0\u05e0\u05d9 \u05d1\u05d1\u05d9\u05ea"), "\u05d0\u05e0\u05d9 \u05d1\u05d1\u05d9\u05ea", "no digits, nothing touched");
+});
+T("learnSpeedHeard: a number said and written as a digit still lands", () => {
+  assertTrue(learnSpeedHeard("\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2", "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d14", null));
+  assertTrue(learnSpeedHeard("\u05d9\u05e9 \u05d0\u05e8\u05d1\u05e2 \u05e2\u05d5\u05e0\u05d5\u05ea", "\u05d9\u05e9 4 \u05e2\u05d5\u05e0\u05d5\u05ea", null));
   /* A vowel the recogniser guessed differently is not a different sentence. nearEnough
      is the drill's own tolerance and this reuses it rather than inventing a second. */
   assertTrue(learnSpeedHeard("\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d7\u05d3\u05e9", "\u05d4\u05d0\u05d5\u05d8\u05d5\u05d1\u05d5\u05e1 \u05d7\u05d3\u05e9\u05d4", null),

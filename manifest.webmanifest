@@ -1,7 +1,7 @@
 {
-  "name": "Hebrew Voice Note Reader",
+  "name": "Hebrew Reader",
   "short_name": "Hebrew",
-  "description": "Read grandad's voice notes and practise saying Hebrew back.",
+  "description": "Learn to speak everyday Hebrew: daily practice, a map of places, and a reader on the side.",
   "start_url": "./hebrew-reader.html",
   "scope": "./",
   "display": "standalone",

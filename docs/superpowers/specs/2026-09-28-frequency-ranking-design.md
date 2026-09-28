@@ -84,6 +84,9 @@ Built offline, once:
    bitter). Fixed: FDOSH's known faults — `סדר` restored to `בסדר`, `הכיל` to `הכל`.
    Added: **137 common words the app had no gloss for** (חייב, חיים, מצטער, כדאי,
    אכפת, מושג, בחייך, נמאס, הלוואי…), glossed by hand in the house transliteration.
+   After probing his real library, four more were dropped for the same reason: אל is
+   "don't" in speech (the app glosses it "to, into"), אף is "nobody/never", האם is
+   subtitle-formal, and נמצא is "is located", not the app's "to be found".
 3. **Automatic matches only for ranks 1,251–3,000**, minus the bad ones caught on a
    scan. No new glosses past 1,250.
 4. **Inflected finite forms dropped** (`חשבתי`, `אעשה`, `עשית`): the app should teach
@@ -91,7 +94,7 @@ Built offline, once:
 5. **One lemma, many keys.** `ידע` covers יודע and לדעת; each key gets the lemma's rank,
    and a key claimed by an earlier lemma is not re-ranked by a later one.
 
-Result: **1,248 ranked lemmas**. The 1,000th reaches FDOSH rank 1,833. Stored as
+Result: **1,245 ranked lemmas**. The 1,000th reaches FDOSH rank 1,845. Stored as
 `FREQ_LIST` — a compact string, one lemma per space, its keys joined by `|` — from which
 `FREQ_RANK = {key: rank}` and `FREQ_LEMMAS` are built at load. `FREQ_DICT` holds the 137
 new glosses and merges into `DICT` beside `DUO_DICT`, never overwriting. The builder and
@@ -112,11 +115,15 @@ the lexicalised ones that would steal an ordinary word (`הערב`, `הפעם`, 
   rank 1, falling linearly to 0 past rank 1,600 — is added only in `learnTargets`'s
   never-drilled sort. `practiceNeeds`, which orders due words, does not read it: due-ness
   keeps deciding reviews, as the research recommends.
-- **Frequency intake.** `libAddFreqIfNeeded` keeps at least `FREQ_INTAKE_FLOOR` (6)
-  never-drilled ranked words in the library, adding the highest-ranked words he does not
-  have (`src: "freq"`, `freq: rank`, `shelf: "reserve"`, no SRS record). Without it the
-  ranking could only reorder the words that happen to be there; with it, the most common
-  missing word is always next in line.
+- **Frequency intake.** `libAddFreqIfNeeded` adds the highest-ranked words he has no
+  form of (`src: "freq"`, `freq: rank`, `shelf: "reserve"`, no SRS record) until at least
+  `FREQ_INTAKE_FLOOR` (6) never-drilled words **commoner than the next missing one** are
+  waiting. The first version counted any six waiting words; run against his real library
+  it added nothing, because 47 ranked words already sat undrilled — so נכון, כמו, חייב
+  and חיים, all top fifty and none of them in his library at all, would have waited
+  weeks behind rarer ones. The form added is the present tense where the dictionary has
+  one, else the infinitive — never the past (the first draft picked היה, "was", for the
+  commonest verb in the language).
 - **Stretch words by frequency.** `campStretchPool` still takes units past his Duolingo
   unit, but orders them by rank before unit, so the two stretch words a node borrows are
   the commonest ones ahead of him.
@@ -124,6 +131,8 @@ the lexicalised ones that would steal an ordinary word (`הערב`, `הפעם`, 
   replaces "WORDS HIS GRANDAD ACTUALLY USES THAT HE STILL CANNOT SAY" with "COMMON HEBREW
   WORDS HE CANNOT SAY YET" — the 24 highest-ranked words not ready — and the survey and
   plan prompts are told to prefer them.
+- **A voice note no longer grows a node on the map** (`CAMP_SPAWN_FROM_NOTES = false`),
+  and the app's name drops "Voice Note" (title, manifest, README).
 - **Every writing prompt loses the WhatsApp framing.** One constant, `LEARNER_CONTEXT`,
   replaces the five copies: everyday spoken Hebrew for real life with his partner's
   family and friends. `listen` becomes "something someone says to him".

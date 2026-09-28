@@ -1,4 +1,11 @@
-# Hebrew Voice Note Reader
+# Hebrew Reader
+
+**What it is now (since 2026-09-28):** George's Hebrew *learning* tool — daily speaking
+practice, the map of places, the word library and its scheduler. It began as a reader for
+grandad's WhatsApp voice notes, and that reader still works (section 1 below), but it is a
+side feature: it no longer decides which words he learns or what the map teaches. New
+words now arrive in order of how common they are in spoken Hebrew
+(`docs/superpowers/specs/2026-09-28-frequency-ranking-design.md`).
 
 Open **`hebrew-reader.html`** in any browser (double-click it — no internet needed for the basics).
 

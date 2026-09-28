@@ -4,6 +4,9 @@ D = None
 OV = {
   2: D, 4: D, 7: D, 9: D, 12: D, 14: D, 17: D, 66: D, 69: D,           # glued letters, כול, מן
   27: ['בסדר'],                                                        # FDOSH splits beseder
+  # Glossed in the app for a sense the list does not mean: אל is "don't" in speech (אל תדאג),
+  # אף is "nobody / never" (אף אחד, אף פעם), האם is subtitle-formal, נמצא is "is located".
+  35: D, 87: D, 94: D, 161: D,
   55: D, 101: D, 121: D, 122: D, 132: D, 134: D, 139: D, 151: D, 154: D,
   164: D, 181: D, 192: D, 197: D, 236: D, 265: D, 270: D, 274: D, 282: D, 289: D,
   38: ['שם', 'לשים'],

@@ -144,8 +144,11 @@ keys is in his library and `wordReady` — the same "ready" that gates sentences
 figure moves exactly when a word becomes usable. Grammar words are outside the list, so
 the figure is honest about content words and says so in its tooltip.
 
-Shown twice: a chip on the Practice start card ("312 of the top 1,000") and a tile in
-Progress. No bar, no gate — the research is clear that comprehension rises in a straight
+Shown as the first tile on Progress, full width ("208 of 1,000 — of the most common
+Hebrew words, you can say"; 208 is his real figure on 2026-09-25). A start-card chip was
+built and removed: the Atlas home screen hides those chips on purpose — its job is the
+map and one button — so it would have been a number nobody sees. A seventh grid tile
+would have sat alone on a phone, hence the full-width one. No bar, no gate — the research is clear that comprehension rises in a straight
 line with coverage, so a threshold would claim a cliff that does not exist.
 
 ## Phase 4 — new common words arrive inside sentences

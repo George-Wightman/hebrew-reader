@@ -2131,6 +2131,7 @@
   .lstat b { display: block; font-size: 1.7rem; line-height: 1.1; color: var(--ink); font-weight: 700; }
   .lstat span { display: block; font-size: .76rem; color: var(--muted); margin-top: 3px; }
   .lstat.accent b { color: var(--accent); }
+  .lstat.wide { grid-column: 1 / -1; }
   .lbars { display: flex; align-items: flex-end; gap: 3px; height: 110px;
            background: var(--c-ffffff); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
   .lbar { flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end;
@@ -21213,6 +21214,29 @@ function wordFreqBonus(k) {
   return Math.max(0, Math.round(FREQ_BONUS_MAX * (1 - (r - 1) / FREQ_BONUS_SPAN)));
 }
 
+/* ---- how much of everyday Hebrew he can say --------------------------------------
+   Of the first `n` ranked lemmas, how many he can SAY — any of the lemma's forms in his
+   library and ready, the same "ready" that lets a word into a sentence, so the figure
+   moves exactly when a word becomes usable and not before. Grammar words are outside the
+   list (STOPLIST treats them as known), so this is a count of content words, and the
+   caption says so.
+
+   A figure and nothing else: no bar to fill, no threshold to cross. Comprehension rises
+   in a straight line with the words you know — the 98% "cliff" failed to replicate in
+   2023 — and a gate here would claim a cliff that does not exist. */
+const FREQ_COVERAGE_OF = 1000;
+function freqCoverage(lib, srs, n) {
+  const of = Math.min(n || FREQ_COVERAGE_OF, FREQ_LEMMAS.length);
+  let said = 0;
+  for (let i = 0; i < of; i++) {
+    if (FREQ_LEMMAS[i].some(k => lib[k] && wordReady(k, srs))) said++;
+  }
+  return { said: said, of: of };
+}
+const FREQ_COVERAGE_WHY = "Counted from a list of the most common words in spoken Hebrew " +
+  "(film and TV subtitles), grammar words like ani and shel left out. A word counts once " +
+  "you can say it — any form of it — and it is ready for sentences.";
+
 /* Ready to appear inside a sentence. Reuses the existing strength bands rather
    than inventing a second notion of "known": a word he has never drilled, or keeps
    missing, has no business being a building block of something longer. */
@@ -28307,6 +28331,14 @@ function learnRenderStats() {
   };
   /* No streak tile — it's the line above the title now, where it's the first thing
      seen rather than the sixth. */
+  /* How much of everyday Hebrew is his, across the full row: it is the one figure here
+     about the language rather than about his practice, and a seventh tile in the grid
+     would sit alone on a phone. See freqCoverage. */
+  const cov = freqCoverage(libAll(), srsAll());
+  tile(cov.said + " of " + cov.of.toLocaleString("en-GB"),
+       "of the most common Hebrew words, you can say");
+  tiles.lastChild.classList.add("wide");
+  tiles.lastChild.title = FREQ_COVERAGE_WHY;
   tile(fmtMins(week.sec), "in the last 7 days", true);
   tile(week.cards, "cards this week");
   tile(fmtMins(all.sec), "since you started");
@@ -42684,6 +42716,23 @@ T("campStretchFor: inside the window, the commonest words go first", () => {
     }
     assertTrue(picked.every(k => window.indexOf(k) !== -1), "and never outside the window");
   } finally { duoUnit = rUnit; }
+});
+T("freqCoverage: a word counts once any form of it is ready, and only then", () => {
+  const verb = FREQ_LEMMAS.find(ks => ks.indexOf("לדעת") !== -1);
+  const top = FREQ_LEMMAS[0];
+  const lib = {}, srs = {};
+  assertEq(freqCoverage(lib, srs), { said: 0, of: FREQ_COVERAGE_OF }, "nothing yet");
+  lib["לדעת"] = { tr: "lada'at", en: "to know" };
+  assertEq(freqCoverage(lib, srs).said, 0, "in the library but never said is not yet his");
+  srs["לדעת"] = { prod: { n: 1, miss: 0, stab: 2, diff: 5, due: todayISO(), last: todayISO() } };
+  assertTrue(wordReady("לדעת", srs), "one meeting makes it ready");
+  assertEq(freqCoverage(lib, srs).said, 1, "and then it counts, for the whole lemma");
+  /* יודע and לדעת are one word — owning both still counts once. */
+  const other = verb.filter(k => k !== "לדעת")[0];
+  if (other) { lib[other] = { tr: "", en: "" }; srs[other] = srs["לדעת"]; }
+  assertEq(freqCoverage(lib, srs).said, 1, "two forms of one verb are one word");
+  assertTrue(top.indexOf("לדעת") === -1 && freqCoverage(lib, srs, 1).said === 0,
+             "and it only counts inside the first n");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

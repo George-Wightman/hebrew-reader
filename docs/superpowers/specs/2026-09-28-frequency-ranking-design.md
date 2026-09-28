@@ -181,16 +181,30 @@ not a test.
   speaker: the first speaker at the natural pitch, the second lower and a touch slower.
   The Pixel voice honours pitch; where a browser ignores it, the speaker name on each line
   still says who is talking.
-- **Generation.** `campSceneEnsure(node)` runs alongside `campWarm` when the sheet opens,
-  once per node, one `GEMINI_MODELS` (Flash-first) call — the node has only one scene, so
-  the stronger writer is worth its pool. It shares an in-flight promise, per the
-  per-minute rule. A daily claim of `SCENE_RUNS_PER_DAY` (4) caps it.
+- **Generation.** `campSceneEnsure(id)` runs when the sheet opens, **after** `campWarm`
+  settles rather than beside it, so opening a place is never five requests into a
+  five-a-minute model at once. Once per node, one writing call on `aiModelsFor("scene")`
+  (Flash while the strong pool is above its reserve — a node has only one scene, so the
+  stronger writer is worth it) plus the review. It shares an in-flight promise, per the
+  per-minute rule, and a daily claim of `SCENE_RUNS_PER_DAY` (4) caps it. If the sheet is
+  still open when the scene lands, it redraws in place.
 - **The gate, in code.** `sceneAcceptable(scene, node, lib, srs)`: every Hebrew token
   resolves (`libKeyFor`, then `bankStripPrefixes`) or is declared in the scene's gloss;
-  at most `SCENE_NEW_MAX` (3) declared new words in the whole scene; and at least 85% of
-  content tokens are ready or node words. Failing scenes are not stored.
-- **Review.** The lines go through `learnReviewItems` as listen items; if the reviewer
-  drops any line, the scene is discarded and tried again next open.
+  at most `SCENE_NEW_MAX` (3) declared new words in the whole scene; at least 80% of
+  content tokens are ready or node words; and at least one of the place's own words
+  appears. Failing scenes are not stored, and the refusal is written to the AI log.
+  Checked against his real "How it was" place in the Node probe: a natural five-line
+  scene with two glossed words passed at 14 of 16.
+- **Review.** Not `learnReviewItems`: it judges each line alone, and a line of
+  dialogue ("כן, בטח") is meaningless without the line it answers. `sceneReview` asks a
+  native-speaker read of the whole exchange, strict in the same direction (unsure means
+  no), and a no discards the scene until the next open.
+- **The prompt's vocabulary list is his 150 most stable ready words**, not
+  `campScaffold`'s 40 — forty words cannot carry a conversation, and the gate checks
+  every word anyway.
+- **Folded once heard.** Open until he has played it through once (per device), then one
+  row with a Play button, so the sheet's Practise button is not pushed down a phone
+  screen every day.
 - Stored on the node (`node.scene`), so it syncs with the campaign.
 
 ## Phase 6 — frequency weights what gets written

@@ -3074,6 +3074,36 @@
   .pp-goldh { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0;
               text-transform: none; color: var(--c-8a6520); }
   .pp-goldsay b[dir="rtl"], .pp-goldlist b { font-size: 1.1rem; }
+  /* The scene (2026-09-28): the world talking, so the title is the display face and the
+     lines are Hebrew set large, the speaker in the aside voice beside them. Folded to its
+     one row once heard — see sceneHtml. No new colours: every one here is a token. */
+  .pp-scene { margin-top: 14px; border-radius: 12px; background: var(--bg); padding: 8px 12px; }
+  .pp-sceneh { display: flex; align-items: center; gap: 10px; }
+  .pp-scenet { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; text-align: left;
+               background: none; border: 0; padding: 6px 0; font-family: var(--display);
+               font-size: 1.05rem; font-weight: 500; color: var(--ink); cursor: pointer; }
+  .pp-scenecaret { font-size: .8rem; color: var(--muted); width: 12px; }
+  .pp-sceneplay { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 15px;
+                  border-radius: 19px; border: 1px solid var(--border); background: transparent;
+                  font: inherit; font-size: .88rem; color: var(--ink); cursor: pointer; }
+  .pp-sceneplay::before { content: ""; width: 11px; height: 11px; background: currentColor;
+    -webkit-mask: var(--ic-play) center / contain no-repeat; mask: var(--ic-play) center / contain no-repeat; }
+  .pp-sceneplay.playing::before { -webkit-mask-image: var(--ic-pause); mask-image: var(--ic-pause); }
+  .pp-sceneplay:hover, .pp-sceneplay.playing { border-color: var(--accent); color: var(--accent); }
+  .pp-scenebody { display: none; padding: 2px 0 6px; }
+  .pp-scene.open .pp-scenebody { display: block; }
+  .pp-sline { display: grid; grid-template-columns: 3.4em 1fr; column-gap: 10px; padding: 8px 0;
+              border-top: 1px solid var(--border); cursor: pointer; }
+  .pp-sline:first-child { border-top: 0; }
+  .pp-swho { grid-row: 1 / span 3; font-family: var(--aside); font-size: 1rem; font-style: italic;
+             color: var(--muted); padding-top: 4px; overflow: hidden; text-overflow: ellipsis; }
+  .pp-she { font-family: var(--he); font-size: 1.3rem; line-height: 1.35; color: var(--hebrew); text-align: right; }
+  .pp-str { font-size: .82rem; color: var(--muted); }
+  .pp-sen { display: none; font-size: .84rem; color: var(--ink); }
+  .pp-scene.en .pp-sen { display: block; }
+  .pp-sline.on .pp-she { color: var(--accent); }
+  .pp-sceneen { margin-top: 6px; font-size: .84rem; }
+  .pp-scenenote { margin: 6px 0 0; font-size: .8rem; color: var(--muted); }
 
   /* ---- the coach's table (compose) ---- */
   .lgive { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px;
@@ -4896,7 +4926,23 @@ function mergeNodeList(xs, ys) {
     if (nm) seenName[nm] = 1;
     out.push(n);
   });
-  return out;
+  /* THE SCENE IS THE ONE THING A LOSING COPY CAN STILL CONTRIBUTE (2026-09-28). First
+     occurrence wins the node, and that is right for everything the node already had —
+     but a scene is written on whichever device opened the place first, so the copy that
+     wins may be the one without it. Taken from the other side only where the winner has
+     none, so both devices still converge on the same file. */
+  const sceneOf = {};
+  other.concat(base).forEach(n => {
+    if (n.scene) sceneOf[n.id] = n.scene;
+    const nm = String(n.name || "").trim().toLowerCase();
+    if (n.scene && nm) sceneOf["name:" + nm] = n.scene;
+  });
+  return out.map(n => {
+    if (n.scene) return n;
+    const nm = String(n.name || "").trim().toLowerCase();
+    const sc = sceneOf[n.id] || (nm && sceneOf["name:" + nm]);
+    return sc ? Object.assign({}, n, { scene: sc }) : n;
+  });
 }
 function mergeChapter(x, y) {
   const nodes = mergeNodeList(x.nodes, y.nodes);
@@ -24043,7 +24089,9 @@ function campGoldWord(k, lib) {
    its own id on every open — but a flag raised while reading a node has to be able to say
    WHICH node, and reconstructing that from the DOM would be reading the view for state. */
 let campSheetId = "";
-function campOpenNode(id) {
+/* `refresh` is the scene arriving while the sheet is open: redraw what is there, and do
+   not start the warm-up or the scene writer a second time. */
+function campOpenNode(id, refresh) {
   const c = campAll(), srs = srsAll(), lib = libAll();
   const n = campNode(id, c);
   const sheet = document.getElementById("pathSheet");
@@ -24071,6 +24119,9 @@ function campOpenNode(id) {
   else if (state === "walked") h += '<p class="pp-walked">You have been here and it counted — ' +
     'the chapter moved on. A few words are still short of yours, and they will keep ' +
     'turning up in what comes next.</p>';
+
+  /* The scene, first — it is the context for everything below it. See sceneHtml. */
+  if (n.scene) h += sceneHtml(n.scene, !sceneHeardAll()[id], hasHeVoice());
 
   h += '<div class="pp-words">' +
        (n.words || []).map(k => campWordRow(k, lib, srs)).join("") + '</div>';
@@ -24129,9 +24180,17 @@ function campOpenNode(id) {
   sheet.classList.add("open");
   document.getElementById("pathSheetBackdrop").classList.add("open");
   document.getElementById("campSheetX").onclick = pathCloseSheet;
+  if (n.scene) sceneWire(n.scene, id);
   /* Started here rather than on the Practise tap: the three calls run while he reads
-     the word list, which is the difference between an instant session and a spinner. */
-  try { campWarm(n); } catch (e) { /* never block opening the sheet */ }
+     the word list, which is the difference between an instant session and a spinner.
+     The scene writer waits for the warm-up to settle, so opening a sheet is never five
+     requests into a five-a-minute model at once. */
+  if (!refresh) {
+    try {
+      const after = () => campSceneEnsure(id);
+      Promise.resolve(campWarm(n)).then(after, after);
+    } catch (e) { /* never block opening the sheet */ }
+  }
   document.getElementById("campMeet").onclick = () => campStartMeet(id);
   document.getElementById("campPractise").onclick = () => campStartPractise(id);
   document.getElementById("campCompose").onclick = () => campStartCompose(id);
@@ -25472,6 +25531,298 @@ function campWarm(node, force) {
   return run;
 }
 
+/* =====================  A SCENE BEFORE EACH PLACE  =====================
+   George, 2026-09-28: "I like the idea of a short story or dialogue to listen to at the
+   start of each node to kind of set the context right. Um, that would need to be done...
+   sensitively … if it's relying on the, the voice on my phone uh, that might be a bit
+   weird." The research's other half: the thinnest strand in this app is listening to
+   connected Hebrew he can mostly understand — 48 of 770 items are listen cards, and none
+   of them is longer than a sentence.
+
+   So each place gets one short scene, written once, in its situation: four to six lines,
+   one or two people, built from words he can already say plus the place's own. It sits
+   at the top of the place's sheet — the moment he is deciding what to open — and it is
+   not graded. It sets the scene; the session is where he is tested.
+
+   Spec: docs/superpowers/specs/2026-09-28-frequency-ranking-design.md, Phase 5. */
+const SCENE_MIN_LINES = 3, SCENE_MAX_LINES = 7;
+/* Words from outside his vocabulary and the place's, across the WHOLE scene, each glossed.
+   A sentence may carry two (COMMISSION_NEW_MAX); a scene is five sentences long and meant
+   to be understood without effort, so three for all of it. */
+const SCENE_NEW_MAX = 3;
+/* Of the content words, at least this share must be ready or the place's own. The
+   listening research puts comfortable comprehension around 90-95% of words known; the
+   place's own words are about to be taught, which is why they count as known here.
+   80 rather than 85: SCENE_NEW_MAX already bounds the genuinely unknown, and a realistic
+   scene for his real "How it was" place — two glossed words in sixteen — sat at 87%, so
+   85 would refuse good scenes over one word. */
+const SCENE_MIN_KNOWN = 0.8;
+const SCENE_RUNS_PER_DAY = 4, SCENE_DAY_KEY = "hvr_sceneday";
+const SCENE_HEARD_KEY = "hvr_sceneheard";
+const SCENE_KNOWN_LIST = 150;
+/* Two voices out of one. The phone has one Hebrew voice, so the second speaker is the
+   same voice lower and a touch slower — enough to tell two people apart without being a
+   caricature. Where a browser ignores pitch, the name on each line still says who it is. */
+const SCENE_VOICES = [{ pitch: 1, rate: 1 }, { pitch: 0.72, rate: 0.94 }];
+
+function sceneNodeWords(node) {
+  return (node.words || []).concat(node.carry || []).concat(node.stretch || []);
+}
+/* The model's reply, in a shape the rest can trust — or null. Pure. */
+function sceneClean(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const speakers = (Array.isArray(raw.speakers) ? raw.speakers : []).slice(0, 2)
+    .map(s => ({ name: String((s && s.name) || "").slice(0, 20), he: String((s && s.he) || "").slice(0, 20) }))
+    .filter(s => s.name);
+  if (!speakers.length) speakers.push({ name: "", he: "" });
+  const lines = (Array.isArray(raw.lines) ? raw.lines : [])
+    .map(l => ({ s: Math.max(0, Math.min(speakers.length - 1, Number(l && l.s) || 0)),
+                 he: String((l && l.he) || "").trim(), tr: String((l && l.tr) || "").trim(),
+                 en: String((l && l.en) || "").trim() }))
+    .filter(l => l.he && l.en);
+  if (lines.length < SCENE_MIN_LINES || lines.length > SCENE_MAX_LINES) return null;
+  const gloss = (Array.isArray(raw.gloss) ? raw.gloss : [])
+    .filter(g => g && g.he && String(g.en || "").trim())
+    .map(g => ({ he: String(g.he), tr: String(g.tr || ""), en: String(g.en) }));
+  return { title: String(raw.title || "").slice(0, 60), speakers: speakers, lines: lines, gloss: gloss };
+}
+/* THE GATE, in code, because a prompt is a request and this is the rule. Every Hebrew word
+   resolves to something he has, or is one of the scene's own few glossed words; enough of
+   the rest is his or the place's; and the place's own words actually appear. Pure. */
+function sceneAcceptable(scene, node, lib, srs) {
+  if (!scene) return { ok: false, why: "no scene" };
+  const place = new Set(sceneNodeWords(node || {}));
+  const names = new Set(scene.speakers.map(s => bankPeel(s.he)).filter(Boolean));
+  const declared = glossDeclared({ gloss: scene.gloss });
+  const fresh = new Set();
+  let total = 0, known = 0, placeUsed = 0;
+  for (const line of scene.lines) {
+    for (const tok of line.he.split(/[^֐-׿]+/).filter(Boolean)) {
+      if (STOPLIST.has(tok) || names.has(bankPeel(tok))) continue;
+      const bare = bankStripPrefixes(tok, lib);
+      if (STOPLIST.has(bare)) continue;
+      const k = libKeyFor(tok, lib) || (lib[bare] ? bare : null);
+      total++;
+      if (!k) {
+        if (!declared[bankPeel(tok)]) return { ok: false, why: "unexplained word " + tok };
+        fresh.add(bankPeel(tok));
+        continue;
+      }
+      if (place.has(k)) placeUsed++;
+      if (wordReady(k, srs) || place.has(k)) known++;
+    }
+  }
+  if (fresh.size > SCENE_NEW_MAX) return { ok: false, why: fresh.size + " new words, " + SCENE_NEW_MAX + " allowed" };
+  if (!total || known / total < SCENE_MIN_KNOWN)
+    return { ok: false, why: "only " + known + " of " + total + " words within reach" };
+  if (!placeUsed) return { ok: false, why: "none of the place's own words" };
+  return { ok: true, known: known, total: total, fresh: fresh.size };
+}
+function scenePrompt(node, lib, srs, level) {
+  const own = sceneNodeWords(node).filter(k => lib[k] || DICT[k])
+    .map(k => k + " (" + ((lib[k] && lib[k].tr) || (DICT[k] ? DICT[k][0] : "")) + ") = " +
+              ((lib[k] && lib[k].en) || (DICT[k] ? DICT[k][1] : "")));
+  /* Wider than campScaffold's forty: a scene is five lines of connected speech, and forty
+     words cannot carry a conversation. The gate checks every word against wordReady
+     anyway, so a longer list costs tokens, not safety. Most stable first. */
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  const known = readyWords(lib, srs).filter(k => !STOPLIST.has(k) && k.indexOf(" ") === -1)
+    .sort((a, b) => stabOf(b) - stabOf(a)).slice(0, SCENE_KNOWN_LIST)
+    .map(k => k + " (" + ((lib[k] && lib[k].tr) || "") + ")");
+  return "You are writing a short listening scene for an English speaker learning " +
+    "conversational Hebrew " + LEARNER_FOR + ". It plays before he practises one place on his " +
+    "learning map, to set the context: he listens, reads along, and should understand almost " +
+    "all of it without help.\n\n" +
+    "THE PLACE: " + (node.name || "") + " — " + (node.situation || "") + "\n" +
+    "HIS LEVEL: " + level + " of " + LEVEL_MAX + ". Keep the grammar at or just below it:\n" +
+    LEVEL_RUBRIC + "\n\n" +
+    "THE PLACE'S OWN WORDS — use at least three of them, each doing real work:\n" + own.join("\n") + "\n\n" +
+    "WORDS HE ALREADY KNOWS — build everything else from these, plus basic grammar words " +
+    "(אני, אתה, את, הוא, היא, זה, של, לא, כן, יש, אין, מה, מי, איפה, גם, עם, על, אבל, מאוד):\n" +
+    known.join(", ") + "\n\n" +
+    "Rules:\n" +
+    "- 4 to 6 short lines, 3 to 9 words each. Either two people in one everyday exchange, or " +
+    "one person telling him something. Real Israelis, spoken Hebrew, never textbook.\n" +
+    "- Give each speaker an ordinary Israeli first name. Never use the names inside the lines.\n" +
+    "- Nearly every word must come from the two lists above. At most " + SCENE_NEW_MAX + " words " +
+    "from outside them in the WHOLE scene, and every one of those must appear in gloss with its " +
+    "meaning — a word used without explaining is thrown away, and the scene with it.\n" +
+    "- Inflect freely: agree gender, number and tense as real Hebrew requires. That is not a new word.\n" +
+    "- It must hang together: each line answers or follows the one before, and the whole thing " +
+    "is a moment someone would actually have, in this place.\n" +
+    "- tr is how he would type it: kh for ח and כ (never ch); the article and one-letter " +
+    "prepositions join the word (harekhov, bakheder) with an apostrophe before a vowel " +
+    "(ha'ir, la'avoda); ו is ve- (ve'ani). No diacritics.\n" +
+    "- Hebrew without nikud.\n\n" +
+    "Return JSON only, no markdown:\n" +
+    '{"title":"","speakers":[{"name":"","he":""}],"lines":[{"s":0,"he":"","tr":"","en":""}],' +
+    '"gloss":[{"he":"","tr":"","en":""}]}\n' +
+    "- title: 2-5 English words naming the moment (\"Late for the bus\").\n" +
+    "- s: which speaker, by index.\n\n" +
+    "BEFORE YOU ANSWER: read it aloud as a native speaker. Would two real people say exactly " +
+    "this, in this order? If a line exists only to use a word, rewrite it.";
+}
+/* A native-speaker read of the WHOLE scene, not of each line alone — a line of dialogue
+   ("כן, בטח") is meaningless out of the exchange it answers, which is why the sentence
+   reviewer is the wrong judge here. Strict in the same direction as that one: when unsure,
+   no. Returns true only on a clear yes. */
+async function sceneReview(scene) {
+  const listing = scene.lines.map((l, i) =>
+    i + ". " + ((scene.speakers[l.s] || {}).name || "") + ": " + l.he + "  |  " + l.en).join("\n");
+  const prompt =
+    "You are a native Hebrew speaker. Below is a short scene written for a learner of " +
+    "everyday spoken Hebrew. Read it as a whole.\n\n" + listing + "\n\n" +
+    "Say no if ANY line is ungrammatical, has wrong gender or number agreement, is English " +
+    "word order in Hebrew words (it is \"כואב לי הראש\", never \"הראש שלי כואב\"), uses a " +
+    "real word where a different one belongs (\"לבית\" where \"הביתה\" is meant), does not " +
+    "match its English, or is something no Israeli would say in that moment — or if the " +
+    "lines do not follow from each other as a real exchange. When you are unsure, say no.\n\n" +
+    'Return JSON only: {"ok":true} or {"ok":false,"why":"one short reason"}';
+  try {
+    const out = extractJSON(await geminiRequest([{ text: prompt }], aiModelsFor("review"),
+                                                { waitOnRateLimit: true, label: "Checking the scene" }));
+    return !!(out && out.ok === true);
+  } catch (e) { return false; }
+}
+async function campSceneWrite(node) {
+  const lib = libAll(), srs = srsAll();
+  const out = extractJSON(await geminiRequest([{ text: scenePrompt(node, lib, srs, learnerLevel()) }],
+    aiModelsFor("scene"),
+    { timeoutMs: GEN_TIMEOUT_MS, waitOnRateLimit: true, label: "Writing the scene for " + (node.name || "this place") }));
+  const scene = sceneClean(out);
+  const gate = sceneAcceptable(scene, node, lib, srs);
+  if (!gate.ok) {
+    aiLogNote({ ts: Date.now(), ok: false, ms: 0, label: "Writing the scene for " + (node.name || ""),
+                err: "scene refused: " + gate.why });
+    return null;
+  }
+  if (!(await sceneReview(scene))) {
+    aiLogNote({ ts: Date.now(), ok: false, ms: 0, label: "Writing the scene for " + (node.name || ""),
+                err: "scene refused by the native-speaker check" });
+    return null;
+  }
+  return Object.assign(scene, { made: todayISO() });
+}
+/* Once per place, one in flight at a time (the per-minute rule — see CLAUDE.md), and a
+   daily cap so a run of refusals cannot spend the morning's strong pool. Runs AFTER the
+   place's own warm-up, never beside it, so opening a sheet is never five requests at once. */
+const sceneInflight = {};
+function campSceneEnsure(id) {
+  const c = campAll(), n = campNode(id, c);
+  if (!n || n.scene || !geminiKeys().length || sceneInflight[id]) return sceneInflight[id] || Promise.resolve(null);
+  if (!dayClaim(SCENE_DAY_KEY, SCENE_RUNS_PER_DAY)) return Promise.resolve(null);
+  const run = campSceneWrite(n).then(scene => {
+    if (!scene) return null;
+    const c2 = campAll(), n2 = campNode(id, c2);
+    if (!n2 || n2.scene) return n2 && n2.scene;
+    n2.scene = scene;
+    campSave(c2);
+    /* Still looking at this place: show it now rather than on the next open. */
+    if (campSheetId === id) campOpenNode(id, true);
+    return scene;
+  }).catch(() => null);
+  sceneInflight[id] = run;
+  const done = () => { delete sceneInflight[id]; };
+  run.then(done, done);
+  return run;
+}
+
+/* ---- playing it ---- */
+function speakHeAs(text, voice, onend) {
+  if (!HE_VOICE || !text) return false;
+  try {
+    const u = new SpeechSynthesisUtterance(String(text));
+    u.voice = HE_VOICE; u.lang = HE_VOICE.lang;
+    u.rate = speechRateFor(HE_VOICE.name, false) * ((voice && voice.rate) || 1);
+    u.pitch = (voice && voice.pitch) || 1;
+    if (onend) { u.onend = onend; u.onerror = onend; }
+    speechSynthesis.speak(u);
+    return true;
+  } catch (e) { return false; }
+}
+/* Each play takes a new token; a line finishing under an old token does nothing, which is
+   what makes Stop, a second Play, or closing the sheet actually stop the chain rather than
+   letting cancel()'s own onend carry it on to the next line. */
+let sceneToken = 0;
+function sceneStop() {
+  sceneToken++;
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
+  document.querySelectorAll(".pp-sline.on").forEach(el => el.classList.remove("on"));
+  const b = document.getElementById("campScenePlay");
+  if (b) { b.classList.remove("playing"); b.textContent = "Play"; }
+}
+function scenePlay(scene, from, to, id) {
+  sceneStop();
+  const tok = ++sceneToken;
+  const b = document.getElementById("campScenePlay");
+  if (b && to - from > 1) { b.classList.add("playing"); b.textContent = "Stop"; }
+  const step = i => {
+    if (tok !== sceneToken) return;
+    document.querySelectorAll(".pp-sline.on").forEach(el => el.classList.remove("on"));
+    if (i >= to) {
+      if (to - from > 1 && id) sceneHeardMark(id);
+      sceneStop();
+      return;
+    }
+    const line = scene.lines[i];
+    const el = document.querySelector('.pp-sline[data-i="' + i + '"]');
+    if (el) el.classList.add("on");
+    const ok = speakHeAs(line.he, SCENE_VOICES[line.s] || SCENE_VOICES[0],
+                         () => setTimeout(() => step(i + 1), 380));
+    if (!ok) sceneStop();
+  };
+  step(from);
+}
+function sceneHeardAll() { try { return JSON.parse(lsGet(SCENE_HEARD_KEY)) || {}; } catch (e) { return {}; } }
+function sceneHeardMark(id) { const h = sceneHeardAll(); h[id] = todayISO(); lsSet(SCENE_HEARD_KEY, JSON.stringify(h)); }
+/* Open until he has heard it through once, then folded to one row — the sheet's job on
+   most days is the Practise button, and five lines above it every time would push that
+   down a phone screen. Pure: html in, nothing read. */
+function sceneHtml(scene, open, voice) {
+  const who = s => campEscape((scene.speakers[s] || {}).name || "");
+  let h = '<div class="pp-scene' + (open ? " open" : "") + '" id="campScene">' +
+    '<div class="pp-sceneh"><button type="button" class="pp-scenet" id="campSceneToggle">' +
+    '<span class="pp-scenecaret">' + (open ? "▾" : "▸") + '</span>' +
+    campEscape(scene.title || "The scene") + '</button>' +
+    (voice ? '<button type="button" class="pp-sceneplay" id="campScenePlay">Play</button>' : '') +
+    '</div><div class="pp-scenebody">';
+  scene.lines.forEach((l, i) => {
+    h += '<div class="pp-sline" data-i="' + i + '">' +
+         (scene.speakers.length > 1 ? '<span class="pp-swho">' + who(l.s) + '</span>' : '<span class="pp-swho"></span>') +
+         '<span class="pp-she" dir="rtl">' + campEscape(l.he) + '</span>' +
+         '<span class="pp-str">' + campEscape(l.tr) + '</span>' +
+         '<span class="pp-sen">' + campEscape(l.en) + '</span></div>';
+  });
+  h += '<button type="button" class="linkbtn pp-sceneen" id="campSceneEn">Show the English</button>' +
+       (voice ? '' : '<p class="pp-scenenote">No Hebrew voice on this device, so it cannot be read aloud here.</p>') +
+       '</div></div>';
+  return h;
+}
+function sceneWire(scene, id) {
+  const box = document.getElementById("campScene");
+  if (!box) return;
+  const t = document.getElementById("campSceneToggle");
+  if (t) t.onclick = () => {
+    box.classList.toggle("open");
+    t.querySelector(".pp-scenecaret").textContent = box.classList.contains("open") ? "▾" : "▸";
+  };
+  const p = document.getElementById("campScenePlay");
+  if (p) p.onclick = () => {
+    if (p.classList.contains("playing")) { sceneStop(); return; }
+    box.classList.add("open");
+    if (t) t.querySelector(".pp-scenecaret").textContent = "▾";
+    scenePlay(scene, 0, scene.lines.length, id);
+  };
+  const en = document.getElementById("campSceneEn");
+  if (en) en.onclick = () => {
+    box.classList.toggle("en");
+    en.textContent = box.classList.contains("en") ? "Hide the English" : "Show the English";
+  };
+  box.querySelectorAll(".pp-sline").forEach(el => {
+    el.onclick = () => { if (hasHeVoice()) scenePlay(scene, Number(el.dataset.i), Number(el.dataset.i) + 1, id); };
+  });
+}
+
 async function campStartPractise(id) {
   const n = campNode(id);
   if (!n) return;
@@ -25680,6 +26031,7 @@ function pathFocusCurrent() {
 }
 
 function pathCloseSheet() {
+  sceneStop();
   campSheetId = "";
   const sheet = document.getElementById("pathSheet");
   if (sheet) sheet.classList.remove("open");
@@ -42847,6 +43199,61 @@ T("sentence commission: new words get their own section and count as the carried
   const libFull = Object.assign({ "רוצה": {} }, lib);
   assertTrue(commissionAcceptable(it, libFull, new Set(["עייף", "רוצה"]), new Set(["לישון"]), 1),
              "one new word, everything else scaffolding: accepted");
+});
+/* ---- the scene before each place (2026-09-28) ---- */
+function sceneFixture() {
+  const strong = { prod: { n: 8, miss: 0, stab: 40, diff: 3, due: "2099-01-01", last: todayISO() } };
+  const lib = {}, srs = {};
+  ["קפה", "רוצה", "חם", "בבקשה", "תודה", "עכשיו"].forEach(k => { lib[k] = { tr: "", en: "" }; srs[k] = strong; });
+  lib["מים"] = { tr: "mayim", en: "water" };               // the place's own, not yet his
+  const node = { id: "t1", name: "At the café", situation: "ordering", words: ["מים", "קפה"] };
+  return { lib: lib, srs: srs, node: node };
+}
+T("sceneClean: a usable scene or nothing", () => {
+  assertNull(sceneClean({ lines: [{ he: "שלום", en: "hi" }] }), "one line is not a scene");
+  const sc = sceneClean({ title: "Coffee", speakers: [{ name: "Noa", he: "נועה" }, { name: "Avi", he: "אבי" }],
+    lines: [{ s: 0, he: "אתה רוצה קפה?", en: "?" }, { s: 5, he: "כן, בבקשה", en: "yes" },
+            { s: 1, he: "חם עכשיו", en: "hot" }, { s: 0, he: "", en: "dropped" }] });
+  assertEq(sc.lines.length, 3, "an empty line is dropped");
+  assertEq(sc.lines[1].s, 1, "a speaker index past the cast is clamped, not trusted");
+});
+T("sceneAcceptable: within reach, the place's words in it, and nothing unexplained", () => {
+  const F = sceneFixture();
+  const mk = (lines, gloss) => sceneClean({ speakers: [{ name: "Noa", he: "נועה" }, { name: "Avi", he: "אבי" }],
+                                            lines: lines, gloss: gloss || [] });
+  const good = mk([{ s: 0, he: "אתה רוצה קפה?", en: "coffee?" }, { s: 1, he: "לא, מים בבקשה", en: "water please" },
+                   { s: 0, he: "הנה, מים", en: "here" }, { s: 1, he: "תודה, חם עכשיו", en: "thanks, it's hot now" }],
+                  [{ he: "הנה", tr: "hine", en: "here is" }]);
+  const g = sceneAcceptable(good, F.node, F.lib, F.srs);
+  assertTrue(g.ok, "a scene of his words and the place's passes: " + g.why);
+  assertTrue(!sceneAcceptable(mk([{ s: 0, he: "אתה רוצה קפה?", en: "" + 1 }, { s: 1, he: "לא, מיץ תפוזים", en: "juice" },
+                                   { s: 0, he: "טוב", en: "ok" }]), F.node, F.lib, F.srs).ok,
+             "an unglossed word it never explained is refused");
+  const heavy = mk([{ s: 0, he: "אתה רוצה קפה או תה?", en: "x" }, { s: 1, he: "עוגה ומיץ וסוכר", en: "x" },
+                    { s: 0, he: "קפה", en: "x" }],
+                   ["תה", "עוגה", "מיץ", "סוכר"].map(h => ({ he: h, tr: "", en: "x" })));
+  assertTrue(!sceneAcceptable(heavy, F.node, F.lib, F.srs).ok, "four new words is more than a scene may carry");
+  const offPlace = mk([{ s: 0, he: "תודה", en: "x" }, { s: 1, he: "תודה, חם עכשיו", en: "x" }, { s: 0, he: "בבקשה", en: "x" }]);
+  assertTrue(!sceneAcceptable(offPlace, F.node, F.lib, F.srs).ok, "a scene with none of the place's words is not its scene");
+  const named = mk([{ s: 0, he: "נועה, אתה רוצה קפה?", en: "x" }, { s: 1, he: "כן בבקשה", en: "x" }, { s: 0, he: "מים", en: "x" }]);
+  assertTrue(sceneAcceptable(named, F.node, F.lib, F.srs).ok, "a speaker's own name is not an unknown word");
+});
+T("scene: the prompt is his, the page draws it safely, and a sync keeps it", () => {
+  const F = sceneFixture();
+  assertTrue(scenePrompt(F.node, F.lib, F.srs, 2).indexOf(LEARNER_FOR) !== -1, "framed for real life");
+  const sc = sceneClean({ title: "<b>x</b>", speakers: [{ name: "Noa", he: "נועה" }],
+    lines: [{ he: "שלום <i>", en: "a" }, { he: "קפה", en: "b" }, { he: "מים", en: "c" }] });
+  const html = sceneHtml(sc, false, true);
+  assertTrue(html.indexOf("<i>") === -1 && html.indexOf("<b>x") === -1, "escaped");
+  assertTrue(html.indexOf('class="pp-scene"') !== -1 && sceneHtml(sc, true, true).indexOf("pp-scene open") !== -1,
+             "folded once heard, open until then");
+  assertTrue(sceneHtml(sc, true, false).indexOf("campScenePlay") === -1, "no Play without a voice");
+  assertEq(html.match(/[\u{1F300}-\u{1FAFF}\u{23E9}-\u{23FA}\u{2709}]/gu) || [], [], "no emoji");
+  /* First occurrence wins the node — so a scene written on the OTHER device must still
+     come across, or the phone writes a second one for a place the laptop already has. */
+  const a = [{ id: "n1", name: "Café", words: [] }];
+  const b = [{ id: "n1", name: "Café", words: [], scene: sc }];
+  assertEq(!!mergeNodeList(a, b)[0].scene && !!mergeNodeList(b, a)[0].scene, true, "the scene survives either way round");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

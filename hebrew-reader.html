@@ -10051,6 +10051,9 @@ function SYNC_LOCAL_SET() {
        caps are per device, like the requests they limit, and a counter under newer-wins
        could go backwards. */
     BREADTH_DAY_KEY, CONTENT_REVIEW_DAY_KEY,
+    /* The same kind of per-device daily cap, for the introduce pass and the scene writer
+       (2026-09-28). Whether a scene has been HEARD does sync — that is about him. */
+    INTRO_DAY_KEY, SCENE_DAY_KEY,
     /* The index would list notes whose audio lives in another device's IndexedDB. */
     VNOTES_KEY,
     /* NOTHING IN THIS FILE READS THESE. They are residue from features that were
@@ -25743,10 +25746,14 @@ function speakHeAs(text, voice, onend) {
 /* Each play takes a new token; a line finishing under an old token does nothing, which is
    what makes Stop, a second Play, or closing the sheet actually stop the chain rather than
    letting cancel()'s own onend carry it on to the next line. */
-let sceneToken = 0;
+let sceneToken = 0, scenePlaying = false;
 function sceneStop() {
   sceneToken++;
-  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
+  /* Only if the scene is what is speaking. pathCloseSheet calls this on every close,
+     including the one campBegin makes on its way into a session, and cancelling there
+     unconditionally would cut off whatever else happened to be talking. */
+  if (scenePlaying) { try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {} }
+  scenePlaying = false;
   document.querySelectorAll(".pp-sline.on").forEach(el => el.classList.remove("on"));
   const b = document.getElementById("campScenePlay");
   if (b) { b.classList.remove("playing"); b.textContent = "Play"; }
@@ -25754,6 +25761,7 @@ function sceneStop() {
 function scenePlay(scene, from, to, id) {
   sceneStop();
   const tok = ++sceneToken;
+  scenePlaying = true;
   const b = document.getElementById("campScenePlay");
   if (b && to - from > 1) { b.classList.add("playing"); b.textContent = "Stop"; }
   const step = i => {

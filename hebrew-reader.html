@@ -26135,7 +26135,14 @@ function learnBuild(opts) {
      ask the same question or the pipeline quietly wastes its calls. rescueWords is
      already only his three worst words in the whole library; there is nothing in it
      that is not worth carrying on any day it can be. */
-  const carry = new Set(rescueWords(lib, srsNow));
+  /* AND THE WORDS HE MEETS TODAY (2026-09-28). The soft launch below gives each new word
+     one isolated card; carrying it as well lets a sentence written FOR it — every other
+     word strong — be served in the same session, so the card is where he meets the word
+     and the sentence is where he uses it. Computed here rather than down at the soft
+     launch because `carry` has to be known before the bank is filtered. learnTopUp's
+     introduce pass writes those sentences, reading the same introWords. */
+  const launching = introWords(targets, srsNow, shape === "quick" ? 1 : NEW_WORD_CARDS);
+  const carry = new Set(rescueWords(lib, srsNow).concat(launching));
   /* The one list — see practiceNeeds. Everything below that chooses a sentence or a
      word reads this, and so does learnTopUp's writer. */
   const needs = practiceNeeds(lib, srsNow, todayISO(), archiveAll());
@@ -26227,9 +26234,7 @@ function learnBuild(opts) {
      is exactly what wordReady accepts. A word soft-launched here is eligible to
      appear inside a sentence from the very next session, with no change to the
      servable gate at all. */
-  const newWords = targets.filter(k => srsStrengthOf(srsNow, k, "prod") === "new");
-  const newRoom = shape === "quick" ? 1 : NEW_WORD_CARDS;
-  const launching = newWords.slice(0, newRoom);
+  /* `launching` is worked out above, beside `carry` — see there. */
   launching.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
 
   /* ---- the flexible slot ---------------------------------------------------
@@ -26366,6 +26371,8 @@ function learnBuild(opts) {
 
   shuffleArr(cards);
   cards.length = Math.min(cards.length, size - (replyPick ? 1 : 0));
+  /* Meet it, then use it: a word launched today comes before any sentence carrying it. */
+  introOrder(cards, launching);
   /* The reply always closes. It's the thing the whole app exists to make possible,
      so the session ends on the real moment rather than on a vocabulary card. */
   if (replyPick) cards.push({ kind: "reply", item: replyPick.it, words: replyPick.it.uses || [] });
@@ -26517,6 +26524,32 @@ function rescueWords(lib, srs, limit, only) {
     .sort((a, b) => missRate(b) - missRate(a))
     .slice(0, limit === undefined ? RESCUE_MAX : limit);
 }
+/* ---- the words he meets next, and the sentences that introduce them ------------
+   The first `n` never-drilled words in learnTargets' order — which, since the frequency
+   work, puts the commonest first. learnBuild soft-launches exactly these (so they must be
+   the same function, or the writer writes for words the session does not launch), and
+   learnTopUp's introduce pass looks INTRO_AHEAD words down the same list so the sentences
+   are banked before the session that needs them. Pure over what it is handed. */
+const INTRO_AHEAD = 3, INTRO_MIN_EACH = 2;
+const INTRO_RUNS_PER_DAY = 4, INTRO_DAY_KEY = "hvr_introday";
+function introWords(targets, srs, n) {
+  return (targets || []).filter(k => srsStrengthOf(srs, k, "prod") === "new")
+                        .slice(0, n === undefined ? INTRO_AHEAD : n);
+}
+/* A word card before any sentence that uses the same launched word. Moves the word card
+   up to just ahead of the first such sentence; everything else keeps the shuffle it got.
+   Mutates and returns `cards`. */
+function introOrder(cards, launched) {
+  (launched || []).forEach(w => {
+    const wi = cards.findIndex(c => c.kind === "word" && c.key === w);
+    const si = cards.findIndex(c => c.kind !== "word" && (c.words || []).indexOf(w) !== -1);
+    if (wi === -1 || si === -1 || wi < si) return;
+    const card = cards.splice(wi, 1)[0];
+    cards.splice(si, 0, card);
+  });
+  return cards;
+}
+
 /* Node scaffolding, wider than the daily kind: `progressing` counts, not only `strong`.
    Inside a node nothing is strong yet, so demanding strong support means the generator
    can only build from vocabulary learned somewhere else — the same fault bankServable's
@@ -26584,6 +26617,14 @@ function sentencePlanPrompt(spec) {
         "with no \"for\". A natural sentence without the stuck word teaches more than " +
         "an odd one built around it.\n\n"
       : "") +
+    ((spec.intro || []).length
+      ? "NEW WORDS HE IS ABOUT TO MEET. He sees each one once on a card, and these " +
+        "sentences are where he learns to use it. Plan TWO briefs for each, naming it in " +
+        "\"for\". Each must be a situation where the rest of the sentence is simple and " +
+        "familiar, so the new word's meaning can be guessed from the words around it — " +
+        "\"I'm tired, I want to sleep\" teaches sleep; \"sleep is good\" teaches nothing:\n" +
+        spec.intro.map(k => wordLine(k, lib)).join("\n") + "\n\n"
+      : "") +
     (spec.setting
       ? "THE SETTING: he is working through " + spec.setting + ". Prefer that setting " +
         "where it fits — but it supplies the NOUNS, it is not the job. The job is the " +
@@ -26616,9 +26657,12 @@ function sentencePlanPrompt(spec) {
     "FUNCTION FOR THE SAME WORD:\n" + LEARN_FUNCTIONS.map(f => "- " + f).join("\n") + "\n\n" +
     "Write " + (spec.count || PLAN_ITEMS) + " briefs. Return JSON only, no markdown:\n" +
     '{"briefs":[{"for":"","fn":"","lvl":2,"kind":"sentence","en":""}]}\n\n' +
-    "- for = the Hebrew word from the stuck list this item is for, copied exactly. " +
-    (rescue.length ? "About a third of the briefs; leave it \"\" on the rest.\n"
-                   : "Leave it \"\" — there is no stuck list this time.\n") +
+    "- for = the Hebrew word from the stuck or new list this item is for, copied exactly. " +
+    (rescue.length ? "About a third of the briefs for stuck words" +
+                     ((spec.intro || []).length ? ", two for each new word" : "") +
+                     "; leave it \"\" on the rest.\n"
+     : (spec.intro || []).length ? "Two briefs for each new word; leave it \"\" on the rest.\n"
+     : "Leave it \"\" — there is no stuck list this time.\n") +
     "- fn = which function above, copied exactly.\n" +
     "- lvl = 1-5 by the scale.\n" +
     "- kind = \"sentence\" (something HE says), \"listen\" (something someone says to " +
@@ -26641,7 +26685,7 @@ async function sentencePlan(spec) {
     { waitOnRateLimit: true,        // background: wait, never get demoted — see sentenceWriteOne
       label: "Planning practice sentences" + (spec.setting ? " for " + spec.setting : "") }));
   const briefs = (out && Array.isArray(out.briefs)) ? out.briefs : [];
-  const okFor = new Set(rescue);
+  const okFor = new Set(rescue.concat(spec.intro || []));
   return briefs.map(b => ({
     for: (b && okFor.has(String(b.for))) ? String(b.for) : "",
     fn: String((b && b.fn) || ""),
@@ -26710,6 +26754,14 @@ async function sentenceWriteOne(spec, briefs) {
         "sentence — not tacked on the end. If that word cannot go in a sentence a real " +
         "person would say, write the good sentence instead and return \"for\": \"\":\n" +
         rescue.map(k => wordLine(k, lib)).join("\n") + "\n\n"
+      : "") +
+    ((spec.intro || []).length
+      ? "THE WORDS BEING INTRODUCED. He is meeting these for the first time. A brief " +
+        "marked MUST USE with one of them should make its meaning clear from the words " +
+        "around it, and keep everything else simple and solid — this sentence is where he " +
+        "learns the word. Give it a gloss \"why\" that says how it is used. If it will not " +
+        "go in naturally, write the good sentence instead and return \"for\": \"\":\n" +
+        spec.intro.map(k => wordLine(k, lib)).join("\n") + "\n\n"
       : "") +
     ((spec.revisit || []).length
       ? "WORDS FROM EARLIER PRACTICE, worth folding back in. Use them where they fit " +
@@ -26920,6 +26972,7 @@ async function sentenceCommission(spec) {
     lib: lib, srs: srs,
     level: spec.level || learnerLevel(),
     rescue: spec.rescue || [],
+    intro: spec.intro || [],
     revisit: spec.revisit || [],
     scaffold: spec.scaffold || scaffoldWords(lib, srs)
   });
@@ -26940,7 +26993,9 @@ async function sentenceCommission(spec) {
   /* Revisit words are permitted vocabulary alongside the rescue words — they count
      against the same carried limit, so a sentence may fold one in without becoming
      the impossible card. */
-  const rescueSet = new Set((spec.rescue || []).concat(spec.revisit || []));
+  /* Intro words too (2026-09-28): a word he is about to meet is carried exactly like a
+     word being rescued — one per sentence, everything else scaffolding. */
+  const rescueSet = new Set((spec.rescue || []).concat(spec.intro || []).concat(spec.revisit || []));
   const clean = drafted.filter(it => commissionAcceptable(it, lib, scaffoldSet, rescueSet,
                                                           spec.maxCarried));
   if (!clean.length) {
@@ -27190,19 +27245,34 @@ async function learnTopUp(quiet) {
      app was using about one of. George: "Be aggressive with hte sentences generation
      in the API, we have loads of usage." */
   const rescue = rescueWords(lib, srs);
-  if (rescue.length) {
-    const carry = new Set(rescue);
+  /* ---- and introduce ---------------------------------------------------------
+     The same question asked of the words he is about to MEET (2026-09-28). The session
+     soft-launches the next new words and carries them (see learnBuild), but no bank
+     sentence carries a word he has never met — every one was written for words already
+     ready — so carrying them served nothing. These are the sentences that make it real:
+     one new word, everything around it strong, its meaning guessable from context.
+
+     Shares ONE commission with rescue when both are short, so a day that already writes
+     a rescue batch spends no extra calls on this. Capped at INTRO_RUNS_PER_DAY on its
+     own, because unlike rescue it moves every session: each launch brings the next word
+     into view. */
+  const intro = introWords(targets, srs, INTRO_AHEAD);
+  const carryAll = new Set(rescue.concat(intro));
+  if (carryAll.size) {
     const stock = {};
     bank.forEach(it => {
       if (it.seen) return;
-      const c = bankCarried(it, lib, srs, carry);
+      const c = bankCarried(it, lib, srs, carryAll);
       if (c) stock[c] = (stock[c] || 0) + 1;
     });
     const starved = rescue.filter(k => (stock[k] || 0) < RESCUE_MIN_EACH);
-    if (starved.length) {
+    let introStarved = intro.filter(k => (stock[k] || 0) < INTRO_MIN_EACH);
+    if (introStarved.length && !dayClaim(INTRO_DAY_KEY, INTRO_RUNS_PER_DAY)) introStarved = [];
+    if (starved.length || introStarved.length) {
       try {
         made += await sentenceCommission({ lib: lib, srs: srs, level: level,
-                                           rescue: starved, setting: learnSetting() });
+                                           rescue: starved, intro: introStarved,
+                                           setting: learnSetting() });
       } catch (e) { /* a failed rescue must not stop the breadth pass below */ }
     }
   }
@@ -42733,6 +42803,50 @@ T("freqCoverage: a word counts once any form of it is ready, and only then", () 
   assertEq(freqCoverage(lib, srs).said, 1, "two forms of one verb are one word");
   assertTrue(top.indexOf("לדעת") === -1 && freqCoverage(lib, srs, 1).said === 0,
              "and it only counts inside the first n");
+});
+T("introWords: the words the session launches are the ones the writer writes for", () => {
+  const srs = { a: { prod: { n: 3, stab: 30, diff: 3 } } };
+  assertEq(introWords(["a", "b", "c", "d"], srs, 2), ["b", "c"], "never-drilled only, in order");
+  assertEq(introWords(["a", "b", "c", "d"], srs), ["b", "c", "d"], "INTRO_AHEAD by default");
+  /* learnBuild and learnTopUp must ask the same question, or sentences get written for
+     words the session never launches — the fault rescueWords' comment warns about. */
+  assertTrue(String(learnBuild).indexOf("introWords(targets") !== -1 &&
+             String(learnTopUp).indexOf("introWords(targets") !== -1,
+             "both read introWords over learnTargets");
+  assertTrue(/concat\(launching\)/.test(String(learnBuild)), "and today's launches are carried");
+});
+T("introOrder: meet the word, then use it", () => {
+  const cards = [{ kind: "sentence", words: ["x", "b"] }, { kind: "word", key: "c", words: ["c"] },
+                 { kind: "word", key: "b", words: ["b"] }, { kind: "sentence", words: ["c"] }];
+  introOrder(cards, ["b", "c"]);
+  assertEq(cards.map(c => c.kind + ":" + (c.key || c.words.join(""))),
+           ["word:b", "sentence:xb", "word:c", "sentence:c"],
+           "b's card moves ahead of its sentence; c was already first");
+});
+T("bankServable: a never-met word rides in a sentence when everything round it is strong", () => {
+  const lib = { new1: {}, s1: {}, s2: {}, p1: {} };
+  const strong = { prod: { n: 8, miss: 0, stab: 40, diff: 3, due: "2099-01-01", last: todayISO() } };
+  const srs = { s1: strong, s2: strong,
+                p1: { prod: { n: 1, miss: 0, stab: 2, diff: 5, due: todayISO(), last: todayISO() } } };
+  const carry = new Set(["new1"]);
+  assertTrue(bankServable({ uses: ["new1", "s1", "s2"] }, lib, srs, carry),
+             "the intro sentence is served the day its word is launched");
+  assertTrue(!bankServable({ uses: ["new1", "s1", "p1"] }, lib, srs, carry),
+             "not when anything else is still only progressing — the daily rule is strong support");
+  assertTrue(!bankServable({ uses: ["new1", "s1"] }, lib, srs), "and never without the carry");
+});
+T("sentence commission: new words get their own section and count as the carried word", () => {
+  const lib = { "לישון": { tr: "lishon", en: "to sleep" }, "עייף": { tr: "ayef", en: "tired" } };
+  const withIntro = sentencePlanPrompt({ lib: lib, level: 2, rescue: [], intro: ["לישון"],
+                                         scaffold: ["עייף"] });
+  assertTrue(withIntro.indexOf("NEW WORDS HE IS ABOUT TO MEET") !== -1 &&
+             withIntro.indexOf("לישון (lishon) = to sleep") !== -1, "the planner is told");
+  assertTrue(sentencePlanPrompt({ lib: lib, level: 2, rescue: [], scaffold: ["עייף"] })
+             .indexOf("NEW WORDS HE IS ABOUT TO MEET") === -1, "and only when there are some");
+  const it = { he: "אני עייף, אני רוצה לישון", for: "לישון", gloss: [] };
+  const libFull = Object.assign({ "רוצה": {} }, lib);
+  assertTrue(commissionAcceptable(it, libFull, new Set(["עייף", "רוצה"]), new Set(["לישון"]), 1),
+             "one new word, everything else scaffolding: accepted");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

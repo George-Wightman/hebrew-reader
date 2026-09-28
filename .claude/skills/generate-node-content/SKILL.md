@@ -113,8 +113,23 @@ scale. What matters:
 
 - **Vocabulary.** Every content word must be in his library, or the gate drops the item.
   `Object.keys(libAll())` is the list — all of it, not a 40-word slice.
-- **Register.** He replies to WhatsApp voice notes from his partner's grandfather. Warm,
-  everyday, spoken. Not textbook.
+- **Register.** Everyday spoken Hebrew for real life — his partner's Israeli family and
+  friends, getting around in Israel (`LEARNER_FOR` in the file). Warm, everyday, spoken.
+  Not textbook. Not framed around grandad's voice notes: since 2026-09-28 those are a side
+  feature, not what the app is for.
+- **Weight by how common a word is, not by judgement.** `FREQ_RANK[k]` (1 = the commonest
+  content word in spoken Hebrew; absent = outside the top ~1,250 lemmas). Aim for:
+  rank ≤ 300 → 4–6 sentences each, with different partners; 301–1,000 → 2–3;
+  unranked → 1–2, somewhere it would really come up. This replaces the "everyday words
+  4–6, rare nouns 1–2" call the 2026-09-23 batch made by eye.
+- **Write for the words he is about to meet.** `introWords(learnTargets(15), srsAll(), 3)`
+  is the next three never-drilled words the session will launch — commonest first. Two
+  sentences each, one new word per sentence, every other content word `strong`
+  (`srsStrengthOf(srs, k, "prod") === "strong"`), and a situation that makes the new
+  word's meaning guessable ("I'm tired, I want to sleep" teaches sleep). These are served
+  the same day the word's card is (see Phase 4 of
+  `docs/superpowers/specs/2026-09-28-frequency-ranking-design.md`), so check them with
+  `bankServable(it, lib, srs, new Set([word]))`, not the three-argument form.
 - **The node's own words** should appear — that is what makes an item count for that node
   (`campBuild` matches on `uses`).
 - **Spread the levels.** About half at his measured level (`learnerLevel()`), a third one

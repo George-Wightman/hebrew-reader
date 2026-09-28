@@ -27526,8 +27526,16 @@ function breadthBrief(lib, srs, bank, needs) {
      on material that leaves it exactly as uncovered as before, three times a day,
      forever. The first version did precisely that: four of its eight words on his real
      state were phrases. They reach him as word cards through the flexible slot. */
+  /* Commonest first before the cut (2026-09-28). Eight slots a run, and a due word with no
+     sentence is stuck either way — so the slots go first to the words everyday Hebrew uses
+     most, which are also the ones a sentence can hold naturally. Unranked words keep
+     their due order behind the ranked ones. */
+  const rankOf = k => FREQ_RANK[k] || Infinity;
   const write = ((needs && needs.due) || [])
     .filter(k => wordReady(k, srs) && !reached.has(k) && k.indexOf(" ") === -1)
+    .map((k, i) => ({ k: k, i: i }))
+    .sort((a, b) => (rankOf(a.k) - rankOf(b.k)) || (a.i - b.i))
+    .map(x => x.k)
     .slice(0, BREADTH_WRITE_FOR);
   const overused = Object.keys(uses)
     .sort((a, b) => (uses[b] - uses[a]) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, BREADTH_OVERUSED);
@@ -43254,6 +43262,13 @@ T("scene: the prompt is his, the page draws it safely, and a sync keeps it", () 
   const a = [{ id: "n1", name: "Café", words: [] }];
   const b = [{ id: "n1", name: "Café", words: [], scene: sc }];
   assertEq(!!mergeNodeList(a, b)[0].scene && !!mergeNodeList(b, a)[0].scene, true, "the scene survives either way round");
+});
+T("breadthBrief: the writer's slots go to the commonest uncovered words first", () => {
+  const ok = { due: "2026-01-01", last: "2025-12-01", stab: 30, diff: 3, n: 5, miss: 0, lapses: 0, lastAt: 1 };
+  const lib = {}, srs = {};
+  ["חתול", "רוצה", "זzz"].forEach(k => { lib[k] = {}; srs[k] = { prod: ok }; });
+  const b = breadthBrief(lib, srs, [], { due: ["חתול", "זzz", "רוצה"], unproven: new Set(), need: {} });
+  assertEq(b.write, ["רוצה", "חתול", "זzz"], "want before cat, and the unranked word last");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

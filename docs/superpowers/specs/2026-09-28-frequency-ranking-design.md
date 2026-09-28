@@ -212,7 +212,10 @@ not a test.
 - `breadthBrief`'s `write` list is due words with no sentence; they are now ordered by
   rank before being cut to eight, so the writer's slots go to common words first.
 - The `generate-node-content` skill replaces "everyday words 4–6 sentences, rare nouns
-  1–2" (a judgement) with rank bands from `FREQ_RANK`.
+  1–2" (a judgement) with rank bands from `FREQ_RANK` (≤300: 4–6, 301–1,000: 2–3,
+  unranked: 1–2), drops the WhatsApp framing, and asks for two pre-baked intro sentences
+  for each of the next three words the session will launch — so a batch can cover the
+  introduce pass before the phone's writer has to.
 
 ## Deferred, with reasons
 

@@ -2017,6 +2017,7 @@
   .lact-label { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase;
                 color: var(--faint); margin: 0 0 6px; }
   .lact-quick { display: flex; gap: 7px; }
+  .lact-check { display: block; margin: 8px auto 0; font-size: .8rem; color: var(--muted); }
   .lact-quick button { flex: 1; background: var(--panel); border: 1px solid var(--border);
                        border-radius: 9px; padding: 10px 4px; font-family: inherit;
                        font-size: .88rem; color: var(--accent); cursor: pointer;
@@ -22008,6 +22009,40 @@ async function reviewTick() {
 /* The strengthening session: an ordinary Learn session narrowed to the words the week
    said were the problem. Same builder again — there is no third kind of session in
    this app, and there should not be. */
+/* ---- checking the words the app has only assumed (2026-09-29) --------------------
+   About 270 of his usable words were imported from Duolingo marked as known without him
+   ever answering them here (srsUnproven). A sentence may carry only one such word, so they
+   were the binding limit on almost every sentence written for him — and they were being
+   "tested gently" at five a session, which is a year of sessions.
+
+   So a quick check: fifteen word cards of them, commonest first, then the course's own
+   order. Deliberately just word cards through the ordinary grader rather than a new kind
+   of card: a right answer writes lastAt and the word stops being assumed; a miss puts it
+   where it belongs, in the scheduler's hands. Either way it is evidence. Pure helper, so the
+   choice can be tested without a store. */
+const CHECK_CARDS = 15;
+function unprovenCheckWords(lib, srs, n) {
+  const unp = [...practiceNeeds(lib, srs, todayISO(), {}).unproven].filter(k => srsGradable(k, lib));
+  const rank = k => FREQ_RANK[k] || 99999, unit = k => (lib[k] && lib[k].duo) || 999;
+  return unp.sort((a, b) => (rank(a) - rank(b)) || (unit(a) - unit(b)) || (a < b ? -1 : a > b ? 1 : 0))
+            .slice(0, n || CHECK_CARDS);
+}
+function unprovenCount(lib, srs) {
+  return [...practiceNeeds(lib, srs, todayISO(), {}).unproven].filter(k => srsGradable(k, lib)).length;
+}
+function learnStartCheck() {
+  const words = unprovenCheckWords(libAll(), srsAll());
+  if (!words.length) return false;
+  sessionClear();
+  learnSession = { cards: words.map(k => ({ kind: "word", key: k, words: [k] })),
+                   i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
+  statsBump({ sessions: 1 });
+  markShown(words);
+  learnShow("lRun");
+  learnRenderCard();
+  return true;
+}
+
 function reviewStartDrill() {
   const r = reviewAll();
   const t = (r.obs && r.obs.targets) || [];
@@ -29348,6 +29383,19 @@ function learnRenderAct() {
     quick.append(b);
   });
   box.append(quick);
+  /* The Duolingo check, only while there is something to check — see learnStartCheck.
+     A quiet line under the two sizes rather than a third equal button: it is a chore he
+     can pick up when he has five minutes, not what the card is for. */
+  const left = unprovenCount(libAll(), srsAll());
+  if (left) {
+    const chk = document.createElement("button");
+    chk.type = "button"; chk.className = "linkbtn lact-check";
+    chk.textContent = "Check " + Math.min(CHECK_CARDS, left) + " Duolingo words (" + left + " to go)";
+    chk.title = "Words imported from Duolingo that the app has assumed you know. One answer each, " +
+                "right or wrong, turns the assumption into evidence.";
+    chk.onclick = () => { learnStartCheck(); };
+    box.append(chk);
+  }
 }
 
 /* ---- the coach, before you start --------------------------------------------
@@ -43392,6 +43440,17 @@ T("libKeyFor: 'I was' filed as its own word credits the verb", () => {
     assertEq(libKeyFor("הייתי", lib), "היה", "the never-drilled 'I was' credits היה");
     assertEq(libKeyFor("לקחת", lib), "לקחת", "never redirected onto another finite form");
   } finally { FORM_INDEX = rFI; }
+});
+T("unprovenCheckWords: only assumed words, commonest first, and an answer ends the assumption", () => {
+  const seeded = () => ({ prod: { n: 1, stab: 8, diff: 4, due: "2099-01-01", last: "2026-09-02" } });
+  const lib = { "רוצה": { duo: 30 }, "חתול": { duo: 12 }, "zz": { duo: 3 }, "בית": {} };
+  const srs = { "רוצה": seeded(), "חתול": seeded(), "zz": seeded(),
+                "בית": { prod: { n: 4, stab: 30, diff: 3, lastAt: 1 } } };
+  assertEq(unprovenCheckWords(lib, srs, 5), ["רוצה", "חתול", "zz"],
+           "ranked words first by rank, then the unranked by unit; a proven word is not asked");
+  assertEq(unprovenCount(lib, srs), 3);
+  srs["רוצה"].prod.lastAt = Date.now();
+  assertEq(unprovenCheckWords(lib, srs, 5), ["חתול", "zz"], "once answered it is evidence, not assumption");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

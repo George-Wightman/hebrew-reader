@@ -28581,6 +28581,18 @@ async function contentIngest() {
     contentNote("ingest-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
     return 0;
   }
+  /* SCENES WRITTEN AHEAD (2026-09-29). Every node on his map was visible when the file
+     was written, so its scene was written and checked there rather than left to the
+     phone's writer — see contentApplyScenes. A node planned after the file keeps the
+     phone's writer as its fallback. */
+  let scened = 0;
+  try {
+    const c = campAll();
+    scened = contentApplyScenes(data.scenes, c);
+    if (scened) campSave(c);
+  } catch (e) {
+    contentNote("scenes-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
+  }
   /* DID THE WRITE ACTUALLY STICK. Stamping the version after a save that silently failed —
      a full localStorage, a store replaced underneath us — would mean never trying again,
      which is the worst possible failure for a one-shot marker. Cheap to check, and it
@@ -28596,14 +28608,14 @@ async function contentIngest() {
   /* `retired` counts as work: a version whose whole job is withdrawing bad sentences
      banks nothing by design, and treating that as a failed read would re-run it on every
      load forever. */
-  if (!n && !landed && !retired) {
+  if (!n && !landed && !retired && !scened) {
     contentNote("nothing-landed", { fileVersion: data.version, items: data.items.length });
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
                             items: data.items.length, bank: bankAll().length,
                             reviewed: reviewed, unreviewed: unreviewed,
-                            retired: retired });
+                            retired: retired, scenes: scened });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -28614,6 +28626,27 @@ async function contentIngest() {
      app contradicting itself. */
   if (n) { try { renderLibrary(); learnBadge(); learnRenderThin(); } catch (e) {} }
   return n;
+}
+
+/* A scene from the file goes onto the node of the same NAME — ids are random per device
+   for every generated chapter (see mergeNodeList), names are not — and only where the
+   node has none, so a scene he has already heard is never swapped under him. Cleaned
+   through sceneClean so a malformed entry is dropped rather than drawn. Pure over the
+   campaign object it is handed; returns how many nodes it filled. */
+function contentApplyScenes(scenes, c) {
+  if (!Array.isArray(scenes) || !scenes.length || !c) return 0;
+  const byName = {};
+  campNodes(c).forEach(n => { const k = String(n.name || "").trim().toLowerCase(); if (k && !byName[k]) byName[k] = n; });
+  let filled = 0;
+  scenes.forEach(raw => {
+    const n = byName[String((raw && raw.node) || "").trim().toLowerCase()];
+    if (!n || n.scene) return;
+    const sc = sceneClean(raw);
+    if (!sc) return;
+    n.scene = Object.assign(sc, { made: String((raw && raw.made) || todayISO()), src: "claude" });
+    filled++;
+  });
+  return filled;
 }
 
 /* ONCE PER LOAD WAS NOT ENOUGH, and this is the bug George found within the hour.
@@ -43583,6 +43616,18 @@ T("libWordsTidy: fixes what was imported wrong and leaves his own corrections al
            "four verbs of putting on are no longer all 'to wear'");
   assertEq(lib["לראות"].en, "to see with my eyes", "a gloss he wrote himself is not overwritten");
   assertEq(libWordsTidy(lib), 0, "and a second run changes nothing");
+});
+T("contentApplyScenes: a written scene lands on the node of that name, and never replaces one", () => {
+  const scene = { node: "Going Places ", title: "Bus", speakers: [{ name: "A", he: "" }],
+                  lines: [{ he: "איפה האוטובוס?", en: "where" }, { he: "שם", en: "there" }, { he: "תודה", en: "thanks" }] };
+  const had = { title: "old", speakers: [], lines: [] };
+  const c = { chapters: [{ n: 1, nodes: [{ id: "x1", name: "going places" }, { id: "x2", name: "Home", scene: had }] }] };
+  assertEq(contentApplyScenes([scene, Object.assign({}, scene, { node: "Home" }), { node: "nowhere" }], c), 1);
+  assertEq(c.chapters[0].nodes[0].scene.title, "Bus", "matched by name, whatever the case and spacing");
+  assertEq(c.chapters[0].nodes[0].scene.src, "claude");
+  assertTrue(c.chapters[0].nodes[1].scene === had, "a scene already there is left alone");
+  assertEq(contentApplyScenes([{ node: "going places", lines: [] }], { chapters: [{ nodes: [{ name: "going places" }] }] }), 0,
+           "a malformed scene is dropped, not drawn");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

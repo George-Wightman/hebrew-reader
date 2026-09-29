@@ -1,5 +1,5 @@
 {
- "version": 6,
+ "version": 7,
  "generated": "2026-09-29",
  "retired": [
   {
@@ -112,6 +112,871 @@
   },
   {
    "he": "קניתי ושילמתי היום"
+  }
+ ],
+ "scenes": [
+  {
+   "node": "How you are",
+   "title": "Bumping into each other",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "שלום! מה נשמע?",
+     "tr": "shalom! ma nishma?",
+     "en": "Hi! How's it going?"
+    },
+    {
+     "s": 1,
+     "he": "בסדר, תודה. קצת עייף. ואת?",
+     "tr": "beseder, toda. ktzat ayef. ve'at?",
+     "en": "Fine, thanks. A bit tired. And you?"
+    },
+    {
+     "s": 0,
+     "he": "טוב, תודה. גם אני עייפה.",
+     "tr": "tov, toda. gam ani ayefa.",
+     "en": "Good, thanks. I'm tired too."
+    },
+    {
+     "s": 1,
+     "he": "סליחה, אני צריך ללכת. להתראות!",
+     "tr": "slikha, ani tzarikh lalekhet. lehitra'ot!",
+     "en": "Sorry, I have to go. See you!"
+    },
+    {
+     "s": 0,
+     "he": "ביי!",
+     "tr": "bai!",
+     "en": "Bye!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "נשמע",
+     "tr": "nishma",
+     "en": "is heard (מה נשמע = how's it going)"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Who people are",
+   "title": "Photos of the family",
+   "speakers": [
+    {
+     "name": "Maya",
+     "he": "מאיה"
+    },
+    {
+     "name": "Tal",
+     "he": "טל"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "זאת המשפחה שלי.",
+     "tr": "zot hamishpakha sheli.",
+     "en": "This is my family."
+    },
+    {
+     "s": 1,
+     "he": "מי זה?",
+     "tr": "mi ze?",
+     "en": "Who's that?"
+    },
+    {
+     "s": 0,
+     "he": "זה אבא שלי, וזאת אמא.",
+     "tr": "ze aba sheli, vezot ima.",
+     "en": "That's my dad, and that's mum."
+    },
+    {
+     "s": 1,
+     "he": "ומי הילד?",
+     "tr": "umi hayeled?",
+     "en": "And who's the boy?"
+    },
+    {
+     "s": 0,
+     "he": "זה חבר שלי. וזה הכלב של סבא וסבתא.",
+     "tr": "ze khaver sheli. veze hakelev shel saba vesavta.",
+     "en": "That's my friend. And that's grandpa and grandma's dog."
+    },
+    {
+     "s": 1,
+     "he": "איזה כלב נחמד!",
+     "tr": "eize kelev nekhmad!",
+     "en": "What a nice dog!"
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Your day",
+   "title": "A long day",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Yossi",
+     "he": "יוסי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "מה אתה עושה היום?",
+     "tr": "ma ata ose hayom?",
+     "en": "What are you doing today?"
+    },
+    {
+     "s": 1,
+     "he": "בבוקר אני עובד, ובערב אני לומד עברית.",
+     "tr": "baboker ani oved, uva'erev ani lomed ivrit.",
+     "en": "In the morning I work, and in the evening I study Hebrew."
+    },
+    {
+     "s": 0,
+     "he": "ואיפה העבודה?",
+     "tr": "ve'eifo ha'avoda?",
+     "en": "And where's work?"
+    },
+    {
+     "s": 1,
+     "he": "בעיר. אני נוסע באוטובוס.",
+     "tr": "ba'ir. ani nose'a ba'otobus.",
+     "en": "In the city. I go by bus."
+    },
+    {
+     "s": 0,
+     "he": "יום ארוך!",
+     "tr": "yom arokh!",
+     "en": "A long day!"
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Asking for things",
+   "title": "At the café",
+   "speakers": [
+    {
+     "name": "You",
+     "he": ""
+    },
+    {
+     "name": "Waiter",
+     "he": ""
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "סליחה, יש קפה?",
+     "tr": "slikha, yesh kafe?",
+     "en": "Excuse me, is there coffee?"
+    },
+    {
+     "s": 1,
+     "he": "כן. אתה רוצה קפה חם או קר?",
+     "tr": "ken. ata rotze kafe kham o kar?",
+     "en": "Yes. Do you want hot or cold coffee?"
+    },
+    {
+     "s": 0,
+     "he": "קפה חם, בבקשה. וגם עוגה.",
+     "tr": "kafe kham, bevakasha. vegam uga.",
+     "en": "Hot coffee, please. And some cake too."
+    },
+    {
+     "s": 1,
+     "he": "אין עוגה היום, סליחה.",
+     "tr": "ein uga hayom, slikha.",
+     "en": "There's no cake today, sorry."
+    },
+    {
+     "s": 0,
+     "he": "בסדר. כמה זה?",
+     "tr": "beseder. kama ze?",
+     "en": "OK. How much is it?"
+    },
+    {
+     "s": 1,
+     "he": "עשרים שקל.",
+     "tr": "esrim shekel.",
+     "en": "Twenty shekels."
+    }
+   ],
+   "gloss": [
+    {
+     "he": "שקל",
+     "tr": "shekel",
+     "en": "shekel"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Family & home",
+   "title": "The new flat",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "זאת הדירה החדשה שלי.",
+     "tr": "zot hadira hakhadasha sheli.",
+     "en": "This is my new flat."
+    },
+    {
+     "s": 1,
+     "he": "איזו דירה יפה! יש חדר גדול?",
+     "tr": "eizo dira yafa! yesh kheder gadol?",
+     "en": "What a lovely flat! Is there a big room?"
+    },
+    {
+     "s": 0,
+     "he": "כן, וגם מטבח קטן.",
+     "tr": "ken, vegam mitbakh katan.",
+     "en": "Yes, and a small kitchen too."
+    },
+    {
+     "s": 1,
+     "he": "ואיפה המיטה?",
+     "tr": "ve'eifo hamita?",
+     "en": "And where's the bed?"
+    },
+    {
+     "s": 0,
+     "he": "בחדר, ליד הדלת.",
+     "tr": "bakheder, leyad hadelet.",
+     "en": "In the room, next to the door."
+    },
+    {
+     "s": 1,
+     "he": "רגע, אני שומע כלב!",
+     "tr": "rega, ani shome'a kelev!",
+     "en": "Wait, I can hear a dog!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "רגע",
+     "tr": "rega",
+     "en": "a moment / wait"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Going places",
+   "title": "Waiting for the bus",
+   "speakers": [
+    {
+     "name": "You",
+     "he": ""
+    },
+    {
+     "name": "A woman",
+     "he": ""
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "סליחה, איפה האוטובוס לעיר?",
+     "tr": "slikha, eifo ha'otobus la'ir?",
+     "en": "Excuse me, where's the bus to the city?"
+    },
+    {
+     "s": 1,
+     "he": "ברחוב הזה, ליד הבית הגדול.",
+     "tr": "barekhov haze, leyad habayit hagadol.",
+     "en": "On this street, next to the big house."
+    },
+    {
+     "s": 0,
+     "he": "תודה. אני נוסע לעבודה.",
+     "tr": "toda. ani nose'a la'avoda.",
+     "en": "Thanks. I'm going to work."
+    },
+    {
+     "s": 1,
+     "he": "האוטובוס בא בעוד חמש דקות.",
+     "tr": "ha'otobus ba be'od khamesh dakot.",
+     "en": "The bus comes in five minutes."
+    },
+    {
+     "s": 0,
+     "he": "קר היום!",
+     "tr": "kar hayom!",
+     "en": "It's cold today!"
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Liking & wanting",
+   "title": "Tea or coffee",
+   "speakers": [
+    {
+     "name": "Maya",
+     "he": "מאיה"
+    },
+    {
+     "name": "Tal",
+     "he": "טל"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "אתה אוהב קפה?",
+     "tr": "ata ohev kafe?",
+     "en": "Do you like coffee?"
+    },
+    {
+     "s": 1,
+     "he": "מאוד! אבל אני שותה רק קצת. ואת?",
+     "tr": "me'od! aval ani shote rak ktzat. ve'at?",
+     "en": "Very much! But I only drink a little. And you?"
+    },
+    {
+     "s": 0,
+     "he": "אני אוהבת תה.",
+     "tr": "ani ohevet te.",
+     "en": "I like tea."
+    },
+    {
+     "s": 1,
+     "he": "גם אני אוהב תה, עם קצת חלב.",
+     "tr": "gam ani ohev te, im ktzat khalav.",
+     "en": "I like tea too, with a bit of milk."
+    },
+    {
+     "s": 0,
+     "he": "ואני רוצה עוגה קטנה.",
+     "tr": "ve'ani rotza uga ktana.",
+     "en": "And I want a small cake."
+    },
+    {
+     "s": 1,
+     "he": "קטנה? אני רוצה גדולה!",
+     "tr": "ktana? ani rotze gdola!",
+     "en": "Small? I want a big one!"
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "How you feel",
+   "title": "Not feeling great",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Yossi",
+     "he": "יוסי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "איך אתה מרגיש היום?",
+     "tr": "eikh ata margish hayom?",
+     "en": "How are you feeling today?"
+    },
+    {
+     "s": 1,
+     "he": "לא טוב. כואב לי הראש.",
+     "tr": "lo tov. ko'ev li harosh.",
+     "en": "Not good. My head hurts."
+    },
+    {
+     "s": 0,
+     "he": "אתה חולה?",
+     "tr": "ata khole?",
+     "en": "Are you ill?"
+    },
+    {
+     "s": 1,
+     "he": "קצת. גם הבטן כואבת.",
+     "tr": "ktzat. gam habeten ko'evet.",
+     "en": "A little. My stomach hurts too."
+    },
+    {
+     "s": 0,
+     "he": "אולי תה חם ומיטה?",
+     "tr": "ulai te kham umita?",
+     "en": "Maybe a hot tea and bed?"
+    },
+    {
+     "s": 1,
+     "he": "כן, אני צריך לנוח.",
+     "tr": "ken, ani tzarikh lanu'akh.",
+     "en": "Yes, I need to rest."
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Your day — past",
+   "title": "What did you do yesterday?",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "מה עשית אתמול?",
+     "tr": "ma asita etmol?",
+     "en": "What did you do yesterday?"
+    },
+    {
+     "s": 1,
+     "he": "בבוקר עבדתי, ואחרי העבודה הלכתי הביתה.",
+     "tr": "baboker avadti, ve'akharei ha'avoda halakhti habayta.",
+     "en": "In the morning I worked, and after work I went home."
+    },
+    {
+     "s": 0,
+     "he": "ובערב?",
+     "tr": "uva'erev?",
+     "en": "And in the evening?"
+    },
+    {
+     "s": 1,
+     "he": "בערב הייתי עם סבא. אכלנו עוגה.",
+     "tr": "ba'erev hayiti im saba. akhalnu uga.",
+     "en": "In the evening I was with grandpa. We ate cake."
+    },
+    {
+     "s": 0,
+     "he": "ומה אמרת לסבא?",
+     "tr": "uma amarta lesaba?",
+     "en": "And what did you say to grandpa?"
+    },
+    {
+     "s": 1,
+     "he": "אמרתי לו שהעוגה הייתה טובה.",
+     "tr": "amarti lo sheha'uga hayta tova.",
+     "en": "I told him the cake was good."
+    }
+   ],
+   "gloss": [
+    {
+     "he": "אחרי",
+     "tr": "akharei",
+     "en": "after"
+    },
+    {
+     "he": "הביתה",
+     "tr": "habayta",
+     "en": "home (to home)"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "What you bought",
+   "title": "Back from the shop",
+   "speakers": [
+    {
+     "name": "Maya",
+     "he": "מאיה"
+    },
+    {
+     "name": "Tal",
+     "he": "טל"
+    }
+   ],
+   "lines": [
+    {
+     "s": 1,
+     "he": "קניתי לחם וגבינה.",
+     "tr": "kaniti lekhem ugvina.",
+     "en": "I bought bread and cheese."
+    },
+    {
+     "s": 0,
+     "he": "וכמה זה היה?",
+     "tr": "vekhama ze haya?",
+     "en": "And how much was it?"
+    },
+    {
+     "s": 1,
+     "he": "שילמתי עשרים שקל.",
+     "tr": "shilamti esrim shekel.",
+     "en": "I paid twenty shekels."
+    },
+    {
+     "s": 0,
+     "he": "לקחת גם עוגה?",
+     "tr": "lakakhta gam uga?",
+     "en": "Did you get a cake too?"
+    },
+    {
+     "s": 1,
+     "he": "כן, לקחתי עוגה לסבתא.",
+     "tr": "ken, lakakhti uga lesavta.",
+     "en": "Yes, I got a cake for grandma."
+    }
+   ],
+   "gloss": [
+    {
+     "he": "שקל",
+     "tr": "shekel",
+     "en": "shekel"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Where you went",
+   "title": "A trip in winter",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Yossi",
+     "he": "יוסי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "איפה היית בחורף?",
+     "tr": "eifo hayita bakhoref?",
+     "en": "Where were you in the winter?"
+    },
+    {
+     "s": 1,
+     "he": "נסעתי לעיר של סבא.",
+     "tr": "nasati la'ir shel saba.",
+     "en": "I went to grandpa's city."
+    },
+    {
+     "s": 1,
+     "he": "נסעתי באוטובוס, והגעתי בלילה.",
+     "tr": "nasati ba'otobus, vehigati balaila.",
+     "en": "I went by bus and got there at night."
+    },
+    {
+     "s": 0,
+     "he": "ומתי חזרת?",
+     "tr": "umatai khazarta?",
+     "en": "And when did you get back?"
+    },
+    {
+     "s": 1,
+     "he": "חזרתי אתמול. היה חם, זיעה כל היום!",
+     "tr": "khazarti etmol. haya kham, ze'a kol hayom!",
+     "en": "I got back yesterday. It was hot, sweating all day!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "חזרת",
+     "tr": "khazarta",
+     "en": "you came back"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "How it was",
+   "title": "The trip",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "איך היה אתמול?",
+     "tr": "eikh haya etmol?",
+     "en": "How was yesterday?"
+    },
+    {
+     "s": 1,
+     "he": "היה כיף! באמת מדהים.",
+     "tr": "haya keif! be'emet madhim.",
+     "en": "It was fun! Really amazing."
+    },
+    {
+     "s": 0,
+     "he": "נהדר. ומה עם הנהג?",
+     "tr": "nehedar. uma im hanehag?",
+     "en": "Great. And what about the driver?"
+    },
+    {
+     "s": 1,
+     "he": "הנהג היה מטורף, אבל הכל היה בסדר.",
+     "tr": "hanehag haya metoraf, aval hakol haya beseder.",
+     "en": "The driver was crazy, but everything was fine."
+    },
+    {
+     "s": 0,
+     "he": "חבל שלא הייתי שם.",
+     "tr": "khaval shelo hayiti sham.",
+     "en": "Shame I wasn't there."
+    }
+   ],
+   "gloss": [
+    {
+     "he": "באמת",
+     "tr": "be'emet",
+     "en": "really"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Replying to Grandad",
+   "title": "A message from grandpa",
+   "speakers": [
+    {
+     "name": "Grandpa",
+     "he": ""
+    },
+    {
+     "name": "You",
+     "he": ""
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "היי! מה נשמע? הכל בסדר?",
+     "tr": "hai! ma nishma? hakol beseder?",
+     "en": "Hi! How's it going? All OK?"
+    },
+    {
+     "s": 1,
+     "he": "היי סבא! הכל מצוין, תודה.",
+     "tr": "hai saba! hakol metzuyan, toda.",
+     "en": "Hi grandpa! Everything's excellent, thanks."
+    },
+    {
+     "s": 0,
+     "he": "אמרת שאתה עייף אתמול.",
+     "tr": "amarta she'ata ayef etmol.",
+     "en": "You said you were tired yesterday."
+    },
+    {
+     "s": 1,
+     "he": "כן, אבל היום אני בסדר.",
+     "tr": "ken, aval hayom ani beseder.",
+     "en": "Yes, but today I'm fine."
+    },
+    {
+     "s": 0,
+     "he": "טוב, ביי!",
+     "tr": "tov, bai!",
+     "en": "Good, bye!"
+    },
+    {
+     "s": 1,
+     "he": "ביי, סבא!",
+     "tr": "bai, saba!",
+     "en": "Bye, grandpa!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "נשמע",
+     "tr": "nishma",
+     "en": "is heard (מה נשמע = how's it going)"
+    }
+   ],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Time and Progress",
+   "title": "How's the flat coming along?",
+   "speakers": [
+    {
+     "name": "Maya",
+     "he": "מאיה"
+    },
+    {
+     "name": "Tal",
+     "he": "טל"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "איך הולך עם הדירה?",
+     "tr": "eikh holekh im hadira?",
+     "en": "How's it going with the flat?"
+    },
+    {
+     "s": 1,
+     "he": "מתקדם. עוד חודש, אולי חודשיים.",
+     "tr": "mitkadem. od khodesh, ulai khodshayim.",
+     "en": "Getting there. Another month, maybe two."
+    },
+    {
+     "s": 0,
+     "he": "ומה עם הדלת?",
+     "tr": "uma im hadelet?",
+     "en": "And what about the door?"
+    },
+    {
+     "s": 1,
+     "he": "הדלת? עוד דקה!",
+     "tr": "hadelet? od daka!",
+     "en": "The door? One more minute!"
+    },
+    {
+     "s": 0,
+     "he": "בהצלחה!",
+     "tr": "behatzlakha!",
+     "en": "Good luck!"
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "Counting Attempts",
+   "title": "Hot outside",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Yossi",
+     "he": "יוסי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "היית בחוץ היום?",
+     "tr": "hayita bakhutz hayom?",
+     "en": "Were you outside today?"
+    },
+    {
+     "s": 1,
+     "he": "כן, פעמיים. חם מאוד בחוץ!",
+     "tr": "ken, pa'amayim. kham me'od bakhutz!",
+     "en": "Yes, twice. It's very hot outside!"
+    },
+    {
+     "s": 0,
+     "he": "חם? עכשיו חורף!",
+     "tr": "kham? akhshav khoref!",
+     "en": "Hot? It's winter now!"
+    },
+    {
+     "s": 1,
+     "he": "אני יודע, אבל היום חם.",
+     "tr": "ani yode'a, aval hayom kham.",
+     "en": "I know, but today it's hot."
+    }
+   ],
+   "gloss": [],
+   "made": "2026-09-29"
+  },
+  {
+   "node": "The Action to Speak",
+   "title": "What to tell grandpa",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "מה אתה רוצה להגיד לסבא?",
+     "tr": "ma ata rotze lehagid lesaba?",
+     "en": "What do you want to say to grandpa?"
+    },
+    {
+     "s": 1,
+     "he": "אני רוצה להגיד תודה.",
+     "tr": "ani rotze lehagid toda.",
+     "en": "I want to say thank you."
+    },
+    {
+     "s": 0,
+     "he": "על מה?",
+     "tr": "al ma?",
+     "en": "For what?"
+    },
+    {
+     "s": 1,
+     "he": "על כל מה שהוא אמר.",
+     "tr": "al kol ma shehu amar.",
+     "en": "For everything he said."
+    },
+    {
+     "s": 0,
+     "he": "אז תגיד לו!",
+     "tr": "az tagid lo!",
+     "en": "So tell him!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "תגיד",
+     "tr": "tagid",
+     "en": "tell (him)!"
+    }
+   ],
+   "made": "2026-09-29"
   }
  ],
  "items": [

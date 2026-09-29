@@ -20940,7 +20940,18 @@ function bankServable(it, lib, srs, carry, opts) {
   if (!unready.every(u => carry.has(u))) return false;
   /* Never two never-met words in one sentence, whatever the limit allows. */
   if (unready.filter(u => srsStrengthOf(srs, u, "prod") === "new").length > 1) return false;
-  const supportOk = (opts && opts.support === "ready")
+  /* A NEVER-MET WORD NEEDS SOLID GROUND, NOT PERFECT GROUND (2026-09-29). Strong-only
+     support left about 47 of his words to build around a new one, and every sentence
+     written for a new word came out as coffee, dogs and grandpa. George: "if a word is
+     reasonably okay, then it should be used … because that is limiting what's
+     possible." The research sets comfortable comprehension at about 95% known, not
+     100% mastered. So a carried word he has NEVER MET may sit among ready words.
+
+     A WEAK word keeps strong support: it has already failed him, and a sentence with
+     one weak word and two half-learned ones is the impossible card this rule was built
+     against. */
+  const allNew = unready.every(u => srsStrengthOf(srs, u, "prod") === "new");
+  const supportOk = ((opts && opts.support === "ready") || allNew)
     ? (u => wordReady(u, srs))
     : (u => srsStrengthOf(srs, u, "prod") === "strong");
   return content.every(u => unready.indexOf(u) !== -1 || supportOk(u));
@@ -26933,6 +26944,19 @@ function introWords(targets, srs, n) {
   return (targets || []).filter(k => srsStrengthOf(srs, k, "prod") === "new")
                         .slice(0, n === undefined ? INTRO_AHEAD : n);
 }
+/* What a sentence introducing a new word may be built from: READY words (see
+   bankServable's never-met rule), proven ones first — a sentence may carry only one
+   word the app has merely assumed, so leading with evidence keeps the writer inside
+   what will actually be served. Most stable first within each. */
+const INTRO_SCAFFOLD_MAX = 80;
+function introScaffold(lib, srs) {
+  const unp = practiceNeeds(lib, srs, todayISO(), {}).unproven;
+  const stabOf = k => ((srs[k] && srs[k].prod && srs[k].prod.stab) || 0);
+  return Object.keys(lib)
+    .filter(k => srsGradable(k, lib) && wordReady(k, srs) && k.indexOf(" ") === -1)
+    .sort((a, b) => ((unp.has(a) ? 1 : 0) - (unp.has(b) ? 1 : 0)) || (stabOf(b) - stabOf(a)))
+    .slice(0, INTRO_SCAFFOLD_MAX);
+}
 /* A word card before any sentence that uses the same launched word. Moves the word card
    up to just ahead of the first such sentence; everything else keeps the shuffle it got.
    Mutates and returns `cards`. */
@@ -27673,12 +27697,23 @@ async function learnTopUp(quiet) {
     const starved = rescue.filter(k => (stock[k] || 0) < RESCUE_MIN_EACH);
     let introStarved = intro.filter(k => (stock[k] || 0) < INTRO_MIN_EACH);
     if (introStarved.length && !dayClaim(INTRO_DAY_KEY, INTRO_RUNS_PER_DAY)) introStarved = [];
-    if (starved.length || introStarved.length) {
+    /* TWO COMMISSIONS NOW, because the two lists stand on different ground (2026-09-29):
+       a weak word is carried by STRONG words, a never-met one by READY words — see
+       bankServable. One shared commission would have to pick one scaffold and write
+       half its sentences against the wrong rule. Sequential, never parallel: the
+       per-minute limit is the one that bites. */
+    if (starved.length) {
       try {
         made += await sentenceCommission({ lib: lib, srs: srs, level: level,
-                                           rescue: starved, intro: introStarved,
+                                           rescue: starved, setting: learnSetting() });
+      } catch (e) { /* a failed rescue must not stop the passes below */ }
+    }
+    if (introStarved.length) {
+      try {
+        made += await sentenceCommission({ lib: lib, srs: srs, level: level,
+                                           intro: introStarved, scaffold: introScaffold(lib, srs),
                                            setting: learnSetting() });
-      } catch (e) { /* a failed rescue must not stop the breadth pass below */ }
+      } catch (e) { /* nor a failed introduction */ }
     }
   }
 
@@ -43230,7 +43265,7 @@ T("introOrder: meet the word, then use it", () => {
            ["word:b", "sentence:xb", "word:c", "sentence:c"],
            "b's card moves ahead of its sentence; c was already first");
 });
-T("bankServable: a never-met word rides in a sentence when everything round it is strong", () => {
+T("bankServable: a never-met word rides among ready words; a weak one still needs strong", () => {
   const lib = { new1: {}, s1: {}, s2: {}, p1: {} };
   const strong = { prod: { n: 8, miss: 0, stab: 40, diff: 3, due: "2099-01-01", last: todayISO() } };
   const srs = { s1: strong, s2: strong,
@@ -43238,9 +43273,17 @@ T("bankServable: a never-met word rides in a sentence when everything round it i
   const carry = new Set(["new1"]);
   assertTrue(bankServable({ uses: ["new1", "s1", "s2"] }, lib, srs, carry),
              "the intro sentence is served the day its word is launched");
-  assertTrue(!bankServable({ uses: ["new1", "s1", "p1"] }, lib, srs, carry),
-             "not when anything else is still only progressing — the daily rule is strong support");
+  /* 2026-09-29: a NEVER-MET word may sit among ready words, not only strong ones. */
+  assertTrue(bankServable({ uses: ["new1", "s1", "p1"] }, lib, srs, carry),
+             "a new word among words he knows reasonably well is served");
   assertTrue(!bankServable({ uses: ["new1", "s1"] }, lib, srs), "and never without the carry");
+  /* A WEAK word keeps strong support — it has already failed once. */
+  lib.weak1 = {};
+  srs.weak1 = { prod: { n: 6, miss: 4, stab: 1, diff: 8, due: todayISO(), last: todayISO() } };
+  assertTrue(!bankServable({ uses: ["weak1", "s1", "p1"] }, lib, srs, new Set(["weak1"])),
+             "a weak word with half-learned support is still the impossible card");
+  assertTrue(bankServable({ uses: ["weak1", "s1", "s2"] }, lib, srs, new Set(["weak1"])),
+             "and with strong support it is served as before");
 });
 T("sentence commission: new words get their own section and count as the carried word", () => {
   const lib = { "לישון": { tr: "lishon", en: "to sleep" }, "עייף": { tr: "ayef", en: "tired" } };

@@ -10471,8 +10471,8 @@ async function syncRun(reason, opts) {
             device: mine.device,
             /* Repaired AFTER the union: the union is what brings a renamed Duo key
                back from the other side. See duoRepair. */
-            keys: duoRepairKeyMap(mergeKeyMap(mine.keys, remote.blob.keys,
-                                              mine.updated, remote.blob.updated)) }
+            keys: duoAssumedKeyMap(duoRepairKeyMap(mergeKeyMap(mine.keys, remote.blob.keys,
+                                              mine.updated, remote.blob.updated))) }
         : mine;
       sha = await syncPush(merged, remote.sha);
       if (sha === null) continue;                // remote changed; pull again
@@ -11255,31 +11255,13 @@ function libAddDuoUnits(upTo, lib, srs) {
                /* Off the focus grid: these are the machine's word pool, not the wall he
                   chose. Learn, SRS, harvest and export all ignore shelf — see SHELVES. */
                shelf: "reserve", genderPair: genderPairFor(k) || null };
-      /* recv is seeded at strong for BOTH bands. Duolingo is a recognition trainer —
-         tiles, multiple choice, listening — so understanding is the half he genuinely
-         has, and drilling him on it would spend sessions proving something already true.
-         Production is what this app is for, and what the bands above actually grade. */
       duoFormsApply(l[k], k);
-      /* SPREAD ONLY WHAT WE ACTUALLY SEEDED. srsSetBand declines to touch a record that
-         is already in the requested band — that guard is the whole of "existing SRS
-         history is never overwritten" — but writing `due` afterwards went round it. A
-         word can be absent from the library and still hold a real record, because
-         deleteWord removes the library row and leaves the schedule behind; re-importing
-         it then kept n and stab and dragged `due` from 2027-06-01 back to next month,
-         which is exactly the "pulled straight back into rotation" failure srsSetBand's
-         own comment describes. Ask whether the band write landed, and only then spread. */
-      const seed = (side, wantBand) => {
-        const before = s[k] && s[k][side];
-        srsSetBand(s, k, side, wantBand);
-        const r = s[k] && s[k][side];
-        /* srsSetBand replaces the record wholesale when it writes, so a NEW object means
-           it wrote and the same one means it declined. */
-        return (r && r !== before) ? r : null;
-      };
-      const r = seed("prod", band);
-      if (r) r.due = duoDueDate(band, i, list.length);
-      const rv = seed("recv", "strong");
-      if (rv) rv.due = duoDueDate("strong", i, list.length);
+      /* NO SEED, since 2026-09-29. This used to write a strong or progressing record for
+         every word it added, on the assumption that finishing a Duolingo unit meant he
+         could say its words. He checked fifteen of them and knew almost none: "a lot of
+         those Hebrew words I've never seen before." So a word arrives here as NEW, and
+         reaches him the way every new word does — a card, then sentences built round it,
+         commonest first. The spread and band logic above now only orders the loop. */
     });
   });
   if (own) { libSave(l); srsSave(s); }
@@ -11486,6 +11468,63 @@ function duoRepairKeyMap(keys) {
   Object.keys(stores).forEach(n => { out[names[n]] = JSON.stringify(stores[n]); });
   return out;
 }
+/* ---- the Duolingo assumption, withdrawn (2026-09-29) -------------------------------
+   George chose to treat every word the importers assumed as NEW: "Treat them all as new."
+   Each seeded side becomes a blank record stamped with today as `last`, which is what
+   makes it stick — mergeSrsSide keeps the later `last`, so the seeded copy dated
+   2026-09-02 on the other device or in progress.json loses to it everywhere.
+
+   And the day's check is re-scored as the first meetings it was. Those thirteen answers
+   were averaged into the seeded history (see srsApply); each becomes the record a first
+   meeting with that grade writes. Matched on the check's own day and a count only the
+   seeded history could produce, so it runs once and never touches a later answer. Runs at
+   load and over every merged sync blob, because a same-day merge prefers the record with
+   more answers — the inflated one — and would otherwise bring it back. */
+const DUO_ASSUMED_DAY = "2026-09-29";
+const DUO_ASSUMED_SRC = ["duo", "batch"];
+const DUO_CHECK_REGRADE = { "לבוא": 0, "לדעת": 0, "לחזור": 0, "ללכת": 0, "למצוא": 0, "לשים": 0,
+  "איזה": 1, "לאהוב": 1, "לחשוב": 1, "לעשות": 1, "לצאת": 1, "לתת": 1, "דרך": 2 };
+function duoAssumedReset(lib, srs, today) {
+  const day = today || todayISO();
+  let n = 0;
+  Object.keys(srs || {}).forEach(k => {
+    const rec = srs[k];
+    if (!rec || !lib || !lib[k] || STOPLIST.has(k)) return;
+    /* Duolingo's words only — the unit import and the earlier guessed-topics batch. His
+       own spreadsheet and the words he approved carry the same record shape but are his
+       ("These are my strongest words"), and he chose for the Duolingo ones. */
+    if (DUO_ASSUMED_SRC.indexOf(lib[k].src) === -1) return;
+    ["prod", "recv"].forEach(side => {
+      if (rec[side] && srsUnproven(rec[side])) {
+        rec[side] = Object.assign(srsBlank(), { last: day, reset: "duo-assumed" });
+        n++;
+      }
+    });
+    const g = DUO_CHECK_REGRADE[k], p = rec.prod;
+    if (g !== undefined && p && p.last === DUO_ASSUMED_DAY && (p.n || 0) > 1 && lib[k].src === "duo") {
+      const stab = g === 2 ? 2 : 1;
+      rec.prod = Object.assign(srsBlank(), { n: 1, stab: stab, due: addDays(DUO_ASSUMED_DAY, stab),
+                                             last: DUO_ASSUMED_DAY, lastAt: p.lastAt || 0,
+                                             streak: g === 2 ? 1 : 0 });
+      n++;
+    }
+  });
+  return n;
+}
+function duoAssumedKeyMap(keys) {
+  if (!keys || typeof keys[LIB_KEY] !== "string" || typeof keys[SRS_KEY] !== "string") return keys;
+  let lib, srs;
+  try { lib = JSON.parse(keys[LIB_KEY]); srs = JSON.parse(keys[SRS_KEY]); } catch (e) { return keys; }
+  if (!duoAssumedReset(lib, srs)) return keys;
+  return Object.assign({}, keys, { [SRS_KEY]: JSON.stringify(srs) });
+}
+function duoAssumedResetStored() {
+  try {
+    const srs = srsAll();
+    if (duoAssumedReset(libAll(), srs)) srsSave(srs);
+  } catch (e) { /* never stop the app opening */ }
+}
+
 /* Called from the init block at the foot of the file, for the same dead-zone reason as
    libAddDuoUnitsIfNeeded. Writes only when something changed. */
 function duoRepairStored() {
@@ -19972,6 +20011,12 @@ const RECENT_DECAY = 0.85;
 
 function srsApply(srs, key, grade, side, todayOverride, cue) {
   const r = srsSide(srs, key, side || "prod");
+  /* AN ASSUMPTION IS NOT HISTORY (2026-09-29). A record the importers seeded carries n and
+     stab he never earned, so his first real answer was averaged into it: in his first
+     Duolingo check he missed or half-knew thirteen of fifteen words and twelve stayed
+     "progressing", one of them strong for 62 days on a single right answer. The first
+     real answer now starts the record from blank — the first-meeting branch below. */
+  if (srsUnproven(r)) Object.assign(r, srsBlank());
   const today = todayOverride || todayISO();
   const nowMs = srsNowMs(todayOverride);
 
@@ -21508,11 +21553,19 @@ const FAM_SEED_BONUS = 1000;
    never-touched batch word would lead the queue forever. George: "Im finding Im
    coming accross the same words over and over". Still a real early-look priority,
    just not a permanent one. */
-const FAM_BATCH_BONUS = 150;
+/* 30 since 2026-09-29, for the same reason as FAM_DUO_MAX below: most of "batch" is the
+   guessed-Duolingo list, and his first check showed those were never known. The core
+   verbs in it (want, go, have, see) are among the commonest words in Hebrew, so
+   wordFreqBonus still puts them first; numbers, colours and animals no longer jump ahead. */
+const FAM_BATCH_BONUS = 30;
 /* Unit 1 leads at the same height the batch bonus sits at, and the curve is gone by unit
    31 — ten units past where he is, which is as far ahead as "he has probably met this"
    can honestly reach. */
-const FAM_DUO_MAX = 150, FAM_DUO_STEP = 5;
+/* 30 and 1, not 150 and 5, since 2026-09-29. The height rested on "an earlier unit means
+   longer ago, more repetitions, better held", and his first check refuted it: he knew
+   almost none of fifteen early-unit words. The unit is still a fair hint of how basic a
+   word is, so it stays — as a tie-break under wordFreqBonus, not a head start over it. */
+const FAM_DUO_MAX = 30, FAM_DUO_STEP = 1;
 function wordFamiliarity(k, lib, srs, arch) {
   const e = lib[k] || {};
   const a = (arch && arch[k]) || null;
@@ -22279,13 +22332,14 @@ async function reviewTick() {
    choice can be tested without a store. */
 const CHECK_CARDS = 15;
 function unprovenCheckWords(lib, srs, n) {
-  const unp = [...practiceNeeds(lib, srs, todayISO(), {}).unproven].filter(k => srsGradable(k, lib));
+  const unp = [...practiceNeeds(lib, srs, todayISO(), {}).unproven]
+    .filter(k => srsGradable(k, lib) && DUO_ASSUMED_SRC.indexOf(lib[k].src) !== -1);
   const rank = k => FREQ_RANK[k] || 99999, unit = k => (lib[k] && lib[k].duo) || 999;
   return unp.sort((a, b) => (rank(a) - rank(b)) || (unit(a) - unit(b)) || (a < b ? -1 : a > b ? 1 : 0))
             .slice(0, n || CHECK_CARDS);
 }
 function unprovenCount(lib, srs) {
-  return [...practiceNeeds(lib, srs, todayISO(), {}).unproven].filter(k => srsGradable(k, lib)).length;
+  return unprovenCheckWords(lib, srs, Infinity).length;
 }
 function learnStartCheck() {
   const words = unprovenCheckWords(libAll(), srsAll());
@@ -33664,6 +33718,8 @@ duoFormsFillIfNeeded();
 /* After both, so it sees whatever they wrote; before rebuildTrIndex, so FORM_INDEX is
    built from the repaired forms. */
 duoRepairStored();
+/* After the repair, so it sees the repaired keys. See duoAssumedReset. */
+duoAssumedResetStored();
 document.getElementById("libViewToggle").textContent = libViewMode() === "map" ? "Grid" : "Map";
 rebuildTrIndex();
 padLoad();
@@ -34101,37 +34157,37 @@ T("libAddDuoUnits: real practice history outranks an assumption from a PDF", () 
   assertEq(lib[early].src, "harvest", "and so does where the word came from");
   assertTrue(added > 100, "while the rest of the band still arrives (" + added + ")");
 });
-T("libAddDuoUnits: the band follows the unit, and lands on production", () => {
+T("libAddDuoUnits: words arrive as new — finishing a unit is not knowing its words", () => {
+  /* 2026-09-29: he checked fifteen seeded words and knew almost none of them. */
   const lib = {}, srs = {};
-  libAddDuoUnits(20, lib, srs);
-  const at = u => Object.keys(lib).find(k => lib[k].duo === u);
-  const early = at(3), late = at(15);
-  assertTrue(!!early && !!late, "both bands produced words");
-  assertEq(srsStrengthOf(srs, early, "prod"), "strong", "unit 3 is known");
-  assertEq(srsStrengthOf(srs, late, "prod"), "progressing", "unit 15 is half-learned");
-  /* The whole point: wordReady reads prod, so both bands must pass it or the import
-     unlocks nothing for the sentence writer. */
-  assertTrue(wordReady(early, srs) && wordReady(late, srs),
-             "both are usable in a sentence");
-  assertEq(srsStrengthOf(srs, late, "recv"), "strong",
-           "Duolingo is a recognition trainer — understanding is the half he has");
-  assertEq(lib[late].shelf, "reserve", "and they land off the focus grid");
+  assertTrue(libAddDuoUnits(20, lib, srs) > 100, "the band still arrives");
+  const k = Object.keys(lib)[0];
+  assertEq(srsStrengthOf(srs, k, "prod"), "new", "with no assumed history");
+  assertEq(srsStrengthOf(srs, k, "recv"), "new", "on either side");
+  assertEq(lib[k].shelf, "reserve", "and off the focus grid");
 });
-T("libAddDuoUnits: due dates are spread, not stacked on one day", () => {
-  /* srsBandRecord("progressing") sets due to TODAY. Seeded in one go that is ~230 words
-     landing on a single date, on a pile that already holds a hundred — a badge that only
-     ever climbs. Spread within the interval the band already earned, never beyond it. */
-  const lib = {}, srs = {};
-  libAddDuoUnits(20, lib, srs);
-  const dues = {};
-  Object.keys(lib).forEach(k => { dues[srs[k].prod.due] = (dues[srs[k].prod.due] || 0) + 1; });
-  const days = Object.keys(dues).length;
-  assertTrue(days >= 8, "due dates span several days, not one (" + days + ")");
-  Object.keys(lib).forEach(k => {
-    const r = srs[k].prod;
-    assertTrue(r.due <= addDays(r.last, r.stab),
-               "never scheduled further out than the stability claims: " + k);
-  });
+T("srsApply: a first real answer replaces an assumption instead of averaging into it", () => {
+  const srs = { w: { prod: { n: 4, stab: 30, diff: 2, due: "2026-10-30", last: "2026-09-02" }, recv: srsBlank() } };
+  assertTrue(srsUnproven(srs.w.prod), "the fixture is a seeded record");
+  srsApply(srs, "w", 0, "prod", "2026-09-29");
+  assertEq([srs.w.prod.n, srs.w.prod.stab], [1, 1], "a miss is a first meeting, not a stumble on a strong word");
+  assertEq(srsStrengthOf(srs, "w", "prod") === "strong", false);
+});
+T("duoAssumedReset: every assumption goes, the day's check is re-scored, and the reset survives a merge", () => {
+  const seeded = () => ({ n: 4, stab: 30, diff: 2, due: "2026-10-30", last: "2026-09-02" });
+  const lib = { a: { src: "duo" }, "ללכת": { src: "duo" }, real: { src: "seed" }, mine: { src: "seed" } };
+  const srs = { a: { prod: seeded(), recv: seeded() },
+                "ללכת": { prod: { n: 5, stab: 9, diff: 3.3, due: "2026-09-29", last: "2026-09-29", lastAt: 5, miss: 1, streak: 0 }, recv: seeded() },
+                real: { prod: { n: 6, stab: 20, diff: 3, last: "2026-09-20", lastAt: 1 }, recv: srsBlank() },
+                mine: { prod: seeded(), recv: seeded() } };
+  assertTrue(duoAssumedReset(lib, srs, "2026-09-29") >= 3);
+  assertEq(srsStrengthOf(srs, "a", "prod"), "new", "an assumed word is new");
+  assertEq([srs["ללכת"].prod.n, srs["ללכת"].prod.stab], [1, 1], "the checked miss is re-scored as a first meeting");
+  assertEq(srs.real.prod.n, 6, "real evidence is untouched");
+  assertEq(srs.mine.prod.n, 4, "and his own spreadsheet words keep theirs — he chose for Duolingo's");
+  assertEq(duoAssumedReset(lib, srs, "2026-09-29"), 0, "and a second run changes nothing");
+  /* The seeded copy still sitting in progress.json must lose to the reset. */
+  assertEq(mergeSrs(srs, { a: { prod: seeded(), recv: seeded() } }).a.prod.n, 0, "the reset wins the merge");
 });
 T("campStretch: the next words are the course's next words, and each node gets its own", () => {
   /* duoUnit reads a real store; it is a plain function declaration, so swap and restore. */
@@ -43919,9 +43975,10 @@ T("libKeyFor: a past form taught as its own word is credited as that word", () =
 });
 T("unprovenCheckWords: only assumed words, commonest first, and an answer ends the assumption", () => {
   const seeded = () => ({ prod: { n: 1, stab: 8, diff: 4, due: "2099-01-01", last: "2026-09-02" } });
-  const lib = { "רוצה": { duo: 30 }, "חתול": { duo: 12 }, "zz": { duo: 3 }, "בית": {} };
+  const lib = { "רוצה": { duo: 30, src: "duo" }, "חתול": { duo: 12, src: "duo" }, "zz": { duo: 3, src: "batch" },
+                "בית": {}, "mine": { src: "seed" } };
   const srs = { "רוצה": seeded(), "חתול": seeded(), "zz": seeded(),
-                "בית": { prod: { n: 4, stab: 30, diff: 3, lastAt: 1 } } };
+                "בית": { prod: { n: 4, stab: 30, diff: 3, lastAt: 1 } }, "mine": seeded() };
   assertEq(unprovenCheckWords(lib, srs, 5), ["רוצה", "חתול", "zz"],
            "ranked words first by rank, then the unranked by unit; a proven word is not asked");
   assertEq(unprovenCount(lib, srs), 3);

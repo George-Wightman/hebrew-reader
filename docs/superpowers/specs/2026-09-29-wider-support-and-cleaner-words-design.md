@@ -90,3 +90,34 @@ skill points at them.
 
 - **Three new words per full session.** George: "put a pin in six". Revisit once the
   wider support and the checked Duolingo words have been live for a few days.
+
+## 7. The Duolingo assumption, withdrawn (added after the first check)
+
+His first 15-word check, the same morning:
+
+> turns out I didn't know any of them … a lot of those Hebrew words I've never seen
+> before. If they're from Duolingo, then … with the data import … I've not seen a lot of
+> them.
+
+The synced data agreed, and showed a second fault: thirteen of fifteen answers were misses
+or half-right, yet twelve words stayed "progressing" — his one real answer had been
+averaged into two to four answers the importer invented, and דרך went to strong for 62 days
+on a single right answer. Asked how the remaining 266 should come in, he chose **treat
+them all as new**.
+
+- `srsApply`: a first real answer to a seeded record starts from blank (a first meeting)
+  instead of being averaged into it.
+- `duoAssumedReset`: every seeded side on a Duolingo-sourced word (`src` duo, and the
+  guessed-topics `batch` list — 248 words) becomes a blank record stamped with today as
+  `last`, which wins every merge against the seeded copy dated 2026-09-02. The morning's
+  thirteen checked words are re-scored as the first meetings they were. Runs at load and
+  over every merged sync blob. His own spreadsheet and approved words (18 with the same
+  record shape) are left alone: he chose for Duolingo's.
+- `libAddDuoUnits` no longer seeds anything: a word from a new Duolingo unit arrives new.
+- `FAM_DUO_MAX` 150 → 30 and `FAM_BATCH_BONUS` 150 → 30: both assumed "met in Duolingo =
+  held", which the check refuted. Frequency now leads the new-word queue (להיות, לראות,
+  פעם, זמן, משהו…), with the unit as a tie-break.
+
+Measured on his state: usable words 390 → 145, servable sentences 620 → 297, "of the
+1,000 most common" 206 → 102. Honest, and every place in the live chapter keeps 17–25
+servable sentences.

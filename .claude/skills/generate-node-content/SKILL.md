@@ -64,6 +64,14 @@ repository and his library and SRS must not land in it. Delete it when finished.
 
 ### 2. Work out what is short
 
+**Use `tools/content` (since 2026-09-29) — see its README.** `fetch_state.py <scratchpad>`
+does step 1; then, with `STATE` pointing at the result, `cov.js` gives per-word coverage
+against the rank targets plus per-node stock, `introcov.js` the next words to be
+introduced, `vocab.js` the words to write from, `gate.js` step 4 in ship order, and
+`scenegate.js` checks pre-written scenes. These run the app's own code in Node; serving
+his state into the Browser pane was refused by the auto-mode classifier on 2026-09-23.
+The browser route below is kept for reference.
+
 Load his data into a browser running the app, served **from the scratchpad** so the data
 sits beside the app on one origin and nothing touches the repo:
 

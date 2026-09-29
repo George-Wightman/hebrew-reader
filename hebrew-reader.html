@@ -7264,7 +7264,11 @@ FREQ_LEMMAS.forEach((keys, i) => keys.forEach(k => { if (!FREQ_RANK[k]) FREQ_RAN
    already had — his own library and the hand-checked dictionary outrank a bulk import,
    and "Uncategorised" is the only category considered worth replacing. */
 (function () {
-  Object.keys(DUO_DICT).forEach(k => { if (!DICT[k]) DICT[k] = DUO_DICT[k]; });
+  /* Tidied on the way in (2026-09-29): the import's own transliteration marks are not the
+     house scheme — see trTidy. A hoisted function declaration, so safe this early. */
+  Object.keys(DUO_DICT).forEach(k => {
+    if (!DICT[k]) DICT[k] = [trTidy(k, DUO_DICT[k][0]), DUO_DICT[k][1]];
+  });
   Object.keys(FREQ_DICT).forEach(k => {
     if (DICT[k]) return;
     DICT[k] = [FREQ_DICT[k][0], FREQ_DICT[k][1]];
@@ -20815,6 +20819,116 @@ function trHouse(tr) {
   return s;
 }
 
+/* ---- one word's transliteration, tidied (2026-09-29) ------------------------------
+   trHouse fixes the joins a writer gets wrong. The Duolingo import brought a different
+   convention for single words — lig'dol, mish'pakhah, g'vinah, b'tokh — where the
+   apostrophe marks a short vowel sound, and a final h after a vowel spells ה. Neither is
+   the house scheme, and 1,665 imported words carry them. So:
+   - a one-letter prefix-shaped opening (b' l' m' k') is the short e it stands for:
+     b'tokh → betokh, m'il → me'il;
+   - any other apostrophe before a consonant goes: lig'dol → ligdol, g'vinah → gvinah;
+   - a final vowel + h where the Hebrew ends in ה loses the h: gvinah → gvina.
+   An apostrophe before a vowel stays — that is the scheme's own (lish'ol, ha'ir). */
+function trTidy(he, tr) {
+  let s = trHouse(String(tr || ""));
+  if (!s) return s;
+  s = s.split(" ").map(w => {
+    let t = w;
+    t = t.replace(/^([blmkBLMK])'(?=[aeiouAEIOU])/, "$1e'");
+    t = t.replace(/^([blmkBLMK])'(?=[b-df-hj-np-tv-zB-DF-HJ-NP-TV-Z])/, "$1e");
+    t = t.replace(/'(?=[b-df-hj-np-tv-zB-DF-HJ-NP-TV-Z])/g, "");
+    return t;
+  }).join(" ");
+  if (/ה$/.test(String(he || "").trim())) s = s.replace(/([aeiou])h$/, "$1");
+  return s;
+}
+/* The ones a rule cannot reach: wrong vowels, wrong glosses, and four different verbs of
+   putting on clothes all glossed "to wear" — on a word card that shows the English, those
+   four were the same question with four right answers. Applied to a library entry only
+   while it still holds the old value, so a correction he made himself is never undone. */
+const LIB_WORD_FIXES = {
+  "מוזר":   { tr: ["muzaz", "muzar"] },
+  "שמן":    { tr: ["shaman", "shamen"] },
+  "לראות":  { tr: ["lirot", "lir'ot"], en: ["watch", "to see"] },
+  "לקחת":   { tr: ["lakakhta", "lakakhat"], en: ["you took / to take", "to take"] },
+  "מלפפון": { tr: ["m'laf'fon", "melafefon"] },
+  "דובדבן": { tr: ["duvd'van", "duvdevan"] },
+  "תרנגול": { tr: ["tar'n'gol", "tarnegol"] },
+  "תרנגולת": { tr: ["tar'n'golet", "tarnegolet"] },
+  "עייף":   { tr: ["ayeif", "ayef"] },
+  "עבדתי":  { tr: ["avadeti", "avadti"] },
+  "מצוין":  { tr: ["matsuyan", "metzuyan"] },
+  "מצוינת": { tr: ["metsuyanet", "metzuyenet"] },
+  "מציע":   { tr: ["matsia", "matzi'a"], en: ["suggest", "suggest(s) (m)"] },
+  "צמא":    { tr: ["tsame", "tzame"] },
+  "מזיע":   { tr: ["mazia", "mazi'a"] },
+  "מפתיע":  { tr: ["maftia", "mafti'a"] },
+  "לשמוע":  { tr: ["lishmoa", "lishmo'a"] },
+  "להרכיב": { en: ["to wear", "to put on (glasses) / to assemble"] },
+  "לחבוש":  { en: ["to wear", "to put on (a hat)"] },
+  "לגרוב":  { en: ["to wear", "to put on (socks)"] },
+  "לנעול":  { en: ["to wear, put on", "to put on (shoes) / to lock"] },
+  "לענוד":  { en: ["to wear, put on", "to put on (jewellery)"] },
+  "להכיר":  { en: ["know; be aquainted hifil)", "to know (someone) / to meet"] },
+  "לכעוס":  { en: ["be angry qal)", "to be angry"] },
+  "לשמור":  { en: ["guard; keep, maintain qal)", "to keep / to look after"] },
+  "לסגור":  { en: ["close; turn of", "to close / to turn off"] },
+  "לפתוח":  { en: ["opens; turns on", "to open / to turn on"] },
+  "לשכור":  { en: ["rents, hires", "to rent / to hire"] },
+  "להפוך":  { en: ["turns into , turns over", "to turn over / to become"] },
+  "לחשוב":  { en: ["think", "to think"] },
+  "לבהות":  { en: ["stare", "to stare"] },
+  "לברוח":  { en: ["escape, run away", "to run away"] },
+  "לגדול":  { en: ["grow, increase", "to grow"] },
+  "לגנוב":  { en: ["steal", "to steal"] },
+  "לגעת":   { en: ["touch", "to touch"] },
+  "לחתוך":  { en: ["cut, slash", "to cut"] },
+  "ליצור":  { en: ["create", "to create"] },
+  "לכלול":  { en: ["include; generalise", "to include"] },
+  "למכור":  { en: ["sell", "to sell"] },
+  "למצוא":  { en: ["find, encounter", "to find"] },
+  "לנוח":   { en: ["rest, relax", "to rest"] },
+  "לספור":  { en: ["to count, enumerate", "to count"] },
+  "לעמוד":  { en: ["stand", "to stand"] },
+  "לצאת":   { en: ["go out, exit", "to go out"] },
+  "לצפות":  { en: ["watch, observe, predict", "to watch"] },
+  "לרוץ":   { en: ["run", "to run"] },
+  "לרשום":  { en: ["note, write, list", "to write down"] },
+  "לשבור":  { en: ["break, shatter", "to break"] },
+  "לשבת":   { en: ["sit, settle", "to sit"] },
+  "לשיר":   { en: ["sing", "to sing"] },
+  "לשנוא":  { en: ["hate, abhor", "to hate"] },
+  "לשקול":  { en: ["weigh; consider; ponder", "to weigh / to consider"] },
+  "לתמוך":  { en: ["support, sustain", "to support"] },
+  "לעזור":  { en: ["help", "to help"] },
+  "נהדר":   { en: ["wonderfully", "wonderful"] },
+  "מסתכל":  { en: ["looking", "look(s) (m)"] },
+  "עומד":   { en: ["standing", "stand(s) (m)"] },
+  "צריך":   { en: ["should", "need(s) / should (m)"] },
+  "כמה":    { en: ["a few", "how many / a few"] }
+};
+/* Pure over the store it is handed; returns how many entries changed. */
+function libWordsTidy(lib) {
+  let n = 0;
+  Object.keys(lib || {}).forEach(k => {
+    const e = lib[k];
+    if (!e) return;
+    const before = (e.tr || "") + "\u0000" + (e.en || "");
+    const fx = LIB_WORD_FIXES[k];
+    if (fx && fx.tr && e.tr === fx.tr[0]) e.tr = fx.tr[1];
+    if (fx && fx.en && e.en === fx.en[0]) e.en = fx.en[1];
+    if (e.tr) e.tr = trTidy(k, e.tr);
+    if ((e.tr || "") + "\u0000" + (e.en || "") !== before) n++;
+  });
+  return n;
+}
+function libWordsTidyIfNeeded() {
+  try {
+    const lib = libAll();
+    if (libWordsTidy(lib)) { libSave(lib); rebuildTrIndex(); }
+  } catch (e) { /* a tidy must never stop the app opening */ }
+}
+
 /* Refreshed BEFORE the filter, and this order is the whole point: an item whose stored
    `uses` came out empty fails `.some(u => lib[u])` and would be thrown away by the very
    call that was supposed to rescue it. Every read path in the app goes through here, so
@@ -33365,6 +33479,10 @@ libAddDuoUnitsIfNeeded();
 /* After the Duolingo import, so a word it brings in is not added twice under another
    form. learnBuild calls it again, so the floor refills as he drills. */
 libAddFreqIfNeeded();
+/* After every import, so whatever they just added is tidied in the same load: Duolingo's
+   transliteration marks and the handful of wrong glosses — see libWordsTidy. Idempotent,
+   so it simply runs every load; an entry he corrected himself is left alone. */
+libWordsTidyIfNeeded();
 /* After the import, so the words it just added are included in the same pass. */
 duoFormsFillIfNeeded();
 document.getElementById("libViewToggle").textContent = libViewMode() === "map" ? "Grid" : "Map";
@@ -43451,6 +43569,28 @@ T("unprovenCheckWords: only assumed words, commonest first, and an answer ends t
   assertEq(unprovenCount(lib, srs), 3);
   srs["רוצה"].prod.lastAt = Date.now();
   assertEq(unprovenCheckWords(lib, srs, 5), ["חתול", "zz"], "once answered it is evidence, not assumption");
+});
+T("trTidy: Duolingo's marks become the house scheme, and the scheme's own apostrophe stays", () => {
+  assertEq(trTidy("לגדול", "lig'dol"), "ligdol");
+  assertEq(trTidy("משפחה", "mish'pakhah"), "mishpakha", "no final h after the vowel of a ה");
+  assertEq(trTidy("גבינה", "g'vinah"), "gvina");
+  assertEq(trTidy("בתוך", "b'tokh"), "betokh", "a b' opening is the short e it stands for");
+  assertEq(trTidy("מעיל", "m'il"), "me'il");
+  assertEq(trTidy("לשאול", "lish'ol"), "lish'ol", "an apostrophe before a vowel is the scheme's own");
+  assertEq(trTidy("העיר", "ha'ir"), "ha'ir");
+  assertEq(trTidy("להגיד", "le-hagid"), "lehagid", "and the hyphen goes");
+  assertEq(trTidy("שבעה", "shiv'ah"), "shiv'a");
+  assertEq(trTidy("רוח", "ru'akh"), "ru'akh", "a word ending in ח keeps its kh");
+});
+T("libWordsTidy: fixes what was imported wrong and leaves his own corrections alone", () => {
+  const lib = { "מוזר": { tr: "muzaz", en: "strange" }, "לחבוש": { tr: "lakh'bosh", en: "to wear" },
+                "לראות": { tr: "lir'ot", en: "to see with my eyes" } };
+  assertEq(libWordsTidy(lib), 2, "two imported mistakes; the third entry is his own");
+  assertEq(lib["מוזר"].tr, "muzar");
+  assertEq([lib["לחבוש"].tr, lib["לחבוש"].en], ["lakhbosh", "to put on (a hat)"],
+           "four verbs of putting on are no longer all 'to wear'");
+  assertEq(lib["לראות"].en, "to see with my eyes", "a gloss he wrote himself is not overwritten");
+  assertEq(libWordsTidy(lib), 0, "and a second run changes nothing");
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

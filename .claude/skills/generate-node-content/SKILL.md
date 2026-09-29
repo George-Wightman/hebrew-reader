@@ -197,6 +197,14 @@ in — check against a bank you extend as you go, not a static snapshot.
 - **Trusting an inflected form is in his library.** `גדולה` and `נעימה` are not, while
   `קטנה` and `חדשה` are. Multi-word entries (`בדרך כלל`) fail inline because
   `bankUnknowns` splits on spaces. Only the gates settle it.
+- **Trusting the resolver on common little words.** Found on 2026-09-29: `לך` credits
+  `הולך` ("go!"), `הזה`/`הזאת`/`הייתי` are their own never-drilled library entries,
+  `אותו`/`אותה` resolve to `אותן`, `שמחה` resolves to `אשמח`, `לבנה` peels to `בנה`, and
+  `דקות` is its own key, not `דקה`. Each silently changes what a sentence is credited to
+  or makes it unservable. For a weak or never-drilled target, every other word must be
+  `strong` and at most one may be an unproven Duolingo import, which leaves about 50
+  words to build from. The v6 gate script (per-item ingest in ship order plus a
+  servability check for the target) is the way to find these, not rereading.
 - **Using a word against its gloss.** `ישן` is in his library as "old"; a sentence using
   it as "sleeps" passes every gate and teaches him the wrong word.
 - **Not incrementing `version`.** The app silently ignores the file.

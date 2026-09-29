@@ -34,14 +34,16 @@ Measured on his library, four misroutes in `libKeyFor`, each fixed:
 - **A guessed prefix beat a verified form.** לבנה → בנה ("build"). Whole-token forms
   and `GENDER_PAIRS` are now asked before a prefix is peeled.
 - **A feminine adjective went to a verb.** שמחה → אשמח. `GENDER_PAIRS` first.
-- **"I was" filed as its own word** (הייתי, הלכתי, אמרתי, נסעתי, נתתי, עבדתי, ראיתי)
-  blocked sentences behind a never-drilled entry while the verb was strong. An entry
-  glossed as a person's finite form now credits its verb.
+- **"I was" filed as its own word** (הייתי, הלכתי, אמרתי…) — a redirect to the verb was
+  built and **taken back**: the live "Your day — past" place teaches exactly those forms
+  and finds its sentences by them, and the redirect took it from 30 servable sentences to
+  0. Caught by the scene gate ("none of the place's own words") before it shipped. A form
+  he is being taught as a word is credited as that word.
 
 `STOPLIST` gains the pronoun-preposition set (איתי…איתם, אותן, להן, שלהן) and the
 article/ש forms of זה (הזה, הזאת, הזו, האלה, שזה), which sat in his queue as
 never-drilled cards. Across his bank, 97 of 1,267 sentences change what they credit;
-every change was read and is a correction.
+every change was read and is a correction. (Measured before the fourth fix was withdrawn; without it the changes are the grammar-word and form-order ones.)
 
 ## 2. New words may sit among words he knows reasonably well
 

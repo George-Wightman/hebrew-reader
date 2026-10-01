@@ -17445,7 +17445,7 @@ function coachDockOpen(on) {
 function coachDockHush() {
   if (!coachDockListening) return;
   coachDockStopped = true;
-  if (coachRec) coachRecStop();
+  if (coachRec || coachRecPending) coachRecStop();
   else micStop();
 }
 
@@ -17461,6 +17461,8 @@ const COACH_REC_MIN_S = 0.4;              // shorter than this is a tap, not a q
 const COACH_HEAR_TIMEOUT_MS = 30000;
 const COACH_VOICE_CONSENT_KEY = "hvr_coachvoiceok";
 let coachRec = null;                      // { mr, stream } while recording
+let coachRecPending = false;              // getUserMedia asked, not yet answered
+let coachRecCancelled = false;            // stopped while pending — see coachRecord
 let coachVoiceDeclined = false;           // this page only: asked, and he said no
 
 /* Can this device do it at all — before asking him anything. */
@@ -17493,8 +17495,22 @@ function coachVoiceReady() {
    stopped the moment recording ends, so nothing holds the microphone afterwards — on
    Android a held capture would hand the drill's recogniser silence. */
 async function coachRecord(onTick) {
-  const stream = await navigator.mediaDevices.getUserMedia(
-    { audio: { echoCancellation: true, noiseSuppression: true } });
+  /* A STOP CAN ARRIVE BEFORE THERE IS ANYTHING TO STOP: closing the dock, ■, a card
+     taking the mic — all while getUserMedia is still resolving (the permission prompt, the
+     first time). coachRec does not exist yet, so the stop used to find nothing and the
+     recording then started anyway and held the microphone for a full minute. */
+  coachRecPending = true;
+  coachRecCancelled = false;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      { audio: { echoCancellation: true, noiseSuppression: true } });
+  } finally { coachRecPending = false; }
+  if (coachRecCancelled) {
+    coachRecCancelled = false;
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    return { blob: new Blob([]), ms: 0 };
+  }
   return new Promise((resolve, reject) => {
     let mr;
     try { mr = new MediaRecorder(stream); }
@@ -17520,7 +17536,7 @@ async function coachRecord(onTick) {
    must be free by the time the recogniser starts, not whenever onstop gets round to it. */
 function coachRecStop() {
   const r = coachRec;
-  if (!r) return;
+  if (!r) { if (coachRecPending) coachRecCancelled = true; return; }
   try { r.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
   try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
 }
@@ -17609,7 +17625,8 @@ async function coachHear(blob) {
   const raw = await geminiRequest([
     { text: coachHearPrompt(ctx.screen, ctx.recent) },
     { inline_data: { mime_type: "audio/wav", data: bytesToBase64(a.wav) } }
-  ], GEMINI_MODELS_FAST, { label: "The coach — hearing you", timeoutMs: COACH_HEAR_TIMEOUT_MS });
+  ], GEMINI_MODELS_FAST, { label: "The coach — hearing you", timeoutMs: COACH_HEAR_TIMEOUT_MS,
+                           totalMs: COACH_HEAR_TIMEOUT_MS + 5000 });
   let data = null;
   try { data = extractJSON(raw); } catch (e) {}
   if (data && typeof data.text === "string") return data.text.trim();
@@ -17646,6 +17663,15 @@ async function coachDockRecordFlow(q) {
     coachDockRender();
     return;
   }
+  if (!got || !got.blob || !got.blob.size) {
+    coachDockMsg = "Didn't catch any words — tap the mic and try again.";
+    coachDockRender();
+    return;
+  }
+  /* WHAT THE BOX HELD WHEN HE STOPPED. Tapping the box stops the recording precisely so he
+     can type more onto it, and the transcript can take seconds — so anything he types or a
+     chip puts there in the meantime is kept after it, not overwritten. */
+  const atStop = q.value;
   coachDockHearing = true;
   coachDockRender();
   let text = "", hearErr = "";
@@ -17659,7 +17685,9 @@ async function coachDockRecordFlow(q) {
     coachDockRender();
     return;
   }
-  q.value = (prefix + text).trim();
+  const since = q.value === atStop ? ""
+    : q.value.indexOf(atStop) === 0 ? q.value.slice(atStop.length) : " " + q.value;
+  q.value = (prefix + text + since).trim();
   coachDockAutoGrow();
   /* Heard in both languages, so there is no English-recogniser warning to give the coach. */
   coachDockVoiceLang = "";
@@ -17987,7 +18015,13 @@ async function geminiSend(parts, models, opts) {
   let sawRateHint = false;      // a SHORT retry hint => rate limit, not daily quota
   let lastNetErr = null;        // a timeout or a dead socket, which is not a quota problem
   let lastHttpErr = null;       // a 5xx: Google's server, not our request and not our quota
+  let lastKeyErr = null;        // a key Google refused outright — not quota, not the server
   const started = Date.now();
+  /* AN INTERACTIVE CALL HAS A DEADLINE AS A WHOLE, not only per attempt (2026-10-01).
+     The per-request timeout moves on to the next key and then the next model, which is
+     right for a background writer and wrong for "Listening back…": four 30s attempts,
+     each re-uploading the recording, is two minutes of a disabled mic. */
+  const deadline = opts.totalMs ? started + opts.totalMs : 0;
   /* WHAT WAS ACTUALLY ATTEMPTED. lastGeminiTiming answers this on success and is
      stamped nowhere else, so a failed call logged `model: ""` and the log could not
      say which model faltered, on which key, or how far down the list it got. That is
@@ -18003,9 +18037,14 @@ async function geminiSend(parts, models, opts) {
      every model, and nothing costs an extra request. */
   const _q0 = aiQAll();
   const _turn = (_aiKeyTurn = (_aiKeyTurn + 1) % 1000);
+  walk:
   for (const model of (models || GEMINI_MODELS)) {
     const start = aiKeyPick(_q0, keys, aiPoolFor(model), _turn);
     for (let n = 0; n < keys.length; n++) {
+      if (deadline && Date.now() >= deadline) {
+        lastNetErr = lastNetErr || "it took too long";
+        break walk;
+      }
       const ki = (start + n) % keys.length;
       const key = keys[ki];
       const keyId = aiKeyId(key, ki);
@@ -18095,7 +18134,25 @@ async function geminiSend(parts, models, opts) {
             aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
-          throw new Error("empty reply");
+          /* AN EMPTY CANDIDATE IS THIS MODEL DECLINING, not the call failing — a safety
+             block or a blank reply on lite is exactly what the next model is for. It
+             used to throw out of every loop, the same escape the timeout and 5xx
+             comments below were written to close. Google counted it, so it is noted. */
+          aiQNote(model, "ok", keyId, opts.label || "");
+          lastHttpErr = lastHttpErr || "an empty reply";
+          break;
+        }
+        /* A KEY GOOGLE REFUSES is that key's problem, and the other key may be fine
+           (2026-10-01). A revoked or mistyped key answered 400/401/403 to every config,
+           each 400 was logged as the model "rejecting" its thinking control, and the
+           final bare-config 400 threw out of every loop — so with one bad key in the
+           pair, every AI call in the app failed while the good key sat unused. Checked
+           BEFORE the thinking-config fallback, because a key error is not a config
+           error. */
+        if (resp.status === 401 || resp.status === 403 ||
+            /API_KEY_INVALID|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+          lastKeyErr = "key " + (ki + 1) + " was refused (HTTP " + resp.status + ")";
+          break;
         }
         /* Recorded before moving on, and only here: `spent` means the 429 carried no
            short retry hint, which is the day's quota rather than the last few seconds.
@@ -18136,6 +18193,8 @@ async function geminiSend(parts, models, opts) {
   /* Said as what it was. Reporting a timeout as "daily free limit reached" sent George
      to his quota dashboard for a problem that was never quota — 12 of 20 used. */
   if (lastNetErr) throw new Error(lastNetErr);
+  /* Every key refused: say which, so the fix is a trip to Settings and not the quota page. */
+  if (lastKeyErr && !lastHttpErr) throw new Error(lastKeyErr + " — check it in Settings");
   /* Same rule, same reason: this one is Google's capacity, and calling it a quota
      problem would send him to the dashboard again. Reached only once every model on
      every key has faltered, so "overloaded" is a claim about Gemini rather than about
@@ -19705,7 +19764,7 @@ function micRecGet(lang) {
 function micListen(opts) {
   /* A card that needs the microphone takes it from a coach recording rather than waiting
      on it: on Android a capture left open hands the recogniser silence. */
-  if (coachRec) coachRecStop();
+  if (coachRec || coachRecPending) coachRecStop();
   /* Busy BEFORE get: micRecGet may tear the instance down to change language, and doing
      that under a caller that is still listening would abort it mid-sentence. */
   if (micRecBusy) return Promise.resolve({ ok: false, error: "already-listening" });
@@ -21234,9 +21293,8 @@ const LIB_WORD_FIXES = {
   "תרנגולת": { tr: ["tar'n'golet", "tarnegolet"] },
   "עייף":   { tr: ["ayeif", "ayef"] },
   "עבדתי":  { tr: ["avadeti", "avadti"] },
-  "מצוין":  { tr: ["matsuyan", "metzuyan"] },
+  "מצוין":  { tr: ["matsuyan", "metzuyan"], en: ["excellent", "excellent (m)"] },
   "מצוינת": { tr: ["metsuyanet", "metzuyenet"], en: ["excellent", "excellent (f)"] },
-  "מצוין":  { en: ["excellent", "excellent (m)"] },
   "מציע":   { tr: ["matsia", "matzi'a"], en: ["suggest", "suggest(s) (m)"] },
   "צמא":    { tr: ["tsame", "tzame"] },
   "מזיע":   { tr: ["mazia", "mazi'a"] },
@@ -37867,6 +37925,35 @@ T("coachDockRecordFlow: a starter chip mid-recording starts again from the openi
     q.value = savedQ; coachDockPaintMic();
   }
 });
+T("coachDockRecordFlow: what he types while it listens back is kept, after the transcript", async () => {
+  const realReady = coachVoiceReady, realRec = coachRecord, realHear = coachHear;
+  const wasOn = coachDockOn, q = document.getElementById("coachDockQ"), savedQ = q.value;
+  try {
+    coachVoiceReady = () => true;
+    coachRecord = async () => ({ blob: new Blob(["x"]), ms: 1500 });
+    coachHear = async () => { q.value = q.value + " in the plural"; return "why is it ספרים"; };
+    coachDockOn = true; q.value = "";
+    await coachDockListen();
+    assertEq(q.value, "why is it ספרים in the plural");
+    coachRecord = async () => ({ blob: new Blob([]), ms: 0 });
+    let heard = 0;
+    coachHear = async () => { heard++; return "x"; };
+    await coachDockListen();
+    assertEq(heard, 0, "a recording cancelled before it began is never sent");
+  } finally {
+    coachVoiceReady = realReady; coachRecord = realRec; coachHear = realHear;
+    coachDockOn = wasOn; coachDockListening = false; coachDockHearing = false; coachDockMsg = "";
+    q.value = savedQ; coachDockPaintMic();
+  }
+});
+T("coachRecStop: a stop while the microphone is still being opened cancels the recording", () => {
+  const wasPending = coachRecPending, wasCancelled = coachRecCancelled, wasRec = coachRec;
+  try {
+    coachRec = null; coachRecPending = true; coachRecCancelled = false;
+    coachRecStop();
+    assertTrue(coachRecCancelled, "remembered, for coachRecord to honour once getUserMedia answers");
+  } finally { coachRecPending = wasPending; coachRecCancelled = wasCancelled; coachRec = wasRec; }
+});
 T("coachRecStop: the microphone is released at once, not when the recorder gets round to it", () => {
   let tracks = 0, stopped = 0;
   const was = coachRec;
@@ -39132,7 +39219,7 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
      that IS a downshift) must not leave that entry sitting in the real ledger for the
      next session, or even the next device, to trip over. Snapshotted and restored the
      same way AI_Q_KEY already is, just below. */
-  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem, wasQ = lsGet(AI_Q_KEY);
   try {
     geminiKeys = () => ["k"];
     const asked = [];
@@ -39157,11 +39244,49 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    /* The success branch writes an "ok" into the live quota counter, too. */
+    if (wasQ == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, wasQ);
   }
 });
 /* Kept as one test to match the timeout case above, which it mirrors exactly. It no
    longer HAS to be: writing it as three is what proved the runner was starting async
    tests concurrently, and fixing that was the price of this test existing at all. */
+T("geminiSend: a refused key hands over to the other key, and an empty reply to the next model", async () => {
+  /* 2026-10-01. One revoked key in the pair used to fail every call in the app: its 400s
+     were logged as thinking-config rejections and the last one threw out of every loop. */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  const q = lsGet(AI_Q_KEY), wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem;
+  try {
+    geminiKeys = () => ["k1", "k2"];
+    const ok = text => Promise.resolve({ ok: true, json: async () => ({
+      candidates: [{ content: { parts: [{ text: text }] } }] }) });
+    const refused = () => Promise.resolve({ ok: false, status: 400,
+      text: () => Promise.resolve('{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}') });
+    geminiFetchWithRetry = (url) => /key=k1/.test(url) ? refused() : ok("from key two");
+    assertEq(await geminiSend([{ text: "x" }], ["gemini-flash-lite-latest"], {}), "from key two");
+    assertEq(lastThinkingSkips, [], "a key error is not logged as the model refusing its config");
+
+    geminiFetchWithRetry = () => refused();
+    let msg = "";
+    try { await geminiSend([{ text: "x" }], ["gemini-flash-lite-latest"], {}); } catch (e) { msg = e.message; }
+    assertTrue(/refused/.test(msg) && /Settings/.test(msg), "both refused, and it says so: " + msg);
+
+    geminiFetchWithRetry = (url) => /flash-lite/.test(url) ? ok("lite answered")
+      : Promise.resolve({ ok: true, json: async () => ({ candidates: [{ content: { parts: [] } }] }) });
+    assertEq(await geminiSend([{ text: "x" }], ["gemini-flash-latest", "gemini-flash-lite-latest"], {}),
+             "lite answered", "an empty reply walks on to the next model");
+
+    let calls = 0;
+    geminiFetchWithRetry = () => { calls++; return Promise.reject(new Error("the request took longer than 30s")); };
+    const t0 = Date.now();
+    try { await geminiSend([{ text: "x" }], ["gemini-flash-lite-latest", "gemini-flash-latest"], { totalMs: 1 }); } catch (e) {}
+    assertTrue(calls <= 1 && Date.now() - t0 < 1000, "a deadline stops the walk: " + calls + " calls");
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    if (q == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, q);
+    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+  }
+});
 T("geminiSend: the good model is held across BOTH keys before anything degrades", async () => {
   /* Swapped from keys-outer on 2026-09-03. The old order protected the second key's
      quota and spent the thing that is actually scarce: Flash is 20/day, Lite is 500, so

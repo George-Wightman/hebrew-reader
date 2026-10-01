@@ -4353,8 +4353,32 @@ function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return n
    better plan than carrying on — but the alarm above fires regardless, so a silent
    failure is no longer possible. */
 function lsSet(k, v) {
-  try { localStorage.setItem(k, v); return true; }
+  try { localStorage.setItem(k, v); syncNoteWrite(k); return true; }
   catch (e) { storageFailed(k, e); return false; }
+}
+/* WHEN THIS DEVICE LAST CHANGED SOMETHING THAT SYNCS (2026-10-01). The blob used to be
+   stamped with the moment of the sync, so "the newer blob wins" meant "whichever device
+   syncs wins" — a stale laptop opening for five minutes pushed its old settings and level
+   over the phone's. The stamp is now the last real write, persisted so a reload keeps it.
+   Writes made BY a sync applying the merge are not his changes; syncRun puts the stamp
+   back afterwards. */
+const SYNC_WRITE_KEY = "hvr_localwrite";
+let syncLocalWriteAt = 0, _syncWriteTimer = null;
+function syncNoteWrite(k) {
+  if (!k || k.indexOf("hvr_") !== 0 || k === SYNC_WRITE_KEY || SELFTEST_RUN) return;
+  try { if (SYNC_LOCAL_SET().has(k) || SYNC_NEVER_SET().has(k)) return; }
+  catch (e) { return; }   // the sets are not built yet this early in the boot
+  syncLocalWriteAt = Date.now();
+  if (_syncWriteTimer) return;
+  _syncWriteTimer = setTimeout(() => {
+    _syncWriteTimer = null;
+    try { localStorage.setItem(SYNC_WRITE_KEY, String(syncLocalWriteAt)); } catch (e) {}
+  }, 500);
+}
+function syncLastWriteAt() {
+  let stored = 0;
+  try { stored = parseInt(localStorage.getItem(SYNC_WRITE_KEY), 10) || 0; } catch (e) {}
+  return Math.max(syncLocalWriteAt, stored);
 }
 
 /* =====================  NIGHT  =====================
@@ -4550,6 +4574,24 @@ function mergeLibrary(a, b) {
     const mine = (a || {})[k], theirs = (b || {})[k];
     if (!mine) { out[k] = theirs; return; }
     if (!theirs) { out[k] = mine; return; }
+    /* THE LATER EDIT WINS the fields he edits, by `mt` (see libSave). Two entries with the
+       same stamp — or none, from before stamps existed — keep the old rule. */
+    const mtA = mine.mt || 0, mtB = theirs.mt || 0;
+    if (mtA !== mtB) {
+      const nw = mtA > mtB ? mine : theirs, old = nw === mine ? theirs : mine;
+      const e = Object.assign({}, old, nw);
+      e.added = earlierISO(mine.added, theirs.added);
+      e.seen = maxNum(mine.seen, theirs.seen);
+      if (mine.forms || theirs.forms) e.forms = Object.assign({}, old.forms || {}, nw.forms || {});
+      if (mine.formsMeta || theirs.formsMeta)
+        e.formsMeta = Object.assign({}, old.formsMeta || {}, nw.formsMeta || {});
+      /* An empty gloss must never overwrite a real one — but a corrected one now does. */
+      e.tr = nw.tr || old.tr;
+      e.en = nw.en || old.en;
+      e.mt = Math.max(mtA, mtB);
+      out[k] = e;
+      return;
+    }
     const e = Object.assign({}, mine, theirs);
     e.added = earlierISO(mine.added, theirs.added);      // first met wins
     e.seen = maxNum(mine.seen, theirs.seen);
@@ -4826,6 +4868,7 @@ function mergeOneFlag(x, y) {
    in mergeKeyMap: objects union, arrays and scalars take the newer blob's value. */
 const MERGE_RULES = {
   "hvr_library":    (a, b) => mergeLibrary(a, b),
+  "hvr_libgone":    (a, b) => mergeMaxNums(a, b),
   "hvr_srs":        (a, b) => mergeSrs(a, b),
   "hvr_stats":      (a, b) => mergeStats(a, b),
   "hvr_archive":    (a, b) => mergeArchive(a, b),
@@ -5031,7 +5074,11 @@ const EXPORT_PREFIX = "hvr_";
 const EXPORT_SCHEMA = 1;
 /* One registry for credential storage, diagnostic redaction and sync exclusions. */
 const CREDENTIAL_KEYS = Object.freeze({
-  gemini: "hvr_geminikey", geminiBackup: "hvr_geminikey2", syncToken: "hvr_synctoken"
+  gemini: "hvr_geminikey", geminiBackup: "hvr_geminikey2", syncToken: "hvr_synctoken",
+  /* The old Claude mode's key. Nothing reads it any more, but a laptop that once used that
+     mode still holds it, and as an ordinary hvr_ key it would have synced and exported
+     like any other (review, 2026-10-01). Named here, it never travels. */
+  legacyClaude: "hvr_key"
 });
 
 function exportKeys() {
@@ -10024,6 +10071,12 @@ function SYNC_NEVER_SET() {
 function SYNC_LOCAL_SET() {
   return _syncLocal || (_syncLocal = new Set([
     SESSION_KEY, BLOCK_KEY, ZOOM_KEY, HE_KEY, LIBVIEW_KEY, MAPPOS_KEY, MAPVIEW_KEY,
+    /* The re-file undo snapshot: a whole library and schedule from one moment. Synced, it
+       could not be deleted (the union brought it back), rode a payload near GitHub's cap,
+       and an Undo weeks later rolled practice back to that day (review, 2026-10-01). */
+    PREREBASE_KEY,
+    /* When this device last changed something — a fact about the device, by definition. */
+    SYNC_WRITE_KEY,
     COLLAPSE_KEY, VIEW_KEY, PAD_OPEN_KEY, NOTES_KEY, ARCH_OPEN_KEY, PAD_KEY,
     AUDIO_CONSENT_KEY, "hvr_migrated", "hvr_voicebanner",
     /* Same kind of thing as hvr_migrated just above: a per-device migration marker, not
@@ -10268,8 +10321,9 @@ function bankDropStubs(bank) {
 function syncSnapshot() {
   const keys = {};
   syncKeys().forEach(k => { keys[k] = lsGet(k); });
+  const w = syncLastWriteAt();
   return { app: "hebrew-reader", schema: SYNC_SCHEMA,
-           updated: new Date().toISOString(), device: syncDeviceId(), keys: keys };
+           updated: new Date(w || Date.now()).toISOString(), device: syncDeviceId(), keys: keys };
 }
 /* WHAT GOES OVER THE WIRE, and the only place slimming belongs. Separated from
    syncSnapshot rather than being a flag on it, because the difference between "the blob
@@ -10326,8 +10380,56 @@ function flagSlimForSync(raw) {
    already in the file, so mergeKeyMap's union handed it straight back on the next sync.
    Measured still travelling after the fix shipped. Dropping at the wire is the only
    thing that removes a key once it is in there. */
-const SYNC_DEAD = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder", "hvr_campdedupe_v1"];
+const SYNC_DEAD = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder", "hvr_campdedupe_v1",
+  /* The coach's en/he switch, deleted 2026-10-01. */
+  "hvr_coachlang"];
 
+/* THE REMOTE COPY, CLEANED BEFORE IT IS MERGED (2026-10-01). A key this device keeps to
+   itself never enters its own snapshot — so when an older build had synced it, the merge
+   saw it on one side only, took the remote copy, and the apply wrote it over this
+   device's own value on every sync (per-device daily caps, the coach thread, the content
+   marker). Dropped here, it is neither applied nor pushed, so it also leaves the file. */
+function syncRemoteKeys(keys) {
+  const out = {};
+  const local = SYNC_LOCAL_SET(), never = SYNC_NEVER_SET();
+  Object.keys(keys || {}).forEach(k => {
+    if (local.has(k) || never.has(k) || SYNC_DEAD.indexOf(k) !== -1) return;
+    out[k] = keys[k];
+  });
+  return out;
+}
+/* Pure over a merged key map. Two things a per-key merge cannot see:
+   - A DELETED WORD stays deleted. Library and schedule both union, so a word removed on
+     one device came straight back from the other, history and all. LIB_GONE_KEY records
+     when each word was deleted; an entry not changed since then goes, with its schedule.
+     A word added again later has a newer `mt` and stays.
+   - THE INBOX DROPS what is already filed or dismissed. Approving or dismissing a word
+     removes it from Pending; the union put it back from the other side, and it was
+     offered again — and approving it again counted its sightings twice. */
+function syncAfterMerge(keys) {
+  const out = Object.assign({}, keys);
+  const parse = k => { try { return JSON.parse(out[k] || "null"); } catch (e) { return null; } };
+  const lib = parse(LIB_KEY), gone = parse(LIB_GONE_KEY);
+  if (lib && gone && typeof gone === "object") {
+    const srs = parse(SRS_KEY);
+    let libChanged = false, srsChanged = false;
+    Object.keys(gone).forEach(k => {
+      if (lib[k] && ((lib[k].mt || 0) < gone[k])) { delete lib[k]; libChanged = true; }
+      if (!lib[k] && srs && srs[k]) { delete srs[k]; srsChanged = true; }
+    });
+    if (libChanged) out[LIB_KEY] = JSON.stringify(lib);
+    if (srsChanged) out[SRS_KEY] = JSON.stringify(srs);
+  }
+  const pend = parse(PENDING_KEY);
+  if (pend && typeof pend === "object") {
+    const dis = parse(DISMISSED_KEY) || {};
+    const L = parse(LIB_KEY) || {};
+    let n = 0;
+    Object.keys(pend).forEach(k => { if (L[k] || dis[k]) { delete pend[k]; n++; } });
+    if (n) out[PENDING_KEY] = JSON.stringify(pend);
+  }
+  return out;
+}
 function syncSnapshotForPush(blob) {
   const keys = Object.assign({}, blob.keys);
   if (keys[BANK_KEY]) keys[BANK_KEY] = bankSlimForSync(keys[BANK_KEY]);
@@ -10456,12 +10558,16 @@ async function syncRun(reason, opts) {
       const remote = await syncPull();
       mine = syncSnapshot();
       merged = remote.blob
-        ? { app: "hebrew-reader", schema: SYNC_SCHEMA, updated: new Date().toISOString(),
+        ? { app: "hebrew-reader", schema: SYNC_SCHEMA,
+            /* The later of the two sides' last real changes — see syncNoteWrite. */
+            updated: String(mine.updated) > String(remote.blob.updated || "")
+              ? mine.updated : (remote.blob.updated || mine.updated),
             device: mine.device,
             /* Repaired AFTER the union: the union is what brings a renamed Duo key
                back from the other side. See duoRepair. */
-            keys: duoAssumedKeyMap(duoRepairKeyMap(mergeKeyMap(mine.keys, remote.blob.keys,
-                                              mine.updated, remote.blob.updated))) }
+            keys: syncAfterMerge(duoAssumedKeyMap(duoRepairKeyMap(mergeKeyMap(
+                    mine.keys, syncRemoteKeys(remote.blob.keys),
+                    mine.updated, remote.blob.updated)))) }
         : mine;
       sha = await syncPush(merged, remote.sha);
       if (sha === null) continue;                // remote changed; pull again
@@ -10496,6 +10602,7 @@ async function syncRun(reason, opts) {
        cannot protect it. Defer applying until its normal session-end sync. */
     const apply = !opts.pushOnly && !sessionBusy();
     if (apply) {
+      const wroteAt = syncLocalWriteAt;
       Object.keys(merged.keys).forEach(k => {
         const v = merged.keys[k];
         if (v === null || v === undefined) return;
@@ -10504,6 +10611,8 @@ async function syncRun(reason, opts) {
           changed++;
         }
       });
+      /* What the merge wrote came from the other device; it is not his change here. */
+      syncLocalWriteAt = wroteAt;
     }
     const m = syncMeta();
     /* Stamped either way, and honestly: `last` is read by flagsWaiting to answer "have
@@ -11023,7 +11132,34 @@ wireModalBackdropClose(document.getElementById("strengthModal"), () => {
 /* =====================  LIBRARY  ===================== */
 const LIB_KEY = "hvr_library";
 function libAll() { try { return JSON.parse(lsGet(LIB_KEY)) || {}; } catch (e) { return {}; } }
-function libSave(v) { lsSet(LIB_KEY, JSON.stringify(v)); }
+/* EVERY CHANGED ENTRY IS STAMPED (2026-10-01), so the merge can tell which device edited a
+   word last. Without it the other device's copy won every field — so a word he retired,
+   recategorised or paired on the phone was put back by the phone's own next sync, from
+   the stale copy in the file. Only the fields he edits count: `seen`, `forms` and
+   `formsMeta` change in the background and have merge rules of their own, and stamping
+   on them would let an unrelated bump carry a stale shelf over a real edit. */
+const LIB_EDIT_IGNORE = ["mt", "seen", "forms", "formsMeta", "added"];
+function libEditSig(e) {
+  if (!e || typeof e !== "object") return "";
+  const o = {};
+  Object.keys(e).sort().forEach(k => { if (LIB_EDIT_IGNORE.indexOf(k) === -1) o[k] = e[k]; });
+  return JSON.stringify(o);
+}
+function libSave(v) {
+  try {
+    const prev = JSON.parse(lsGet(LIB_KEY) || "{}") || {};
+    const now = Date.now();
+    Object.keys(v || {}).forEach(k => {
+      const e = v[k];
+      if (!e || typeof e !== "object") return;
+      if (!prev[k] || libEditSig(prev[k]) !== libEditSig(e)) e.mt = now;
+    });
+  } catch (e) { /* a stamp must never stop a save */ }
+  lsSet(LIB_KEY, JSON.stringify(v));
+}
+/* word -> when it was deleted. Synced, merged by the later time — see syncAfterMerge. */
+const LIB_GONE_KEY = "hvr_libgone";
+function libGoneAll() { try { return JSON.parse(lsGet(LIB_GONE_KEY)) || {}; } catch (e) { return {}; } }
 /* Local calendar date, NOT toISOString(). toISOString converts to UTC first, so in
    any timezone ahead of UTC (BST for most of the year here) a local midnight reads
    back as the PREVIOUS day. That made every scheduled due date one day short, and
@@ -12524,6 +12660,14 @@ function deleteWord(key) {
   delete lib[key];
   if (partner && lib[partner] && lib[partner].opp === key) lib[partner].opp = "";
   libSave(lib);
+  /* RECORDED, and its history with it (2026-10-01). The confirm says the drill history
+     goes too; it never did, and with no record of the deletion the next sync brought the
+     word back from the other device — reattached to that history. */
+  const gone = libGoneAll();
+  gone[key] = Date.now();
+  lsSet(LIB_GONE_KEY, JSON.stringify(gone));
+  const srs = srsAll();
+  if (srs[key]) { delete srs[key]; srsSave(srs); }
 
   const f = focusAll();
   if (f[key]) { delete f[key]; focusSave(f); }
@@ -38846,6 +38990,66 @@ T("mergeMaxNums: higher count wins, union of keys", () => {
 /* ---- the whole key map ---- */
 const KM = (o) => { const r = {}; Object.keys(o).forEach(k => { r[k] = JSON.stringify(o[k]); }); return r; };
 
+T("mergeLibrary: the later edit wins what he edits, from either side", () => {
+  /* Review, 2026-10-01: a word retired on the phone came back from the stale copy in the
+     file on the phone's own next sync — the other side's fields always won. */
+  const phone = { "בית": { tr: "bayit", en: "house", shelf: "reserve", seen: 2, mt: 200, added: "2026-08-02" } };
+  const file  = { "בית": { tr: "bayit", en: "house", shelf: "focus", seen: 5, mt: 100, added: "2026-08-01" } };
+  const a = mergeLibrary(phone, file), b = mergeLibrary(file, phone);
+  assertEq([a["בית"].shelf, b["בית"].shelf], ["reserve", "reserve"], "the newer shelf, whichever side is mine");
+  assertEq([a["בית"].seen, a["בית"].added, a["בית"].mt], [5, "2026-08-01", 200],
+           "while sightings, first meeting and the stamp still merge as before");
+  const fix = mergeLibrary({ "x": { tr: "old", en: "e", mt: 1 } }, { "x": { tr: "new", en: "e", mt: 2 } });
+  assertEq(fix.x.tr, "new", "and a corrected transliteration now reaches the other device");
+});
+T("syncAfterMerge: a deleted word stays deleted, and the inbox drops what is filed", () => {
+  const keys = {
+    hvr_library: JSON.stringify({ "חתול": { tr: "khatul", mt: 50 }, "כלב": { tr: "kelev", mt: 900 },
+                                  "בית": { tr: "bayit", mt: 10 } }),
+    hvr_libgone: JSON.stringify({ "חתול": 100, "כלב": 100 }),
+    hvr_srs: JSON.stringify({ "חתול": { prod: {} }, "בית": { prod: {} } }),
+    hvr_pending: JSON.stringify({ "בית": { seen: 1 }, "ים": { seen: 1 }, "שמש": { seen: 1 } }),
+    hvr_dismissed: JSON.stringify({ "שמש": 1 })
+  };
+  const out = syncAfterMerge(keys);
+  const lib = JSON.parse(out.hvr_library), srs = JSON.parse(out.hvr_srs), pend = JSON.parse(out.hvr_pending);
+  assertTrue(!lib["חתול"], "deleted after its last edit: gone");
+  assertTrue(!!lib["כלב"], "added again after the deletion: kept");
+  assertTrue(!srs["חתול"] && !!srs["בית"], "and the deleted word's schedule goes with it, nothing else");
+  assertEq(Object.keys(pend), ["ים"], "filed and dismissed words are not offered again");
+  assertEq(syncAfterMerge({ a: "1" }), { a: "1" }, "a map with none of these stores passes through");
+});
+T("syncRemoteKeys: what this device keeps to itself is never applied from the file", () => {
+  const out = syncRemoteKeys({ hvr_srs: "{}", hvr_coach: "{}", hvr_prerebase: "{}",
+                               hvr_geminikey: "k", hvr_convo: "x", hvr_coachlang: "en" });
+  assertEq(Object.keys(out), ["hvr_srs"]);
+});
+T("libSave: stamps an entry he edited, and not one the background touched", () => {
+  const saved = lsGet(LIB_KEY);
+  try {
+    lsSet(LIB_KEY, JSON.stringify({ a: { tr: "a", shelf: "focus", seen: 1, mt: 5 },
+                                    b: { tr: "b", shelf: "focus", seen: 1, mt: 5 } }));
+    const lib = libAll();
+    lib.a.shelf = "reserve";        // his edit
+    lib.b.seen = 9;                 // a harvest bump
+    libSave(lib);
+    const after = libAll();
+    assertTrue(after.a.mt > 5, "the edit is stamped");
+    assertEq(after.b.mt, 5, "the bump is not, so it cannot carry a stale shelf over a real edit");
+  } finally {
+    if (saved == null) localStorage.removeItem(LIB_KEY); else lsSet(LIB_KEY, saved);
+  }
+});
+T("syncSnapshot: stamped with his last change, not with the moment of the sync", () => {
+  const was = syncLocalWriteAt;
+  try {
+    syncLocalWriteAt = Date.parse("2026-09-01T10:00:00Z");
+    const stored = parseInt(localStorage.getItem(SYNC_WRITE_KEY), 10) || 0;
+    const snap = syncSnapshot();
+    assertEq(snap.updated, new Date(Math.max(syncLocalWriteAt, stored)).toISOString(),
+             "so a stale device syncing late no longer counts as the newer one");
+  } finally { syncLocalWriteAt = was; }
+});
 T("mergeKeyMap: applies the right rule per store", () => {
   const mine = KM({ "hvr_library": { "א": { tr: "a", seen: 5 } }, "hvr_stats": { "2026-08-20": { cards: 10 } } });
   const theirs = KM({ "hvr_library": { "ב": { tr: "b", seen: 1 } }, "hvr_stats": { "2026-08-20": { cards: 3 } } });

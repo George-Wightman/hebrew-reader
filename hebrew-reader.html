@@ -2487,20 +2487,6 @@
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     box-shadow: 0 2px 14px var(--c-34-48-60-10);
   }
-  /* QUIETER THAN THE MIC, deliberately. It sits next to a 44px filled circle and must not
-     compete with it — the mic is what he came to press. Same height so the row still
-     reads as one strip, but an outline pill with the state written in it rather than
-     signalled by colour: "he" and "en" are unambiguous where a tint would need learning.
-     Teal only when it is on Hebrew, i.e. when it is doing something other than the
-     default, which is §3's rule that teal means "you can act on this". */
-  .coachdock-lang {
-    flex: 0 0 auto; height: 44px; min-width: 40px; padding: 0 10px; border-radius: 22px;
-    cursor: pointer; border: 1px solid var(--border); background: var(--c-255-255-255-93);
-    color: var(--muted); font-size: .82rem; font-weight: 600; letter-spacing: .02em;
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  }
-  .coachdock-lang.he { border-color: var(--accent); color: var(--accent); }
-  .coachdock-lang:disabled { opacity: .55; cursor: default; }
   .coachdock-mic svg { width: 20px; height: 20px; fill: currentColor; }
   /* Quieter than the send arrow beside it — an outline, and smaller — because sending is
      the thing the row is now waiting for and this is the aside. */
@@ -3142,7 +3128,6 @@
     background: var(--panel); border: 1.5px solid var(--accent); font-size: .96rem; }
   .coachdock-mic { width: 52px; height: 52px; background: var(--accent); color: var(--on-accent);
     border-color: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); }
-  .coachdock-lang { height: 52px; border-radius: 26px; background: var(--panel); }
   .coachdock-top button { background: var(--panel); border-color: var(--border); }
   .coachdock-starter { background: var(--panel); border-radius: 16px; }
   /* Two floating panels were landing on each other: with the sentence pad open, the
@@ -3774,11 +3759,6 @@
            the side. It starts one row tall and grows with the text — see coachDockAutoGrow
            for why the height is driven from JS rather than by rows/CSS alone. -->
       <textarea id="coachDockQ" rows="1" autocomplete="off" placeholder="Ask the coach…"></textarea>
-      <!-- WHICH LANGUAGE THE MIC IS LISTENING FOR. Not decoration and not a setting
-           buried in a modal: the recogniser can only be one language at a time, and this
-           is the only thing that knows which he is about to speak. Text, not a flag or a
-           globe — two letters say it and survive being 22px wide. -->
-      <button class="coachdock-lang" id="coachDockLang" type="button"></button>
       <!-- Speak more into what is already in the box. Shown only once there is text, when
            the main circle has become the send arrow. -->
       <button class="coachdock-more" id="coachDockMore" type="button" aria-label="Say more"
@@ -9629,7 +9609,6 @@ document.getElementById("aiStar").onclick = () => aiModalOpen(true);
    tap-outside to close it, exactly as the sentence pad has none. */
 document.getElementById("uhBtn").onclick = () => coachDockOpen(!coachDockOn);
 document.getElementById("coachDockMic").onclick = () => coachDockMicPress();
-document.getElementById("coachDockLang").onclick = () => coachLangToggle();
 document.getElementById("coachDockMore").onclick = () => coachDockListen();
 (function wireCoachDockBox() {
   const q = document.getElementById("coachDockQ");
@@ -14822,9 +14801,10 @@ function aiLogNote(entry) { aiLogSave(aiLogPush(aiLogAll(), entry)); aiStarPaint
 function aiLogParts(parts) {
   return (parts || []).map(p => {
     if (p && typeof p.text === "string") return p.text;
-    if (p && p.inlineData) {
-      const kb = Math.round(((p.inlineData.data || "").length * 3 / 4) / 1024);
-      return "[" + (p.inlineData.mimeType || "binary") + ", " + kb + "KB]";
+    const d = p && (p.inlineData || p.inline_data);
+    if (d) {
+      const kb = Math.round(((d.data || "").length * 3 / 4) / 1024);
+      return "[" + (d.mimeType || d.mime_type || "binary") + ", " + kb + "KB]";
     }
     return "[part]";
   }).join("\n").slice(0, AI_LOG_PREVIEW);
@@ -17292,41 +17272,18 @@ let coachPastOpen = false;      // earlier sittings, reset closed each time it o
 let coachDockListening = false;
 let coachDockStopped = false;   // did WE stop it, or did the endpointer decide?
 let coachDockMsg = "";          // a mic failure, shown until the next thing he does
-let coachDockVoiceLang = "";    // "en"/"he" if the box holds a transcript; "" once he types
-let coachDockRelisten = false;  // he changed language mid-listen; start again when this one ends
+let coachDockVoiceLang = "";    // "en" if the box holds a live English transcript; "" otherwise
+let coachDockRelisten = false;  // a starter chip was tapped mid-recording; start again when it ends
+let coachDockHearing = false;   // the recording is with Gemini, being written down
 
-/* WHICH LANGUAGE THE DOCK'S MIC LISTENS FOR, and why it is his choice rather than the
-   app's. Web Speech takes ONE language per session and has no multilingual mode, so the
-   app has to commit before he opens his mouth — and it has now guessed wrong in both
-   directions. en-GB destroyed the Hebrew inside his English questions: he said adom
-   (אדום) and it printed "Adam". he-IL, shipped 2026-09-08 on the file's own claim that it
-   "transcribes English perfectly well", failed his real test the same afternoon: "It
-   picks up the English initially, although it does lag a little bit. Then once I start
-   speaking Hebrew it doesn't then switch back to English."
-
-   That claim was true for a stray Hebrew word inside English and false for holding an
-   English conversation, which is what the dock is actually for. So there is no setting
-   that serves both, and a control is the honest answer: he knows which language he is
-   about to speak, and the app cannot.
-
-   Defaults to English because that is the common case — he asks in English about Hebrew.
-   Remembered across sessions so the choice costs one tap ever, not one per question. */
-const COACH_LANG_KEY = "hvr_coachlang";
-function coachLangGet() { return lsGet(COACH_LANG_KEY) === "he" ? "he" : "en"; }
-function coachLangSet(v) { lsSet(COACH_LANG_KEY, v === "he" ? "he" : "en"); }
-function coachLangCode() { return coachLangGet() === "he" ? "he-IL" : "en-GB"; }
-function coachLangToggle() {
-  coachLangSet(coachLangGet() === "he" ? "en" : "he");
-  /* Restart rather than wait for the next question. Changing it mid-listen means the
-     current attempt is in the wrong language, and micRecGet rebuilds on a mode change —
-     so the only useful thing to do with what it has heard so far is drop it.
-
-     The restart itself happens in coachDockListen, once the outstanding attempt has
-     actually ended; calling it from here cannot work, because this runs while that await
-     is still pending and the guard at the top of it would refuse. */
-  if (coachDockListening) { coachDockRelisten = true; coachDockHush(); }
-  coachDockPaintMic();
-}
+/* THE en/he SWITCH IS GONE (2026-10-01), and with it the question it made him answer.
+   Web Speech takes one language per session, so the switch asked him to know, word by
+   word, which recogniser he was about to need — en-GB printed adom as "Adam", he-IL lost
+   his English, and he called the control "really not intuitive". The dock now records
+   and Gemini hears the recording, which is not bound to one language: see coachRecord and
+   docs/superpowers/specs/2026-10-01-the-coach-hears-both-languages-design.md. The live
+   mic survives only as the fallback, and is fixed to English — the common case. */
+const COACH_LIVE_LANG = "en-GB";
 
 /* Constant markup, never a value from anywhere — the renderer's textContent-only rule is
    about untrusted strings, and these are three literals. */
@@ -17383,10 +17340,14 @@ function coachDockPaintMic() {
   const hasText = !!(q && q.value.trim());
   b.classList.toggle("listening", coachDockListening);
   b.classList.toggle("send", !coachDockListening && hasText);
-  b.disabled = !!coachBusy;
+  b.disabled = !!coachBusy || coachDockHearing;
   b.innerHTML = coachDockListening ? COACH_STOP_SVG : hasText ? COACH_SEND_SVG : COACH_MIC_SVG;
   b.setAttribute("aria-label", coachDockListening ? "Finished talking"
+                             : coachDockHearing ? "Listening back"
                              : hasText ? "Send to the coach" : "Speak to the coach");
+  /* The box's placeholder carries the state while there is nothing in it to read: the
+     seconds while he talks (coachDockTick), then what the wait is for. */
+  if (q && !coachDockListening) q.placeholder = coachDockHearing ? "Listening back…" : "Ask the coach…";
   /* SPEAK SOME MORE. Once there are words in the box the main control is the send arrow,
      so adding to them by voice needs its own way in — the half he wants to say in Hebrew
      after asking in English is the case this exists for. Only there when there is
@@ -17394,20 +17355,8 @@ function coachDockPaintMic() {
   const m = document.getElementById("coachDockMore");
   if (m) {
     m.style.display = (!coachDockListening && hasText) ? "" : "none";
-    m.disabled = !!coachBusy;
+    m.disabled = !!coachBusy || coachDockHearing;
     if (!m.innerHTML) m.innerHTML = COACH_MIC_SVG;
-  }
-  const L = document.getElementById("coachDockLang");
-  if (L) {
-    const he = coachLangGet() === "he";
-    L.textContent = he ? "he" : "en";
-    L.classList.toggle("he", he);
-    L.disabled = !!coachBusy;
-    /* The label says what it IS; the aria-label says what pressing it DOES, because a
-       screen reader announcing "en" on a button gives no clue it is a switch. */
-    L.setAttribute("aria-label", he ? "Mic is listening for Hebrew — switch to English"
-                                    : "Mic is listening for English — switch to Hebrew");
-    L.title = L.getAttribute("aria-label");
   }
 }
 
@@ -17489,21 +17438,243 @@ function coachDockOpen(on) {
   coachDockListen();
 }
 
-/* Stop listening without sending — closing the dock, or reaching for the keyboard. */
+/* Stop listening without sending — closing the dock, or reaching for the keyboard. A
+   recording that is stopped this way is still written down if the dock is open (he has
+   said something and is about to type more onto it); closing the dock throws it away,
+   because coachDockRecordFlow checks coachDockOn before spending a call on it. */
 function coachDockHush() {
   if (!coachDockListening) return;
   coachDockStopped = true;
-  micStop();
+  if (coachRec) coachRecStop();
+  else micStop();
+}
+
+/* ---- the recording, and Gemini hearing it (2026-10-01) ----------------------------
+   One mic, both languages. Web Speech is one language per session; a Gemini model
+   listening to the recording is not, so "why is it להיות and not לשתות" can come back
+   with the Hebrew in Hebrew. The price is no words on screen while he talks: on his Pixel
+   a getUserMedia capture and Web Speech cannot run together (micNeedsStreamHold), and he
+   chose this side of that — "I'd rather be able to just speak in English and in Hebrew
+   and actually pick it up." */
+const COACH_REC_MAX_MS = 60 * 1000;
+const COACH_REC_MIN_S = 0.4;              // shorter than this is a tap, not a question
+const COACH_HEAR_TIMEOUT_MS = 30000;
+const COACH_VOICE_CONSENT_KEY = "hvr_coachvoiceok";
+let coachRec = null;                      // { mr, stream } while recording
+let coachVoiceDeclined = false;           // this page only: asked, and he said no
+
+/* Can this device do it at all — before asking him anything. */
+function coachVoiceSupported() {
+  return !!(window.MediaRecorder && (window.AudioContext || window.webkitAudioContext) &&
+            window.OfflineAudioContext && navigator.mediaDevices &&
+            navigator.mediaDevices.getUserMedia);
+}
+/* Asked once, in its own words: it is his voice, not someone else's, so the voice-note
+   consent does not cover it and does not read right for it. A no is honoured for the
+   rest of this page and asked again next time, rather than locking him out for good on
+   a misclick. */
+function coachVoiceConsent() {
+  if (lsGet(COACH_VOICE_CONSENT_KEY)) return true;
+  if (coachVoiceDeclined) return false;
+  const ok = confirm("The coach can hear Hebrew and English in the same breath — but to do " +
+    "that, it sends a recording of each question you speak to Google's Gemini API, which " +
+    "may use it on the free tier.\n\nUse it? (Asked once. If not, the mic stays " +
+    "English-only, as before.)");
+  if (ok) lsSet(COACH_VOICE_CONSENT_KEY, "1");
+  else coachVoiceDeclined = true;
+  return ok;
+}
+function coachVoiceReady() {
+  try { if (!geminiKeys().length) return false; } catch (e) { return false; }
+  return coachVoiceSupported() && coachVoiceConsent();
+}
+
+/* Records until coachRecStop, or COACH_REC_MAX_MS. Resolves { blob, ms }. The tracks are
+   stopped the moment recording ends, so nothing holds the microphone afterwards — on
+   Android a held capture would hand the drill's recogniser silence. */
+async function coachRecord(onTick) {
+  const stream = await navigator.mediaDevices.getUserMedia(
+    { audio: { echoCancellation: true, noiseSuppression: true } });
+  return new Promise((resolve, reject) => {
+    let mr;
+    try { mr = new MediaRecorder(stream); }
+    catch (e) { stream.getTracks().forEach(t => t.stop()); reject(e); return; }
+    const chunks = [], t0 = Date.now();
+    let tick = null, cap = null;
+    const done = () => {
+      try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      clearInterval(tick); clearTimeout(cap);
+      coachRec = null;
+    };
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = () => { done(); resolve({ blob: new Blob(chunks, { type: mr.mimeType || "audio/webm" }),
+                                          ms: Date.now() - t0 }); };
+    mr.onerror = () => { done(); reject(new Error("recording failed")); };
+    coachRec = { mr: mr, stream: stream };
+    tick = setInterval(() => { try { onTick && onTick(Date.now() - t0); } catch (e) {} }, 250);
+    cap = setTimeout(coachRecStop, COACH_REC_MAX_MS);
+    try { mr.start(); } catch (e) { done(); reject(e); }
+  });
+}
+/* Tracks first, then the recorder: when the drill needs the microphone (micListen) it
+   must be free by the time the recogniser starts, not whenever onstop gets round to it. */
+function coachRecStop() {
+  const r = coachRec;
+  if (!r) return;
+  try { r.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { if (r.mr.state !== "inactive") r.mr.stop(); } catch (e) {}
+}
+
+/* Pure: 16-bit PCM mono WAV from float samples. WAV because it is on Gemini's documented
+   list and the phone's own WebM is not; 16 kHz because that is speech, and it keeps a
+   minute under 2MB of inline data. */
+function pcm16Wav(samples, rate) {
+  const n = samples.length, out = new Uint8Array(44 + n * 2), v = new DataView(out.buffer);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const x = Math.max(-1, Math.min(1, samples[i] || 0));
+    v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+  }
+  return out;
+}
+function bytesToBase64(u8) {
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+/* Whatever container the browser recorded in, decoded by the browser that recorded it,
+   then resampled to 16 kHz mono. Resolves { wav, seconds }. */
+async function audioWav16k(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  let decoded;
+  try { decoded = await ac.decodeAudioData(await blob.arrayBuffer()); }
+  finally { try { ac.close(); } catch (e) {} }
+  const rate = 16000, len = Math.max(1, Math.ceil(decoded.duration * rate));
+  const off = new OfflineAudioContext(1, len, rate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  return { wav: pcm16Wav(rendered.getChannelData(0), rate), seconds: decoded.duration };
+}
+
+/* What Gemini is told when it hears him. The card and the last turns are SPELLING HELP:
+   they are why להיות comes back spelled right when he is drilling it. They are never a
+   licence to hear the card's word — on 27 Sep the whole question was that he had said a
+   different one. Pure. */
+function coachHearPrompt(screen, recent) {
+  return "Write down exactly what this person said. He is an English speaker learning " +
+    "Hebrew, and he mixes the two freely — often an English question with Hebrew words " +
+    "in it.\n\n" +
+    "- English words in English. Hebrew words in Hebrew script, without nikud.\n" +
+    "- Write the word he ACTUALLY said, even when it is the wrong word or mispronounced. " +
+    "Never write the word he should have said instead.\n" +
+    "- Do not translate. Do not answer the question. Do not add anything he did not say.\n" +
+    "- If you cannot make out any words, return an empty string.\n\n" +
+    (screen ? "What is on his screen — ONLY to help you spell a word you actually hear. " +
+      "Do not assume he said any of it:\n" + screen + "\n\n" : "") +
+    (recent ? "The last thing he and his coach said, for the same purpose:\n" + recent + "\n\n" : "") +
+    "Return JSON only, no markdown: {\"text\": \"...\"}";
+}
+/* The context for that prompt, read from wherever he is. Never throws: a hearing without
+   context is worse, not impossible. */
+function coachHearContext() {
+  let screen = "", recent = "";
+  try {
+    const at = uhHere();
+    screen = coachScreenText(uhReportFor(at));
+    if (at.kind === "card") {
+      const att = coachAttemptText(learnSpoken);
+      if (att) screen += "\n" + att;
+    }
+  } catch (e) {}
+  try {
+    const last = coachAll().live.filter(t => t && t.a).slice(-2);
+    recent = last.map(t => "He asked: " + t.q + "\nCoach: " + t.a.slice(0, 300)).join("\n");
+  } catch (e) {}
+  return { screen: screen, recent: recent };
+}
+/* The recording, written down. "" when there was nothing to hear; throws on a failure
+   worth telling him about. */
+async function coachHear(blob) {
+  const a = await audioWav16k(blob);
+  if (a.seconds < COACH_REC_MIN_S) return "";
+  const ctx = coachHearContext();
+  const raw = await geminiRequest([
+    { text: coachHearPrompt(ctx.screen, ctx.recent) },
+    { inline_data: { mime_type: "audio/wav", data: bytesToBase64(a.wav) } }
+  ], GEMINI_MODELS_FAST, { label: "The coach — hearing you", timeoutMs: COACH_HEAR_TIMEOUT_MS });
+  let data = null;
+  try { data = extractJSON(raw); } catch (e) {}
+  if (data && typeof data.text === "string") return data.text.trim();
+  throw new Error("the answer didn't come back cleanly");
+}
+
+/* The recording path of coachDockListen. Same shape as the live one — the words land in
+   the box after whatever is already there, and nothing sends until the arrow — so the
+   send stage he asked for on 2026-09-22 is unchanged. */
+async function coachDockRecordFlow(q) {
+  const base = q.value.trim();
+  const prefix = base ? base + " " : "";
+  coachDockListening = true;
+  coachDockStopped = false;
+  coachDockMsg = "";
+  coachDockRender();
+  let got = null, recErr = null;
+  try {
+    got = await coachRecord(ms => { q.placeholder = "Listening… " + Math.floor(ms / 1000) + "s — tap ■ when done"; });
+  } catch (e) { recErr = e; }
+  finally { coachDockListening = false; }
+  if (coachDockRelisten) {
+    /* A starter chip, tapped mid-recording: it rewrote the box, so what was recorded
+       against the old one is dropped and he starts again from the opening. */
+    coachDockRelisten = false;
+    if (coachDockOn) { coachDockListen(); } else { coachDockPaintMic(); }
+    return;
+  }
+  if (!coachDockOn) { coachDockPaintMic(); return; }
+  if (recErr) {
+    const blocked = recErr && /NotAllowed|Permission|denied/i.test(String(recErr.name) + String(recErr.message));
+    coachDockMsg = blocked ? "Microphone blocked — type it instead."
+                           : "Couldn't record (" + ((recErr && recErr.message) || "unknown") + ") — type it instead.";
+    coachDockRender();
+    return;
+  }
+  coachDockHearing = true;
+  coachDockRender();
+  let text = "", hearErr = "";
+  try { text = await coachHear(got.blob); }
+  catch (e) { hearErr = (e && e.message) || String(e); }
+  finally { coachDockHearing = false; }
+  if (!coachDockOn) { coachDockPaintMic(); return; }
+  if (!text) {
+    coachDockMsg = hearErr ? "Couldn't make that out (" + hearErr + ") — try again, or type it."
+                           : "Didn't catch any words — tap the mic and try again.";
+    coachDockRender();
+    return;
+  }
+  q.value = (prefix + text).trim();
+  coachDockAutoGrow();
+  /* Heard in both languages, so there is no English-recogniser warning to give the coach. */
+  coachDockVoiceLang = "";
+  coachDockRender();
 }
 
 async function coachDockListen() {
   const q = document.getElementById("coachDockQ");
-  if (!q || coachDockListening || coachBusy) return;
+  if (!q || coachDockListening || coachDockHearing || coachBusy) return;
   /* THE DRILL HAS THE STRONGER CLAIM. There is one recogniser (micRecGet keeps a single
      instance on purpose), and a production card being graded must not lose it to a
      question. Opening quietly in the idle state is the right failure: the box still
      types, and the mic button still works once the card is done. */
   if (micRecBusy) { coachDockPaintMic(); return; }
+  if (coachVoiceReady()) return coachDockRecordFlow(q);
   if (micNeedsStreamHold()) {
     const got = await micAcquire();
     if (!got) { coachDockMsg = "Microphone blocked — type it instead."; coachDockRender(); return; }
@@ -17516,35 +17687,19 @@ async function coachDockListen() {
   coachDockRender();
   let res;
   try {
-    /* HIS CHOICE, not a constant — see coachLangGet for why neither language works as
-       one. Both were tried as the fixed answer on 2026-09-08 and both failed in real use.
-
-       NOT continuous. An end here — his tap or the endpointer's — only ever puts the
-       words in the box; see the note at the foot of this function for why it no longer
-       sends. */
-    res = await micListen({ lang: coachLangCode(),
+    /* THE FALLBACK: no key, no recorder, or he said no to sending his voice. Live, and
+       English — the common case. NOT continuous: an end, his tap or the endpointer's,
+       only ever puts the words in the box. */
+    res = await micListen({ lang: COACH_LIVE_LANG,
                             onInterim: t => { q.value = prefix + t; coachDockAutoGrow(); coachDockPaintMic(); } });
   } finally {
     coachDockListening = false;
   }
-  /* SWITCHED LANGUAGE MID-SENTENCE. Checked here rather than in coachLangToggle because
-     `coachDockListening` is still true while this await is outstanding, so a restart
-     called from there hits the guard at the top of this function and silently does
-     nothing — the mic would stop and never come back, and he would have to tap it again
-     to say the thing he had just started saying. `res` is a stop we caused, so it is
-     dropped rather than reported as a mic failure. */
+  /* A starter chip, tapped mid-listen — see coachDockStarter. KEEP WHAT HE HAS ALREADY
+     SAID: George, when a restart threw away the half he had spoken, "it deletes my
+     message it doesnt conjoin them". The restarted listen reads the box as its prefix. */
   if (coachDockRelisten) {
     coachDockRelisten = false;
-    /* KEEP WHAT HE HAS ALREADY SAID. This used to reset the box to `base` — the value
-       from before this attempt started — which threw away the half of the sentence he had
-       just spoken in the other language. George: "it deletes my message it doesnt conjoin
-       them it jsut starts a new message entirely."
-
-       Switching language mid-sentence is the case where BOTH halves matter: he asks in
-       English and then wants to say the Hebrew bit properly. Committing it here is also
-       what joins them, because the restarted listen reads the box as its own `base` and
-       prefixes the next transcript onto it. A stop we caused still returns what it heard,
-       so res is the better source than the interim text already on screen. */
     if (res && res.ok && res.text) { q.value = (prefix + res.text).trim(); coachDockAutoGrow(); }
     if (coachDockOn) { coachDockListen(); } else { coachDockPaintMic(); }
     return;
@@ -17562,17 +17717,10 @@ async function coachDockListen() {
   /* Which mic produced this text, so the prompt can warn the coach about an English
      transcript of a Hebrew word. Cleared the moment he types, because then it is his
      spelling and means what it says. */
-  coachDockVoiceLang = coachLangGet();
-  /* NOTHING SENDS UNTIL HE PRESSES THE ARROW. This used to send the moment the endpointer
-     decided he had stopped — "dash a quick question" — and the coach stopped being a
-     quick-question tool. George: "the messages send instantly, theres no time for me to
-     add or edit so can we have a send stage, I stop talking or go the read what I put/
-     add more in hebrew, and have to press a send/ enter arrow to send it to coach."
-
-     So an end, however it came, leaves the words in the box: he can read them, type into
-     them, switch language and speak more (coachDockMore appends, because coachDockListen
-     reads the box as its prefix), and the arrow sends. Not focused, on purpose — on a
-     phone that raises the keyboard over the thread he is about to read. */
+  coachDockVoiceLang = "en";
+  /* NOTHING SENDS UNTIL HE PRESSES THE ARROW. George: "the messages send instantly,
+     theres no time for me to add or edit so can we have a send stage". Not focused, on
+     purpose — on a phone that raises the keyboard over the thread he is about to read. */
   coachDockRender();
 }
 
@@ -17616,11 +17764,8 @@ function coachDockSend() {
 }
 
 function coachDockMicPress() {
-  if (coachDockListening) {
-    coachDockStopped = true;
-    micStop();
-    return;
-  }
+  if (coachDockListening) { coachDockHush(); return; }
+  if (coachDockHearing) return;
   const q = document.getElementById("coachDockQ");
   if (q && q.value.trim()) { coachDockSend(); return; }
   coachDockListen();
@@ -19558,6 +19703,9 @@ function micRecGet(lang) {
 /* Resolves rather than rejects on failure: every caller wants "here's what happened"
    so it can fall back to hand-grading, and none of them want a throw mid-card. */
 function micListen(opts) {
+  /* A card that needs the microphone takes it from a coach recording rather than waiting
+     on it: on Android a capture left open hands the recogniser silence. */
+  if (coachRec) coachRecStop();
   /* Busy BEFORE get: micRecGet may tear the instance down to change language, and doing
      that under a caller that is still listening would abort it mid-sentence. */
   if (micRecBusy) return Promise.resolve({ ok: false, error: "already-listening" });
@@ -37543,94 +37691,133 @@ T("micRecGet: a language change rebuilds rather than poking a live recogniser", 
   assertTrue(seen.rebuiltOnChange, "a different language gets a different recogniser");
   assertEq(seen.lang, "en-GB");
 });
-T("coachLang: defaults to English, remembers Hebrew, and maps to a recogniser code", () => {
-  const had = lsGet(COACH_LANG_KEY);
+T("pcm16Wav: a valid 16kHz mono WAV, with the samples where Gemini will read them", () => {
+  const w = pcm16Wav(new Float32Array([0, 1, -1, 0.5, 2]), 16000);
+  const v = new DataView(w.buffer);
+  const tag = o => String.fromCharCode(w[o], w[o + 1], w[o + 2], w[o + 3]);
+  assertEq([tag(0), tag(8), tag(12), tag(36)], ["RIFF", "WAVE", "fmt ", "data"]);
+  assertEq(w.length, 44 + 5 * 2);
+  assertEq([v.getUint16(22, true), v.getUint32(24, true), v.getUint16(34, true)], [1, 16000, 16],
+           "mono, 16 kHz, 16-bit");
+  assertEq(v.getUint32(40, true), 10, "data length in bytes");
+  assertEq([v.getInt16(44, true), v.getInt16(46, true), v.getInt16(48, true)], [0, 32767, -32768]);
+  assertEq(v.getInt16(52, true), 32767, "a sample past full scale is clipped, not wrapped");
+  assertEq(bytesToBase64(new Uint8Array([77, 97, 110])), "TWFu");
+});
+T("coachHearPrompt: both languages in their own script, and the card is spelling help only", () => {
+  const p = coachHearPrompt("Hebrew: להיות", "He asked: x\nCoach: y");
+  assertTrue(p.indexOf("Hebrew words in Hebrew script") !== -1);
+  assertTrue(p.indexOf("ACTUALLY said") !== -1 && p.indexOf("Never write the word he should have said") !== -1,
+             "27 Sep: the point of his question was that he said a different word");
+  assertTrue(p.indexOf("Do not assume he said any of it") !== -1);
+  assertTrue(p.indexOf("להיות") !== -1 && p.indexOf("He asked: x") !== -1);
+  assertEq(coachHearPrompt("", "").indexOf("on his screen"), -1, "no context, no context section");
+});
+T("coachDockRecordFlow: what he said lands in the box after what is there, and never sends", async () => {
+  const realReady = coachVoiceReady, realRec = coachRecord, realHear = coachHear, realAsk = uhAsk;
+  const wasOn = coachDockOn, wasListening = coachDockListening, wasLang = coachDockVoiceLang;
+  const q = document.getElementById("coachDockQ"), savedQ = q.value;
+  let asked = 0, heard = 0;
   try {
-    lsSet(COACH_LANG_KEY, "");
-    assertEq(coachLangGet(), "en", "English is the common case and the default");
-    assertEq(coachLangCode(), "en-GB");
-    coachLangSet("he");
-    assertEq(coachLangGet(), "he");
-    assertEq(coachLangCode(), "he-IL");
-    lsSet(COACH_LANG_KEY, "gibberish");
-    assertEq(coachLangGet(), "en", "anything unrecognised falls back rather than throwing");
+    uhAsk = () => { asked++; };
+    coachVoiceReady = () => true;
+    coachRecord = async () => ({ blob: new Blob(["x"]), ms: 1500 });
+    coachHear = async () => { heard++; return "why is it להיות and not לשתות"; };
+    coachDockOn = true; coachDockListening = false; q.value = "";
+    await coachDockListen();
+    assertEq(q.value, "why is it להיות and not לשתות", "both languages, in their own scripts");
+    assertEq(asked, 0, "nothing sends until the arrow");
+    assertTrue(!coachDockHearing && !coachDockListening, "and nothing is left looking busy");
+    assertEq(coachDockVoiceLang, "", "heard in both languages: no English-recogniser warning");
+    coachHear = async () => "הספר האדום";
+    await coachDockListen();
+    assertEq(q.value, "why is it להיות and not לשתות הספר האדום", "speaking again adds to it");
+    coachHear = async () => "";
+    await coachDockListen();
+    assertTrue(/Didn't catch/.test(coachDockMsg), "silence says so: " + coachDockMsg);
+    assertEq(q.value, "why is it להיות and not לשתות הספר האדום", "and leaves the box alone");
+    coachHear = async () => { throw new Error("daily free limit reached"); };
+    await coachDockListen();
+    assertTrue(/daily free limit/.test(coachDockMsg), "a failed hearing says why: " + coachDockMsg);
+    /* Closing the dock while recording throws the recording away unheard. */
+    heard = 0;
+    coachHear = async () => { heard++; return "x"; };
+    coachRecord = async () => { coachDockOn = false; return { blob: new Blob(["x"]), ms: 900 }; };
+    await coachDockListen();
+    assertEq(heard, 0, "no call is spent on a question he closed");
   } finally {
-    /* The suite shares one localStorage — put back exactly what was found. */
-    if (had === null || had === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
-    else lsSet(COACH_LANG_KEY, had);
+    coachVoiceReady = realReady; coachRecord = realRec; coachHear = realHear; uhAsk = realAsk;
+    coachDockOn = wasOn; coachDockListening = wasListening; coachDockVoiceLang = wasLang;
+    coachDockHearing = false; coachDockMsg = ""; q.value = savedQ; coachDockPaintMic();
   }
 });
-T("coachLangToggle: switching mid-sentence restarts the mic in the new language", async () => {
-  /* The path that was wrong first time round. coachDockListening is still true while
-     coachDockListen's await is outstanding, so restarting from the toggle hit the guard
-     at the top of that function and did nothing: the mic stopped and never came back. */
-  const realMic = micListen, realAcquire = micAcquire, hadLang = lsGet(COACH_LANG_KEY);
-  const wasOn = coachDockOn;
-  const asked = [];
-  let release = null;
-  try {
-    lsSet(COACH_LANG_KEY, "en");
-    coachDockOn = true;
-    micAcquire = async () => true;
-    micListen = (opts) => {
-      asked.push(opts.lang);
-      /* First call hangs, exactly as a real one does while he is still talking; the
-         second resolves so the test does not. */
-      if (asked.length === 1) return new Promise(r => { release = r; });
-      return Promise.resolve({ ok: false, error: "aborted" });
-    };
-    coachDockListen();
-    await new Promise(r => setTimeout(r, 0));
-    assertEq(asked.join(","), "en-GB", "started in English");
-    assertTrue(coachDockListening, "and is still listening when he reaches for the switch");
-    coachLangToggle();                    // he realises he is about to speak Hebrew
-    release({ ok: false, error: "aborted" });   // micStop lands
-    await new Promise(r => setTimeout(r, 0));
-    await new Promise(r => setTimeout(r, 0));
-    assertEq(asked.join(","), "en-GB,he-IL",
-             "the attempt is restarted in Hebrew rather than just stopped");
-  } finally {
-    micListen = realMic; micAcquire = realAcquire;
-    coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
-    if (hadLang === null || hadLang === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
-    else lsSet(COACH_LANG_KEY, hadLang);
-  }
-});
-T("coachLangToggle: switching mid-sentence keeps what he already said and joins to it", async () => {
-  /* The half of the restart that was wrong on the first attempt: it reset the box to the
-     value from before the attempt, throwing away the English he had just dictated.
-     George: "it deletes my message it doesnt conjoin them it jsut starts a new message
-     entirely." Both halves matter here — asking in English, then saying the Hebrew. */
-  const realMic = micListen, realAcq = micAcquire, hadLang = lsGet(COACH_LANG_KEY);
+T("coachDockRecordFlow: a starter chip mid-recording starts again from the opening", async () => {
+  const realReady = coachVoiceReady, realRec = coachRecord, realHear = coachHear, realStop = coachRecStop;
   const wasOn = coachDockOn, q = document.getElementById("coachDockQ"), savedQ = q.value;
-  const bases = [];
+  let recs = 0, release = null;
+  try {
+    coachVoiceReady = () => true;
+    coachHear = async () => "office";
+    coachRecord = () => { recs++; return recs === 1 ? new Promise(r => { release = r; })
+                                                     : Promise.resolve({ blob: new Blob(["x"]), ms: 900 }); };
+    coachRecStop = () => { if (release) release({ blob: new Blob(["x"]), ms: 500 }); };
+    coachDockOn = true; q.value = "";
+    const first = coachDockListen();
+    await new Promise(r => setTimeout(r, 0));
+    coachRec = { mr: { state: "recording" }, stream: { getTracks: () => [] } };
+    coachDockStarter(COACH_STARTERS[0][1]);
+    await first;
+    for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0));
+    assertEq(recs, 2, "recorded again");
+    assertEq(q.value, "How do I say office", "after the opening, with the first recording dropped");
+  } finally {
+    coachVoiceReady = realReady; coachRecord = realRec; coachHear = realHear; coachRecStop = realStop;
+    coachRec = null; coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
+    q.value = savedQ; coachDockPaintMic();
+  }
+});
+T("coachRecStop: the microphone is released at once, not when the recorder gets round to it", () => {
+  let tracks = 0, stopped = 0;
+  const was = coachRec;
+  try {
+    coachRec = { mr: { state: "recording", stop: () => { stopped++; } },
+                 stream: { getTracks: () => [{ stop: () => { tracks++; } }] } };
+    coachRecStop();
+    assertEq([tracks, stopped], [1, 1]);
+  } finally { coachRec = was; }
+});
+T("coachDockListen: the fallback mic is English, and a starter chip keeps what he had said", async () => {
+  /* The half of the restart that was wrong on the first attempt: it reset the box to the
+     value from before the attempt. George: "it deletes my message it doesnt conjoin them". */
+  const realMic = micListen, realAcq = micAcquire, realReady = coachVoiceReady;
+  const wasOn = coachDockOn, q = document.getElementById("coachDockQ"), savedQ = q.value;
+  const bases = [], langs = [];
   let release = null;
   try {
-    lsSet(COACH_LANG_KEY, "en");
+    coachVoiceReady = () => false;
     coachDockOn = true; q.value = "";
     micAcquire = async () => true;
     micListen = (opts) => {
-      /* What the box held when this attempt started IS the prefix the next transcript
-         gets joined onto, so recording it is recording the join. */
-      bases.push(q.value);
+      bases.push(q.value); langs.push(opts.lang);
       if (bases.length === 1) return new Promise(r => { release = r; });
-      return Promise.resolve({ ok: true, text: "הספר האדום", confidence: 0.9, alts: [] });
+      return Promise.resolve({ ok: true, text: "office", confidence: 0.9, alts: [] });
     };
     coachDockListen();
     await new Promise(r => setTimeout(r, 0));
-    coachLangToggle();
+    coachDockRelisten = true;
     release({ ok: true, text: "how do I say", confidence: 0.9, alts: [] });
     for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0));
-    assertEq(bases[0], "", "the first attempt started from an empty box");
-    assertEq(bases[1], "how do I say",
-             "and the second starts from what he had already said, not from nothing");
+    assertEq(langs[0], "en-GB", "no key or no consent: the live mic, in English");
+    assertEq(bases[1], "how do I say", "the second attempt starts from what he had already said");
   } finally {
-    micListen = realMic; micAcquire = realAcq;
+    micListen = realMic; micAcquire = realAcq; coachVoiceReady = realReady;
     coachDockOn = wasOn; coachDockRelisten = false; coachDockListening = false;
     q.value = savedQ;
-    if (hadLang === null || hadLang === undefined) { try { localStorage.removeItem(COACH_LANG_KEY); } catch (e) {} }
-    else lsSet(COACH_LANG_KEY, hadLang);
   }
+});
+T("aiLogParts: audio is described in either spelling the API takes", () => {
+  const out = aiLogParts([{ inline_data: { mime_type: "audio/wav", data: "A".repeat(4000) } }]);
+  assertTrue(/audio\/wav, \d+KB/.test(out) && out.indexOf("AAAA") === -1, out);
 });
 T("coachDockAutoGrow: the box wraps and grows with the question, then shrinks back", () => {
   /* It was an <input>: a long question scrolled off to the right where he could not see
@@ -39905,12 +40092,13 @@ T("coachDockHush: reaching for the keyboard keeps what the mic already heard", (
 T("coachDockListen: the end of speech fills the box and never sends", async () => {
   /* George: "have to press a send/ enter arrow to send it to coach". Both ends — the
      endpointer deciding he stopped, and his own tap on the pulsing circle — used to send. */
-  const realListen = micListen, realAsk = uhAsk, wasOn = coachDockOn;
+  const realListen = micListen, realAsk = uhAsk, wasOn = coachDockOn, realReady = coachVoiceReady;
   const q = document.getElementById("coachDockQ"), savedQ = q.value;
   const wasListening = coachDockListening, wasLang = coachDockVoiceLang;
   let asked = 0;
   try {
     uhAsk = () => { asked++; };
+    coachVoiceReady = () => false;
     coachDockOn = true; coachDockListening = false;
     micListen = async () => ({ ok: true, text: "how do I say office" });
     q.value = "";
@@ -39924,7 +40112,7 @@ T("coachDockListen: the end of speech fills the box and never sends", async () =
     assertEq(q.value, "how do I say office משרד", "speaking again adds to it rather than replacing it");
     assertEq(asked, 0, "still nothing sent");
   } finally {
-    micListen = realListen; uhAsk = realAsk; coachDockOn = wasOn;
+    micListen = realListen; uhAsk = realAsk; coachVoiceReady = realReady; coachDockOn = wasOn;
     coachDockListening = wasListening; coachDockVoiceLang = wasLang; q.value = savedQ;
     coachDockPaintMic();
   }

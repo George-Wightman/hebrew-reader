@@ -17146,7 +17146,20 @@ function coachScreenText(rep) {
    And one line from the flag that prompted this rewrite: the compose card's report says
    "You have just said, and he is answering: ...", and the coach read that as someone
    else's line and talked about "the coach's question". It is told the line is its own. */
-function coachPrompt(rep, thread, subject, question, who, asr) {
+/* HIS LAST TRY AT THIS CARD, which is what "why is it this word?" is nearly always about
+   and which the card report never carried (2026-10-01). Pure over a learnSpoken-shaped
+   object; "" when there is no attempt to describe. Final letters restored, as in every
+   other place a model is shown these words. */
+function coachAttemptText(sp) {
+  if (!sp || !Array.isArray(sp.expected) || !sp.expected.length) return "";
+  const status = sp.status || [];
+  const missed = sp.expected.filter((w, i) => status[i] && status[i] !== "matched");
+  return "The card wanted: " + heShownAll(sp.expected) + "\n" +
+    "The mic heard him say: " + (String(sp.text || "").trim() || "(nothing)") + "\n" +
+    (missed.length ? "Marked as not said: " + heShownAll(missed) + "\n"
+                   : "Every word was marked as said.\n");
+}
+function coachPrompt(rep, thread, subject, question, who, asr, attempt) {
   const hist = (thread || []).filter(t => t && t.a && !t.err);
   const w = who || coachWho();
   return "You are a warm, brisk Hebrew coach. The person asking you is an English speaker " +
@@ -17170,6 +17183,14 @@ function coachPrompt(rep, thread, subject, question, who, asr) {
     "corrected sentence and one line on why.\n" +
     "- Why is it X and not Y: the rule in a sentence or two, shown on his own example.\n" +
     "- If the question is unclear, answer the likeliest reading and say which you took.\n" +
+    /* THE 27 SEP ANSWER began "Ah, you mean the B in lehiyot?" — a guess, stated as
+       understanding, about a word his speech had been turned into. Naming the word first
+       puts a wrong reading in the first line, where he sees it, and asking is better than
+       an answer to a question he did not ask. */
+    "- WHEN HIS QUESTION TURNS ON A PARTICULAR HEBREW WORD OR PHRASE, open with one short " +
+    "line naming it in Hebrew and how it is said — \"You're asking about להיות (lihyot) —\" " +
+    "— then answer. If you cannot tell which word he means, do not guess: ask him which, " +
+    "in one short question, and stop there.\n" +
     "You cannot see his progress, his schedule or how the app works, so say nothing about " +
     "them.\n\n" +
     "HE IS SPEAKING AS A " + (w.gender === "f" ? "WOMAN" : "MAN") + ". Anything you hand " +
@@ -17196,6 +17217,10 @@ function coachPrompt(rep, thread, subject, question, who, asr) {
     "\n=== WHAT IS ON HIS SCREEN" + (subject ? " (" + subject + ")" : "") +
     " ===\nBackground, so you know where he is. It is not the limit of what you know " +
     "about Hebrew.\n" + (coachScreenText(rep) || "(nothing in particular)") +
+    (attempt ? "\n\n=== HIS LAST TRY AT THIS CARD ===\nWhat he has just said on this card, " +
+      "and how it was marked. A question like \"why is it this word\" or \"why was that " +
+      "wrong\" is most likely about this. The mic can mishear him too, so what it heard is " +
+      "not proof of what he said.\n" + attempt : "") +
     /* THE SAFETY NET FOR WHEN HE FORGETS THE SWITCH. Only ever set for a question he
        DICTATED under the English recogniser — typed text means what it says, and a
        Hebrew-set mic transcribes Hebrew correctly by definition. */
@@ -17211,8 +17236,8 @@ function coachPrompt(rep, thread, subject, question, who, asr) {
     "\n\n=== HIS QUESTION ===\n" + question;
 }
 
-function uhAskParts(rep, question, thread, subject, asr) {
-  return [{ text: coachPrompt(rep, thread, subject, question, null, asr) }];
+function uhAskParts(rep, question, thread, subject, asr, attempt) {
+  return [{ text: coachPrompt(rep, thread, subject, question, null, asr, attempt) }];
 }
 
 let coachBusy = null;     // { q, subject } while a call is in flight; the thread holds the rest
@@ -17235,7 +17260,11 @@ async function uhAsk(rep, question, at, asr) {
        thing he asks all day. The fast pool is 500 and is lite-first with flash as its own
        fallback, so a lite failure already escalates without new code. His call, and the
        reasoning is in the spec so nobody restores it by accident. */
-    const parts = uhAskParts(rep, question, store.live, subject, asr);
+    /* learnSpoken belongs to the card on screen (it is cleared when the card changes),
+       so it is only his last try when the question was asked FROM that card. */
+    let attempt = "";
+    try { if (here.kind === "card") attempt = coachAttemptText(learnSpoken); } catch (e) {}
+    const parts = uhAskParts(rep, question, store.live, subject, asr, attempt);
     a = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
                                    { label: "The coach — a question" }) || "").trim();
   } catch (e) {
@@ -37647,6 +37676,21 @@ T("coachPrompt: warns the coach only about a question dictated in English", () =
   const typed = coachPrompt(rep, [], "", "how do I say adom", null, null);
   assertTrue(typed.indexOf("HOW THIS QUESTION REACHED YOU") === -1,
              "and typed text means what it says — never tell the coach to reinterpret it");
+});
+T("coachPrompt: carries his last try at the card, and only when there is one", () => {
+  const rep = { title: "x", sections: [] };
+  const att = coachAttemptText({ expected: ["להיות"], text: "לשתות", status: ["missed"] });
+  assertTrue(att.indexOf("The card wanted: להיות") !== -1 && att.indexOf("heard him say: לשתות") !== -1);
+  assertTrue(att.indexOf("Marked as not said: להיות") !== -1);
+  assertEq(coachAttemptText({ expected: ["בקיצ"], text: "בקיץ", status: ["matched"] }).indexOf("בקיצ"), -1,
+           "final letters restored before a model sees them");
+  assertEq(coachAttemptText(null), "");
+  assertEq(coachAttemptText({ expected: [], text: "x" }), "", "a card with nothing expected has no attempt");
+  const p = coachPrompt(rep, [], "", "why is it this word?", null, null, att);
+  assertTrue(p.indexOf("HIS LAST TRY AT THIS CARD") !== -1 && p.indexOf("לשתות") !== -1);
+  assertTrue(p.indexOf("=== HIS QUESTION ===") > p.indexOf("HIS LAST TRY"), "the question stays last");
+  assertEq(coachPrompt(rep, [], "", "q", null, null, "").indexOf("HIS LAST TRY"), -1);
+  assertTrue(p.indexOf("do not guess: ask him which") !== -1, "it asks rather than guesses");
 });
 T("micListen: without continuous the endpointer still ends it — the coach's box needs that", async () => {
   const res = await micFakeRun(get => {

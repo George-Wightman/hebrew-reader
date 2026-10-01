@@ -4218,6 +4218,11 @@
 <script>
 "use strict";
 
+/* Is this page running the self tests? Declared first, because rendering at load already
+   needs it: background work that reaches the network or spends AI quota — the sync, the
+   content check — stays off while the suite runs in his real profile (2026-10-01). */
+const SELFTEST_RUN = location.search.indexOf("selftest") !== -1;
+
 /* =====================  WHICH BUILD AM I ON?  =====================
    This was a hand-maintained array of changelog entries, and it went stale exactly
    the way hand-maintained things do: two releases shipped without anyone adding an
@@ -4943,7 +4948,7 @@ function mergeChapter(x, y) {
     state: state,
     sketch: pick(x.sketch, y.sketch),
     theme: x.theme || y.theme
-  });
+  }, (x.passed || y.passed) ? { passed: true } : {});   // a latch, either side — campLatchPassed
 }
 function mergeCampaign(a, b) {
   a = a || {}; b = b || {};
@@ -19839,6 +19844,11 @@ const HE_NUM_UNITS = {
   7: ["שבע", "שבעה", "שבעת"], 8: ["שמונה", "שמונת"], 9: ["תשע", "תשעה", "תשעת"],
   10: ["עשר", "עשרה", "עשרת"]
 };
+/* The units by gender, for the teens and the compounds. Twelve has its own spellings. */
+const HE_NUM_FEM = { 1: ["אחת"], 2: ["שתים", "שתיים"], 3: ["שלוש"], 4: ["ארבע"], 5: ["חמש"],
+                     6: ["שש"], 7: ["שבע"], 8: ["שמונה"], 9: ["תשע"] };
+const HE_NUM_MAS = { 1: ["אחד"], 2: ["שנים", "שניים"], 3: ["שלושה"], 4: ["ארבעה"], 5: ["חמישה"],
+                     6: ["שישה"], 7: ["שבעה"], 8: ["שמונה"], 9: ["תשעה"] };
 const HE_NUM_TENS = { 20: "עשרים", 30: "שלושים", 40: "ארבעים", 50: "חמישים",
                       60: "שישים", 70: "שבעים", 80: "שמונים", 90: "תשעים" };
 function heNumberForms(n) {
@@ -19847,14 +19857,20 @@ function heNumberForms(n) {
   if (HE_NUM_UNITS[n]) return HE_NUM_UNITS[n].slice();
   if (n > 10 && n < 20) {
     const u = n - 10;
-    /* Feminine teens take עשרה, masculine take עשר; twelve has its own spellings. */
-    const fem = u === 2 ? ["שתים", "שתיים"] : [HE_NUM_UNITS[u][0]];
-    const mas = u === 2 ? ["שנים", "שניים"] : [HE_NUM_UNITS[u][1] || HE_NUM_UNITS[u][0]];
-    return fem.map(w => w + " עשרה").concat(mas.map(w => w + " עשר"));
+    /* Feminine teens take עשרה, masculine take עשר. Spelled out per gender rather than
+       read off HE_NUM_UNITS by position (2026-10-01): that list is not ordered by gender —
+       אחד comes before אחת, and eight's second entry is the construct שמונת — so eleven
+       came out with both genders crossed and masculine eighteen as שמונת עשר, and a
+       correct "eleven" was marked nearly. */
+    return HE_NUM_FEM[u].map(w => w + " עשרה").concat(HE_NUM_MAS[u].map(w => w + " עשר"));
   }
   if (HE_NUM_TENS[n]) return [HE_NUM_TENS[n]];
   if (n > 20 && n < 100 && HE_NUM_TENS[n - n % 10]) {
-    return HE_NUM_UNITS[n % 10].slice(0, 2).map(u => HE_NUM_TENS[n - n % 10] + " ו" + u);
+    /* Same reason: the construct שמונת is not a units word in עשרים ושמונה. */
+    const u = n % 10;
+    return (u === 2 ? ["שתיים", "שניים"] : [HE_NUM_FEM[u][0], HE_NUM_MAS[u][0]])
+      .filter((w, i, a) => a.indexOf(w) === i)
+      .map(u => HE_NUM_TENS[n - n % 10] + " ו" + u);
   }
   return [];
 }
@@ -20702,7 +20718,12 @@ function srsSetBand(srs, key, side, band) {
      word cold pulled it straight back into rotation, which is the exact opposite of
      what the click means. Same guard srsMarkKnown already applies for the same reason. */
   if (srsStrength(r[side]) === band) return;
-  r[side] = srsBandRecord(band);
+  /* HIS CLICK IS EVIDENCE, an import is not (2026-10-01). A bare srsBandRecord is exactly
+     the fingerprint srsUnproven reads as an unproven Duolingo seed, so the first answer
+     after he set a word to strong reset it to a first meeting — stab 2, back in two days,
+     "progressing" — which is the very outcome this function's guard above exists to stop.
+     `streak` is one of the fields only a real record carries. */
+  r[side] = band === "new" ? srsBandRecord(band) : Object.assign(srsBandRecord(band), { streak: 0 });
 }
 /* Production drives the queue and the badge — it's what the app is for. */
 function srsDueCount() {
@@ -20852,7 +20873,7 @@ function statsRange(days) {
   const out = [];
   const d = new Date();
   for (let i = days - 1; i >= 0; i--) {
-    const dd = new Date(d.getTime() - i * 86400000);
+    const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate() - i);   // calendar days: a 24h step double-counts or skips the clock-change day
     const iso = isoOf(dd);
     out.push(Object.assign({ iso: iso }, st[iso] ? statsDay(st, iso) : statsBlank()));
   }
@@ -20880,7 +20901,7 @@ function statsStreak() {
   let n = 0;
   const d = new Date();
   for (let i = 0; i < STATS_DAYS_KEPT; i++) {
-    const iso = isoOf(new Date(d.getTime() - i * 86400000));
+    const iso = isoOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() - i));
     const day = st[iso];
     if (day && day.cards) n++;
     else if (i > 0) break;
@@ -22262,6 +22283,8 @@ function campApplyFallback() {
    and if it fails he never learns that it was attempted. A background spend he did
    not ask for has no business surfacing an error. */
 let campPlanning = false, campPlanGaveUp = false;
+let campPlanFails = 0, campPlanRetryAt = 0;
+const CAMP_PLAN_MAX_FAILS = 3, CAMP_PLAN_RETRY_MS = 10 * 60 * 1000;
 /* Someone arriving with a real library can be strong on everything the first few
    chapters teach. One chapter per visit to the map would make him walk that off over
    a week of openings; three lets him fast-forward through what he already knows in
@@ -22270,7 +22293,7 @@ let campPlanning = false, campPlanGaveUp = false;
    weeds." */
 const CAMP_WARM_MAX_PER_RUN = 3;
 async function campWarmNext() {
-  if (campPlanning || campPlanGaveUp) return;
+  if (campPlanning || campPlanGaveUp || Date.now() < campPlanRetryAt) return;
   campPlanning = true;
   try {
     for (let round = 0; round < CAMP_WARM_MAX_PER_RUN; round++) {
@@ -22311,9 +22334,16 @@ async function campWarmNext() {
   } catch (e) {
     /* One failure is a bad afternoon; three is a broken key or an exhausted quota, and
        retrying on every render would burn the rest of the day's allowance discovering
-       that again. */
-    campPlanGaveUp = true;
-    try { campApplyFallback(); } catch (e2) {}
+       that again. COUNTED NOW, as this comment always said (2026-10-01): a single throw
+       — opening the map offline — used to give up at once and write the canned chapter
+       for good. Under three, it waits a while and tries again; at three, the fallback. */
+    campPlanFails++;
+    if (campPlanFails >= CAMP_PLAN_MAX_FAILS) {
+      campPlanGaveUp = true;
+      try { campApplyFallback(); } catch (e2) {}
+    } else {
+      campPlanRetryAt = Date.now() + CAMP_PLAN_RETRY_MS;
+    }
   } finally { campPlanning = false; }
 }
 
@@ -22533,12 +22563,19 @@ function reviewWeeklyDue() {
   if (r.blocks.length < REVIEW_MIN_BLOCKS) return false;
   return !r.obs || (Date.now() - (r.obs.ts || 0)) > REVIEW_WEEK_MS;
 }
+let reviewWeeklyTriedAt = 0;
+const REVIEW_WEEKLY_RETRY_MS = 6 * 60 * 60 * 1000;
 async function reviewWeekly() {
   const r = reviewAll();
   if (!geminiKeys().length) return null;
   const notes = r.blocks.filter(b => b.note)
     .map(b => b.d + ": " + b.note).join("\n");
   if (!notes) return null;
+  /* A failure records nothing, so reviewWeeklyDue stays true and every render of the map
+     used to try again — a strong-pool request each time, from the 20 a day the coach
+     also draws on (2026-10-01). One attempt per few hours, success or not. */
+  if (Date.now() - reviewWeeklyTriedAt < REVIEW_WEEKLY_RETRY_MS) return null;
+  reviewWeeklyTriedAt = Date.now();
   const srs = srsAll(), lib = libAll();
   const weak = Object.keys(lib)
     .filter(k => srsGradable(k, lib) && srsStrengthOf(srs, k, "prod") === "weak")
@@ -23075,8 +23112,24 @@ function campChapterWalked(ch, c, srs) {
   return (ch.nodes || []).filter(n => campNodeDone(n.id, c, srs) ||
                                       campNodeWalked(n.id, c, srs)).length;
 }
+/* ONCE PASSED, PASSED (2026-10-01). Completion was recomputed from today's word strengths
+   every time, so one word in a finished chapter slipping to weak made that chapter live
+   again — and every node of the chapter he had moved on to read "Finish this chapter
+   first" and refused to start. `passed` is a fact, not a cache: it only ever goes from
+   false to true (campLatchPassed), and words left behind keep their own drill as always. */
 function campChapterComplete(ch, c, srs) {
+  if (ch && ch.passed) return true;
   return campChapterWalked(ch, c, srs) >= campThreshold((ch.nodes || []).length);
+}
+/* Latches every chapter that is complete right now; returns how many were newly latched,
+   so a caller that did not otherwise mean to save knows it must. */
+function campLatchPassed(c, srs) {
+  let n = 0;
+  ((c && c.chapters) || []).forEach(ch => {
+    if (!ch || ch.passed || !(ch.nodes || []).length) return;
+    if (campChapterWalked(ch, c, srs) >= campThreshold(ch.nodes.length)) { ch.passed = true; n++; }
+  });
+  return n;
 }
 /* The chapter he is working in: the first that is not yet complete. */
 function campLiveChapter(c, srs) {
@@ -23095,6 +23148,7 @@ function campLiveChapter(c, srs) {
    the one before it was finished. Stored state is only ever a cache of this. */
 function campRestate(c, srs) {
   const cc = c || campAll(), ss = srs || srsAll();
+  campLatchPassed(cc, ss);
   cc.chapters.forEach(ch => { ch.state = campChapterStanding(ch, cc, ss); });
   return cc;
 }
@@ -24391,7 +24445,11 @@ let campWordsSeen = null;
 function campRender() {
   const tree = document.getElementById("pathTree");
   if (!tree) return;
-  const c = campRestate(campEnsure());
+  const c0 = campEnsure();
+  /* Rendering is where a chapter is usually first seen complete, and the latch must be
+     written down or it is only true until the next render. */
+  if (campLatchPassed(c0, srsAll())) campSave(c0);
+  const c = campRestate(c0);
   const srs = srsAll();
   const L = campLayout(c);
 
@@ -26496,9 +26554,13 @@ function sceneWire(scene, id) {
   });
 }
 
+let campPractiseWaiting = "";   // the node whose Practise is waiting on a warm-up
 async function campStartPractise(id) {
   const n = campNode(id);
   if (!n) return;
+  /* A second tap while the first is still waiting would build and start the session
+     twice — the first one's cards go into cooldown unseen (2026-10-01). */
+  if (campPractiseWaiting === id) return;
   /* Wait ONLY when there is genuinely nothing written for the stuck words. With
      something on the shelf the session starts now and the warm-up keeps running
      behind it, landing in time for the next one. */
@@ -26506,8 +26568,13 @@ async function campStartPractise(id) {
     const weak = campWeakWords(n, srsAll());
     campSay(weak.length ? "Writing you practice for " + weak.join(", ") + "…"
                         : "Getting the session ready…");
+    campPractiseWaiting = id;
     try { await campWarm(n); }
     catch (e) { campSay("Couldn't reach the AI — running on what's already banked."); }
+    finally { campPractiseWaiting = ""; }
+    /* He gave up waiting and closed the sheet, or opened another place: a session for
+       this one must not pull him in when the warm-up finally lands. */
+    if (campSheetId !== id) return;
   } else {
     campWarm(n, true);
   }
@@ -27920,7 +27987,11 @@ async function sentenceWriteOne(spec, briefs) {
     const b = briefs[Number(it && it.i)] || null;
     return Object.assign({}, it, {
       lvl: b ? b.lvl : LEVEL_DEFAULT,
-      for: (it && it.for) ? String(it.for) : (b ? b.for : "")
+      /* An EMPTY "for" is the writer declining the word, exactly as the prompt asks it to
+         when the word will not go in naturally — so it is kept. Only a missing field
+         falls back to the brief (2026-10-01: "" is falsy, so every declined brief had
+         its word put back and was then rejected for not containing it). */
+      for: (it && typeof it.for === "string") ? it.for : (b ? b.for : "")
     });
   });
 }
@@ -28618,7 +28689,11 @@ async function learnReviewItems(data, opts) {
   const items = (data && Array.isArray(data.items)) ? data.items : [];
   const required = !!(opts && opts.required);
   const give = () => required ? Object.assign({}, data, { items: [] }) : data;
-  if (items.length < 2) return data;           // nothing worth a round trip
+  if (!items.length) return give();
+  /* Nothing worth a round trip — unless the review is REQUIRED, which is exactly when a
+     batch whittled down to one survivor by the gate is most in need of it (2026-10-01:
+     a lone flash-lite sentence used to bank with no review at all). */
+  if (items.length < 2 && !required) return data;
   if (!geminiKeys().length) return give();
   const listing = items.map((it, i) =>
     i + ". [" + (it.type || "sentence") + "] " + (it.he || "") +
@@ -29255,18 +29330,26 @@ function contentRefresh(bank, items) {
    below the rate new batches are ever written and far above the rate he switches tabs. */
 const CONTENT_RECHECK_MS = 10 * 60 * 1000;
 let contentLastCheck = 0;
+/* ONE CHECK AT A TIME (2026-10-01). A forced check from Settings during the startup
+   ingest started a second contentIngest, and both reviewed the same new items — up to
+   twice the strong-pool spend, which is the burst CLAUDE.md says to share a promise
+   against. A press while one is running gets that one's answer. */
+let contentCheckInFlight = null;
 function contentCheck(force) {
+  if (contentCheckInFlight) return contentCheckInFlight;
   if (!force && Date.now() - contentLastCheck < CONTENT_RECHECK_MS) return Promise.resolve(0);
   contentLastCheck = Date.now();
   /* Same moment, same throttle, and never waited on — see flagStatusIngest. */
   try { flagStatusIngest().catch(() => {}); } catch (e) {}
-  return Promise.resolve(contentIngest())
+  contentCheckInFlight = Promise.resolve(contentIngest())
     .catch(e => { contentNote("check-threw", { err: (e && e.message) || String(e) }); return 0; })
     .then(n => {
       /* Never waited on, same as flagStatusIngest: a review is background spend. */
       try { Promise.resolve(contentReviewTick()).catch(() => {}); } catch (e) {}
       return n;
-    });
+    })
+    .finally(() => { contentCheckInFlight = null; });
+  return contentCheckInFlight;
 }
 
 /* ---- reviewing the shelf a batch at a time ------------------------------------
@@ -30379,7 +30462,7 @@ function learnRenderStart() {
   /* Checked at the same moment the "running short" line is drawn, so the claim and the
      evidence for it can never be more than one throttle window apart. Fire-and-forget:
      contentIngest repaints the line itself if a batch actually lands. */
-  contentCheck();
+  if (!SELFTEST_RUN) contentCheck();
 
   if (n < 10) {
     document.getElementById("lStartTitle").textContent = "Not enough words yet";
@@ -32039,6 +32122,9 @@ async function learnAmendReport(btn) {
       }
     } catch (e) {}
   }
+  /* He may have graded and moved on while the coach thought. The answer is on the flag
+     either way; it must not land on the NEXT card's control, replacing its question. */
+  if (learnSession !== s || s.cards[s.i] !== c || learnSpoken !== sp) return;
   const card = document.getElementById("lCard");
   const wrap = card && card.querySelector(".lamend");
   if (!wrap) return;
@@ -34204,21 +34290,26 @@ migrationHintCheck();
 syncPaint();
 /* On open, but never in the way: deferred so first paint is never waiting on a
    network call, and quiet so a plane-mode launch says nothing. */
-setTimeout(() => syncRun("open", { quiet: true }), 1200);
+/* NOT DURING THE SELF TESTS (2026-10-01). These three ran alongside the suite: a real
+   GitHub sync whose steps advanced whenever a test awaited a timer — able to land inside
+   a test's stubbed fetch, write a fake sha into the real sync meta, or push a test's
+   synthetic grade — and a content check able to spend a real review request. legacyClean
+   was already gated; these were not. */
+if (!SELFTEST_RUN) setTimeout(() => syncRun("open", { quiet: true }), 1200);
 /* After the sync, not before: the sync merges the bank, and ingesting into a bank that is
    about to be replaced by a merge would do the near-duplicate work twice and could bank
    something the other device already had. Late enough to be off the opening critical
    path either way — nothing on screen is waiting for it. */
-setTimeout(() => { contentCheck(true); }, 2600);
+if (!SELFTEST_RUN) setTimeout(() => { contentCheck(true); }, 2600);
 /* After the content check for the same reason it waits for the sync: the bank should be
    the merged one before anything is retired from it. */
-setTimeout(() => { if (location.search.indexOf("selftest") === -1) legacyClean(); }, 5200);
+if (!SELFTEST_RUN) setTimeout(() => { legacyClean(); }, 5200);
 /* Coming back to a resident app is the moment that matters — see contentCheck. Guarded
    because an old WebView may not have the event, and a missing re-check must degrade to
    the load-time one rather than throwing on boot. */
 try {
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) contentCheck();
+    if (!document.hidden && !SELFTEST_RUN) contentCheck();
   });
 } catch (e) {}
 syncPadOffset();
@@ -34234,6 +34325,7 @@ syncPadOffset();
 (function formsAutoStart() {
   try {
     if (lsGet(FORMS_AUTO_KEY) !== "1") return;
+    if (SELFTEST_RUN) return;               // spends real quota and writes the real library
     if (!geminiKeys().length) return;
     const q = formsQRoll(formsQAll(), todayISO());
     if (formsBankless(libAll(), q, todayISO()).length < FORMS_AUTO_THRESHOLD) return;
@@ -34293,18 +34385,54 @@ function runSelfTests() {
 
      Sync tests are unaffected in order or behaviour — they still run in declaration
      order and settle immediately; they simply do so one microtask apart. */
+  /* THE SUITE RUNS IN HIS REAL PROFILE, and a test that forgets to restore a store leaves
+     synthetic data there for good — several of which (the calibration log, the retired
+     list, the reviewed list) sync and union-merge, so even putting the device right
+     afterwards would not take them back out of the file. Every hvr_ key is snapshotted
+     here and put back after the last test, and every key that changed is REPORTED as a
+     failure, so a leak is both harmless and impossible to miss (2026-10-01). */
+  const before = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.indexOf("hvr_") === 0) before[k] = localStorage.getItem(k);
+  }
+  /* A test that never settles used to hang the whole run with the title never updating. */
+  const SELFTEST_TIMEOUT_MS = 20000;
   let chain = Promise.resolve();
   SELFTESTS.forEach(t => {
     chain = chain.then(() => {
       let r;
       try { r = t.fn(); }
       catch (e) { fail(t.name, e); return; }
-      if (r && typeof r.then === "function")
-        return r.then(() => pass(t.name), e => fail(t.name, e));
+      if (r && typeof r.then === "function") {
+        let timer = null;
+        const limit = new Promise((_, rej) => {
+          timer = setTimeout(() => rej(new Error("did not settle within " + SELFTEST_TIMEOUT_MS / 1000 + "s")),
+                             SELFTEST_TIMEOUT_MS);
+        });
+        return Promise.race([r, limit]).then(() => pass(t.name), e => fail(t.name, e))
+          .finally(() => clearTimeout(timer));
+      }
       pass(t.name);
     });
   });
   const finish = () => {
+    const leaked = [];
+    const now = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf("hvr_") === 0) now[k] = localStorage.getItem(k);
+    }
+    Object.keys(now).forEach(k => {
+      if (!(k in before)) { leaked.push(k + " (created)"); try { localStorage.removeItem(k); } catch (e) {} }
+      else if (now[k] !== before[k]) { leaked.push(k); try { localStorage.setItem(k, before[k]); } catch (e) {} }
+    });
+    Object.keys(before).forEach(k => {
+      if (!(k in now)) { leaked.push(k + " (deleted)"); try { localStorage.setItem(k, before[k]); } catch (e) {} }
+    });
+    if (leaked.length) fail("the suite left his storage as it found it",
+                            new Error("changed and now restored: " + leaked.join(", ")));
+    else pass("the suite left his storage as it found it");
     window.__selftest = out;
     console.log("SELFTEST " + out.pass + " passed, " + out.fail + " failed");
     document.title = "selftest " + out.pass + "/" + (out.pass + out.fail);
@@ -34697,6 +34825,8 @@ T("campBuild: wider material is bounded, and a sentence with no node word is ref
   const r = { lib: libAll, srs: srsAll, camp: campAll, bank: bankAll,
               rec: recencyAll, lvlA: levelAll, lvlS: levelSave,
               voice: hasHeVoice, notes: noteTargets };
+  /* campBuild marks what it served as shown — the real recency store and session counter. */
+  const savedRec = lsGet(RECENCY_KEY), savedSeq = lsGet(SESSION_SEQ_KEY);
   try {
     const strong = srsBandRecord("strong");
     /* The node's own five, all strong, so nothing is stuck and slice 2 stays empty —
@@ -34748,6 +34878,8 @@ T("campBuild: wider material is bounded, and a sentence with no node word is ref
     libAll = r.lib; srsAll = r.srs; campAll = r.camp; bankAll = r.bank;
     recencyAll = r.rec; levelAll = r.lvlA; levelSave = r.lvlS;
     hasHeVoice = r.voice; noteTargets = r.notes;
+    const putBack = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    putBack(RECENCY_KEY, savedRec); putBack(SESSION_SEQ_KEY, savedSeq);
   }
 });
 T("bank sync: content that came from a public file does not ride the private repo", () => {
@@ -35974,15 +36106,23 @@ T("srsAnswer: the bonus is read off the same tag the calibration split reads", (
      population the bonus was applied to. Same field, by construction. */
   const mk = () => ({ "מילה": { prod: { n: 3, stab: 10, diff: 4, miss: 0, streak: 3,
                                         last: "2026-08-20", due: "2026-08-30" } } });
-  const plain = mk(), coach = mk();
-  srsAnswer(plain, "מילה", 2, "prod", { kd: "sentence" }, "2026-09-02");
-  srsAnswer(coach, "מילה", 2, "prod", { kd: "compose" }, "2026-09-02");
-  assertTrue(coach["מילה"].prod.stab > plain["מילה"].prod.stab,
-             "the coach answer stretches the schedule further than the sentence card");
-  const noTag = mk();
-  srsAnswer(noTag, "מילה", 2, "prod", null, "2026-09-02");
-  assertEq(noTag["מילה"].prod.stab, plain["מילה"].prod.stab,
-           "and an answer with no tag is treated as prompted, never as a coach answer");
+  /* srsAnswer logs every answer to his real calibration log, which syncs and unions —
+     three fake "Got it"s a run, permanently, until this was restored (2026-10-01). */
+  const savedLog = lsGet(SRSLOG_KEY);
+  try {
+    const plain = mk(), coach = mk();
+    srsAnswer(plain, "מילה", 2, "prod", { kd: "sentence" }, "2026-09-02");
+    srsAnswer(coach, "מילה", 2, "prod", { kd: "compose" }, "2026-09-02");
+    assertTrue(coach["מילה"].prod.stab > plain["מילה"].prod.stab,
+               "the coach answer stretches the schedule further than the sentence card");
+    const noTag = mk();
+    srsAnswer(noTag, "מילה", 2, "prod", null, "2026-09-02");
+    assertEq(noTag["מילה"].prod.stab, plain["מילה"].prod.stab,
+             "and an answer with no tag is treated as prompted, never as a coach answer");
+  } finally {
+    const putBack = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    putBack(SRSLOG_KEY, savedLog);
+  }
 });
 T("srsCalibration: the receipt can be read over coach answers alone", () => {
   const log = [{ g: 2, r: 0.9, kd: "compose" }, { g: 0, r: 0.9, kd: "compose" },
@@ -36232,6 +36372,23 @@ T("learnSpeedHeard: lands the phrase, and only the whole phrase", () => {
 });
 /* Android writes spoken numbers as digits and it cannot be turned off (George,
    2026-09-23). Every one of these was a correct answer marked wrong before. */
+T("heNumberForms: each gender's own word, and never a construct form inside a compound", () => {
+  assertEq(heNumberForms(11), ["אחת עשרה", "אחד עשר"], "eleven came out with both genders crossed");
+  assertEq(heNumberForms(18), ["שמונה עשרה", "שמונה עשר"], "and masculine eighteen as שמונת עשר");
+  assertEq(heNumberForms(12), ["שתים עשרה", "שתיים עשרה", "שנים עשר", "שניים עשר"]);
+  assertEq(heNumberForms(13), ["שלוש עשרה", "שלושה עשר"]);
+  assertEq(heNumberForms(28), ["עשרים ושמונה"], "שמונת is not a units word");
+  assertEq(heNumberForms(21), ["עשרים ואחת", "עשרים ואחד"]);
+  assertEq(heNumberForms(22), ["עשרים ושתיים", "עשרים ושניים"]);
+  assertEq(heDigitsSpoken("בשעה 11", "בשעה אחת עשרה"), "בשעה אחת עשרה", "a correct eleven is a match");
+});
+T("srsSetBand: a band he set by hand is his, not an import waiting to be proved", () => {
+  const box = {};
+  srsSetBand(box, "x", "prod", "strong");
+  assertTrue(!srsUnproven(box.x.prod), "the next answer must build on it, not reset it");
+  assertEq(srsStrength(box.x.prod), "strong");
+  assertTrue(srsUnproven(srsBandRecord("strong")), "while the importers' seed still reads as unproven");
+});
 T("heDigitsSpoken: a digit becomes the number word the card wanted", () => {
   assertEq(heDigitsSpoken("\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d14", "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2"), "\u05d0\u05e0\u05d9 \u05d1\u05d0 \u05d1\u05d0\u05e8\u05d1\u05e2", "prefix kept");
   assertEq(heDigitsSpoken("\u05d9\u05e9 \u05dc\u05d4\u05dd 3 \u05d9\u05dc\u05d3\u05d9\u05dd", "\u05d9\u05e9 \u05dc\u05d4\u05dd \u05e9\u05dc\u05d5\u05e9\u05d4 \u05d9\u05dc\u05d3\u05d9\u05dd"), "\u05d9\u05e9 \u05dc\u05d4\u05dd \u05e9\u05dc\u05d5\u05e9\u05d4 \u05d9\u05dc\u05d3\u05d9\u05dd",
@@ -39277,7 +39434,8 @@ T("geminiSend: a refused key hands over to the other key, and an empty reply to 
              "lite answered", "an empty reply walks on to the next model");
 
     let calls = 0;
-    geminiFetchWithRetry = () => { calls++; return Promise.reject(new Error("the request took longer than 30s")); };
+    geminiFetchWithRetry = () => { calls++;
+      return new Promise((_, rej) => setTimeout(() => rej(new Error("the request took longer than 30s")), 15)); };
     const t0 = Date.now();
     try { await geminiSend([{ text: "x" }], ["gemini-flash-lite-latest", "gemini-flash-latest"], { totalMs: 1 }); } catch (e) {}
     assertTrue(calls <= 1 && Date.now() - t0 < 1000, "a deadline stops the walk: " + calls + " calls");
@@ -41076,7 +41234,7 @@ T("contentIngest: reviews what is new, never re-buys what it holds, never loses 
      spending per LOAD instead of per NEW ITEM, losing content when the review fails, and
      letting the spend scale with the file. */
   const realFetch = window.fetch, realLast = lsGet(CONTENT_LAST_KEY), realV = lsGet(CONTENT_V_KEY);
-  const realBank = lsGet(BANK_KEY);
+  const realBank = lsGet(BANK_KEY), realRet = lsGet(RETIRED_KEY), realOk = lsGet(CONTENT_OK_KEY);
   const realReview = learnReviewItems, realIngest = learnIngest;
   const file = items => () => Promise.resolve({ ok: true, status: 200,
     json: async () => ({ version: 99, items: items }) });
@@ -41152,6 +41310,7 @@ T("contentIngest: reviews what is new, never re-buys what it holds, never loses 
     learnReviewItems = realReview; learnIngest = realIngest;
     const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
     put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
+    put(RETIRED_KEY, realRet); put(CONTENT_OK_KEY, realOk);   // the reviewer path writes both, and both sync
     rebuildTrIndex();
   }
 });
@@ -41161,7 +41320,7 @@ T("contentIngest: a version can withdraw a sentence it shipped wrong", async () 
      Eight items said לבית where a person says הביתה and nine had the head hurting in
      English word order, all of them already in his bank. */
   const realFetch = window.fetch, realLast = lsGet(CONTENT_LAST_KEY);
-  const realV = lsGet(CONTENT_V_KEY), realBank = lsGet(BANK_KEY);
+  const realV = lsGet(CONTENT_V_KEY), realBank = lsGet(BANK_KEY), realGen = lsGet(GENSTAT_KEY);
   const realReview = learnReviewItems;
   try {
     learnReviewItems = async d => d;                 // not what this test is about
@@ -41203,31 +41362,40 @@ T("contentIngest: a version can withdraw a sentence it shipped wrong", async () 
     window.fetch = realFetch; learnReviewItems = realReview;
     const put = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
     put(CONTENT_LAST_KEY, realLast); put(CONTENT_V_KEY, realV); put(BANK_KEY, realBank);
+    put(GENSTAT_KEY, realGen);
     rebuildTrIndex();
   }
 });
-T("contentCheck: throttled, but a resident app does re-check", () => {
+T("contentCheck: throttled, but a resident app does re-check", async () => {
   /* THE BUG GEORGE FOUND. The ingest ran once, 2.6s after load, and his phone runs the app
      as a PWA that stays resident for days — so it checked before any content existed and
      never looked again, while the "running short" line repainted every time he returned. */
-  const real = contentIngest, saveLast = contentLastCheck;
+  const real = contentIngest, realTick = contentReviewTick, realFlags = flagStatusIngest, saveLast = contentLastCheck;
   let calls = 0;
   try {
     contentIngest = () => { calls++; return Promise.resolve(0); };
+    contentReviewTick = () => Promise.resolve();
+    flagStatusIngest = () => Promise.resolve();
     contentLastCheck = 0;
-    contentCheck(true);
+    contentCheckInFlight = null;
+    const p = contentCheck(true);
     assertEq(calls, 1, "a forced check always runs");
-    contentCheck();
-    assertEq(calls, 1, "and an immediate second one is throttled away");
+    assertTrue(contentCheck(true) === p, "and one asked for while it runs shares it rather than doubling it");
+    await p;
+    await contentCheck();
+    assertEq(calls, 1, "an immediate second one is throttled away");
     contentLastCheck = Date.now() - CONTENT_RECHECK_MS - 1;
-    contentCheck();
+    await contentCheck();
     assertEq(calls, 2, "but coming back later checks again — this is the whole fix");
-  } finally { contentIngest = real; contentLastCheck = saveLast; }
+  } finally {
+    contentIngest = real; contentReviewTick = realTick; flagStatusIngest = realFlags; contentLastCheck = saveLast;
+    contentCheckInFlight = null;
+  }
 });
 T("learnIngest: provenance survives into the bank", () => {
   /* Without this there is no way in a month to ask whether pre-baked content actually
      outperforms the commissioned kind — the two would be indistinguishable. */
-  const realBank = lsGet(BANK_KEY);
+  const realBank = lsGet(BANK_KEY), realGen = lsGet(GENSTAT_KEY);   // learnIngest counts tokens
   try {
     const lib = libAll();
     const ks = Object.keys(lib).filter(k => srsGradable(k, lib)).slice(0, 2);
@@ -41240,6 +41408,7 @@ T("learnIngest: provenance survives into the bank", () => {
     assertEq(bankAll()[0].src, "", "the commission path stays unmarked");
   } finally {
     if (realBank == null) localStorage.removeItem(BANK_KEY); else lsSet(BANK_KEY, realBank);
+    if (realGen == null) localStorage.removeItem(GENSTAT_KEY); else lsSet(GENSTAT_KEY, realGen);
     rebuildTrIndex();
   }
 });
@@ -42479,6 +42648,20 @@ T("campChapterComplete: words alone open the next chapter", () => {
     assertEq(campChapterGold(camp.chapters[0]), 0, "none of them is gold");
     assertTrue(campChapterComplete(camp.chapters[0]),
                "but three walked is the threshold, and the chapter opens anyway");
+  });
+});
+T("campChapterComplete: a chapter once passed stays passed when a word slips", () => {
+  const camp = campOneChapter();
+  const nodes = camp.chapters[0].nodes;
+  const srs = {};
+  nodes.slice(0, 3).forEach(n => Object.assign(srs, campReadySrs(n)));
+  withCamp(camp, srs, {}, () => {
+    assertEq(campLatchPassed(camp, srs), 1, "latched the first time it is complete");
+    assertEq(campLatchPassed(camp, srs), 0, "and only once");
+    assertTrue(campChapterComplete(camp.chapters[0], camp, {}),
+               "with every word forgotten it is still passed — the next chapter stays open");
+    assertTrue(mergeChapter({ n: 1, nodes: [] }, { n: 1, nodes: [], passed: true }).passed,
+               "and a device that has not seen it pass cannot un-pass it");
   });
 });
 T("campChapterComplete: opens on the threshold, not on every node", () => {
@@ -44002,8 +44185,9 @@ async function withSyncRaceTest(run) {
   const real = { configured: syncConfigured, busy: sessionBusy, pull: syncPull,
     push: syncPush, keys: syncKeys, get: lsGet, set: lsSet, device: syncDeviceId,
     meta: syncMeta, saveMeta: syncMetaSave, status: syncSetStatus, paint: syncPaint,
-    after: syncAfterApply, flag: flagPaint, flight: syncInFlight, last: syncLastRun };
-  const st = { local: { hvr_testgrade: "before" }, busy: false, remote: null,
+    after: syncAfterApply, flag: flagPaint, flight: syncInFlight, last: syncLastRun,
+    snapshot: syncSnapshot };
+  const st = { local: { hvr_testgrade: "before" }, busy: false, remote: null, snaps: [],
     uploads: [], meta: { last: "2026-01-01T00:00:00.000Z" }, applied: 0,
     status: "", bad: false, rejectWrite: "", pulls: 0 };
   try {
@@ -44020,6 +44204,10 @@ async function withSyncRaceTest(run) {
     syncAfterApply = () => { st.applied++; };
     flagPaint = () => {};
     syncInFlight = false; syncLastRun = 0;
+    /* Recorded, so a receipt can be checked against the snapshot it names rather than
+       against the merge's own fresh `updated` — the two are separate clock readings, and
+       comparing them flaked whenever they fell a millisecond apart. */
+    syncSnapshot = () => { const v = real.snapshot(); st.snaps.push(v); return v; };
     syncPull = async () => { st.pulls++; return { sha: "old", blob: st.remote }; };
     syncPush = async blob => {
       const copy = JSON.parse(JSON.stringify(blob));
@@ -44036,6 +44224,7 @@ async function withSyncRaceTest(run) {
     syncSetStatus = real.status; syncPaint = real.paint;
     syncAfterApply = real.after; flagPaint = real.flag;
     syncInFlight = real.flight; syncLastRun = real.last;
+    syncSnapshot = real.snapshot;
   }
 }
 T("sync race: a grade saved during upload is uploaded again and survives locally", () => withSyncRaceTest(async st => {
@@ -44047,7 +44236,8 @@ T("sync race: a grade saved during upload is uploaded again and survives locally
   assertEq(st.local.hvr_testgrade, "new grade");
   assertEq(st.uploads.length, 2);
   assertEq(st.uploads[1].keys.hvr_testgrade, "new grade");
-  assertEq(st.meta.last, st.uploads[1].updated, "receipt identifies the snapshot actually uploaded");
+  assertTrue(st.snaps.some(v => v.updated === st.meta.last && v.keys.hvr_testgrade === "new grade"),
+             "receipt identifies the snapshot actually uploaded — the one holding the new grade");
 }));
 T("sync race: a key added during upload is included in the retry", () => withSyncRaceTest(async st => {
   st.onPush = () => {

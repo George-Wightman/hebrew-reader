@@ -4932,16 +4932,21 @@ function mergeNodeList(xs, ys) {
      but a scene is written on whichever device opened the place first, so the copy that
      wins may be the one without it. Taken from the other side only where the winner has
      none, so both devices still converge on the same file. */
+  /* A later correction of the same scene (sceneIsCorrection) beats the winner's copy too,
+     or a device that has not fetched the fix would sync the broken line straight back. */
   const sceneOf = {};
+  const keep = (k, sc) => { if (!sceneOf[k] || !sceneIsCorrection(sc, sceneOf[k])) sceneOf[k] = sc; };
   other.concat(base).forEach(n => {
-    if (n.scene) sceneOf[n.id] = n.scene;
+    if (n.scene) keep(n.id, n.scene);
     const nm = String(n.name || "").trim().toLowerCase();
-    if (n.scene && nm) sceneOf["name:" + nm] = n.scene;
+    if (n.scene && nm) keep("name:" + nm, n.scene);
   });
   return out.map(n => {
-    if (n.scene) return n;
     const nm = String(n.name || "").trim().toLowerCase();
-    const sc = sceneOf[n.id] || (nm && sceneOf["name:" + nm]);
+    /* Ids are per device, so the correction usually arrives under the NAME key. */
+    const byId = sceneOf[n.id], byName = nm ? sceneOf["name:" + nm] : null;
+    const sc = (byId && byName && sceneIsCorrection(byId, byName)) ? byName : (byId || byName);
+    if (n.scene) return sceneIsCorrection(n.scene, sc) ? Object.assign({}, n, { scene: sc }) : n;
     return sc ? Object.assign({}, n, { scene: sc }) : n;
   });
 }
@@ -15368,11 +15373,11 @@ function flagContext(report) {
   try {
     const sp = learnSpoken;
     if (sp) c.spoken = { text: sp.text || "", conf: sp.conf || 0, unsure: !!sp.unsure,
-                         expected: (sp.expected || []).join(" "),
+                         expected: heShownAll(sp.expected),
                          status: (sp.status || []).join(","),
                          alts: (sp.alts || []).slice(0, 3),
                          soundPairs: (sp.soundPairs || [])
-                           .map(p => p.expected + " / " + p.heard) };
+                           .map(p => heShown(p.expected) + " / " + heShown(p.heard)) };
   } catch (e) {}
   try {
     const id = (learnSession && learnSession.path && learnSession.path.id) || campSheetId;
@@ -20986,6 +20991,13 @@ function heFinalFix(he) {
     (m, a, b) => a + HE_NONFINAL_TO_FINAL[b]);
 }
 function heFinalFormsBad(he) { return heFinalFix(he) !== String(he || ""); }
+/* WHAT A MODEL OR A PERSON IS SHOWN, as opposed to what is compared. The mic's `expected`
+   words come out of normHe, which folds every final letter into its ordinary form so that
+   matching is not thrown by them — right for comparing, wrong for anything that prints
+   them. Every grader prompt was being handed בקיצ for בקיץ and asked to judge his Hebrew
+   against Hebrew that is not spelled correctly (seen on his flags of 27 Sep). */
+function heShown(w) { return heFinalFix(w); }
+function heShownAll(words) { return heFinalFix((words || []).join(" ")); }
 
 /* ---- transliteration in the house scheme ---------------------------------------
    He reads the transliteration — it is the line he produces from — and CLAUDE.md says a
@@ -21046,7 +21058,8 @@ const LIB_WORD_FIXES = {
   "עייף":   { tr: ["ayeif", "ayef"] },
   "עבדתי":  { tr: ["avadeti", "avadti"] },
   "מצוין":  { tr: ["matsuyan", "metzuyan"] },
-  "מצוינת": { tr: ["metsuyanet", "metzuyenet"] },
+  "מצוינת": { tr: ["metsuyanet", "metzuyenet"], en: ["excellent", "excellent (f)"] },
+  "מצוין":  { en: ["excellent", "excellent (m)"] },
   "מציע":   { tr: ["matsia", "matzi'a"], en: ["suggest", "suggest(s) (m)"] },
   "צמא":    { tr: ["tsame", "tzame"] },
   "מזיע":   { tr: ["mazia", "mazi'a"] },
@@ -21093,7 +21106,30 @@ const LIB_WORD_FIXES = {
   "מסתכל":  { en: ["looking", "look(s) (m)"] },
   "עומד":   { en: ["standing", "stand(s) (m)"] },
   "צריך":   { en: ["should", "need(s) / should (m)"] },
-  "כמה":    { en: ["a few", "how many / a few"] }
+  "כמה":    { en: ["a few", "how many / a few"] },
+  /* TWO RIGHT ANSWERS TO ONE CARD (2026-10-01). Each of these shared its English with
+     another word in his library, so a word card asking for "dog" was equally answered by
+     כלב and כלבה. The (m)/(f) marks follow the style the number pairs already used. */
+  "כלבה":   { en: ["dog", "dog (f)"] },
+  "חתולה":  { en: ["cat", "cat (f)"] },
+  "סוסה":   { en: ["horse", "horse (f), mare"] },
+  "דובה":   { en: ["bear", "bear (f)"] },
+  "ברווזה": { en: ["duck", "duck (f)"] },
+  "פילה":   { en: ["elephant", "elephant (f)"] },
+  "אתון":   { en: ["donkey", "donkey (f)"] },
+  "צבה":    { en: ["turtle, tortoise", "tortoise (f)"] },
+  "כולן":   { en: ["everyone", "everyone (f, all women)"] },
+  "שישה":   { en: ["six", "six (m)"] },
+  "שבעה":   { en: ["seven", "seven (m)"] },
+  "תשעה":   { en: ["nine", "nine (m)"] },
+  "עשרה":   { en: ["ten", "ten (m)"] },
+  "פרי":    { en: ["fruit", "fruit (one piece)"] },
+  "פירות":  { en: ["fruit", "fruit (plural)"] },
+  "גבר":    { en: ["man", "man (male)"] },
+  "נמוך":   { en: ["short", "short (not tall)"] },
+  "קצר":    { en: ["short", "short (not long)"] },
+  "כתום":   { en: ["orange", "orange (colour)"] },
+  "תפוז":   { en: ["orange", "orange (fruit)"] }
 };
 /* Pure over the store it is handed; returns how many entries changed. */
 function libWordsTidy(lib) {
@@ -27852,6 +27888,69 @@ function legacyChunkFix(store, srs) {
   moves.forEach(([from, to]) => { if (s[from] && !s[to]) s[to] = s[from]; delete s[from]; });
   return { store: out, srs: s, moved: moves.length };
 }
+/* ---- the second read of the non-Claude sentences (2026-10-01) --------------------
+   Every non-Claude sentence still live in his bank was read again after his flags of 27
+   Sep. One more is wrong Hebrew (יום אחרון for "the last day" needs the article — היום
+   האחרון) and is retired. The rest are right Hebrew carrying a broken line beside it: a
+   transliteration that teaches the wrong sound (lakhol for יכול, halyada for הילדה), or
+   an English cue that leads somewhere else ("boyfriend" for חבר, two translations in one
+   cue). Those are corrected in place, matched on the exact old value so nothing he — or
+   a later fix — changed is touched.
+
+   Not behind a done-once key, unlike legacyClean: these items sync in full, and a device
+   still holding the old text can merge it back. Idempotent, so it runs every load and
+   the two converge. */
+const LEGACY_RETIRE_2 = [
+  { he: "היום הוא יום אחרון" }
+];
+const BANK_TR_WORD_FIXES = { ayeif: "ayef", zeh: "ze", mamesh: "mamash", eyze: "eize", hey: "hai" };
+const BANK_TEXT_FIXES = [
+  { he: "אני לא יכול לשתות תה כי זה חם מאוד", f: "tr",
+    from: "ani lo lakhol lishtot te ki ze kham me'od", to: "ani lo yakhol lishtot te ki ze kham me'od" },
+  { he: "אני חושב שהארנב קטן, אבל אבא אוהב אותו", f: "tr",
+    from: "ani khoshev sheha'ar'nav katan, aval aba ohev oto", to: "ani khoshev sheha'arnav katan, aval aba ohev oto" },
+  { he: "אני צמא, אפשר מים?", f: "tr", from: "ani tzama, efshar mayim?", to: "ani tzame, efshar mayim?" },
+  { he: "אני צמא, אפשר מים?", f: "en",
+    from: "I am thirsty, is water possible?", to: "I'm thirsty, can I have some water?" },
+  { he: "איזה יופי של גשם היום", f: "en", from: "what a beauty of rain today", to: "What lovely rain today" },
+  { he: "איפה אמא ואיך היא?", f: "tr", from: "eifo ima veheikh hi?", to: "eifo ima ve'eikh hi?" },
+  { he: "הילדה הזאת קטנה", f: "tr", from: "halyada hazot ktana", to: "hayalda hazot ktana" },
+  { he: "בסדר, לא נורא", f: "en", from: "It's okay, not bad", to: "It's fine, no big deal" },
+  { he: "למה הילד עצוב היום?", f: "tr", from: "lama hayeled atsuv hayom?", to: "lama hayeled atzuv hayom?" },
+  { he: "איפה החבר שלך?", f: "en", from: "Where is your boyfriend?", to: "Where is your friend?" },
+  { he: "סבא, אפשר בננה?", f: "en",
+    from: "Grandpa, can I have a banana? / Grandpa, is a banana possible?", to: "Grandpa, can I have a banana?" },
+  { he: "אני אוהב אותך אבל אני מרגיש חלש היום.", f: "en",
+    from: "I love you, but I feel too weak today.", to: "I love you, but I feel weak today." },
+  { he: "כן, יש מיטה", f: "qen", from: "", to: "Is there a bed?" }
+];
+/* Pure: the bank with the fixes above applied to non-Claude items, and how many changed.
+   Claude's own items are left to contentRefresh — the file is their source. */
+function bankTextTidy(bank) {
+  let changed = 0;
+  const words = s => String(s || "").replace(/[A-Za-z']+/g, w => BANK_TR_WORD_FIXES[w] || w);
+  const out = (bank || []).map(it => {
+    if (!it || !it.he || it.src === "claude") return it;
+    const next = Object.assign({}, it);
+    if (next.tr) next.tr = words(next.tr);
+    if (next.qtr) next.qtr = words(next.qtr);
+    BANK_TEXT_FIXES.forEach(fx => {
+      if (fx.he === next.he && String(next[fx.f] || "") === fx.from) next[fx.f] = fx.to;
+    });
+    if (["tr", "qtr", "en", "qen"].every(k => String(next[k] || "") === String(it[k] || ""))) return it;
+    changed++;
+    return next;
+  });
+  return { bank: out, changed: changed };
+}
+function bankTidyIfNeeded() {
+  try {
+    retiredAdd(LEGACY_RETIRE_2, "second read by hand, 1 Oct");
+    const r = bankTextTidy(bankAll());
+    if (r.changed) { bankSave(r.bank); rebuildTrIndex(); }
+  } catch (e) { /* a tidy must never stop the app opening */ }
+}
+
 async function legacyClean() {
   if (!lsGet(LEGACY_CLEAN_KEY)) {
     try {
@@ -28721,6 +28820,22 @@ async function contentIngest() {
   } catch (e) {
     contentNote("retire-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
   }
+  /* CORRECTING A SENTENCE WITHOUT WITHDRAWING IT (2026-10-01). learnIngest refuses an
+     item whose `he` is already banked, so an English cue fixed in the file never reached a
+     device that already held the sentence — "The front door is yellow" for הדלת של הבית
+     צהובה stayed on his phone however the file read. Retire-and-rebank would work once,
+     but the retire list is re-applied on every later version, so it would reset `seen`
+     and spend the review pool on the same sentence forever. The text of a src:"claude"
+     item belongs to the file — that is what bankSlimForSync already assumes — so it is
+     simply brought into line. */
+  let refreshed = 0;
+  try {
+    const r = contentRefresh(bankAll(), data.items);
+    refreshed = r.changed;
+    if (refreshed) { bankSave(r.bank); rebuildTrIndex(); }
+  } catch (e) {
+    contentNote("refresh-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
+  }
 
   /* THE REVIEW THE SKILL COULD NOT RUN. generate-node-content says outright that
      learnReviewItems "is not available from a fixture browser" — the keys deliberately
@@ -28813,14 +28928,14 @@ async function contentIngest() {
   /* `retired` counts as work: a version whose whole job is withdrawing bad sentences
      banks nothing by design, and treating that as a failed read would re-run it on every
      load forever. */
-  if (!n && !landed && !retired && !scened) {
+  if (!n && !landed && !retired && !scened && !refreshed) {
     contentNote("nothing-landed", { fileVersion: data.version, items: data.items.length });
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
                             items: data.items.length, bank: bankAll().length,
                             reviewed: reviewed, unreviewed: unreviewed,
-                            retired: retired, scenes: scened });
+                            retired: retired, refreshed: refreshed, scenes: scened });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -28845,13 +28960,50 @@ function contentApplyScenes(scenes, c) {
   let filled = 0;
   scenes.forEach(raw => {
     const n = byName[String((raw && raw.node) || "").trim().toLowerCase()];
-    if (!n || n.scene) return;
+    if (!n) return;
     const sc = sceneClean(raw);
     if (!sc) return;
-    n.scene = Object.assign(sc, { made: String((raw && raw.made) || todayISO()), src: "claude" });
+    const next = Object.assign(sc, { made: String((raw && raw.made) || todayISO()), src: "claude" });
+    /* A CORRECTION IS NOT A SWAP (2026-10-01). The rule above protects a scene he has
+       heard from being replaced by a different one. The same scene — Claude's, same
+       title — re-dated in the file is that scene with a line fixed, and leaving the broken
+       line in place forever is not what the rule was for. */
+    if (n.scene && !sceneIsCorrection(n.scene, next)) return;
+    n.scene = next;
     filled++;
   });
   return filled;
+}
+/* Pure: `b` is a later correction of `a` — both Claude's, same title, `b` dated after.
+   Shared with mergeNodeList, so a device that has not fetched the fix yet cannot sync the
+   broken line back over one that has. */
+function sceneIsCorrection(a, b) {
+  return !!(a && b && a.src === "claude" && b.src === "claude" && a.title === b.title &&
+            String(b.made || "") > String(a.made || ""));
+}
+/* Pure: the bank with every src:"claude" item's words brought into line with the file —
+   cue, transliteration, gloss — matched on type + exact `he`, which is the only stable
+   name a sentence has across devices. Nothing else is touched: id and seen are device
+   state, and items he or a rescue writer produced are not the file's to correct. */
+function contentRefresh(bank, items) {
+  const want = {};
+  (Array.isArray(items) ? items : []).forEach(it => {
+    if (!it || !it.he) return;
+    const type = ["sentence", "listen", "reply"].indexOf(it.type) !== -1 ? it.type : "sentence";
+    want[type + " " + it.he] = { en: String(it.en || ""), tr: trHouse(it.tr || ""),
+                                 gloss: cleanGloss(it.gloss) };
+  });
+  let changed = 0;
+  const out = (bank || []).map(b => {
+    if (!b || b.src !== "claude" || !b.he) return b;
+    const w = want[(b.type || "sentence") + " " + b.he];
+    if (!w || !w.tr) return b;
+    if (w.en === b.en && w.tr === b.tr &&
+        JSON.stringify(w.gloss) === JSON.stringify(b.gloss)) return b;
+    changed++;
+    return Object.assign({}, b, { en: w.en, tr: w.tr, gloss: w.gloss });
+  });
+  return { bank: out, changed: changed };
 }
 
 /* ONCE PER LOAD WAS NOT ENOUGH, and this is the bug George found within the hour.
@@ -31201,7 +31353,7 @@ function learnAdjudicatePrompt(spoken, want, lib) {
      two strings that differ by two letters. */
   const trOf = w => { const t = trFormsOf(w, lib); return t.length ? " (" + t[0] + ")" : ""; };
   return "A learner of Hebrew was asked to say this out loud:\n  " +
-    (spoken.expected || []).join(" ") + "\n\n" +
+    heShownAll(spoken.expected) + "\n\n" +
     "A speech recogniser heard:\n  " + (spoken.text || "(nothing)") + "\n" +
     ((spoken.alts && spoken.alts.length)
       ? "Its other guesses were:\n" + spoken.alts.map(s => "  " + s).join("\n") + "\n" : "") +
@@ -31214,7 +31366,7 @@ function learnAdjudicatePrompt(spoken, want, lib) {
     "same-sounding word at that point as a yes.\n\n" +
     "For each numbered word, decide whether what the recogniser produced is consistent " +
     "with him having said it:\n" +
-    want.map(i => i + ". " + spoken.expected[i] + trOf(spoken.expected[i])).join("\n") + "\n\n" +
+    want.map(i => i + ". " + heShown(spoken.expected[i]) + trOf(spoken.expected[i])).join("\n") + "\n\n" +
     "Return JSON only, no markdown: {\"said\":[0,2]} — the indexes he PROBABLY did say. " +
     "Be conservative about words that sound genuinely DIFFERENT: if the transcript shows " +
     "something that does not sound like it, or shows nothing at all, leave the index " +
@@ -31404,7 +31556,7 @@ function learnGracePrompt(c, spoken, want, en, lib) {
   const trOf = w => { const t = trFormsOf(w, lib); return t.length ? " (" + t[0] + ")" : ""; };
   return "An English speaker learning Hebrew was shown this English and asked to say it " +
     "in Hebrew:\n  " + en + "\n\n" +
-    "The app had this sentence in mind:\n  " + (spoken.expected || []).join(" ") + "\n\n" +
+    "The app had this sentence in mind:\n  " + heShownAll(spoken.expected) + "\n\n" +
     "He said:\n  " + (spoken.text || "(nothing)") + "\n\n" +
     "THERE IS RARELY ONE CORRECT TRANSLATION. Decide whether what he said is a fair way " +
     "of saying that English in Hebrew — a reasonable synonym, a different but valid verb, " +
@@ -31413,7 +31565,7 @@ function learnGracePrompt(c, spoken, want, en, lib) {
     "It is NOT fair if he said something that means something else, left out the point of " +
     "the sentence, or produced words that do not form a sentence.\n\n" +
     "These words are still marked missing:\n" +
-    want.map(i => "  " + spoken.expected[i] + trOf(spoken.expected[i])).join("\n") + "\n\n" +
+    want.map(i => "  " + heShown(spoken.expected[i]) + trOf(spoken.expected[i])).join("\n") + "\n\n" +
     /* `changes` FIRST, and the order is the point: a model writes its keys in order, so
        this makes it say what differs before it rules on whether that matters. About
        fifteen tokens, not a thinking pass — grace has to land while the card is up. */
@@ -31553,7 +31705,7 @@ function learnAmendRender(card) {
   const pair = learnAmendPairs()[0];
   if (pair) {
     const lib = libAll();
-    const A = learnWordLabel(pair.expected, lib), B = learnWordLabel(pair.heard, lib);
+    const A = learnWordLabel(heShown(pair.expected), lib), B = learnWordLabel(heShown(pair.heard), lib);
     const q = document.createElement("div");
     q.className = "lamend-q";
     q.textContent = "Did you say…";
@@ -31598,10 +31750,10 @@ function learnAmendPrompt(c, sp, lib) {
   return "You are a warm, brisk Hebrew coach. An English speaker learning conversational " +
     "Hebrew has just been marked down on a card and says that is not what he meant.\n\n" +
     "He was shown this English:\n  " + (learnGraceEnglish(c) || "(none)") + "\n\n" +
-    "The app wanted:\n  " + (sp.expected || []).join(" ") + "\n\n" +
+    "The app wanted:\n  " + heShownAll(sp.expected) + "\n\n" +
     "The recogniser heard him say:\n  " + (sp.text || "(nothing)") + "\n\n" +
     (want.length ? "It marked these as not said:\n" +
-      want.map(w => "  " + w + trOf(w)).join("\n") + "\n\n" : "") +
+      want.map(w => "  " + heShown(w) + trOf(w)).join("\n") + "\n\n" : "") +
     "Tell him in two or three sentences what the difference actually is between what he " +
     "said and what was wanted — the nuance, not the spelling. If what he said is in fact a " +
     "fair way to say that English, say so plainly and say what the wanted word adds.\n\n" +
@@ -33713,6 +33865,8 @@ libAddFreqIfNeeded();
    transliteration marks and the handful of wrong glosses — see libWordsTidy. Idempotent,
    so it simply runs every load; an entry he corrected himself is left alone. */
 libWordsTidyIfNeeded();
+/* The sentence-side twin of the line above — see bankTextTidy. */
+bankTidyIfNeeded();
 /* After the import, so the words it just added are included in the same pass. */
 duoFormsFillIfNeeded();
 /* After both, so it sees whatever they wrote; before rebuildTrIndex, so FORM_INDEX is
@@ -44018,6 +44172,69 @@ T("contentApplyScenes: a written scene lands on the node of that name, and never
   assertTrue(c.chapters[0].nodes[1].scene === had, "a scene already there is left alone");
   assertEq(contentApplyScenes([{ node: "going places", lines: [] }], { chapters: [{ nodes: [{ name: "going places" }] }] }), 0,
            "a malformed scene is dropped, not drawn");
+});
+T("contentApplyScenes: a re-dated scene of the same title is a correction, and lands", () => {
+  const sc = (title, made, line) => ({ title: title, made: made, src: "claude", speakers: [{ name: "A", he: "" }],
+    lines: [{ s: 0, he: "שלום", tr: "", en: "hi" }, { s: 0, he: line, tr: "", en: "x" }, { s: 0, he: "ביי", tr: "", en: "bye" }],
+    gloss: [] });
+  const c = { chapters: [{ nodes: [{ id: "a", name: "Time", scene: sc("Flat", "2026-09-29", "עוד דקה") },
+                                   { id: "b", name: "Home", scene: sc("Flat", "2026-09-29", "עוד דקה") }] }] };
+  const fixed = Object.assign(sc("Flat", "2026-10-01", "עוד שבוע"), { node: "Time" });
+  assertEq(contentApplyScenes([fixed, Object.assign(sc("Other", "2026-10-01", "x"), { node: "Home" })], c), 1,
+           "the correction lands; a different scene does not replace one he may have heard");
+  assertEq(c.chapters[0].nodes[0].scene.lines[1].he, "עוד שבוע");
+  assertEq(c.chapters[0].nodes[1].scene.title, "Flat");
+  assertEq(contentApplyScenes([fixed], c), 0, "and applying it again changes nothing");
+  /* Sync: the device without the fix must not merge the broken line back. */
+  const old = [{ id: "p1", name: "Time", scene: sc("Flat", "2026-09-29", "עוד דקה") }];
+  const neu = [{ id: "q9", name: "time", scene: sc("Flat", "2026-10-01", "עוד שבוע") }];
+  assertEq(mergeNodeList(old, neu)[0].scene.lines[1].he, "עוד שבוע");
+  assertEq(mergeNodeList(neu, old)[0].scene.lines[1].he, "עוד שבוע", "whichever side wins the node");
+});
+T("contentRefresh: a corrected cue reaches a sentence he already holds, and nothing else moves", () => {
+  const bank = [
+    { id: "b1", src: "claude", type: "sentence", he: "הדלת של הבית צהובה", tr: "hadelet shel habayit tzehuba",
+      en: "The front door is yellow", gloss: [], seen: 4 },
+    { id: "b2", src: "", type: "sentence", he: "הדלת של הבית צהובה", tr: "x", en: "his own", seen: 1 },
+    { id: "b3", src: "claude", type: "listen", he: "הדלת של הבית צהובה", tr: "t", en: "listen cue", gloss: [] }
+  ];
+  const r = contentRefresh(bank, [{ he: "הדלת של הבית צהובה", tr: "hadelet shel habayit tzehuba",
+                                    en: "The door of the house is yellow", type: "sentence" }]);
+  assertEq(r.changed, 1);
+  assertEq([r.bank[0].en, r.bank[0].id, r.bank[0].seen], ["The door of the house is yellow", "b1", 4],
+           "id and seen are device state and stay");
+  assertTrue(r.bank[1] === bank[1] && r.bank[2] === bank[2], "not his, and not the same type: untouched");
+  assertEq(contentRefresh(r.bank, [{ he: "הדלת של הבית צהובה", tr: "hadelet shel habayit tzehuba",
+                                     en: "The door of the house is yellow" }]).changed, 0, "idempotent");
+});
+T("grader prompts: the Hebrew they are shown has its final letters back", () => {
+  assertEq(heShownAll(["בקיצ", "יש", "הרבה", "פירות"]), "בקיץ יש הרבה פירות");
+  const sp = { expected: ["בקיצ", "יש", "הרבה", "פירות"], text: "זה ממש פרי בקיץ", status: ["missed", "matched", "missed", "missed"] };
+  const g = learnGracePrompt({ kind: "sentence" }, sp, [0], "There's lots of fruit in the summer", {});
+  const a = learnAdjudicatePrompt(sp, [0], {});
+  assertTrue(g.indexOf("בקיץ יש הרבה פירות") !== -1 && g.indexOf("בקיצ") === -1, "grace prompt");
+  assertTrue(a.indexOf("בקיץ יש הרבה פירות") !== -1 && a.indexOf("בקיצ") === -1, "adjudication prompt");
+});
+T("bankTextTidy: the second read's fixes land on his old sentences, and only on the old text", () => {
+  const bank = [
+    { he: "הילדה הזאת קטנה", tr: "halyada hazot ktana", en: "This girl is small.", type: "listen" },
+    { he: "אני עייף.", tr: "ani ayeif.", en: "I am tired." },
+    { he: "איפה החבר שלך?", tr: "eifo hakhaver shelkha?", en: "Where's your mate?" },
+    { he: "אני עייף.", tr: "ani ayeif.", en: "I am tired.", src: "claude" }
+  ];
+  const r = bankTextTidy(bank);
+  assertEq(r.changed, 2);
+  assertEq([r.bank[0].tr, r.bank[1].tr], ["hayalda hazot ktana", "ani ayef."]);
+  assertTrue(r.bank[2] === bank[2], "an English he changed himself is not the old value, so it stays");
+  assertTrue(r.bank[3] === bank[3], "Claude's items are the file's to correct");
+  assertEq(bankTextTidy(r.bank).changed, 0, "idempotent");
+});
+T("libWordsTidy: a word card no longer has two right answers", () => {
+  const lib = { "כלבה": { tr: "kalba", en: "dog" }, "כלב": { tr: "kelev", en: "dog" },
+                "תפוז": { tr: "tapuz", en: "orange" }, "כתום": { tr: "katom", en: "orange" } };
+  libWordsTidy(lib);
+  assertEq([lib["כלבה"].en, lib["כלב"].en, lib["תפוז"].en, lib["כתום"].en],
+           ["dog (f)", "dog", "orange (fruit)", "orange (colour)"]);
 });
 T("voice notes: no writing prompt is framed around grandad any more", () => {
   const strip = f => String(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

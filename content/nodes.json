@@ -1,6 +1,6 @@
 {
- "version": 7,
- "generated": "2026-09-29",
+ "version": 8,
+ "generated": "2026-10-01",
  "retired": [
   {
    "he": "איפה המיטה שלך"
@@ -112,6 +112,9 @@
   },
   {
    "he": "קניתי ושילמתי היום"
+  },
+  {
+   "he": "עם אהבה, אמא."
   }
  ],
  "scenes": [
@@ -204,7 +207,7 @@
     {
      "s": 1,
      "he": "ומי הילד?",
-     "tr": "umi hayeled?",
+     "tr": "vemi hayeled?",
      "en": "And who's the boy?"
     },
     {
@@ -221,7 +224,7 @@
     }
    ],
    "gloss": [],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Your day",
@@ -246,7 +249,7 @@
     {
      "s": 1,
      "he": "בבוקר אני עובד, ובערב אני לומד עברית.",
-     "tr": "baboker ani oved, uva'erev ani lomed ivrit.",
+     "tr": "baboker ani oved, veba'erev ani lomed ivrit.",
      "en": "In the morning I work, and in the evening I study Hebrew."
     },
     {
@@ -269,7 +272,7 @@
     }
    ],
    "gloss": [],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Asking for things",
@@ -534,7 +537,7 @@
     {
      "s": 0,
      "he": "אולי תה חם ומיטה?",
-     "tr": "ulai te kham umita?",
+     "tr": "ulai te kham vemita?",
      "en": "Maybe a hot tea and bed?"
     },
     {
@@ -545,7 +548,7 @@
     }
    ],
    "gloss": [],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Your day — past",
@@ -576,7 +579,7 @@
     {
      "s": 0,
      "he": "ובערב?",
-     "tr": "uva'erev?",
+     "tr": "veba'erev?",
      "en": "And in the evening?"
     },
     {
@@ -588,7 +591,7 @@
     {
      "s": 0,
      "he": "ומה אמרת לסבא?",
-     "tr": "uma amarta lesaba?",
+     "tr": "vema amarta lesaba?",
      "en": "And what did you say to grandpa?"
     },
     {
@@ -610,7 +613,7 @@
      "en": "home (to home)"
     }
    ],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "What you bought",
@@ -629,7 +632,7 @@
     {
      "s": 1,
      "he": "קניתי לחם וגבינה.",
-     "tr": "kaniti lekhem ugvina.",
+     "tr": "kaniti lekhem vegvina.",
      "en": "I bought bread and cheese."
     },
     {
@@ -664,7 +667,7 @@
      "en": "shekel"
     }
    ],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Where you went",
@@ -701,7 +704,7 @@
     {
      "s": 0,
      "he": "ומתי חזרת?",
-     "tr": "umatai khazarta?",
+     "tr": "vematai khazarta?",
      "en": "And when did you get back?"
     },
     {
@@ -718,7 +721,7 @@
      "en": "you came back"
     }
    ],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "How it was",
@@ -749,7 +752,7 @@
     {
      "s": 0,
      "he": "נהדר. ומה עם הנהג?",
-     "tr": "nehedar. uma im hanehag?",
+     "tr": "nehedar. vema im hanehag?",
      "en": "Great. And what about the driver?"
     },
     {
@@ -772,7 +775,7 @@
      "en": "really"
     }
    ],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Replying to Grandad",
@@ -802,8 +805,8 @@
     },
     {
      "s": 0,
-     "he": "אמרת שאתה עייף אתמול.",
-     "tr": "amarta she'ata ayef etmol.",
+     "he": "אתמול אמרת שאתה עייף.",
+     "tr": "etmol amarta she'ata ayef.",
      "en": "You said you were tired yesterday."
     },
     {
@@ -832,7 +835,7 @@
      "en": "is heard (מה נשמע = how's it going)"
     }
    ],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Time and Progress",
@@ -863,14 +866,14 @@
     {
      "s": 0,
      "he": "ומה עם הדלת?",
-     "tr": "uma im hadelet?",
+     "tr": "vema im hadelet?",
      "en": "And what about the door?"
     },
     {
      "s": 1,
-     "he": "הדלת? עוד דקה!",
-     "tr": "hadelet? od daka!",
-     "en": "The door? One more minute!"
+     "he": "הדלת? עוד שבוע!",
+     "tr": "hadelet? od shavu'a!",
+     "en": "The door? Another week!"
     },
     {
      "s": 0,
@@ -880,7 +883,7 @@
     }
    ],
    "gloss": [],
-   "made": "2026-09-29"
+   "made": "2026-10-01"
   },
   {
    "node": "Counting Attempts",
@@ -1006,7 +1009,7 @@
   },
   {
    "he": "האוטובוס נוסע לאט היום",
-   "tr": "ha'otobus nosea le'at hayom",
+   "tr": "ha'otobus nose'a le'at hayom",
    "en": "the bus is going slowly today",
    "type": "sentence",
    "lvl": 1,
@@ -1198,7 +1201,7 @@
   },
   {
    "he": "אני מרגיש טוב אבל עייף",
-   "tr": "ani margish tov aval ayeif",
+   "tr": "ani margish tov aval ayef",
    "en": "I feel fine but tired",
    "type": "sentence",
    "lvl": 4,
@@ -1670,7 +1673,7 @@
   },
   {
    "he": "אני עייף כי עבדתי הרבה",
-   "tr": "ani ayef ki avadeti harbe",
+   "tr": "ani ayef ki avadti harbe",
    "en": "I'm tired because I worked a lot",
    "type": "sentence",
    "lvl": 3,
@@ -1766,7 +1769,7 @@
   },
   {
    "he": "טוב לשמוע אותך",
-   "tr": "tov lishmoa otkha",
+   "tr": "tov lishmo'a otkha",
    "en": "Good to hear you",
    "type": "sentence",
    "lvl": 3,
@@ -2214,7 +2217,7 @@
   },
   {
    "he": "אני נוסע לעיר היום",
-   "tr": "ani nosea la'ir hayom",
+   "tr": "ani nose'a la'ir hayom",
    "en": "I'm travelling to the city today",
    "type": "sentence",
    "lvl": 2,
@@ -2238,7 +2241,7 @@
   },
   {
    "he": "אני נוסע באוטובוס לעבודה",
-   "tr": "ani nosea ba'otobus la'avoda",
+   "tr": "ani nose'a ba'otobus la'avoda",
    "en": "I travel by bus to work",
    "type": "sentence",
    "lvl": 3,
@@ -2262,7 +2265,7 @@
   },
   {
    "he": "לאן אתה נוסע?",
-   "tr": "le'an ata nosea?",
+   "tr": "le'an ata nose'a?",
    "en": "Where are you travelling to?",
    "type": "sentence",
    "lvl": 2,
@@ -2278,7 +2281,7 @@
   },
   {
    "he": "בזמן האחרון אני נוסע הרבה",
-   "tr": "bazman ha'akharon ani nosea harbe",
+   "tr": "bazman ha'akharon ani nose'a harbe",
    "en": "Recently I travel a lot",
    "type": "sentence",
    "lvl": 4,
@@ -2318,7 +2321,7 @@
   },
   {
    "he": "הרחוב ריק בלילה",
-   "tr": "harekhov reik balayla",
+   "tr": "harekhov reik balaila",
    "en": "The street is empty at night",
    "type": "sentence",
    "lvl": 3,
@@ -2334,7 +2337,7 @@
   },
   {
    "he": "אני נוסע לעיר כל שבוע",
-   "tr": "ani nosea la'ir kol shavua",
+   "tr": "ani nose'a la'ir kol shavu'a",
    "en": "I travel to the city every week",
    "type": "sentence",
    "lvl": 3,
@@ -2358,7 +2361,7 @@
   },
   {
    "he": "אני נוסע באוטובוס כי יורד גשם",
-   "tr": "ani nosea ba'otobus ki yored geshem",
+   "tr": "ani nose'a ba'otobus ki yored geshem",
    "en": "I'm taking the bus because it's raining",
    "type": "sentence",
    "lvl": 4,
@@ -2454,7 +2457,7 @@
   },
   {
    "he": "השבוע היה נחמד",
-   "tr": "hashavua haya nekhmad",
+   "tr": "hashavu'a haya nekhmad",
    "en": "The week was nice",
    "type": "sentence",
    "lvl": 2,
@@ -2486,7 +2489,7 @@
   },
   {
    "he": "סבא לא בריא השבוע",
-   "tr": "saba lo bari hashavua",
+   "tr": "saba lo bari hashavu'a",
    "en": "Grandpa isn't well this week",
    "type": "sentence",
    "lvl": 3,
@@ -2574,7 +2577,7 @@
   },
   {
    "he": "אתמול עבדתי כל היום",
-   "tr": "etmol avadeti kol hayom",
+   "tr": "etmol avadti kol hayom",
    "en": "Yesterday I worked all day",
    "type": "sentence",
    "lvl": 2,
@@ -2582,7 +2585,7 @@
   },
   {
    "he": "עבדתי בבית השבוע",
-   "tr": "avadeti babayit hashavua",
+   "tr": "avadti babayit hashavu'a",
    "en": "I worked at home this week",
    "type": "sentence",
    "lvl": 2,
@@ -2590,7 +2593,7 @@
   },
   {
    "he": "עבדתי הרבה ואני עייף",
-   "tr": "avadeti harbe ve'ani ayef",
+   "tr": "avadti harbe ve'ani ayef",
    "en": "I worked a lot and I'm tired",
    "type": "sentence",
    "lvl": 3,
@@ -2598,7 +2601,7 @@
   },
   {
    "he": "עבדתי בבוקר ובערב",
-   "tr": "avadeti baboker uva'erev",
+   "tr": "avadti baboker veba'erev",
    "en": "I worked morning and evening",
    "type": "sentence",
    "lvl": 3,
@@ -2606,7 +2609,7 @@
   },
   {
    "he": "עבדתי עם חבר טוב",
-   "tr": "avadeti im khaver tov",
+   "tr": "avadti im khaver tov",
    "en": "I worked with a good friend",
    "type": "sentence",
    "lvl": 3,
@@ -2638,7 +2641,7 @@
   },
   {
    "he": "הלכתי לישון בלילה",
-   "tr": "halakhti lishon balayla",
+   "tr": "halakhti lishon balaila",
    "en": "I went to sleep at night",
    "type": "sentence",
    "lvl": 3,
@@ -2694,7 +2697,7 @@
   },
   {
    "he": "הייתי חולה שבוע",
-   "tr": "hayiti khole shavua",
+   "tr": "hayiti khole shavu'a",
    "en": "I was ill for a week",
    "type": "sentence",
    "lvl": 3,
@@ -2758,7 +2761,7 @@
   },
   {
    "he": "לא ראיתי אותו השבוע",
-   "tr": "lo ra'iti oto hashavua",
+   "tr": "lo ra'iti oto hashavu'a",
    "en": "I didn't see him this week",
    "type": "sentence",
    "lvl": 3,
@@ -2774,7 +2777,7 @@
   },
   {
    "he": "עבדתי ואז הלכתי הביתה",
-   "tr": "avadeti ve'az halakhti habayta",
+   "tr": "avadti ve'az halakhti habayta",
    "en": "I worked and then went home",
    "type": "sentence",
    "lvl": 4,
@@ -2822,7 +2825,7 @@
   },
   {
    "he": "הייתי בעבודה כל השבוע",
-   "tr": "hayiti ba'avoda kol hashavua",
+   "tr": "hayiti ba'avoda kol hashavu'a",
    "en": "I was at work all week",
    "type": "sentence",
    "lvl": 3,
@@ -2862,7 +2865,7 @@
   },
   {
    "he": "קניתי פירות וגבינה",
-   "tr": "kaniti perot vegvina",
+   "tr": "kaniti peirot vegvina",
    "en": "I bought fruit and cheese",
    "type": "sentence",
    "lvl": 3,
@@ -2966,7 +2969,7 @@
   },
   {
    "he": "אתמול נתתי לילד תפוח",
-   "tr": "etmol natati layeled tapuakh",
+   "tr": "etmol natati layeled tapu'akh",
    "en": "Yesterday I gave the boy an apple",
    "type": "sentence",
    "lvl": 4,
@@ -3078,7 +3081,7 @@
   },
   {
    "he": "אתמול חזרתי בלילה",
-   "tr": "etmol khazarti balayla",
+   "tr": "etmol khazarti balaila",
    "en": "Yesterday I came back at night",
    "type": "sentence",
    "lvl": 3,
@@ -3262,7 +3265,7 @@
   },
   {
    "he": "היה מטורף בעבודה השבוע",
-   "tr": "haya metoraf ba'avoda hashavua",
+   "tr": "haya metoraf ba'avoda hashavu'a",
    "en": "Work was crazy this week",
    "type": "sentence",
    "lvl": 4,
@@ -3286,7 +3289,7 @@
   },
   {
    "he": "נהדר לשמוע אותך",
-   "tr": "nehedar lishmoa otkha",
+   "tr": "nehedar lishmo'a otkha",
    "en": "Wonderful to hear you",
    "type": "sentence",
    "lvl": 3,
@@ -3318,7 +3321,7 @@
   },
   {
    "he": "נסעתי לשבוע בחורף",
-   "tr": "nasati leshavua bakhoref",
+   "tr": "nasati leshavu'a bakhoref",
    "en": "I went away for a week in winter",
    "type": "sentence",
    "lvl": 3,
@@ -3342,7 +3345,7 @@
   },
   {
    "he": "הגעתי הביתה בלילה",
-   "tr": "higati habayta balayla",
+   "tr": "higati habayta balaila",
    "en": "I arrived home at night",
    "type": "sentence",
    "lvl": 4,
@@ -3438,7 +3441,7 @@
   },
   {
    "he": "טסתי לשבוע באביב",
-   "tr": "tasti leshavua ba'aviv",
+   "tr": "tasti leshavu'a ba'aviv",
    "en": "I flew off for a week in spring",
    "type": "sentence",
    "lvl": 3,
@@ -3462,7 +3465,7 @@
   },
   {
    "he": "קניתי תפוח ותה",
-   "tr": "kaniti tapuakh vete",
+   "tr": "kaniti tapu'akh vete",
    "en": "I bought an apple and tea",
    "type": "sentence",
    "lvl": 2,
@@ -3534,7 +3537,7 @@
   },
   {
    "he": "נתתי לילדה תפוח",
-   "tr": "natati layalda tapuakh",
+   "tr": "natati layalda tapu'akh",
    "en": "I gave the girl an apple",
    "type": "sentence",
    "lvl": 3,
@@ -3735,7 +3738,7 @@
   {
    "he": "החתולה בחדר שלי",
    "tr": "hakhatula bakheder sheli",
-   "en": "The cat is in my room",
+   "en": "The cat (female) is in my room",
    "type": "sentence",
    "lvl": 1,
    "for": "חתולה"
@@ -3799,7 +3802,7 @@
   {
    "he": "הכלבה של סבא נחמדה",
    "tr": "hakalba shel saba nekhmada",
-   "en": "Grandpa's dog is sweet",
+   "en": "Grandpa's dog (female) is sweet",
    "type": "sentence",
    "lvl": 1,
    "for": "כלבה"
@@ -3991,7 +3994,7 @@
   {
    "he": "אבא נותן תפוח לסוסה",
    "tr": "aba noten tapu'akh lasusa",
-   "en": "Dad gives the horse an apple",
+   "en": "Dad gives the mare an apple",
    "type": "sentence",
    "lvl": 3,
    "for": "סוסה"
@@ -4335,7 +4338,7 @@
   {
    "he": "בתשע אני בבית",
    "tr": "betesha ani babayit",
-   "en": "I'm home by nine",
+   "en": "At nine I'm at home",
    "type": "sentence",
    "lvl": 1,
    "for": "תשע"
@@ -5192,7 +5195,7 @@
   },
   {
    "he": "אני עובד בלילה",
-   "tr": "ani oved balayla",
+   "tr": "ani oved balaila",
    "en": "I work nights",
    "type": "sentence",
    "lvl": 2,
@@ -5296,7 +5299,7 @@
   },
   {
    "he": "אתה יכול לפתוח את הדלת?",
-   "tr": "ata yakhol liftoakh et hadelet?",
+   "tr": "ata yakhol lifto'akh et hadelet?",
    "en": "Can you open the door?",
    "type": "sentence",
    "lvl": 4,
@@ -5561,7 +5564,7 @@
   {
    "he": "הדלת של הבית צהובה",
    "tr": "hadelet shel habayit tzehuba",
-   "en": "The front door is yellow",
+   "en": "The door of the house is yellow",
    "type": "sentence",
    "lvl": 1,
    "for": "צהוב"
@@ -6217,7 +6220,7 @@
   {
    "he": "זה הבית שלהן",
    "tr": "ze habayit shelahen",
-   "en": "That's their house",
+   "en": "That's their house (the women's)",
    "type": "sentence",
    "lvl": 1,
    "for": "שלהן"
@@ -6257,7 +6260,7 @@
   {
    "he": "יש להן ילדים",
    "tr": "yesh lahen yeladim",
-   "en": "They have children",
+   "en": "They (women) have children",
    "type": "sentence",
    "lvl": 2,
    "for": "להן"
@@ -6360,7 +6363,7 @@
   },
   {
    "he": "האבטיח קר ומתוק",
-   "tr": "ha'avatiakh kar vematok",
+   "tr": "ha'avati'akh kar vematok",
    "en": "The watermelon is cold and sweet",
    "type": "sentence",
    "lvl": 1,
@@ -6393,7 +6396,7 @@
   {
    "he": "אני שואל את אמא",
    "tr": "ani sho'el et ima",
-   "en": "I'll ask Mum",
+   "en": "I'm asking Mum",
    "type": "sentence",
    "lvl": 3,
    "for": "לשאול"
@@ -6657,7 +6660,7 @@
   {
    "he": "אתה מלך!",
    "tr": "ata melekh!",
-   "en": "You're a star!",
+   "en": "You're a king! (= you're a star)",
    "type": "sentence",
    "lvl": 5,
    "for": "מלך"
@@ -7209,7 +7212,7 @@
   {
    "he": "להתראות ותודה",
    "tr": "lehitra'ot vetoda",
-   "en": "Goodbye, and thank you",
+   "en": "See you, and thanks",
    "type": "sentence",
    "lvl": 1,
    "for": "להתראות"
@@ -7905,7 +7908,7 @@
   {
    "he": "האוטובוס עומד.",
    "tr": "ha'otobus omed.",
-   "en": "The bus isn't moving.",
+   "en": "The bus is standing still.",
    "type": "sentence",
    "lvl": 2,
    "for": "עומד"
@@ -8527,14 +8530,6 @@
    "for": "אהבה"
   },
   {
-   "he": "עם אהבה, אמא.",
-   "tr": "im ahava, ima.",
-   "en": "With love, mum.",
-   "type": "sentence",
-   "lvl": 1,
-   "for": "אהבה"
-  },
-  {
    "he": "הילד נוגע בכלב.",
    "tr": "hayeled noge'a bakelev.",
    "en": "The boy is touching the dog.",
@@ -8801,7 +8796,7 @@
   {
    "he": "ארוחה טובה!",
    "tr": "arukha tova!",
-   "en": "Enjoy your meal!",
+   "en": "Have a good meal!",
    "type": "sentence",
    "lvl": 1,
    "for": "ארוחה"

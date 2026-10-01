@@ -216,6 +216,15 @@ in — check against a bank you extend as you go, not a static snapshot.
 - **Using a word against its gloss.** `ישן` is in his library as "old"; a sentence using
   it as "sleeps" passes every gate and teaches him the wrong word.
 - **Not incrementing `version`.** The app silently ignores the file.
+- **Correcting a shipped item the wrong way.** Since 2026-10-01 (`contentRefresh`), an
+  edit to an existing item's `en`, `tr` or `gloss` reaches every device that holds it —
+  just edit it in place. A wrong `he` is different: it is the item's identity, so add the
+  old `he` to `retired` and ship the corrected sentence as a new item. A scene is only
+  replaced if the new one has the **same title** and a **later `made`** — re-date it, or
+  the fix never lands. Before then, cue fixes silently went nowhere.
+- **Rewriting `nodes.json` with LF.** Unlike `hebrew-reader.html` it is committed with
+  CRLF and no trailing newline; `json.dumps(d, ensure_ascii=False, indent=1)` with `\n`
+  → `\r\n` round-trips it byte for byte.
 - **Putting his synced data in the repo.** It is public. Scratchpad only.
 - **Leaving the `fixture` entry in `.claude/launch.json`.** Revert it.
 - **Trying to replace the rescue writer.** It cannot be pre-baked; that is the point.

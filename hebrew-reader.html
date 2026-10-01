@@ -31931,9 +31931,19 @@ function learnAmendPrompt(c, sp, lib) {
     "The recogniser heard him say:\n  " + (sp.text || "(nothing)") + "\n\n" +
     (want.length ? "It marked these as not said:\n" +
       want.map(w => "  " + heShown(w) + trOf(w)).join("\n") + "\n\n" : "") +
-    "Tell him in two or three sentences what the difference actually is between what he " +
-    "said and what was wanted — the nuance, not the spelling. If what he said is in fact a " +
-    "fair way to say that English, say so plainly and say what the wanted word adds.\n\n" +
+    /* THE TRANSCRIPT IS NOT PROOF (2026-10-01). On 27 Sep the mic heard לשתות on a card
+       for להיות, he pressed this, and the answer explained the difference between drinking
+       and being — to a man who may well have said להיות perfectly. "Obviously that's not
+       what I meant." So the first question is whether the mic got it wrong. */
+    "THE RECOGNISER MAY HAVE MISHEARD HIM. Speech recognition is markedly worse on a " +
+    "learner's accent, so what it printed is evidence, not proof, of what he said. If what " +
+    "it heard could plausibly be a mishearing of the wanted Hebrew — similar sounds, a " +
+    "shared ending, a swallowed prefix — say that first, in one sentence: he may well have " +
+    "said it right, and there is a button under your answer to mark it so.\n\n" +
+    "Then tell him in two or three sentences what the difference actually is between what " +
+    "was heard and what was wanted — the nuance, not the spelling. If what was heard is in " +
+    "fact a fair way to say that English, say so plainly and say what the wanted word " +
+    "adds.\n\n" +
     "Write transliteration with the English in brackets, never Hebrew letters. Plain text, " +
     "no markdown, no preamble, do not address him by name.";
 }
@@ -31980,7 +31990,58 @@ async function learnAmendReport(btn) {
   note.textContent = answer ||
     "Noted and sent to Claude. The coach could not be reached just now.";
   wrap.append(note);
+  /* "I SAID IT RIGHT" — the other half of what the button means. Only when something is
+     still marked missing, and only while this card's attempt is still the one on screen. */
+  if (learnSpoken === sp && (sp.status || []).some(st => st !== "matched")) {
+    const ok = document.createElement("button");
+    ok.type = "button"; ok.className = "linkbtn lamend-no";
+    ok.textContent = "I said it right — the mic misheard";
+    ok.onclick = () => {
+      learnAmendSaidRight(sp);
+      ok.remove();
+      const done = document.createElement("div");
+      done.className = "lamend-said";
+      done.textContent = "Marked as said.";
+      wrap.append(done);
+      if (flag) {
+        try {
+          const all = flagAll();
+          const i = all.findIndex(f => f && f.id === flag.id);
+          if (i !== -1) {
+            all[i] = Object.assign({}, all[i], { text: all[i].text + "\n\n## Then\nHe marked it: I said it right — the mic misheard." });
+            flagSave(all);
+          }
+        } catch (e) {}
+      }
+      syncPadOffset();
+    };
+    wrap.append(ok);
+  }
   syncPadOffset();
+}
+/* Every word still marked missing becomes said, and the suggested grade is re-derived from
+   that — the same latitude, and the same path, as learnAmendResolve's homophone face: he
+   grades himself anyway, and this only stops the app arguing with him. */
+function learnAmendSaidRight(sp) {
+  if (!sp || !Array.isArray(sp.status)) return 0;
+  let n = 0;
+  sp.status = sp.status.map((st, i) => {
+    if (st === "matched") return st;
+    n++;
+    if (learnMarks && learnMarks[i] !== undefined) learnMarks[i] = 0;
+    return "matched";
+  });
+  sp.soundPairs = [];
+  if (n) {
+    try {
+      if (learnMicGrades(learnSession && learnSession.cards[learnSession.i]) && !learnCardTokens)
+        learnSuggested = learnSuggestFrom(sp.status);
+    } catch (e) {}
+    try { statsBump({ amendWon: 1 }); } catch (e) {}
+    if (learnPanelCtl && learnPanelCtl.repaint) learnPanelCtl.repaint();
+    if (learnSuggestPaint) learnSuggestPaint();
+  }
+  return n;
 }
 
 function learnMicError(card, msg) {
@@ -37097,7 +37158,7 @@ T("learnAmendResolve: saying it was the target lifts exactly that word", () => {
      said correctly still docked him; this is the path from near to matched, and it must not
      touch anything it was not asked about. */
   const savedSp = learnSpoken, savedMk = learnMarks, savedSug = learnSuggested,
-        savedSess = learnSession, savedTok = learnCardTokens;
+        savedSess = learnSession, savedTok = learnCardTokens, savedStats = lsGet(STATS_KEY);
   try {
     learnCardTokens = null;
     learnSession = { i: 0, cards: [{ kind: "word", key: "אטי" }] };
@@ -37121,6 +37182,9 @@ T("learnAmendResolve: saying it was the target lifts exactly that word", () => {
   } finally {
     learnSpoken = savedSp; learnMarks = savedMk; learnSuggested = savedSug;
     learnSession = savedSess; learnCardTokens = savedTok;
+    /* statsBump writes his real day record. */
+    if (savedStats === null || savedStats === undefined) { try { localStorage.removeItem(STATS_KEY); } catch (e) {} }
+    else lsSet(STATS_KEY, savedStats);
   }
 });
 T("learnAmendResolve: saying it was the OTHER word changes nothing", () => {
@@ -37128,7 +37192,7 @@ T("learnAmendResolve: saying it was the OTHER word changes nothing", () => {
      rescue put it — crediting him for agreeing would make the control worthless as
      evidence. */
   const savedSp = learnSpoken, savedMk = learnMarks, savedSug = learnSuggested,
-        savedSess = learnSession, savedTok = learnCardTokens;
+        savedSess = learnSession, savedTok = learnCardTokens, savedStats = lsGet(STATS_KEY);
   try {
     learnCardTokens = null;
     learnSession = { i: 0, cards: [{ kind: "word", key: "אטי" }] };
@@ -37144,6 +37208,9 @@ T("learnAmendResolve: saying it was the OTHER word changes nothing", () => {
   } finally {
     learnSpoken = savedSp; learnMarks = savedMk; learnSuggested = savedSug;
     learnSession = savedSess; learnCardTokens = savedTok;
+    /* statsBump writes his real day record. */
+    if (savedStats === null || savedStats === undefined) { try { localStorage.removeItem(STATS_KEY); } catch (e) {} }
+    else lsSet(STATS_KEY, savedStats);
   }
 });
 T("learnWordLabel: transliteration and gloss, never bare Hebrew in a button", () => {
@@ -37165,6 +37232,30 @@ T("learnAmendPrompt: carries both sides and refuses Hebrew letters back", () => 
   assertTrue(/never Hebrew letters/.test(p),
     "and the answer comes back in transliteration, which is what he reads");
   assertTrue(/not the spelling/.test(p), "asked for the nuance, which is the actual question");
+  assertTrue(/MAY HAVE MISHEARD HIM/.test(p) && p.indexOf("MISHEARD") < p.indexOf("not the spelling"),
+    "27 Sep: whether the mic got it wrong is asked FIRST, before explaining a difference");
+});
+T("learnAmendSaidRight: every missing word becomes said, and the grade is re-derived", () => {
+  const savedSp = learnSpoken, savedMk = learnMarks, savedSug = learnSuggested,
+        savedSess = learnSession, savedTok = learnCardTokens, savedStats = lsGet(STATS_KEY);
+  try {
+    learnCardTokens = null;
+    learnSession = { i: 0, cards: [{ kind: "word", key: "להיות" }] };
+    learnSpoken = { text: "לשתות", expected: ["להיות"], status: ["missed"], soundPairs: [] };
+    learnMarks = [1];
+    learnSuggested = 0;
+    assertEq(learnAmendSaidRight(learnSpoken), 1);
+    assertEq([learnSpoken.status, learnMarks, learnSuggested], [["matched"], [0], 2],
+             "the word is said, its mark is Got it, and the card's suggestion follows");
+    assertEq(learnAmendSaidRight(learnSpoken), 0, "nothing left to lift");
+    assertEq(learnAmendSaidRight(null), 0);
+  } finally {
+    learnSpoken = savedSp; learnMarks = savedMk; learnSuggested = savedSug;
+    learnSession = savedSess; learnCardTokens = savedTok;
+    /* statsBump writes his real day record. */
+    if (savedStats === null || savedStats === undefined) { try { localStorage.removeItem(STATS_KEY); } catch (e) {} }
+    else lsSet(STATS_KEY, savedStats);
+  }
 });
 T("heSoundAlike: the recogniser's איתי rescues the אטי he actually said", () => {
   assertTrue(heSoundAlike("אטי", "איתי", SOUND_LIB),

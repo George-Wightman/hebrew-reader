@@ -29,6 +29,11 @@
     "1790148024690-m3mj8": { "status": "addressed", "kind": "bug", "at": "2026-09-23T08:00:00Z",
       "note": "The paused card shows just Start over, Submit and Keep going now; Say it no longer hangs around beside them (e9cceb0)." },
     "1790070083381-msl2f": { "status": "addressed", "kind": "bug", "at": "2026-09-22T23:30:00Z",
-      "note": "The English sits inside the coach's bubble now (4b2b748). The coach also waits for the arrow before sending, and is Hebrew-only (fd88fb8)." }
+      "note": "The English sits inside the coach's bubble now (4b2b748). The coach also waits for the arrow before sending, and is Hebrew-only (fd88fb8)." },
+
+    "1790516974618-b8hzc": { "status": "addressed", "kind": "hebrew", "at": "2026-10-01T19:40:00Z",
+      "note": "That card now reads \"The door of the house is yellow\". Every sentence was read again and eleven more misleading cues fixed (d9e68e2)." },
+    "1790516918915-pt6hc": { "status": "addressed", "kind": "hebrew", "at": "2026-10-01T19:40:00Z",
+      "note": "Now cued \"See you, and thanks\". להתראות is the everyday goodbye, but literally \"see you again\", so שלום ותודה was a fair answer (d9e68e2)." }
   }
 }

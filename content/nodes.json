@@ -1,6 +1,6 @@
 {
- "version": 8,
- "generated": "2026-10-01",
+ "version": 9,
+ "generated": "2026-10-02",
  "retired": [
   {
    "he": "איפה המיטה שלך"
@@ -3329,7 +3329,7 @@
    "gloss": [
     {
      "he": "לשבוע",
-     "tr": "leshavua",
+     "tr": "leshavu'a",
      "en": "for a week",
      "why": "ל- on a period of time means 'for that long'. Without it, נסעתי שבוע says you spent the week travelling."
     }
@@ -3449,7 +3449,7 @@
    "gloss": [
     {
      "he": "לשבוע",
-     "tr": "leshavua",
+     "tr": "leshavu'a",
      "en": "for a week",
      "why": "ל- on a period of time means 'for that long'. Without it, נסעתי שבוע says you spent the week travelling."
     }

@@ -34876,10 +34876,16 @@ function runSelfTests() {
       const k = localStorage.key(i);
       if (k && k.indexOf("hvr_") === 0) now[k] = localStorage.getItem(k);
     }
+    /* A key that did not exist and was CREATED is cleaned up and named in the console,
+       not failed: on an empty profile the code under test creates stores on first touch
+       (the device id, the AI log) and that is not his data. A key that existed and was
+       CHANGED or DELETED is his data, and fails the run. */
+    const created = [];
     Object.keys(now).forEach(k => {
-      if (!(k in before)) { leaked.push(k + " (created)"); try { localStorage.removeItem(k); } catch (e) {} }
+      if (!(k in before)) { created.push(k); try { localStorage.removeItem(k); } catch (e) {} }
       else if (now[k] !== before[k]) { leaked.push(k); try { localStorage.setItem(k, before[k]); } catch (e) {} }
     });
+    if (created.length) console.log("SELFTEST cleaned up stores the run created: " + created.join(", "));
     Object.keys(before).forEach(k => {
       if (!(k in now)) { leaked.push(k + " (deleted)"); try { localStorage.setItem(k, before[k]); } catch (e) {} }
     });
@@ -34898,6 +34904,12 @@ function runSelfTests() {
 
 /* ---- test helpers shared across suites ---- */
 const F = (he, tr) => ({ he: he, tr: tr });
+/* Put a store back exactly as found — and a store that was not there goes away again,
+   rather than being "restored" as an empty default nobody had. */
+function selftestPut(k, v) {
+  if (v === null || v === undefined) { try { localStorage.removeItem(k); } catch (e) {} }
+  else lsSet(k, v);
+}
 
 T("harness runs", () => { assertEq(2 + 2, 4); assertTrue(true); assertNull(null); });
 
@@ -39923,7 +39935,7 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
     assertEq(msg, "the request took longer than 20s");
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
-    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
     /* The success branch writes an "ok" into the live quota counter, too. */
     if (wasQ == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, wasQ);
   }
@@ -39965,7 +39977,7 @@ T("geminiSend: a refused key hands over to the other key, and an empty reply to 
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     if (q == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, q);
-    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
   }
 });
 T("geminiSend: the good model is held across BOTH keys before anything degrades", async () => {
@@ -40065,7 +40077,7 @@ T("geminiSend: a 503 is this model being busy, not the call failing", async () =
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(AI_Q_KEY, q || "");
-    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
   }
 });
 T("healthNote: one entry per kind per device, counted rather than repeated", () => {
@@ -40097,7 +40109,7 @@ T("healthNote: one entry per kind per device, counted rather than repeated", () 
     all = healthAll();
     assertEq(all.length, HEALTH_MAX, "the ring never grows past its cap");
     assertTrue(all.every(e => (e.last || 0) >= (all[0].last || 0)), "sorted oldest first");
-  } finally { lsSet(HEALTH_KEY, was || "[]"); healthMem = wasMem; }
+  } finally { selftestPut(HEALTH_KEY, was); healthMem = wasMem; }
 });
 
 T("healthNote: still records when the store itself is what failed", () => {
@@ -40113,7 +40125,7 @@ T("healthNote: still records when the store itself is what failed", () => {
     const all = healthAll();
     assertEq(all.length, 1, "the note survived a store that refused it");
     assertEq(all[0].kind, "thinking-refused");
-  } finally { lsSet = realSet; lsSet(HEALTH_KEY, was || "[]"); healthMem = wasMem; }
+  } finally { lsSet = realSet; selftestPut(HEALTH_KEY, was); healthMem = wasMem; }
 });
 
 T("mergeHealth: per device, and never summed", () => {
@@ -40198,7 +40210,7 @@ T("sessRecord: keeps the conversation, bounded, and never the whole prompt", () 
 
     for (let i = 0; i < SESS_MAX + 4; i++) sessRecord({ turns: [] }, "n" + i);
     assertEq(sessAll().length, SESS_MAX, "and the ring is capped");
-  } finally { lsSet(SESS_KEY, was || "[]"); }
+  } finally { selftestPut(SESS_KEY, was); }
 });
 
 T("trailNote: the last few screens, deduped, never unbounded", () => {
@@ -40223,7 +40235,7 @@ T("trailNote: the last few screens, deduped, never unbounded", () => {
     assertEq(trailAll().length, 3, "going back is a new visit, not the old one");
     for (let i = 0; i < TRAIL_MAX + 10; i++) trailNote("v" + i, "", 5000 + i);
     assertEq(trailAll().length, TRAIL_MAX);
-  } finally { lsSet(TRAIL_KEY, was || "[]"); }
+  } finally { selftestPut(TRAIL_KEY, was); }
 });
 
 T("flagContext: carries the trail, and points at the session rather than copying it", () => {
@@ -40254,7 +40266,7 @@ T("flagContext: carries the trail, and points at the session rather than copying
     sessRecord({ turns: [{ said: "new", out: { ok: "clean", say: { he: "y" } } }] },
                "c2-0-1qt5", Date.now() - 1000);
     assertEq(flagContext("").sessionId, sessAll()[0].id, "a fresh one is");
-  } finally { lsSet(TRAIL_KEY, wasT || "[]"); lsSet(SESS_KEY, wasS || "[]"); }
+  } finally { selftestPut(TRAIL_KEY, wasT); selftestPut(SESS_KEY, wasS); }
 });
 
 T("hvr_sessions: syncs, and has a merge rule so it is not overwritten", () => {
@@ -40375,7 +40387,7 @@ T("geminiSend: a refused thinking control is recorded, not silently swallowed", 
   } finally {
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     lsSet(AI_Q_KEY, q || "");
-    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
   }
 });
 
@@ -42092,7 +42104,7 @@ T("aiModelsFor: the reviewer outlives everyone else in the pool", () => {
     assertEq(aiModelsFor("coach"), GEMINI_MODELS_FAST);
   } finally {
     if (real == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, real);
-    lsSet(HEALTH_KEY, wasHealth || "[]"); healthMem = wasHealthMem;
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
   }
 });
 T("learnReviewItems: required means it banks nothing rather than banking unchecked", async () => {

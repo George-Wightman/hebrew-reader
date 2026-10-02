@@ -160,8 +160,13 @@ self.addEventListener("fetch", (event) => {
         let changed = true;
         if (previous) {
           const freshLM = lastModifiedOf(resp);
-          if (cachedLM !== null && freshLM !== null) {
-            changed = freshLM > cachedLM;
+          /* A SAME DATE IS AN ANSWER; A NEWER ONE IS ONLY A REASON TO LOOK (2026-10-01).
+             GitHub Pages stamps every file with the time of the last deploy, so a push
+             of content/nodes.json or flag-status.json alone gave the unchanged app a new
+             Last-Modified and it announced "a newer version is ready" for identical
+             bytes. The bodies decide. */
+          if (cachedLM !== null && freshLM !== null && freshLM <= cachedLM) {
+            changed = false;
           } else {
             try {
               const [a, b] = await Promise.all([previous.text(), forCompare.text()]);
@@ -175,8 +180,14 @@ self.addEventListener("fetch", (event) => {
       return resp;
     }).catch(() => null);
 
-    /* Cached copy wins the race when there is one — that is the whole point. */
-    if (cached) return cached;
+    /* Cached copy wins the race when there is one — that is the whole point. The refresh
+       carries on behind it, and the worker is kept alive until it lands: without this the
+       browser may stop it once the cached reply is out, before a 1.3MB fetch and its
+       cache.put finish, and the next launch is still on the old shell. */
+    if (cached) {
+      try { event.waitUntil(network); } catch (e) {}
+      return cached;
+    }
 
     const resp = await network;
     if (resp) return resp;

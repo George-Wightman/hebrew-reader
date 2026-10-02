@@ -4452,7 +4452,16 @@ function fetchWithTimeout(url, opts, ms) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), limit);
   return fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }))
-    .then(resp => { clearTimeout(timer); return resp; })
+    .then(resp => {
+      clearTimeout(timer);
+      /* THE BODY GETS ITS OWN LIMIT (2026-10-01). Clearing the timer when headers arrived
+         left a stalled body — resp.json() on a dropped mobile connection — waiting
+         forever, and syncInFlight with it: every later sync quietly returned false until
+         a reload. Aborting once the body is already read does nothing, so this costs a
+         completed request nothing. */
+      setTimeout(() => ctl.abort(), limit);
+      return resp;
+    })
     .catch(err => {
       clearTimeout(timer);
       /* An abort reports as a bare "AbortError", which reaches the user as an error
@@ -5144,9 +5153,17 @@ function parseImport(text) {
    has no correct answer — which due date wins? — and pretending otherwise would quietly
    corrupt the one store the app can't rebuild. */
 function applyImport(d) {
+  /* This device's sync identity stays its own. A backup from the laptop carried the
+     laptop's deviceId and last-sync receipt, so after an import the phone pushed as the
+     laptop and believed flags it had never sent were on GitHub (review, 2026-10-01). */
+  const ownMeta = lsGet(SYNC_META_KEY);
   exportKeys().forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
   let written = 0;
-  Object.keys(d.keys).forEach(k => { if (lsSet(k, d.keys[k])) written++; });
+  Object.keys(d.keys).forEach(k => {
+    if (k === SYNC_META_KEY) return;
+    if (lsSet(k, d.keys[k])) written++;
+  });
+  if (ownMeta !== null) lsSet(SYNC_META_KEY, ownMeta);
   return written;
 }
 
@@ -7596,9 +7613,12 @@ async function applyRebase(cands) {
        dictionary form, so the pronunciation has to follow it — otherwise the grid
        reads "siyamti" under a word meaning "to finish". `en` cannot be fixed this
        way; reglossLemmas handles that. */
-    if (c.tr) {
+    /* Not when it MERGED into a row that already existed: that row was already the
+       dictionary form, kept its own tr/en by rekeyInStores' rule, and may carry his
+       correction — which the model's citation transliteration used to overwrite. */
+    if (c.tr && !willMerge) {
       const lib = libAll();
-      if (lib[c.to]) { lib[c.to].tr = c.tr; libSave(lib); }
+      if (lib[c.to]) { lib[c.to].tr = trTidy(c.to, c.tr); libSave(lib); }
     }
   }
   rebuildTrIndex();
@@ -7807,8 +7827,23 @@ function padAgreementIssues(words, opts) {
   const out = [];
   const info = (words || []).map(w => formInfo(w.he));
 
+  /* את IS TWO WORDS: "you (f)" and the object marker. Read as the pronoun only when it
+     ends the sentence or the next word is a verb or adjective form — את רוצה, את עייפה —
+     and as the marker before a definite noun, a name, or anything unknown. Without this,
+     "אני רואה את הספר" under a male lens was told to say אתה, and in "ראיתי את דני עייף"
+     the adjective was told to be feminine (review, 2026-10-01). */
+  const asPronoun = n => {
+    const he = (words[n] || {}).he;
+    if (he !== "את") return pronounFeatures(he);
+    const next = words[n + 1];
+    if (!next) return pronounFeatures(he);
+    const ni = info[n + 1];
+    return (ni && (ni.pos === "verb" || ni.pos === "adj")) ? pronounFeatures(he) : null;
+  };
+
   (words || []).forEach((w, n) => {
-    const pf = pronounFeatures(w.he);
+    const pf = asPronoun(n);
+    if (w.he === "את" && !pf) return;          // the object marker agrees with nothing
 
     /* Rule B — the lens. */
     if (lens && lens !== "p") {
@@ -7833,6 +7868,7 @@ function padAgreementIssues(words, opts) {
     if (!feats.gender || feats.person) return;
     let subj = null;
     for (let k = n - 1; k >= 0 && n - k <= AGREE_LOOKBACK; k--) {
+      if (words[k].he === "את" && !asPronoun(k)) continue;   // the marker is no subject
       const p = subjectFeaturesOf(words[k].he, lib);
       if (!p) continue;
       subj = { p: p, he: words[k].he };
@@ -8251,7 +8287,7 @@ function normaliseFormsReply(json, requested) {
       if (!f || typeof f !== "object") return;
       const h = String(f.he || "").trim();
       if (!h || !isHebrewForm(h)) return;      // see isHebrewForm — Arabic yeh got through once
-      forms[tag] = { he: h, tr: String(f.tr || "").trim() };
+      forms[tag] = { he: h, tr: trTidy(h, String(f.tr || "").trim()) };   // the house scheme, as every other tr
     });
     out[he] = {
       pos: pos,
@@ -8307,7 +8343,7 @@ function normaliseVerifyReply(json, index) {
       if (!f || typeof f !== "object") return;
       const h = String(f.he || "").trim();
       if (!h || !isHebrewForm(h)) return;      // see isHebrewForm — Arabic yeh got through once
-      forms[tag] = { he: h, tr: String(f.tr || "").trim() };
+      forms[tag] = { he: h, tr: trTidy(h, String(f.tr || "").trim()) };
     });
     out[he] = { forms: forms };
   });
@@ -8626,7 +8662,11 @@ async function formsRunBatch() {
      cost of a bad batch unbounded. */
   const tieItems = [];
   Object.keys(pass1).forEach(he => {
-    const d = disputedTags(pass1[he].forms, (pass2[he] || {}).forms);
+    /* Not the forms the dictionary already confirmed for free: pass 2 is never asked
+       about them, so they always looked "disputed" against its silence, and almost every
+       batch paid for a third call it did not need (review, 2026-10-01). */
+    const free = freeByWord[he] || [];
+    const d = disputedTags(pass1[he].forms, (pass2[he] || {}).forms).filter(t => free.indexOf(t) === -1);
     if (d.length) tieItems.push({ he: he, lemma: pass1[he].lemma, root: pass1[he].root,
                                   pos: pass1[he].pos, tags: d });
   });
@@ -8657,7 +8697,17 @@ async function formsRunBatch() {
 
 /* Drains the queue in batches, stopping on budget, on the session cap, or when
    nothing is left. onProgress(doneSoFar, remaining) is called after each batch. */
-async function formsRunQueue(opts) {
+/* ONE QUEUE AT A TIME (2026-10-01). The auto-fill at boot and the Fill in forms button
+   each started their own: both took the same first ten bankless words and paid for every
+   call twice, and each saved the call counter it had read at its start, so one run's
+   calls vanished from the daily cap. A second start now waits on the first. */
+let formsQueueInFlight = null;
+function formsRunQueue(opts) {
+  if (formsQueueInFlight) return formsQueueInFlight;
+  formsQueueInFlight = formsRunQueueOnce(opts).finally(() => { formsQueueInFlight = null; });
+  return formsQueueInFlight;
+}
+async function formsRunQueueOnce(opts) {
   opts = opts || {};
   let words = 0, calls = 0;
   for (;;) {
@@ -9944,9 +9994,11 @@ document.getElementById("syncConnectBtn").onclick = async (ev) => {
     await syncPull();                       // 404 is fine; 401/403 throws
     syncSetStatus("Connected. Syncing…");
     document.getElementById("syncSetup").style.display = "none";
-    await syncRun("setup", { force: true });
+    const ok = await syncRun("setup", { force: true });
     syncPaintSettings();
-    syncSetStatus("Connected to " + repo + ".");
+    /* syncRun reports its own failure (a read-only token pulls fine and fails to push);
+       "Connected" over the top of it said the opposite of what happened. */
+    if (ok) syncSetStatus("Connected to " + repo + ".");
   } catch (e) {
     if (prevRepo) lsSet(SYNC_REPO_KEY, prevRepo); else localStorage.removeItem(SYNC_REPO_KEY);
     if (prevTok) lsSet(SYNC_TOKEN_KEY, prevTok); else localStorage.removeItem(SYNC_TOKEN_KEY);
@@ -11010,7 +11062,7 @@ document.getElementById("rebaseBtn").onclick = settingsAction(async () => {
     (c.detail ? "   (" + c.detail + ")" : "")).join("\n");
   if (!confirm("Re-file " + cands.length + " word" + (cands.length === 1 ? "" : "s") +
                " under the dictionary form?\n\n" + lines +
-               "\n\nDrill history, marks, pairs and cached audio move with them. " +
+               "\n\nDrill history, marks and pairs move with them. " +
                "Settings → Undo re-filing puts it all back.")) return;
 
   snapshotBeforeRebase();
@@ -11029,7 +11081,11 @@ document.getElementById("rebaseBtn").onclick = settingsAction(async () => {
 
 document.getElementById("undoRebaseBtn").onclick = settingsAction(() => {
   if (!hasRebaseSnapshot()) { alert("Nothing to undo."); return; }
-  if (!confirm("Put the library back as it was before the last re-filing?")) return;
+  /* It restores the schedule from that moment too, so practice since then goes with it —
+     said, rather than discovered (review, 2026-10-01). */
+  if (!confirm("Put the library back as it was before the last re-filing?\n\n" +
+               "Your practice record goes back to that moment too — anything drilled since " +
+               "is undone.")) return;
   const n = undoRebase();
   paintUndoRebaseRow();
   settingsModal.style.display = "none";
@@ -14078,6 +14134,7 @@ function wireClusterDrag(el, head, name) {
      the click that follows — capture on touchdown would eat every word tap. */
   const MOVE_SLOP = 8;             // px of finger wobble tolerated before it's a drag
   let moved = false;               // has this gesture committed to pan/zoom?
+  let lastUpWasPan = false;        // the last lift ended a pan — see endPointer
   let downX = 0, downY = 0;
 
   /* A cluster drag that has just cancelled itself hands its finger here, so the pinch
@@ -14166,6 +14223,10 @@ function wireClusterDrag(el, head, name) {
     gesture = null;
     wrap.classList.remove("panning", "zooming");
     if (moved) { swallowNextClick = true; mapViewSave(); }
+    /* Kept for the double-tap listener below, which runs AFTER this one (both bubble on
+       pointerup, in registration order) and so always read `moved` already reset — two
+       quick pans in one place zoomed the map (review, 2026-10-01). */
+    lastUpWasPan = moved;
     moved = false;
   };
   wrap.addEventListener("pointerup", endPointer);
@@ -14188,7 +14249,7 @@ function wireClusterDrag(el, head, name) {
        reasonable thing to want; hijacking that to zoom would make the rows feel
        booby-trapped. Pinch still works over anything. */
     if (ev.target.closest(".mapcluster")) { lastTap = 0; return; }
-    if (moved) return;                       // that was a pan, not a tap
+    if (moved || lastUpWasPan) { lastTap = 0; return; }   // that was a pan, not a tap
     const now = Date.now();
     const near = Math.abs(ev.clientX - lastTapX) < 30 && Math.abs(ev.clientY - lastTapY) < 30;
     if (now - lastTap < 300 && near) {
@@ -18422,7 +18483,7 @@ function padAskExplainPrompt() {
     "2. DO NOT confirm or praise what is already correct. No 'this is right', no 'good choice'. " +
     "If a word is correct he already knew it, and reading that wastes his time.\n" +
     "3. For each fault, GIVE HIM THE BETTER OPTION AND THE RULE BEHIND IT, so he can apply it to " +
-    "other sentences — e.g. \"use האיש (ha-ish) rather than הגבר (ha-gever); הגבר sounds formal " +
+    "other sentences — e.g. \"use האיש (ha'ish) rather than הגבר (hagever); הגבר sounds formal " +
     "and distant for family\", or \"Hebrew has no 'was doing' — the past form alone carries it\". " +
     "The rule matters as much as the correction.\n" +
     "4. Do NOT repeat word-level corrections here — the sentence array above already carries " +
@@ -18430,7 +18491,9 @@ function padAskExplainPrompt() {
     "view cannot express: word order, register (too formal for family), or a sentence that doesn't " +
     "hang together as a whole. If the sentence array covers everything, say so in a few words.\n" +
     "5. Every Hebrew word you mention in notes MUST be followed by its pronunciation in English " +
-    "letters — like למשוך (limshoch). He cannot read the script, so bare Hebrew is useless.\n" +
+    "letters — like למשוך (limshokh). He cannot read the script, so bare Hebrew is useless. " +
+    "Write pronunciation with kh for ח and כ (never ch), and join the article or a one-letter " +
+    "preposition to its word with an apostrophe before a vowel: ha'ir, bakheder.\n" +
     "6. No grammar jargon. Never say binyan, participle, construct state, segolate, conjugation.\n" +
     "7. Under 90 words. If genuinely nothing is wrong, say only that in a few words.";
   return p;
@@ -18543,7 +18606,7 @@ function padBuildTiles(sentence) {
     const he = document.createElement("span"); he.className = "phe";
     he.textContent = w.hebrew || "—";
     if (!w.hebrew) tile.title = "No Hebrew came back for this word";
-    const tr = document.createElement("span"); tr.className = "ptr"; tr.textContent = w.translit || "";
+    const tr = document.createElement("span"); tr.className = "ptr"; tr.textContent = trHouse(w.translit || "", w.hebrew);   // the house scheme, whatever the model wrote
     const en = document.createElement("span"); en.className = "pen"; en.textContent = w.english || "";
     tile.append(he, tr, en);
 
@@ -18586,7 +18649,8 @@ function padBuildTiles(sentence) {
 }
 
 function padShowMainLine(line, gapCount, notes, sentence) {
-  padExplainFor = document.getElementById("padInput").value;
+  const nowText = document.getElementById("padInput").value;
+  padExplainFor = padExplainSent !== null ? padExplainSent : nowText;
   padExplainNotes = notes || "";
   const box = document.getElementById("padExplain");
   box.innerHTML = "";
@@ -18625,6 +18689,8 @@ function padShowMainLine(line, gapCount, notes, sentence) {
   box.style.display = "block";
   document.getElementById("padExplainLabel").textContent = "Ready to read";
   document.getElementById("padExplainLabel").style.display = "block";
+  /* Edited while it was checking: say so at once, rather than on the next keystroke. */
+  if (padExplainFor !== nowText) padMarkStale(true);
   syncPadOffset();
 }
 
@@ -18814,9 +18880,17 @@ function padAfterAskExplain(data) {
    confirmed live (2026-08-05) that Google retires dated model names for new API
    keys with a 404 ("no longer available to new users"), while the -latest alias
    is maintained specifically so callers don't have to track that churn. */
+/* WHAT WAS ACTUALLY SENT, and whether a check is still out (2026-10-01). The answer used to
+   be stamped with whatever the box held when it ARRIVED, so edits made during the wait
+   never raised the "you've edited since this" banner, and Keep saved notes about the old
+   sentence as describing the new one. And with nothing stopping a second press, the first
+   reply's words could be matched against the second press's gaps — teaching aliasLearn a
+   wrong spelling, which persists and syncs. */
+let padExplainInFlight = false, padExplainSent = null;
 async function padAskExplain() {
   const text = document.getElementById("padInput").value.trim();
   if (!text) { padStatus("Nothing to explain yet."); return; }
+  if (padExplainInFlight) { padStatus("Still checking the last one…"); return; }
   const prompt = padAskExplainPrompt();
   if (!geminiKeys().length) {
     const ok = await padCopy(prompt);
@@ -18827,6 +18901,8 @@ async function padAskExplain() {
   }
   padStatus("Checking…");
   busy(true);
+  padExplainInFlight = true;
+  padExplainSent = document.getElementById("padInput").value;
   try {
     /* Lite-first here only — see GEMINI_MODELS_FAST. */
     padAfterAskExplain(extractJSON(await geminiRequest([{ text: prompt }], GEMINI_MODELS_FAST,
@@ -18842,6 +18918,8 @@ async function padAskExplain() {
     padShowAskExplainPasteBox();
   } finally {
     busy(false);   // in finally, so a throw can never leave the ring stuck on
+    padExplainInFlight = false;
+    padExplainSent = null;
   }
 }
 
@@ -20669,7 +20747,12 @@ function srsAnswer(srs, key, grade, side, extra, todayOverride) {
   if (ms > 0) r.ms = r.ms ? Math.round(r.ms * 0.7 + ms * 0.3) : Math.round(ms);
   /* The same day the schedule was written against, or the log would score its own
      prediction against a different calendar than the one that made it. */
-  try { srsLogPush(key, side, grade, before, extra, todayOverride); } catch (e) {}
+  /* NOT for an untested import: its `before` is a seeded record he never earned, so the
+     prediction logged against it was the importer's guess, not the scheduler's — which is
+     what this log exists to audit (review, 2026-10-01). */
+  if (!srsUnproven(before)) {
+    try { srsLogPush(key, side, grade, before, extra, todayOverride); } catch (e) {}
+  }
   return r;
 }
 
@@ -21410,10 +21493,12 @@ function heShownAll(words) { return heFinalFix((words || []).join(" ")); }
    kh for ch; the article and one-letter prepositions join without a hyphen, with an
    apostrophe where the join meets a vowel; and no apostrophe where it meets a consonant.
    Only ever for transliteration fields — "ch" is English in the coach's prose. */
-function trHouse(tr) {
+function trHouse(tr, he) {
   let s = String(tr || "");
   if (!s) return s;
-  s = s.replace(/ch/g, "kh").replace(/Ch/g, "Kh").replace(/CH/g, "KH");
+  /* Unless the Hebrew has צ' — which really is "ch" (צ'כית chekhit), the same exception
+     trKh makes. Callers that know the word pass it; khekhit was the result without. */
+  if (!/[צץ]['׳]/.test(String(he || ""))) s = s.replace(/ch/g, "kh").replace(/Ch/g, "Kh").replace(/CH/g, "KH");
   s = s.replace(/\b(ha|he|be|ba|bi|le|la|li|me|mi|ve|va|she|ke|ka)-(?=[A-Za-z])/gi,
     (m, p, off, str) => /[aeiou]/i.test(str[off + m.length]) ? p + "'" : p);
   s = s.replace(/\b(ha|be|ba|le|la|me|mi|ve|she)'(?=[b-df-hj-np-tv-z])/gi, "$1");
@@ -21431,10 +21516,13 @@ function trHouse(tr) {
    - a final vowel + h where the Hebrew ends in ה loses the h: gvinah → gvina.
    An apostrophe before a vowel stays — that is the scheme's own (lish'ol, ha'ir). */
 function trTidy(he, tr) {
-  let s = trHouse(String(tr || ""));
+  let s = trHouse(String(tr || ""), he);
   if (!s) return s;
   s = s.split(" ").map(w => {
     let t = w;
+    /* Before l or r an opening shva is silent in speech — blog, klavim, brakha — so the
+       cluster stays a cluster. b'log came out "belog" (review, 2026-10-01). */
+    t = t.replace(/^([blmkBLMK])'(?=[lrLR])/, "$1");
     t = t.replace(/^([blmkBLMK])'(?=[aeiouAEIOU])/, "$1e'");
     t = t.replace(/^([blmkBLMK])'(?=[b-df-hj-np-tv-zB-DF-HJ-NP-TV-Z])/, "$1e");
     t = t.replace(/'(?=[b-df-hj-np-tv-zB-DF-HJ-NP-TV-Z])/g, "");
@@ -21542,7 +21630,19 @@ function libWordsTidy(lib) {
     if (fx && fx.tr && e.tr === fx.tr[0]) e.tr = fx.tr[1];
     if (fx && fx.en && e.en === fx.en[0]) e.en = fx.en[1];
     if (e.tr) e.tr = trTidy(k, e.tr);
-    if ((e.tr || "") + "\u0000" + (e.en || "") !== before) n++;
+    /* THE FORM TABLES TOO (2026-10-01). Only the headword's tr was ever tidied, so every
+       Duolingo-sourced form still read y'ladim, g'vinah, tar'n'gol — the convention the
+       headwords were cleaned of on 29 Sep — in the tables he is shown under a lens. */
+    let formsChanged = false;
+    if (e.forms && typeof e.forms === "object") {
+      Object.keys(e.forms).forEach(tag => {
+        const f = e.forms[tag];
+        if (!f || !f.tr) return;
+        const t = trTidy(f.he || k, f.tr);
+        if (t !== f.tr) { f.tr = t; formsChanged = true; }
+      });
+    }
+    if ((e.tr || "") + "\u0000" + (e.en || "") !== before || formsChanged) n++;
   });
   return n;
 }
@@ -28827,7 +28927,7 @@ async function learnTopUp(quiet) {
 
    Banking nothing is genuinely cheap here and that is what makes this affordable. The
    fast pool is 500/day against a handful spent, campWarm is fire-and-forget, and
-   commissionResult already has language for a batch that produced nothing. The next
+   commissionDead already has language for a batch that produced nothing. The next
    session simply writes again. */
 async function learnReviewItems(data, opts) {
   const items = (data && Array.isArray(data.items)) ? data.items : [];
@@ -34360,7 +34460,7 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     const slow = ev.shiftKey;   // Shift+R: the same deliberately-slow pass the "slowly" button gives
     const c = learnSession.cards[learnSession.i];
-    if (learnRevealed) playHe(cardAudioKey(c, "answer"), c.kind === "word" ? c.key : c.item.he, slow);
+    if (learnRevealed) playHe(cardAudioKey(c, "answer"), c.kind === "word" ? c.key : learnExpectedHe(c), slow);   // a chunk card has no item
     else learnSpeakPrompt(slow);
   } else if (learnRevealed && !learnCardTokens &&
              (ev.key === "1" || ev.key === "2" || ev.key === "3")) {
@@ -35626,6 +35726,16 @@ T("agreement: a noun subject governs the adjective after it", () => {
     assertEq(r.length, 1);
     assertEq(r[0].suggest, "גדולות", "feminine plural noun wants a feminine plural adjective");
     assertTrue(/נשים/.test(r[0].why));
+  });
+});
+T("agreement: את before a noun is the object marker, not 'you (f)'", () => {
+  withP5Index(() => {
+    const male = { lens:"m", speaker:"m", lib:P5_LIB };
+    assertEq(padAgreementIssues(W("אני","רואה","את","הספר"), male), [],
+             "a man-lens must not ask for אתה in front of a definite object");
+    assertEq(padAgreementIssues(W("ראיתי","את","האישה","גדולה"), { lens:"", speaker:"m", lib:P5_LIB }), [],
+             "and the marker is never the subject an adjective agrees with");
+    assertEq(padAgreementIssues(W("את"), male).length, 1, "on its own it is still the pronoun");
   });
 });
 T("agreement: a noun with no recorded gender makes no claim", () => {
@@ -44992,6 +45102,9 @@ T("trTidy: Duolingo's marks become the house scheme, and the scheme's own apostr
   assertEq(trTidy("להגיד", "le-hagid"), "lehagid", "and the hyphen goes");
   assertEq(trTidy("שבעה", "shiv'ah"), "shiv'a");
   assertEq(trTidy("רוח", "ru'akh"), "ru'akh", "a word ending in ח keeps its kh");
+  assertEq(trTidy("בלוג", "b'log"), "blog", "a cluster before l or r stays a cluster");
+  assertEq(trTidy("כלבים", "k'lavim"), "klavim");
+  assertEq(trTidy("צ'כית", "chekhit"), "chekhit", "צ' really is ch");
 });
 T("libWordsTidy: fixes what was imported wrong and leaves his own corrections alone", () => {
   const lib = { "מוזר": { tr: "muzaz", en: "strange" }, "לחבוש": { tr: "lakh'bosh", en: "to wear" },

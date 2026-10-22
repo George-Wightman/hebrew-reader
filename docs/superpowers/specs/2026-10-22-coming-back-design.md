@@ -132,7 +132,39 @@ start path (daily, node, check, review drill, coach) is covered by one hook:
 sessions by mode, clean rate by card kind, time per card, where sessions were abandoned,
 and the feel taps. The check-hebrew-flags skill reads it too.
 
+## Phase 5 — the sit-down session (added the same night)
+
+George, after reading the engagement ideas:
+
+> "Doing the 15 cards is like not enough. So a sit-down session of, okay, I'm doing this
+> now for 30 minutes, boom, let's start. And it's got that easing me in, it's making me
+> feel confident. A few new words, a few complex sentences, then using those conversations
+> that we had with the coach and the nodes and things. And then that easy win."
+
+A third button on the Daily practice slip, "Sit down for 30 minutes", the full width
+under the two sizes. It lays the app's existing sessions end to end in his order:
+
+1. **Warm-up** — the daily build at 20 cards opens on its sure wins (phase 2).
+2. **Practice** — the rest of that build: reviews, the level mix's reach above him. Gentle
+   after a break (phase 3).
+3. **On the map: <node>** — the current node's words met on word cards if they are new,
+   then `campBuild`'s practice; `introOrder` keeps meet-before-use.
+4. **Talk it through** — a coach card on the node's words, when there is a key and a
+   connection. One card that hands back to the session when the talk ends.
+5. **To finish** — the daily build's closing win, held back to the very end.
+
+Each part's first card says "Part 2 of 5 · Practice". On his real state the night it was
+built: 3 warm-up, 16 practice, 11 on "Your day — past" (five new past-tense verbs met,
+then six sentences), the coach on four of them, one win — 32 cards and a talk, about
+thirty minutes at his measured ~34 seconds a card. Journal mode `sit`.
+
+Found on the way and fixed in the same phase: a gentle session over a library of nothing
+but new words had no targets and returned nothing; it now falls back to an ordinary one.
+
 ## Deferred, with reasons
+
+- **A continuing story** (his favourite of the other ideas): pinned by him — "how we would
+  do it, I'm not sure. We might have to wait until a bit later to really see."
 
 - **Node sessions (`campBuild`) get no wins-first order.** They have their own meet/use
   ordering, and he chose the daily 15 on return precisely because nodes felt big. Once the

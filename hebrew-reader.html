@@ -2896,6 +2896,11 @@
   .lfeel-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
   .lfeel-b { border: 1.5px solid var(--accent); background: transparent; color: var(--ink);
              border-radius: 20px; padding: 8px 14px; font: inherit; font-size: .9rem; cursor: pointer; }
+  .lact-sit { display: block; width: 100%; margin-top: 10px; min-height: 44px; border-radius: 24px;
+              border: 1.5px dashed var(--accent); background: transparent; color: var(--ink);
+              font: inherit; font-size: .95rem; font-weight: 600; cursor: pointer; }
+  .lpart { font-family: var(--ui); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+           color: var(--muted); margin-bottom: 6px; }
   .lact-why { font-family: var(--aside); font-style: italic; font-size: 1.02rem; color: var(--muted);
               margin: -4px 0 10px; line-height: 1.3; }
   .lact-quick button { border-radius: 24px; min-height: 48px; font-size: .95rem; font-weight: 600;
@@ -27772,8 +27777,11 @@ function learnBuild(opts) {
 
   /* Coming back after a break — see comebackCheck. Daily practice only: a node is a
      place he chose to go, and it says on the map what it holds. */
-  const gentle = only ? null : comebackCheck(todayISO());
-  const targets = learnTargets(SESSION_CARDS, only, { gentle: !!gentle });
+  let gentle = only ? null : comebackCheck(todayISO());
+  let targets = learnTargets(SESSION_CARDS, only, { gentle: !!gentle });
+  /* Nothing he has had before to be gentle with — a library of nothing but new words.
+     An ordinary session, then, rather than none. */
+  if (gentle && !targets.length) { gentle = null; targets = learnTargets(SESSION_CARDS, only); }
   if (!targets.length) return null;
 
   const voice = hasHeVoice();
@@ -28364,6 +28372,109 @@ function comebackLine(cb) {
   const n = cb.left === 1 ? "next session is" : "next " + (cb.left === 2 ? "two" : cb.left) + " sessions are";
   const away = (cb.away && cb.away !== Infinity) ? " \u2014 " + cb.away + " days away" : "";
   return "Welcome back" + away + ". The " + n + " gentle: only words you've had before.";
+}
+
+/* ---- the sit-down session (2026-10-22) -------------------------------------------
+   George: "Doing the 15 cards is like not enough. So a sit-down session of, okay, I'm
+   doing this now for 30 minutes, boom, let's start. And it's got that easing me in, it's
+   making me feel confident. A few new words, a few complex sentences, then using those
+   conversations that we had with the coach and the nodes and things. And then that easy
+   win."
+
+   So it is the app's existing sessions laid end to end in that order, not a new kind of
+   card: the daily build (sized up, so its warm-up wins open it and its level mix reaches
+   above him), the current map node's own practice (its new words, met then used), the
+   coach on that node's words (when there is a key and a connection), and the daily
+   build's closing win held back to finish on. Each card carries `part`, and the card
+   says so at the start of each part, so thirty minutes reads as a shape rather than as
+   forty cards in a row. At his measured pace (~34s a card) the cards are ~25 minutes and
+   the talk the rest.
+
+   A return after a break makes the practice part gentle (learnBuild reads comebackCheck);
+   the node part is where the new words come from, which is what he asked for. */
+const SIT_PRACTICE_CARDS = 20, SIT_NODE_CARDS = 8;
+const SIT_PARTS = { warm: "Warm-up", practice: "Practice", map: "On the map",
+                    talk: "Talk it through", finish: "To finish" };
+/* Pure over what it is handed, so the suite can drive it: `daily` is a learnBuild result,
+   `nodeCards` a campBuild result (or null), `talk` a compose card (or null). */
+function sitAssemble(daily, nodeCards, talk, srs, today) {
+  const out = (daily || []).slice();
+  if (!out.length) return out;
+  const closer = cardEase(out[out.length - 1], srs, today) >= EASE_MIN ? out.pop() : null;
+  let warm = 0;
+  while (warm < OPEN_WINS && warm < out.length && cardEase(out[warm], srs, today) >= EASE_MIN) warm++;
+  out.forEach((c, i) => { c.part = i < warm ? "warm" : "practice"; });
+  const idOf = c => c.item ? "i:" + (c.item.id || c.item.he) : "k:" + c.key;
+  const have = new Set(out.map(idOf).concat(closer ? [idOf(closer)] : []));
+  const map = [];
+  (nodeCards || []).forEach(c => {
+    if (have.has(idOf(c))) return;
+    have.add(idOf(c));
+    c.part = "map";
+    map.push(c);
+  });
+  /* Meet it, then use it — the same rule the daily build keeps. */
+  introOrder(map, map.filter(c => c.kind === "word").map(c => c.key));
+  map.forEach(c => out.push(c));
+  if (talk) { talk.part = "talk"; out.push(talk); }
+  if (closer) { closer.part = "finish"; out.push(closer); }
+  return out;
+}
+function sitBuild() {
+  const daily = learnBuild({ size: SIT_PRACTICE_CARDS });
+  if (!daily || !daily.length) return null;
+  const srs = srsAll(), today = todayISO();
+  let node = null;
+  try { node = campCurrentNode(); } catch (e) {}
+  let nodeCards = null, talk = null;
+  if (node) {
+    /* A node's words are MET before they are practised — its own first lesson is nothing
+       but their word cards (campStartMeet). Measured on his real state the night this was
+       written: the current node's four words were all brand new, and campBuild alone put
+       three sentences carrying עבדתי ahead of its word card and gave הייתי none at all. */
+    const lib = libAll();
+    const meet = ((node.words || []).filter(k => lib[k] && srsGradable(k, lib) &&
+                                                 srsStrengthOf(srs, k, "prod") === "new"))
+      .map(k => ({ kind: "word", key: k, words: [k] }));
+    try { nodeCards = meet.concat(campBuild(node, SIT_NODE_CARDS) || []); } catch (e) { nodeCards = meet; }
+    try {
+      if (geminiKeys().length && navigator.onLine) {
+        const pool = composePool(node, libAll(), srs);
+        if (pool.length >= COMPOSE_OPENING) talk = composeCard(pool, composeObjectives(pool, srs), 0);
+      }
+    } catch (e) {}
+  }
+  const out = sitAssemble(daily, nodeCards, talk, srs, today);
+  out.sitNode = node ? node.name : "";
+  if (daily.gentle) out.gentle = daily.gentle;
+  return out;
+}
+/* The line a part opens with, or "" mid-part. Pure. */
+function sitPartLine(cards, i) {
+  const c = cards && cards[i];
+  if (!c || !c.part) return "";
+  if (i > 0 && cards[i - 1] && cards[i - 1].part === c.part) return "";
+  const parts = [];
+  cards.forEach(x => { if (x.part && parts.indexOf(x.part) === -1) parts.push(x.part); });
+  let name = SIT_PARTS[c.part] || "";
+  if (c.part === "map" && cards.sitNode) name += ": " + cards.sitNode;
+  return "Part " + (parts.indexOf(c.part) + 1) + " of " + parts.length + " \u00b7 " + name;
+}
+async function sitStart() {
+  const hint = document.getElementById("lStartHint");
+  const cards = sitBuild();
+  if (!cards || !cards.length) {
+    if (hint) hint.textContent = "Nothing to drill yet \u2014 add some words first.";
+    return;
+  }
+  sessionClear();
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [],
+                   mode: "sit", gentle: !!cards.gentle };
+  statsBump({ sessions: 1 });
+  learnShow("lRun");
+  learnRenderCard();
+  /* Same as the daily start: next time's material is written while he works. */
+  setTimeout(() => { try { Promise.resolve(learnTopUp(true)).catch(() => {}); } catch (e) {} }, 4000);
 }
 
 /* ---- the session journal (2026-10-22) ---------------------------------------------
@@ -30825,7 +30936,8 @@ function sessionStash() {
     ts: Date.now(), i: s.i, got: s.got, cards: s.cards,
     strengthened: s.strengthened, back: s.back, path: s.path || null,
     fluent: s.fluent || [], moved: s.moved || {},
-    jid: s.jid || null, jUnready: s.jUnready || null, mode: s.mode || "", gentle: !!s.gentle
+    jid: s.jid || null, jUnready: s.jUnready || null, mode: s.mode || "", gentle: !!s.gentle,
+    sitNode: (s.cards && s.cards.sitNode) || ""
   }));
 }
 function sessionClear() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
@@ -30849,6 +30961,7 @@ function sessionValidate(d, now) {
   /* `fluent` and `moved` default rather than being dropped, so a session stashed by an
      older build still resumes into a shape learnAdvance can work with — an absent
      `fluent` is what made every clean card after a resume throw. */
+  if (d.sitNode) d.cards.sitNode = d.sitNode;
   return { cards: d.cards, i: d.i, got: d.got || 0,
            strengthened: d.strengthened || {}, back: d.back || {},
            fluent: Array.isArray(d.fluent) ? d.fluent : [],
@@ -31051,6 +31164,14 @@ function learnRenderAct() {
     quick.append(b);
   });
   box.append(quick);
+  /* THE SIT-DOWN, under the two sizes and the width of both: a different kind of thing
+     from "how many cards", so it is not a third size beside them. */
+  const sit = document.createElement("button");
+  sit.type = "button"; sit.className = "lact-sit";
+  sit.textContent = "Sit down for 30 minutes";
+  sit.title = "Warm up, practise, the new words on your map, a talk with the coach, and an easy one to finish.";
+  sit.onclick = () => { sitStart(); };
+  box.append(sit);
   /* The Duolingo check, only while there is something to check — see learnStartCheck.
      A quiet line under the two sizes rather than a third equal button: it is a chore he
      can pick up when he has five minutes, not what the card is for. */
@@ -31707,6 +31828,13 @@ function learnRenderCard() {
      hands you a mic. That is concrete and you touch it, where a pill reading עב → עב
      is a label to decode. And the counter is the road's job now. */
   const meta = LEARN_KINDS[c.kind];
+  /* A sit-down session says where he is at the start of each part — see sitPartLine. */
+  const partLine = sitPartLine(s.cards, s.i);
+  if (partLine) {
+    const pl = document.createElement("div"); pl.className = "lpart";
+    pl.textContent = partLine;
+    card.append(pl);
+  }
   const ask = document.createElement("div"); ask.className = "lask";
   /* Compose is the one kind whose task changes under him: the opening sentence is built
      from the first pair, and after that it is about working the rest of the table in. */
@@ -45951,6 +46079,27 @@ T("journal: what a session is, and how hard each card was when he met it", () =>
   assertEq(journalUnready({ words: ["דקה", "בא", "אני"] }, lib, srs), 1, "דקה unready; בא ready; אני is grammar");
   assertEq(journalAway({ "2026-10-03": { cards: 15 }, "2026-10-21": { cards: 0 } }, "2026-10-22"), 19);
   assertEq(journalAway({}, "2026-10-22"), null);
+});
+T("sit-down: warm-up, practice, the map, the talk, and the easy win held back to finish", () => {
+  const today = "2026-10-22";
+  const rec = (stab, last) => ({ stab: stab, diff: 3, n: 5, last: last, due: "2026-11-30", miss: 0 });
+  const srs = { "חם": { prod: rec(100, "2026-10-20") }, "קר": { prod: rec(90, "2026-10-20") },
+                "בית": { prod: rec(80, "2026-10-20") }, "דקה": { prod: rec(1, "2026-10-01") } };
+  const W = k => ({ kind: "word", key: k, words: [k] });
+  const daily = [W("חם"), W("קר"), W("דקה"), W("בית")];
+  const node = [W("דקה"), W("מיטה"), { kind: "sentence", item: { id: "n1", he: "x" }, words: ["מיטה"] }];
+  const talk = { kind: "compose", objectives: ["מיטה"] };
+  const out = sitAssemble(daily, node, talk, srs, today);
+  assertEq(out.map(c => c.key || c.kind), ["חם", "קר", "דקה", "מיטה", "sentence", "compose", "בית"]);
+  assertEq(out.map(c => c.part), ["warm", "warm", "practice", "map", "map", "talk", "finish"]);
+  out.sitNode = "Family & home";
+  assertEq(sitPartLine(out, 0), "Part 1 of 5 · Warm-up");
+  assertEq(sitPartLine(out, 1), "", "said once, at the start of the part");
+  assertEq(sitPartLine(out, 3), "Part 3 of 5 · On the map: Family & home");
+  assertEq(sitPartLine(out, 6), "Part 5 of 5 · To finish");
+  const bare = sitAssemble([W("דקה"), W("מיטה")], null, null, srs, today);
+  assertEq(bare.map(c => c.part), ["practice", "practice"], "no node, no key, no wins: still a session");
+  assertEq(sitPartLine([W("a")], 0), "", "an ordinary session has no parts");
 });
 T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
   const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };

@@ -27833,6 +27833,16 @@ function learnBuild(opts) {
     : [];
   const cards = shadowPicks.map(x => ({ kind: "shadow", item: x.it, words: x.it.uses || [] }));
 
+  /* SURE WINS, RESERVED (2026-10-22). Reordering alone found nothing to put first on his
+     real state the night he came back: nineteen days away had pulled every card the need
+     list chose below EASE_MIN. So a few are chosen for the purpose — sentences whose every
+     word he is still very likely to have — and sessionEaseOrder puts them at the two ends.
+     Paid for out of the bank's room by subtraction, like everything else here. */
+  const winPicks = sessionWinPicks(ranked.filter(x => shadowPicks.indexOf(x) === -1),
+                                   srsNow, todayISO(), launching,
+                                   shape === "quick" ? QUICK_WINS : OPEN_WINS + 1);
+  winPicks.forEach(x => cards.push({ kind: x.it.type, item: x.it, words: x.it.uses || [] }));
+
   /* ---- the soft launch -----------------------------------------------------
      George: "use the word cards to introduce new words, for instance those in the
      library that are 'never seen' ... Once I know a word even weakly it makes more
@@ -27897,9 +27907,14 @@ function learnBuild(opts) {
      precisely the failure the "sentences are the residual now" note claims to have
      fixed. Measured on the balanced shape: 1 shadow + 2 new + 2 chunk + 1 note left
      nine slots, and the bank was being handed seven of them. */
-  const bankRoom = learnBankRoom(size, cards.length, chunkPicks.length,
-                                 notePicks.length, replyPick ? 1 : 0, shape);
-  const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1);
+  /* The wins ARE bank sentences, so they count inside the bank's floor rather than on top
+     of it — counted on top, they pushed the session past `size` and the truncation below
+     cut cards at random. */
+  const bankRoom = Math.max(0, learnBankRoom(size, cards.length - winPicks.length, chunkPicks.length,
+                                             notePicks.length, replyPick ? 1 : 0, shape) -
+                               winPicks.length);
+  const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1 &&
+                                      winPicks.indexOf(x) === -1);
   /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
      list. Mostly his own level, with a deliberate reach above it — "it should be
      trying ot push me". pickByLevel preserves bankPool's ordering inside each level,
@@ -27986,9 +28001,12 @@ function learnBuild(opts) {
   }
 
   shuffleArr(cards);
-  cards.length = Math.min(cards.length, size - (replyPick ? 1 : 0));
+  learnTrim(cards, size - (replyPick ? 1 : 0), launching, winPicks.map(x => x.it));
   /* Meet it, then use it: a word launched today comes before any sentence carrying it. */
   introOrder(cards, launching);
+  /* Wins first and last — see sessionEaseOrder. After introOrder, and it moves only
+     cards that order does not care about, so meeting-before-using still holds. */
+  sessionEaseOrder(cards, srsNow, launching, todayISO(), shape === "quick" ? 1 : OPEN_WINS);
   /* The reply always closes. It's the thing the whole app exists to make possible,
      so the session ends on the real moment rather than on a vocabulary card. */
   if (replyPick) cards.push({ kind: "reply", item: replyPick.it, words: replyPick.it.uses || [] });
@@ -28177,6 +28195,79 @@ function introOrder(cards, launched) {
     cards.splice(si, 0, card);
   });
   return cards;
+}
+
+/* ---- open on wins, close on one (2026-10-22) -------------------------------------
+   The order used to be a shuffle, so a session could open on its three hardest cards.
+   On 2026-10-03 he had 0 right by card 4 and wrote "when it gets hard like this I'm just
+   like… I'm done"; on 2026-10-22 he said what he likes about the daily fifteen is that
+   "it gives me things I'm comfortable with… I'm challenging myself… it scaffolds me well."
+   So the easiest few go first and one more goes last, and everything else keeps its
+   place between them.
+
+   Ease is how likely he is to still have the card's hardest word right now: the lowest
+   srsR among its words, on the side the card grades. A word never drilled is 0. Only a
+   card at or above EASE_MIN counts as a win, so a thin day gets fewer rather than fake
+   ones. Never moved: shadowing (by ear, the slowest card there is), anything carrying
+   an unready word, and anything holding a word launched today, whose meet-then-use order
+   introOrder has just set. Mutates and returns `cards`. */
+const OPEN_WINS = 3, QUICK_WINS = 2, EASE_MIN = 0.8;
+function cardEase(c, srs, today) {
+  const side = KIND_SIDE[c && c.kind] || "prod";
+  const ws = ((c && c.words) || []).filter(w => !STOPLIST.has(w));
+  if (!ws.length) return 0;
+  return ws.reduce((lo, w) => {
+    const rec = srs && srs[w] && srs[w][side];
+    return Math.min(lo, (rec && rec.n) ? srsR(rec, today) : 0);
+  }, 1);
+}
+function sessionEaseOrder(cards, srs, launched, today, openN) {
+  const nOpen = openN === undefined ? OPEN_WINS : openN;
+  const L = new Set(launched || []);
+  const movable = c => !!c && ["shadow", "compose", "reply", "note"].indexOf(c.kind) === -1 &&
+                       !c.carry && !(c.words || []).some(w => L.has(w));
+  const wins = cards.map((c, i) => ({ c: c, i: i, e: movable(c) ? cardEase(c, srs, today) : -1 }))
+    .filter(x => x.e >= EASE_MIN)
+    .sort((a, b) => (b.e - a.e) || (a.i - b.i));
+  const open = wins.slice(0, nOpen).map(x => x.c);
+  const close = wins[nOpen] ? wins[nOpen].c : null;
+  const rest = cards.filter(c => open.indexOf(c) === -1 && c !== close);
+  const out = open.concat(rest, close ? [close] : []);
+  cards.length = 0;
+  out.forEach(c => cards.push(c));
+  return cards;
+}
+
+/* DOWN TO SIZE WITHOUT LOSING A WORD'S INTRODUCTION (2026-10-22). This was
+   `cards.length = size` after a shuffle, so whenever the slices overran — the bank's floor
+   makes that possible — a random card went. On his real state it took עוד's word card
+   and left two sentences carrying עוד: the never-seen-this-word card, rebuilt by
+   arithmetic. Now the cards dropped are the last ordinary ones; a word launched today
+   and a reserved win are never what goes. Mutates and returns `cards`. */
+function learnTrim(cards, limit, launched, winItems) {
+  const L = new Set(launched || []), W = new Set(winItems || []);
+  const keep = c => (c.kind === "word" && L.has(c.key)) || (c.item && W.has(c.item));
+  for (let i = cards.length - 1; cards.length > limit && i >= 0; i--) {
+    if (!keep(cards[i])) cards.splice(i, 1);
+  }
+  if (cards.length > limit) cards.length = limit;
+  return cards;
+}
+
+/* The sentences sessionEaseOrder will find: from `pool` (learnBuild's ranked list, fresh
+   before recent), sentence or listen items carrying nothing unready and no word launched
+   today, whose cardEase is at least EASE_MIN. Fresh ones first, so the same handful does
+   not open every session; the easiest first within that. Pure. */
+function sessionWinPicks(pool, srs, today, launched, n) {
+  const L = new Set(launched || []);
+  return (pool || [])
+    .filter(x => x && x.it && (x.it.type === "sentence" || x.it.type === "listen") && !x.carry &&
+                 !(x.it.uses || []).some(w => L.has(w)))
+    .map((x, i) => ({ x: x, i: i, e: cardEase({ kind: x.it.type, words: x.it.uses || [] }, srs, today) }))
+    .filter(y => y.e >= EASE_MIN)
+    .sort((a, b) => ((a.x.recent ? 1 : 0) - (b.x.recent ? 1 : 0)) || (b.e - a.e) || (a.i - b.i))
+    .slice(0, Math.max(0, n || 0))
+    .map(y => y.x);
 }
 
 /* Node scaffolding, wider than the daily kind: `progressing` counts, not only `strong`.
@@ -45505,6 +45596,52 @@ T("little words: in the library once, as words to learn rather than grammar", ()
   assertTrue(added.indexOf("עוד") !== -1 && lib["עוד"].cat === "Grammar", "a missing one arrives");
   assertEq(libAddLittleWords(lib), [], "a second run adds nothing");
   assertEq(wordFreqBonus("כבר"), FREQ_BONUS_MAX, "introduced first among new words");
+});
+T("session order: three sure wins open it, one more closes it, the rest keep their place", () => {
+  const today = "2026-10-22";
+  const rec = (stab, last) => ({ stab: stab, diff: 3, n: 5, last: last, due: "2026-11-30", miss: 0 });
+  const srs = {
+    "חם": { prod: rec(100, "2026-10-20") }, "קר": { prod: rec(90, "2026-10-20") },
+    "אבא": { prod: rec(80, "2026-10-20") }, "בית": { prod: rec(70, "2026-10-20") },
+    "דקה": { prod: rec(1, "2026-10-01") }, "זמן": { prod: rec(2, "2026-10-01") }
+  };
+  const W = k => ({ kind: "word", key: k, words: [k] });
+  const hard1 = W("דקה"), hard2 = W("זמן"), fresh = W("רק");
+  const carried = { kind: "sentence", item: { he: "x" }, carry: "רק", words: ["רק", "חם"] };
+  const shadow = { kind: "shadow", item: { he: "y" }, words: ["חם"] };
+  const easy = ["חם", "קר", "אבא", "בית"].map(W);
+  const cards = [hard1, shadow, easy[3], fresh, carried, easy[0], hard2, easy[2], easy[1]];
+  sessionEaseOrder(cards, srs, ["רק"], today);
+  assertEq(cards.slice(0, 3).map(c => c.key), ["חם", "קר", "אבא"], "easiest first");
+  assertEq(cards[cards.length - 1].key, "בית", "and one to finish on");
+  assertEq(cards.slice(3, -1), [hard1, shadow, fresh, carried, hard2], "the middle keeps its order");
+  assertTrue(cardEase(fresh, srs, today) === 0, "a word never drilled is no win");
+  const thin = [hard1, easy[0], hard2];
+  sessionEaseOrder(thin, srs, [], today);
+  assertEq(thin, [easy[0], hard1, hard2], "a thin day gets fewer wins, never fake ones");
+});
+T("sure wins: sentences he very likely still has, fresh before recent, never a launched word", () => {
+  const today = "2026-10-22";
+  const rec = (stab) => ({ stab: stab, diff: 3, n: 5, last: "2026-10-20", due: "2026-11-30", miss: 0 });
+  const srs = { "חם": { prod: rec(100) }, "קר": { prod: rec(90) }, "דקה": { prod: rec(1) } };
+  srs["דקה"].prod.last = "2026-10-01";
+  const it = (he, uses, type) => ({ it: { he: he, uses: uses, type: type || "sentence" } });
+  const a = it("a", ["חם"]), b = it("b", ["קר"]), hard = it("c", ["חם", "דקה"]);
+  const launched = it("d", ["חם", "רק"]), carried = Object.assign(it("e", ["קר"]), { carry: "x" });
+  const shadowy = it("f", ["חם"], "reply");
+  const recent = Object.assign(it("g", ["חם"]), { recent: true });
+  const got = sessionWinPicks([recent, hard, launched, carried, shadowy, b, a], srs, today, ["רק"], 3);
+  assertEq(got.map(x => x.it.he), ["a", "b", "g"], "easy, fresh first, recent only to fill");
+  assertEq(sessionWinPicks([hard], srs, today, [], 3), [], "nothing easy, nothing picked");
+});
+T("trimming to size never drops a launched word's card or a reserved win", () => {
+  const win = { he: "w" };
+  const cards = [{ kind: "word", key: "a" }, { kind: "word", key: "עוד" }, { kind: "sentence", item: win },
+                 { kind: "sentence", item: { he: "x" } }, { kind: "word", key: "b" }];
+  learnTrim(cards, 3, ["עוד"], [win]);
+  assertEq(cards.map(c => c.key || c.item.he), ["a", "עוד", "w"], "ordinary cards go, from the end");
+  const all = [{ kind: "word", key: "עוד" }, { kind: "sentence", item: win }];
+  assertEq(learnTrim(all, 1, ["עוד"], [win]).length, 1, "still never over the limit");
 });
 T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
   const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };

@@ -2890,6 +2890,8 @@
   .lact-name { font-size: 1.4rem; font-weight: 500; border-bottom: 0; padding-bottom: 0;
                margin-bottom: 10px; }
   .lact-quick { gap: 10px; }
+  .lact-why { font-family: var(--aside); font-style: italic; font-size: 1.02rem; color: var(--muted);
+              margin: -4px 0 10px; line-height: 1.3; }
   .lact-quick button { border-radius: 24px; min-height: 48px; font-size: .95rem; font-weight: 600;
                        border: 1.5px solid var(--accent); background: transparent; }
   .lact-quick button.primary { flex: 2; }
@@ -27307,7 +27309,8 @@ wireModalBackdropClose(document.getElementById("pathSheetBackdrop"), pathCloseSh
    else: the same four buckets, the same ordering, the same overdue cap. That is what
    makes "a campaign lesson is a Learn session" true rather than aspirational — there
    is no second scheduler to drift out of step with this one. */
-function learnTargets(limit, only) {
+function learnTargets(limit, only, opts) {
+  const gentle = !!(opts && opts.gentle);
   const lib = libAll(), srs = srsAll(), focus = focusAll(), today = todayISO();
   const arch = archiveAll();
   const allow = only && only.length ? new Set(only) : null;
@@ -27359,6 +27362,15 @@ function learnTargets(limit, only) {
     return pickOf(b) - pickOf(a);
   });
   shuffleArr(starred); shuffleArr(rest);
+  /* A GENTLE SESSION (see comebackCheck) meets nothing new and leads with the overdue
+     words he is likeliest still to have — the most stable — rather than the ones that
+     need it most. The need order is right for a learner in his stride and wrong for one
+     coming back, whose first job is to find out he still knows things. */
+  if (gentle) {
+    const stabOf = k => (srs[k] && srs[k].prod && srs[k].prod.stab) || 0;
+    overdue.sort((a, b) => stabOf(b) - stabOf(a));
+    return overdue.concat(starred, rest).slice(0, limit);
+  }
   /* Review can never fill the whole session. Without this cap a big enough overdue
      pile crowds out every new word indefinitely — which is exactly what happened on
      a 5-card Quick session, where the words he'd just failed were the entire thing.
@@ -27724,7 +27736,10 @@ function learnBuild(opts) {
   const level = levelSettle(lvlStore);
   levelSave(lvlStore);
 
-  const targets = learnTargets(SESSION_CARDS, only);
+  /* Coming back after a break — see comebackCheck. Daily practice only: a node is a
+     place he chose to go, and it says on the map what it holds. */
+  const gentle = only ? null : comebackCheck(todayISO());
+  const targets = learnTargets(SESSION_CARDS, only, { gentle: !!gentle });
   if (!targets.length) return null;
 
   const voice = hasHeVoice();
@@ -27754,8 +27769,9 @@ function learnBuild(opts) {
      and the sentence is where he uses it. Computed here rather than down at the soft
      launch because `carry` has to be known before the bank is filtered. learnTopUp's
      introduce pass writes those sentences, reading the same introWords. */
-  const launching = introWords(targets, srsNow, shape === "quick" ? 1 : NEW_WORD_CARDS);
-  const carry = new Set(rescueWords(lib, srsNow).concat(launching));
+  const launching = gentle ? [] : introWords(targets, srsNow, shape === "quick" ? 1 : NEW_WORD_CARDS);
+  /* Gentle: nothing carried either, so every sentence is made only of words he has. */
+  const carry = gentle ? new Set() : new Set(rescueWords(lib, srsNow).concat(launching));
   /* The one list — see practiceNeeds. Everything below that chooses a sentence or a
      word reads this, and so does learnTopUp's writer. */
   const needs = practiceNeeds(lib, srsNow, todayISO(), archiveAll());
@@ -27840,7 +27856,7 @@ function learnBuild(opts) {
      Paid for out of the bank's room by subtraction, like everything else here. */
   const winPicks = sessionWinPicks(ranked.filter(x => shadowPicks.indexOf(x) === -1),
                                    srsNow, todayISO(), launching,
-                                   shape === "quick" ? QUICK_WINS : OPEN_WINS + 1);
+                                   shape === "quick" ? QUICK_WINS : gentle ? GENTLE_WINS : OPEN_WINS + 1);
   winPicks.forEach(x => cards.push({ kind: x.it.type, item: x.it, words: x.it.uses || [] }));
 
   /* ---- the soft launch -----------------------------------------------------
@@ -28022,6 +28038,9 @@ function learnBuild(opts) {
   cards.forEach(c => { if (c.item && c.item.id) shownNow[c.item.id] = true; });
   markShown(Object.keys(shownNow));
 
+  /* Read by the start button, which puts it on the session so learnFinish can count a
+     gentle session off and the journal can say which kind it was. */
+  if (gentle) cards.gentle = gentle;
   return cards;
 }
 
@@ -28212,6 +28231,10 @@ function introOrder(cards, launched) {
    an unready word, and anything holding a word launched today, whose meet-then-use order
    introOrder has just set. Mutates and returns `cards`. */
 const OPEN_WINS = 3, QUICK_WINS = 2, EASE_MIN = 0.8;
+/* A gentle session (see comebackCheck) is half sure things. Measured on the night he came
+   back: with four, the other eleven cards were words nineteen days had faded to near zero,
+   back to back. With eight, the faded ones sit between things he still has. */
+const GENTLE_WINS = 8;
 function cardEase(c, srs, today) {
   const side = KIND_SIDE[c && c.kind] || "prod";
   const ws = ((c && c.words) || []).filter(w => !STOPLIST.has(w));
@@ -28231,11 +28254,82 @@ function sessionEaseOrder(cards, srs, launched, today, openN) {
     .sort((a, b) => (b.e - a.e) || (a.i - b.i));
   const open = wins.slice(0, nOpen).map(x => x.c);
   const close = wins[nOpen] ? wins[nOpen].c : null;
-  const rest = cards.filter(c => open.indexOf(c) === -1 && c !== close);
+  /* Any wins left over are SPREAD through the middle rather than left where the shuffle
+     put them — on his real state a gentle session otherwise ran six faded cards back to
+     back. The other cards keep their relative order, so introOrder's still holds. */
+  const spare = wins.slice(nOpen + 1).map(x => x.c);
+  const others = cards.filter(c => open.indexOf(c) === -1 && c !== close && spare.indexOf(c) === -1);
+  const rest = others.slice();
+  spare.forEach((c, k) => {
+    const at = Math.round((k + 1) * others.length / (spare.length + 1)) + k;
+    rest.splice(Math.min(at, rest.length), 0, c);
+  });
   const out = open.concat(rest, close ? [close] : []);
   cards.length = 0;
   out.forEach(c => cards.push(c));
   return cards;
+}
+
+/* ---- welcome back (2026-10-22) ---------------------------------------------------
+   He came back after nineteen days to 182 due words, and the session the app built for
+   that moment was its hardest: the overdue pile leading, two new words launched on top,
+   sentences carrying them. His last session before the gap had ended in "it's gone a lot
+   harder… I can't be bothered anymore." And what he said he wanted on return: "15 cards,
+   get that refresh… things I'm comfortable with."
+
+   So a return after COMEBACK_DAYS away earns COMEBACK_SESSIONS gentle sessions: nothing
+   new, nothing carried, overdue words most-stable first. One counts off when it is
+   FINISHED (learnFinish), so walking out of one does not use it up. A return more than
+   two days old is let go — by then he has been practising, and the normal session is right. */
+const COMEBACK_KEY = "hvr_comeback", COMEBACK_DAYS = 4, COMEBACK_SESSIONS = 2;
+/* The return he is in the middle of, if any: the first day back after COMEBACK_DAYS or more
+   away, as long as it was within the last two days. Looking for the RETURN rather than
+   asking "was yesterday empty" matters on the very night this shipped: he had already done
+   a session that day, so asking tomorrow would have found him in his stride. */
+function comebackGap(stats, today) {
+  const days = Object.keys(stats || {}).filter(d => d <= today && ((stats[d] || {}).cards || 0) > 0).sort();
+  const gap = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  if (!days.length) return null;
+  if (days.indexOf(today) === -1) {
+    const away = gap(days[days.length - 1], today);
+    if (away >= COMEBACK_DAYS) return { from: today, away: away };
+  }
+  for (let i = days.length - 1; i > 0 && days[i] >= addDays(today, -2); i--) {
+    const away = gap(days[i - 1], days[i]);
+    if (away >= COMEBACK_DAYS) return { from: days[i], away: away };
+  }
+  return null;
+}
+function comebackAll() {
+  try { const o = JSON.parse(lsGet(COMEBACK_KEY)); return (o && typeof o === "object") ? o : null; }
+  catch (e) { return null; }
+}
+/* Pure decision: the state a session built today should run under, or null. One return
+   earns its sessions once: a state already made for this return is used up, not renewed. */
+function comebackState(saved, stats, today) {
+  const g = comebackGap(stats, today);
+  if (!g) return null;
+  if (saved && saved.from === g.from) return saved.left > 0 ? saved : null;
+  return { from: g.from, away: g.away, left: COMEBACK_SESSIONS };
+}
+function comebackCheck(today) {
+  const saved = comebackAll();
+  const st = comebackState(saved, statsAll(), today);
+  if (st && st !== saved) lsSet(COMEBACK_KEY, JSON.stringify(st));
+  return st;
+}
+/* After a finished gentle session. */
+function comebackSpend() {
+  const st = comebackAll();
+  if (!st || !(st.left > 0)) return;
+  st.left -= 1;
+  lsSet(COMEBACK_KEY, JSON.stringify(st));
+}
+/* Pure, for the slip and its test. */
+function comebackLine(cb) {
+  const n = cb.left === 1 ? "next session is" : "next " + (cb.left === 2 ? "two" : cb.left) + " sessions are";
+  const away = (cb.away && cb.away !== Infinity) ? " \u2014 " + cb.away + " days away" : "";
+  return "Welcome back" + away + ". The " + n + " gentle: only words you've had before.";
 }
 
 /* DOWN TO SIZE WITHOUT LOSING A WORD'S INTRODUCTION (2026-10-22). This was
@@ -30804,6 +30898,15 @@ function learnRenderAct() {
   const nm = document.createElement("div"); nm.className = "lact-name";
   nm.textContent = "Daily practice";
   box.append(nm);
+  /* Said before he starts, in the world's voice: what the next session will be like after
+     a break, so the first card is not where he finds out. Reads without saving — the
+     state is only written when a session is actually built. */
+  const cb = comebackState(comebackAll(), statsAll(), todayISO());
+  if (cb) {
+    const why = document.createElement("div"); why.className = "lact-why";
+    why.textContent = comebackLine(cb);
+    box.append(why);
+  }
   const quick = document.createElement("div"); quick.className = "lact-quick";
   /* Talk used to be a third chip here, held open "until the campaign owns it properly
      — a node's closing conversation is what it becomes". The campaign owns it now: the
@@ -31318,7 +31421,8 @@ document.getElementById("lStartBtn").onclick = async () => {
     return;
   }
   sessionClear();          // a new draw replaces whatever was stashed
-  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [],
+                   mode: learnShape() === "quick" ? "5" : "15", gentle: !!cards.gentle };
   statsBump({ sessions: 1 });
   if (!/new practice|limit|Couldn't/.test(hint.textContent)) hint.textContent = before;
   learnShow("lRun");
@@ -34455,6 +34559,7 @@ function learnFinish() {
   setTimeout(() => syncRun("session", { quiet: true }), 400);
   micRelease();
   statsSnapshotBands();
+  if (s.gentle) comebackSpend();
   learnRenderRoad(s.cards.length - 1, s.cards.length);
   const strong = Object.keys(s.strengthened).filter(k => !s.back[k]).length;
   const back = Object.keys(s.back).length;
@@ -45642,6 +45747,23 @@ T("trimming to size never drops a launched word's card or a reserved win", () =>
   assertEq(cards.map(c => c.key || c.item.he), ["a", "עוד", "w"], "ordinary cards go, from the end");
   const all = [{ kind: "word", key: "עוד" }, { kind: "sentence", item: win }];
   assertEq(learnTrim(all, 1, ["עוד"], [win]).length, 1, "still never over the limit");
+});
+T("welcome back: a return after four days away earns two gentle sessions, spent only by finishing", () => {
+  const before = { "2026-09-29": { cards: 30 }, "2026-10-03": { cards: 15 }, "2026-10-10": { cards: 0 } };
+  const st = comebackState(null, before, "2026-10-22");
+  assertEq(st, { from: "2026-10-22", away: 19, left: COMEBACK_SESSIONS }, "a day with no cards is not a day practised");
+  const back = Object.assign({}, before, { "2026-10-22": { cards: 15 } });
+  assertEq(comebackState(null, back, "2026-10-22").from, "2026-10-22", "the night he came back, after a session");
+  assertEq(comebackState(null, back, "2026-10-23"), { from: "2026-10-22", away: 19, left: COMEBACK_SESSIONS },
+           "and the next day: the return is what counts, not whether yesterday was empty");
+  assertEq(comebackState(null, back, "2026-10-25"), null, "a return more than two days old is let go");
+  assertTrue(comebackState(Object.assign({}, st, { left: 1 }), back, "2026-10-23").left === 1, "an unspent state carries");
+  assertEq(comebackState(Object.assign({}, st, { left: 0 }), back, "2026-10-23"), null, "one return, earned once");
+  assertEq(comebackState(null, { "2026-10-20": { cards: 5 }, "2026-10-21": { cards: 5 } }, "2026-10-22"), null,
+           "practising in his stride: an ordinary session");
+  assertEq(comebackState(null, {}, "2026-10-22"), null, "a brand-new device is not coming back");
+  assertTrue(/19 days away\. The next two sessions are gentle/.test(comebackLine(st)), comebackLine(st));
+  assertTrue(/The next session is gentle/.test(comebackLine({ away: 5, left: 1 })));
 });
 T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
   const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };

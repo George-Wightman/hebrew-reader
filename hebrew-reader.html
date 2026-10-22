@@ -8765,17 +8765,17 @@ async function rekeyWord(from, to) {
    They can still be added by hand with the ⊕ button on any word card. */
 const STOPLIST = new Set([
   "אני","אתה","את","הוא","היא","אנחנו","אתם","אתן","הם","הן",
-  "זה","זאת","זו","אלה","עצמי",
+  "זה","זו","עצמי",
   "שלי","שלך","שלו","שלה","שלנו","שלכם","שלהם",
   "אותי","אותך","אותו","אותה","אותנו","אתכם","אותם",
   "לי","לך","לו","לה","לנו","לכם","להם",
-  "של","גם","רק","או","אם","כי","אז","כל","עם","על","עד","לא","כן",
+  "של","גם","אז","עם","לא","כן",
   /* George: "there are filler words ... like grammer, they should be treated
      differently from more complex and useful words like nouns and verbs." גם and אז
      were already here, so the intent always covered connectives — אבל and מאוד were
      simply missed, and were being drilled as content words and gating nodes. */
   "אבל","מאוד",
-  "מה","מי","זה","יש","אין","הרבה","עוד","כבר","פה","כאן","שם",
+  "מה","מי","זה","יש","אין","הרבה","פה","שם",
   /* The same classes as the rows above, arriving as their own library entries
      (2026-09-29). "with me/him/her…" is the לי/לו/לה pattern on עם; אותן and להן/שלהן
      finish the sets already here; הזה/הזאת/הזו/האלה/שזה are זה with the article or ש
@@ -8784,6 +8784,44 @@ const STOPLIST = new Set([
   "איתי","איתך","איתו","איתה","איתנו","איתכם","איתם",
   "אותן","להן","שלהן","הזה","הזאת","הזו","האלה","שזה"
 ]);
+/* LITTLE WORDS HE HAS TO LEARN, NOT GRAMMAR HE KNOWS COLD (2026-10-22). These were on
+   the list above, which made them invisible twice over: never drilled, and never seen by
+   bankServable, so a sentence built on them passed as "within reach". George, on בעוד
+   דקה אני בא and זאת רק ההתחלה: "I've never seen any of these words before… I've got no
+   clue where to even start." An English speaker cannot guess רק or כבר the way he can
+   guess a pronoun's role, so they are words: in the library, introduced by the soft
+   launch (commonest first — see wordFreqBonus), and counted by the gate like any other.
+   See docs/superpowers/specs/2026-10-22-coming-back-design.md, phase 1. */
+/* אז stays grammar: "the connectives are grammar" is a test with its own history (it
+   kept gold on a node from hanging on one), and "so" is the one of these he can use
+   without being taught. */
+const LITTLE_WORDS = ["רק", "עוד", "כבר", "זאת", "כי", "עד", "או", "כל", "על", "כאן", "אלה",
+                      "אם"];
+const LITTLE_KEY = "hvr_little_v1";
+/* Pure over `lib`: each little word not already there, from DICT, in the machine's pool
+   like the frequency intake. Returns what it added. */
+function libAddLittleWords(lib) {
+  const added = [];
+  LITTLE_WORDS.forEach(k => {
+    if (lib[k] || !DICT[k]) return;
+    lib[k] = { tr: String(DICT[k][0]).split("/")[0].trim(), en: DICT[k][1], cat: "Grammar",
+               opp: "", seen: 0, added: todayISO(), src: "little", shelf: "reserve" };
+    added.push(k);
+  });
+  return added;
+}
+/* Once per device. A word he later deletes stays deleted — that is what the key is for. */
+function libAddLittleIfNeeded() {
+  try {
+    if (lsGet(LITTLE_KEY)) return 0;
+    const lib = libAll();
+    if (!Object.keys(lib).length) return 0;         // fresh install: SEED runs first
+    const added = libAddLittleWords(lib);
+    if (added.length) { libSave(lib); rebuildTrIndex(); }
+    lsSet(LITTLE_KEY, "1");
+    return added.length;
+  } catch (e) { return 0; }
+}
 
 /* The single authority on what the scheduler will record — and therefore on what a
    session is allowed to ASK. These two had drifted apart: learnTargets walked the
@@ -22389,6 +22427,9 @@ function wordFamiliarity(k, lib, srs, arch) {
    being chosen. */
 const FREQ_BONUS_MAX = 160, FREQ_BONUS_SPAN = 1600;
 function wordFreqBonus(k) {
+  /* Off the frequency list only because they were grammar until 2026-10-22; in speech
+     they are among the commonest words there are, so they rank as the top. */
+  if (LITTLE_WORDS.indexOf(k) !== -1) return FREQ_BONUS_MAX;
   const r = FREQ_RANK[k];
   if (!r) return 0;
   return Math.max(0, Math.round(FREQ_BONUS_MAX * (1 - (r - 1) / FREQ_BONUS_SPAN)));
@@ -34736,6 +34777,8 @@ libAddDuoUnitsIfNeeded();
 /* After the Duolingo import, so a word it brings in is not added twice under another
    form. learnBuild calls it again, so the floor refills as he drills. */
 libAddFreqIfNeeded();
+/* The little words, once — see LITTLE_WORDS. Ahead of the tidy below, like the imports. */
+libAddLittleIfNeeded();
 /* After every import, so whatever they just added is tidied in the same load: Duolingo's
    transliteration marks and the handful of wrong glosses — see libWordsTidy. Idempotent,
    so it simply runs every load; an entry he corrected himself is left alone. */
@@ -45452,6 +45495,27 @@ T("shadowing: only a sentence short enough to hold by ear", () => {
   assertTrue(shadowFits({ he: "השולחן גדול" }), "two words");
   assertTrue(shadowFits({ he: "איפה  השולחן?" }), "a double space is not a word");
   assertTrue(!shadowFits({ he: "בחדר יש שולחן ומיטה" }), "the four-word one George could not echo");
+});
+T("little words: in the library once, as words to learn rather than grammar", () => {
+  LITTLE_WORDS.forEach(k => assertTrue(!STOPLIST.has(k), k + " is no longer filler"));
+  assertTrue(STOPLIST.has("אני") && STOPLIST.has("של"), "the grammar he has stays");
+  const lib = { "רק": { tr: "mine", en: "his own gloss" } };
+  const added = libAddLittleWords(lib);
+  assertTrue(added.indexOf("רק") === -1 && lib["רק"].en === "his own gloss", "an entry he has is left alone");
+  assertTrue(added.indexOf("עוד") !== -1 && lib["עוד"].cat === "Grammar", "a missing one arrives");
+  assertEq(libAddLittleWords(lib), [], "a second run adds nothing");
+  assertEq(wordFreqBonus("כבר"), FREQ_BONUS_MAX, "introduced first among new words");
+});
+T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
+  const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };
+  libAddLittleWords(lib);
+  const ready = { stab: 12, diff: 3, n: 6, due: "2099-01-01", last: "2026-10-01", miss: 0, lapses: 0, streak: 4 };
+  const srs = { "דקה": { prod: ready, recv: ready }, "בא": { prod: ready, recv: ready } };
+  const it = { he: "בעוד דקה אני בא", uses: bankUses("בעוד דקה אני בא", lib) };
+  assertTrue(it.uses.indexOf("עוד") !== -1, "בעוד credits עוד");
+  assertTrue(!bankServable(it, lib, srs), "an unmet little word blocks it, as any unmet word would");
+  srs["עוד"] = { prod: ready, recv: ready };
+  assertTrue(bankServable(it, lib, srs), "once it is met, the sentence is back");
 });
 T("grader prompts: the Hebrew they are shown has its final letters back", () => {
   assertEq(heShownAll(["בקיצ", "יש", "הרבה", "פירות"]), "בקיץ יש הרבה פירות");

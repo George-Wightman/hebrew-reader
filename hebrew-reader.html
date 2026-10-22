@@ -4659,13 +4659,29 @@ function mergeSrs(a, b) {
    practised on both devices, and that is the accepted direction to be wrong in —
    summing is correct once and then double-counts on every later merge, because the
    merged total is written back to both devices. */
+/* `bands` IS NOT A NUMBER (2026-10-22). It is the day's strength snapshot, an object,
+   and maxNum read it as 0 on both sides — so every sync since the snapshot was added
+   wrote `bands: 0`. The dashboard's "strong words" milestones read it and said 0 from
+   21 September; the stats room's fourteen-day comparison went quietly empty. An object
+   field keeps an object: the one with more strong words, then more progressing. */
+function mergeStatsObj(x, y) {
+  const ox = x && typeof x === "object" ? x : null, oy = y && typeof y === "object" ? y : null;
+  if (!ox || !oy) return ox || oy;
+  const rank = o => [o.strong || 0, o.progressing || 0];
+  const rx = rank(ox), ry = rank(oy);
+  if (ry[0] !== rx[0]) return ry[0] > rx[0] ? oy : ox;
+  if (ry[1] !== rx[1]) return ry[1] > rx[1] ? oy : ox;
+  /* A tie must not depend on which device called it `a` — see mergeById. */
+  return JSON.stringify(oy) < JSON.stringify(ox) ? oy : ox;
+}
 function mergeStats(a, b) {
   const out = {};
   unionKeys(a, b).forEach(d => {
     const mine = (a || {})[d] || {}, theirs = (b || {})[d] || {};
     const rec = {};
     unionKeys(mine, theirs).forEach(f => {
-      rec[f] = maxNum(mine[f], theirs[f]);
+      const obj = mergeStatsObj(mine[f], theirs[f]);
+      rec[f] = obj || maxNum(mine[f], theirs[f]);
     });
     out[d] = rec;
   });
@@ -39295,6 +39311,20 @@ T("mergeStats: commutative and idempotent", () => {
   const b = { "2026-08-20": { sec: 120, cards: 20 } };
   assertEq(mergeStats(a, b), mergeStats(b, a));
   assertEq(mergeStats(mergeStats(a, b), b), mergeStats(a, b));
+});
+T("mergeStats: the day's strength snapshot survives a sync instead of becoming 0", () => {
+  const snap = { strong: 85, progressing: 60, weak: 40, "new": 238 };
+  const a = { "2026-10-22": { cards: 15, bands: snap } };
+  const b = { "2026-10-22": { cards: 15 } };
+  assertEq(mergeStats(a, b)["2026-10-22"].bands, snap, "one side has it: kept whole");
+  assertEq(mergeStats(b, a)["2026-10-22"].bands, snap, "whichever side it is on");
+  const later = { "2026-10-22": { cards: 20, bands: { strong: 86, progressing: 59, weak: 40, "new": 238 } } };
+  assertEq(mergeStats(a, later)["2026-10-22"].bands.strong, 86, "both: the one with more strong words");
+  assertEq(mergeStats(a, later), mergeStats(later, a), "commutative");
+  const tie = { "2026-10-22": { bands: { strong: 85, progressing: 60, weak: 41, "new": 237 } } };
+  assertEq(mergeStats(a, tie)["2026-10-22"].bands, mergeStats(tie, a)["2026-10-22"].bands, "a tie too");
+  assertEq(mergeStats(a, { "2026-10-22": { bands: 0 } })["2026-10-22"].bands, snap,
+           "a day an older build already zeroed does not zero it back");
 });
 
 T("mergeById: union by id, higher seen, stable order", () => {

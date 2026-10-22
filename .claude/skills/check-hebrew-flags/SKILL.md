@@ -246,6 +246,15 @@ the question and answer are in it. Group the report by kind.
    ledger is empty, too: "nothing has degraded since <first>" is a real result, and it is
    the one that says the last fix held.
 
+6b. **Read how he has been practising, every time.** Since 2026-10-22 the app keeps a
+   session journal (`hvr_journal`: one row per session — which button, how far he got, each
+   card's kind / clean / seconds / hinted / unready words, and his end-screen "how did that
+   feel?" tap). Decode the state with `python tools/content/fetch_state.py <scratch>` and
+   run `python tools/journal_report.py <scratch>/state_keys.json [days]`. Lead the report
+   with anything that says the app is getting harder to come back to: days missed, sessions
+   abandoned part-way, clean rate falling below ~70%, "felt hard" taps. That is what took
+   him away for nineteen days in October 2026, and no flag said so until afterwards.
+
 7. Treat the result as a punch list, not just a status report: if he asked to "check flags"
    as a prelude to picking something up, offer to start on one rather than just printing
    the list and stopping.

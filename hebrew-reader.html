@@ -2890,6 +2890,12 @@
   .lact-name { font-size: 1.4rem; font-weight: 500; border-bottom: 0; padding-bottom: 0;
                margin-bottom: 10px; }
   .lact-quick { gap: 10px; }
+  .lfeel { margin: 14px 0 4px; text-align: center; }
+  .lfeel-q { font-family: var(--aside); font-style: italic; font-size: 1.05rem; color: var(--muted);
+             margin-bottom: 8px; }
+  .lfeel-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .lfeel-b { border: 1.5px solid var(--accent); background: transparent; color: var(--ink);
+             border-radius: 20px; padding: 8px 14px; font: inherit; font-size: .9rem; cursor: pointer; }
   .lact-why { font-family: var(--aside); font-style: italic; font-size: 1.02rem; color: var(--muted);
               margin: -4px 0 10px; line-height: 1.3; }
   .lact-quick button { border-radius: 24px; min-height: 48px; font-size: .95rem; font-weight: 600;
@@ -3724,6 +3730,9 @@
       <!-- What the session moved, word by word. The stats room next door already covers
            minutes and cards; this is the half it cannot say. -->
       <div id="lEndWords"></div>
+      <!-- One tap, no follow-up: how the session felt, for the journal. The thing the app
+           most needs to know to set the difficulty, and the one thing it cannot measure. -->
+      <div class="lfeel" id="lEndFeel"></div>
       <div class="lactions">
         <button class="btn" id="lAgainBtn">Another session</button>
         <button class="btn secondary" id="lDoneBtn">Done for now</button>
@@ -4775,6 +4784,30 @@ function mergeSrsLog(a, b, cap) {
   return cap ? out.slice(-cap) : out;
 }
 
+/* The session journal, by id. One device writes a session card by card, so for the same
+   id the copy with MORE cards is the later one; `fin` and `feel` are only ever set, never
+   cleared, so either side having them means they happened. Sorted by start time, then id,
+   so the output is the same whichever device merges. */
+function mergeJournal(a, b, cap) {
+  const byId = {};
+  [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(e => {
+    if (!e || typeof e !== "object" || !e.id) return;
+    const m = byId[e.id];
+    if (!m) { byId[e.id] = e; return; }
+    const ne = (e.cards || []).length, nm = (m.cards || []).length;
+    const base = ne > nm || (ne === nm && JSON.stringify(e) < JSON.stringify(m)) ? e : m;
+    const other = base === e ? m : e;
+    byId[e.id] = Object.assign({}, base, {
+      fin: !!(base.fin || other.fin),
+      feel: base.feel || other.feel || "",
+      end: Math.max(base.end || 0, other.end || 0)
+    });
+  });
+  const out = Object.keys(byId).map(k => byId[k])
+    .sort((x, y) => ((x.at || 0) - (y.at || 0)) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return cap ? out.slice(-cap) : out;
+}
+
 /* Saved messages, keyed by timestamp. Newest first, same as the app writes them. */
 function mergeHistory(a, b, cap) {
   const byTs = {};
@@ -4915,7 +4948,8 @@ const MERGE_RULES = {
      phone's record of what went wrong on the phone is erased by the laptop every sync.
      That is the exact failure the note beside COACH_KEY describes shipping twice. */
   "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX),
-  "hvr_sessions":   (a, b) => mergeSessions(a, b, SESS_MAX)
+  "hvr_sessions":   (a, b) => mergeSessions(a, b, SESS_MAX),
+  "hvr_journal":    (a, b) => mergeJournal(a, b, JOURNAL_MAX)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -23177,7 +23211,7 @@ function learnStartCheck() {
   if (!words.length) return false;
   sessionClear();
   learnSession = { cards: words.map(k => ({ kind: "word", key: k, words: [k] })),
-                   i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
+                   i: 0, got: 0, strengthened: {}, back: {}, fluent: [], mode: "check" };
   statsBump({ sessions: 1 });
   markShown(words);
   learnShow("lRun");
@@ -23195,7 +23229,7 @@ function reviewStartDrill() {
   if (store.obs) { store.obs.seen = true; reviewSave(store); }
   learnStatsOpen(false);
   sessionClear();
-  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [] };
+  learnSession = { cards: cards, i: 0, got: 0, strengthened: {}, back: {}, fluent: [], mode: "review" };
   statsBump({ sessions: 1 });
   learnShow("lRun");
   learnRenderCard();
@@ -28332,6 +28366,93 @@ function comebackLine(cb) {
   return "Welcome back" + away + ". The " + n + " gentle: only words you've had before.";
 }
 
+/* ---- the session journal (2026-10-22) ---------------------------------------------
+   Until tonight nothing recorded a SESSION. The stats keep daily totals and the SRS log
+   keeps single answers, so which button he pressed, how far he got before walking out,
+   which kind of card was eating the time and whether it felt too hard could only be
+   learned by him describing it — "I think there's not really a clear way for you to know
+   how I'm using it". One row per session, synced, so it can be read like the flags.
+
+   Opened on the first card render, which every start path passes through. Written after
+   every card, so a session he walks out of is on record with how far it got. `fin` on
+   learnFinish; `feel` from the end screen's one tap. Each card is
+   [kind, clean 0/1, seconds, hinted 0/1, words not yet ready when the session opened]. */
+const JOURNAL_KEY = "hvr_journal", JOURNAL_MAX = 400;
+function journalAll() {
+  try { const a = JSON.parse(lsGet(JOURNAL_KEY)); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+function journalSave(a) { lsSet(JOURNAL_KEY, JSON.stringify(a.slice(-JOURNAL_MAX))); }
+function journalPut(e) {
+  const a = journalAll();
+  const i = a.findIndex(x => x && x.id === e.id);
+  if (i === -1) a.push(e); else a[i] = e;
+  journalSave(a);
+}
+/* Pure: what kind of session this is, from what the session object carries. */
+function journalMode(s) {
+  if (!s) return "";
+  const first = s.cards && s.cards[0];
+  if (s.path) {
+    const n = (typeof campNode === "function" && campNode(s.path.id)) || null;
+    return "node:" + ((n && n.name) || s.path.id) + ":" + s.path.lesson;
+  }
+  if (first && first.kind === "compose") return "coach";
+  return s.mode || "";
+}
+/* Pure: how many of a card's gradable words are not ready, against `srs` as it stood
+   when the session opened — the card's difficulty as he met it. */
+function journalUnready(c, lib, srs) {
+  return ((c && c.words) || []).filter(w => srsGradable(w, lib) && !wordReady(w, srs)).length;
+}
+/* Pure: the last day before `today` with cards answered, as a count of days; null with none. */
+function journalAway(stats, today) {
+  const days = Object.keys(stats || {}).filter(d => d < today && ((stats[d] || {}).cards || 0) > 0).sort();
+  return days.length ? Math.round((Date.parse(today) - Date.parse(days[days.length - 1])) / 86400000) : null;
+}
+function journalOpen(s) {
+  if (!s || s.jid) return;
+  try {
+    const lib = libAll(), srs = srsAll(), now = Date.now();
+    s.jid = now.toString(36) + "-" + syncDeviceId();
+    s.jUnready = (s.cards || []).map(c => journalUnready(c, lib, srs));
+    journalPut({ id: s.jid, dev: syncDeviceId(), at: now, end: 0, mode: journalMode(s),
+                 of: (s.cards || []).length, away: journalAway(statsAll(), todayISO()),
+                 gentle: !!s.gentle, fin: false, feel: "", cards: [] });
+  } catch (e) { /* the journal is a record, never a reason a session cannot start */ }
+}
+function journalCard(s, c, clean, sec, hinted) {
+  if (!s || !s.jid) return;
+  try {
+    const a = journalAll();
+    const e = a.find(x => x && x.id === s.jid);
+    if (!e) return;
+    e.cards.push([c.kind, clean ? 1 : 0, sec || 0, hinted ? 1 : 0, (s.jUnready || [])[s.i] || 0]);
+    e.end = Date.now();
+    journalSave(a);
+  } catch (e) {}
+}
+function journalFinish(s) {
+  if (!s || !s.jid) return;
+  try {
+    const a = journalAll();
+    const e = a.find(x => x && x.id === s.jid);
+    if (!e) return;
+    e.fin = true; e.end = Date.now();
+    journalSave(a);
+  } catch (e) {}
+}
+function journalFeel(id, feel) {
+  try {
+    const a = journalAll();
+    const e = a.find(x => x && x.id === id);
+    if (!e) return false;
+    e.feel = feel;
+    journalSave(a);
+    return true;
+  } catch (e) { return false; }
+}
+
 /* DOWN TO SIZE WITHOUT LOSING A WORD'S INTRODUCTION (2026-10-22). This was
    `cards.length = size` after a shuffle, so whenever the slices overran — the bank's floor
    makes that possible — a random card went. On his real state it took עוד's word card
@@ -30703,7 +30824,8 @@ function sessionStash() {
   lsSet(SESSION_KEY, JSON.stringify({
     ts: Date.now(), i: s.i, got: s.got, cards: s.cards,
     strengthened: s.strengthened, back: s.back, path: s.path || null,
-    fluent: s.fluent || [], moved: s.moved || {}
+    fluent: s.fluent || [], moved: s.moved || {},
+    jid: s.jid || null, jUnready: s.jUnready || null, mode: s.mode || "", gentle: !!s.gentle
   }));
 }
 function sessionClear() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
@@ -30731,7 +30853,11 @@ function sessionValidate(d, now) {
            strengthened: d.strengthened || {}, back: d.back || {},
            fluent: Array.isArray(d.fluent) ? d.fluent : [],
            moved: (d.moved && typeof d.moved === "object") ? d.moved : {},
-           path: d.path || undefined, ts: d.ts };
+           path: d.path || undefined, ts: d.ts,
+           /* The journal row it was writing, so a resumed session carries on the same
+              row rather than opening a second one for the same fifteen cards. */
+           jid: d.jid || undefined, jUnready: Array.isArray(d.jUnready) ? d.jUnready : undefined,
+           mode: d.mode || "", gentle: !!d.gentle };
 }
 function sessionRestore() {
   let d = null;
@@ -31533,6 +31659,7 @@ function learnRenderRoad(i, total) {
 
 function learnRenderCard() {
   const s = learnSession; if (!s) return;
+  journalOpen(s);
   const c = s.cards[s.i];
   const lib = libAll();
   const card = document.getElementById("lCard");
@@ -33910,10 +34037,12 @@ function learnAdvance(clean) {
   }
   /* One write per card rather than per session: a session abandoned two-thirds
      through still counts the two-thirds he actually did. */
-  statsBump({ sec: statsCardEnd(), cards: 1, clean: clean ? 1 : 0,
+  const sec = statsCardEnd();
+  statsBump({ sec: sec, cards: 1, clean: clean ? 1 : 0,
               hints: learnHints ? 1 : 0,
               spoken: learnSpoken ? 1 : 0,
               spokenOk: (learnSpoken && clean) ? 1 : 0 });
+  journalCard(s, c, clean, sec, learnHints > 0);
   if (clean) {
     s.got++;
     /* Kept for the walk home. Collected here rather than reconstructed at the end
@@ -34560,6 +34689,9 @@ function learnFinish() {
   micRelease();
   statsSnapshotBands();
   if (s.gentle) comebackSpend();
+  journalFinish(s);
+  lastJournalId = s.jid || null;
+  journalRenderFeel();
   learnRenderRoad(s.cards.length - 1, s.cards.length);
   const strong = Object.keys(s.strengthened).filter(k => !s.back[k]).length;
   const back = Object.keys(s.back).length;
@@ -34670,6 +34802,37 @@ function learnFinish() {
   learnShow("lEnd");
   learnEndButtons();
   learnBadge();
+}
+
+/* ---- how did that feel? --------------------------------------------------------
+   The journal can count how many he got right; it cannot tell a session that was right at
+   the edge from one that wore him down, and that difference is the whole of what went
+   wrong in September. So one question, three answers, gone once answered. Optional:
+   nothing waits on it and nothing nags for it. */
+let lastJournalId = null;
+const FEELS = [["easy", "Too easy"], ["right", "About right"], ["hard", "Too hard"]];
+function journalRenderFeel() {
+  const box = document.getElementById("lEndFeel");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!lastJournalId) { box.style.display = "none"; return; }
+  box.style.display = "";
+  const q = document.createElement("div"); q.className = "lfeel-q";
+  q.textContent = "How did that feel?";
+  const row = document.createElement("div"); row.className = "lfeel-row";
+  FEELS.forEach(([v, label]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "lfeel-b"; b.textContent = label;
+    b.onclick = () => {
+      journalFeel(lastJournalId, v);
+      box.innerHTML = "";
+      const done = document.createElement("div"); done.className = "lfeel-q";
+      done.textContent = "Noted \u2014 thank you.";
+      box.append(done);
+    };
+    row.append(b);
+  });
+  box.append(q, row);
 }
 
 /* The two end-screen buttons behave differently coming out of a path lesson —
@@ -45764,6 +45927,30 @@ T("welcome back: a return after four days away earns two gentle sessions, spent 
   assertEq(comebackState(null, {}, "2026-10-22"), null, "a brand-new device is not coming back");
   assertTrue(/19 days away\. The next two sessions are gentle/.test(comebackLine(st)), comebackLine(st));
   assertTrue(/The next session is gentle/.test(comebackLine({ away: 5, left: 1 })));
+});
+T("journal: merging keeps the further-along copy of a session and never loses fin or feel", () => {
+  const phone = [{ id: "a", at: 2, cards: [["word", 1, 5, 0, 0], ["sentence", 0, 20, 1, 1]], fin: false, feel: "", end: 9 },
+                 { id: "b", at: 5, cards: [], fin: false, feel: "", end: 0 }];
+  const laptop = [{ id: "a", at: 2, cards: [["word", 1, 5, 0, 0]], fin: false, feel: "hard", end: 4 },
+                  { id: "c", at: 1, cards: [["word", 1, 3, 0, 0]], fin: true, feel: "", end: 3 }];
+  const m = mergeJournal(phone, laptop, 400);
+  assertEq(m.map(e => e.id), ["c", "a", "b"], "every session from both, in the order they started");
+  const a = m[1];
+  assertEq([a.cards.length, a.feel, a.end], [2, "hard", 9], "the longer copy, with the feel the other side had");
+  assertEq(mergeJournal(phone, laptop, 400), mergeJournal(laptop, phone, 400), "commutative");
+  assertEq(mergeJournal(m, laptop, 400), m, "idempotent");
+  assertEq(mergeJournal(phone, laptop, 2).length, 2, "capped, oldest out");
+});
+T("journal: what a session is, and how hard each card was when he met it", () => {
+  assertEq(journalMode({ mode: "15", cards: [{ kind: "word" }] }), "15");
+  assertEq(journalMode({ cards: [{ kind: "compose" }] }), "coach");
+  assertTrue(/^node:.*:2$/.test(journalMode({ path: { id: "nope", lesson: 2 }, cards: [] })), "a node lesson");
+  const lib = { "דקה": {}, "בא": {}, "אני": {} };
+  const ready = { stab: 12, diff: 3, n: 6, due: "2099-01-01", last: "2026-10-01", miss: 0 };
+  const srs = { "בא": { prod: ready } };
+  assertEq(journalUnready({ words: ["דקה", "בא", "אני"] }, lib, srs), 1, "דקה unready; בא ready; אני is grammar");
+  assertEq(journalAway({ "2026-10-03": { cards: 15 }, "2026-10-21": { cards: 0 } }, "2026-10-22"), 19);
+  assertEq(journalAway({}, "2026-10-22"), null);
 });
 T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
   const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };

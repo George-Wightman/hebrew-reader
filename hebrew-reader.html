@@ -22256,6 +22256,17 @@ const SESSION_BANK_MIN = 5;
    nothing about production — `levelRecord` deliberately refuses to count it — so two
    of fifteen was buying very little. One keeps the exercise. */
 const SHADOW_CARDS = 1;
+/* LONGEST SENTENCE IT WILL ASK HIM TO REPEAT BY EAR (2026-10-22). George, on בחדר יש
+   שולחן ומיטה: "the ones where I'm reading and then saying the Hebrew are doing really
+   well but … listen and say it back is a bit too hard. The sentence is kind of too long
+   for me to be able to work it out." Reading cards keep the words on screen; this one
+   has to be held in his head from sound alone, so length costs far more here. The pick
+   used to take whichever seen sentence covered the most due words — which favours the
+   long ones. Three words is plenty of bank to choose from and a fair span to echo. */
+const SHADOW_MAX_WORDS = 3;
+function shadowFits(it) {
+  return String((it && it.he) || "").trim().split(/\s+/).filter(Boolean).length <= SHADOW_MAX_WORDS;
+}
 /* Fixed phrases from PHRASES. Their own retrieval, worth having, not worth a fifth
    of the session. */
 const CHUNK_CARDS = 2;
@@ -27755,9 +27766,12 @@ function learnBuild(opts) {
      Withheld from a Quick session on purpose rather than by the accident it used to
      be (the old gate named two of the four shapes by hand, and so excluded Quick
      without ever saying so). Five cards is too tight to spend one on mimicry when
-     the same card could be a word he has never met. */
+     the same card could be a word he has never met.
+
+     Short ones only — see SHADOW_MAX_WORDS. With none short enough the slot is simply
+     not taken, and the bank slice below gets it back by subtraction. */
   const shadowPicks = (voice && shape !== "quick")
-    ? ranked.filter(x => (x.it.seen || 0) > 0 && x.it.type !== "reply" &&
+    ? ranked.filter(x => (x.it.seen || 0) > 0 && x.it.type !== "reply" && shadowFits(x.it) &&
                          (!replyPick || x.it !== replyPick.it)).slice(0, SHADOW_CARDS)
     : [];
   const cards = shadowPicks.map(x => ({ kind: "shadow", item: x.it, words: x.it.uses || [] }));
@@ -29550,6 +29564,16 @@ async function contentIngest() {
      with the version stamped. Having a stub is precisely NOT having the content. */
   const had = bankAll().filter(b => b && b.src === "claude" && b.he).length;
   if (!contentShouldIngest(data, contentVersion(), had)) {
+    /* THE REFRESH RUNS ON A SKIP TOO (2026-10-22). It used to run only when the version
+       moved, so a device that took a version before contentRefresh existed — or under a
+       stale cached shell — kept the old words for good: his phone was still showing
+       "ba-cheder yesh shulchan u-mita" for a sentence the file has spelled bakheder yesh
+       shulkhan vemita since v4. It is local and pure, and saves only when something
+       actually differs, so running it on every check costs nothing. */
+    try {
+      const r = contentRefresh(bankAll(), data && data.items);
+      if (r.changed) { bankSave(r.bank); rebuildTrIndex(); }
+    } catch (e) {}
     contentNote("skipped", { fileVersion: data && data.version,
                              items: data && data.items && data.items.length, have: had });
     return 0;
@@ -45386,6 +45410,18 @@ T("contentRefresh: a corrected cue reaches a sentence he already holds, and noth
   assertTrue(r.bank[1] === bank[1] && r.bank[2] === bank[2], "not his, and not the same type: untouched");
   assertEq(contentRefresh(r.bank, [{ he: "הדלת של הבית צהובה", tr: "hadelet shel habayit tzehuba",
                                      en: "The door of the house is yellow" }]).changed, 0, "idempotent");
+});
+T("contentRefresh: an old-scheme spelling on his device comes into the house scheme", () => {
+  const bank = [{ id: "b1", src: "claude", type: "sentence", he: "בחדר יש שולחן ומיטה",
+                  tr: "ba-cheder yesh shulchan u-mita", en: "in the room there is a table and a bed", gloss: [] }];
+  const r = contentRefresh(bank, [{ he: "בחדר יש שולחן ומיטה", tr: "bakheder yesh shulkhan vemita",
+                                    en: "in the room there is a table and a bed", type: "sentence" }]);
+  assertEq([r.changed, r.bank[0].tr], [1, "bakheder yesh shulkhan vemita"]);
+});
+T("shadowing: only a sentence short enough to hold by ear", () => {
+  assertTrue(shadowFits({ he: "השולחן גדול" }), "two words");
+  assertTrue(shadowFits({ he: "איפה  השולחן?" }), "a double space is not a word");
+  assertTrue(!shadowFits({ he: "בחדר יש שולחן ומיטה" }), "the four-word one George could not echo");
 });
 T("grader prompts: the Hebrew they are shown has its final letters back", () => {
   assertEq(heShownAll(["בקיצ", "יש", "הרבה", "פירות"]), "בקיץ יש הרבה פירות");

@@ -37,6 +37,15 @@
       "note": "Now cued \"See you, and thanks\". להתראות is the everyday goodbye, but literally \"see you again\", so שלום ותודה was a fair answer (d9e68e2)." },
 
     "1792702846046-o8cou": { "status": "addressed", "kind": "idea", "at": "2026-10-22T22:30:00Z",
-      "note": "Say it back now only uses sentences of three words or fewer. That card's spelling is fixed too (f5e72a1)." }
+      "note": "Say it back now only uses sentences of three words or fewer. That card's spelling is fixed too (f5e72a1)." },
+
+    "1791064419151-puh20": { "status": "addressed", "kind": "bug", "at": "2026-10-22T23:59:00Z",
+      "note": "Little words like רק, עוד and זאת are now taught before a sentence uses them (3a02f4a). Sessions open on three easy ones and end on one (0a2b330), and after a break the first two are gentle (0d3c4d3)." },
+    "1791064550771-a399u": { "status": "addressed", "kind": "bug", "at": "2026-10-22T23:59:00Z",
+      "note": "That sentence slipped through because עוד was treated as grammar you already knew. It is a word to learn now, met on its own card first (3a02f4a)." },
+    "1791064747323-35ywh": { "status": "addressed", "kind": "bug", "at": "2026-10-22T23:59:00Z",
+      "note": "A sentence can no longer lean on words you have never met; each new one gets its own card before any sentence uses it (3a02f4a, 0a2b330)." },
+    "1791064829996-2kch6": { "status": "addressed", "kind": "idea", "at": "2026-10-22T23:59:00Z",
+      "note": "Noted, thanks. The new end-of-session question (how did that feel?) is the place for this now (8d31e7b)." }
   }
 }

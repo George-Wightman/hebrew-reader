@@ -4816,11 +4816,24 @@ function mergeJournal(a, b, cap) {
 /* The welcome-back state: the later return wins, and for the same return the side that
    has spent more of it — a gentle session finished on the phone must not be handed back
    by a laptop that has not heard about it yet. */
+/* ONE RETURN, WHICHEVER DEVICE SAW IT FIRST (review, 2026-10-22). A laptop that builds a
+   session before its stats have synced dates the same return a day later than the phone
+   did; "later from wins" then handed the phone a fresh pair of gentle sessions, which it
+   recomputed and saved back, and the two flip-flopped. Two dates within COMEBACK_DAYS are
+   the same return: the earlier date, the lower count, and JSON as the last tie-break so
+   the result does not depend on argument order. */
+function comebackSameReturn(f1, f2) {
+  if (!f1 || !f2) return false;
+  return Math.abs(Date.parse(f1) - Date.parse(f2)) < COMEBACK_DAYS * 86400000;
+}
 function mergeComeback(a, b) {
   const x = a && typeof a === "object" ? a : null, y = b && typeof b === "object" ? b : null;
   if (!x || !y) return x || y;
-  if (x.from !== y.from) return String(x.from) > String(y.from) ? x : y;
-  return (y.left || 0) < (x.left || 0) ? y : x;
+  if (!comebackSameReturn(x.from, y.from)) return String(x.from) > String(y.from) ? x : y;
+  const from = String(x.from) < String(y.from) ? x.from : y.from;
+  const left = Math.min(x.left || 0, y.left || 0);
+  const base = JSON.stringify(x) < JSON.stringify(y) ? x : y;
+  return Object.assign({}, base, { from: from, left: left });
 }
 
 /* Saved messages, keyed by timestamp. Newest first, same as the app writes them. */
@@ -8852,10 +8865,11 @@ const LITTLE_WORDS = ["רק", "עוד", "כבר", "זאת", "כי", "עד", "א�
 const LITTLE_KEY = "hvr_little_v1";
 /* Pure over `lib`: each little word not already there, from DICT, in the machine's pool
    like the frequency intake. Returns what it added. */
-function libAddLittleWords(lib) {
+function libAddLittleWords(lib, gone) {
   const added = [];
   LITTLE_WORDS.forEach(k => {
-    if (lib[k] || !DICT[k]) return;
+    /* Deleted on another device before this one ran the intake: stays deleted. */
+    if (lib[k] || !DICT[k] || (gone && gone[k])) return;
     lib[k] = { tr: String(DICT[k][0]).split("/")[0].trim(), en: DICT[k][1], cat: "Grammar",
                opp: "", seen: 0, added: todayISO(), src: "little", shelf: "reserve" };
     added.push(k);
@@ -8868,7 +8882,7 @@ function libAddLittleIfNeeded() {
     if (lsGet(LITTLE_KEY)) return 0;
     const lib = libAll();
     if (!Object.keys(lib).length) return 0;         // fresh install: SEED runs first
-    const added = libAddLittleWords(lib);
+    const added = libAddLittleWords(lib, libGoneAll());
     if (added.length) { libSave(lib); rebuildTrIndex(); }
     lsSet(LITTLE_KEY, "1");
     return added.length;
@@ -23274,9 +23288,12 @@ function convoWordLine(k, lib) {
 const RECENCY_KEY = "hvr_recency", SESSION_SEQ_KEY = "hvr_sessionseq";
 function recencyAll() { try { return JSON.parse(lsGet(RECENCY_KEY)) || {}; } catch (e) { return {}; } }
 function recencySave(v) { lsSet(RECENCY_KEY, JSON.stringify(v)); }
-function markShown(keys) {
+/* `sameSession`: these were shown in the session already counted — mark them with its
+   number rather than starting another, or a sit-down would age the cooldown twice. */
+function markShown(keys, sameSession) {
   if (!keys || !keys.length) return;
-  const seq = (parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0) + 1;
+  const cur = parseInt(lsGet(SESSION_SEQ_KEY), 10) || 0;
+  const seq = sameSession && cur ? cur : cur + 1;
   lsSet(SESSION_SEQ_KEY, String(seq));
   const rec = recencyAll();
   keys.forEach(k => { rec[k] = seq; });
@@ -26349,7 +26366,10 @@ function composeAdvance(s, c, out) {
   statsBump({ sec: statsCardEnd(), cards: 1, clean: clean ? 1 : 0,
               spoken: learnSpoken ? 1 : 0,
               spokenOk: (learnSpoken && clean) ? 1 : 0 });
-  if (clean) s.got++;
+  /* Per turn only when the coach IS the session (its score is objectives, not cards).
+     Inside a sit-down it is one card of thirty, and learnAdvance counts it once — counting
+     each turn too ended a session on "33 / 30" (review, 2026-10-22). */
+  if (clean && s.cards[0] === c) s.got++;
   sessionStash();
   learnRenderCard();
 }
@@ -26516,7 +26536,10 @@ function campDebtWords(node, c, srs) {
 
 /* Built in priority order and stopped at the ceiling — no shuffle, no truncation. The
    order below IS the design, so a coin flip must not be allowed to edit it. */
-function campBuild(node, size) {
+/* `opts.inner`: called inside another session (the sit-down), which has already aged the
+   level evidence and will be one session in the cooldown — so neither happens twice. */
+function campBuild(node, size, opts) {
+  const inner = !!(opts && opts.inner);
   const lib = libAll(), srs = srsAll();
   size = size || CAMP_SESSION_CARDS;
   const words = (node.words || []).filter(k => lib[k] && srsGradable(k, lib));
@@ -26545,9 +26568,9 @@ function campBuild(node, size) {
   /* Same once-per-session level bookkeeping the daily builder does, for the same
      reason: a run of node sessions must still age the evidence, or a fortnight of
      them leaves a stale level waiting when he comes back. */
-  const lvlStore = levelDecay(levelAll());
+  const lvlStore = inner ? levelAll() : levelDecay(levelAll());
   const level = levelSettle(lvlStore);
-  levelSave(lvlStore);
+  if (!inner) levelSave(lvlStore);
 
   const voice = hasHeVoice();
   const bank = bankPrune(bankAll(), lib);
@@ -26691,7 +26714,7 @@ function campBuild(node, size) {
   const shown = {};
   cards.forEach(c => (c.words || []).forEach(w => { shown[w] = true; }));
   cards.forEach(c => { if (c.item && c.item.id) shown[c.item.id] = true; });
-  markShown(Object.keys(shown));
+  markShown(Object.keys(shown), inner);
   return cards;
 }
 /* One clean look at each stuck word before the sentences carry it. */
@@ -28362,7 +28385,7 @@ function comebackAll() {
 function comebackState(saved, stats, today) {
   const g = comebackGap(stats, today);
   if (!g) return null;
-  if (saved && saved.from === g.from) return saved.left > 0 ? saved : null;
+  if (saved && comebackSameReturn(saved.from, g.from)) return saved.left > 0 ? saved : null;
   return { from: g.from, away: g.away, left: COMEBACK_SESSIONS };
 }
 function comebackCheck(today) {
@@ -28447,7 +28470,7 @@ function sitBuild() {
     const meet = ((node.words || []).filter(k => lib[k] && srsGradable(k, lib) &&
                                                  srsStrengthOf(srs, k, "prod") === "new"))
       .map(k => ({ kind: "word", key: k, words: [k] }));
-    try { nodeCards = meet.concat(campBuild(node, SIT_NODE_CARDS) || []); } catch (e) { nodeCards = meet; }
+    try { nodeCards = meet.concat(campBuild(node, SIT_NODE_CARDS, { inner: true }) || []); } catch (e) { nodeCards = meet; }
     try {
       if (geminiKeys().length && navigator.onLine) {
         const pool = composePool(node, libAll(), srs);
@@ -46080,12 +46103,23 @@ T("journal: merging keeps the further-along copy of a session and never loses fi
   assertEq(mergeJournal(m, laptop, 400), m, "idempotent");
   assertEq(mergeJournal(phone, laptop, 2).length, 2, "capped, oldest out");
 });
-T("welcome back syncs: the later return wins, and a spent session stays spent", () => {
+T("welcome back syncs: one return whichever device dated it, and a spent session stays spent", () => {
   const a = { from: "2026-10-22", away: 19, left: 2 }, b = { from: "2026-10-22", away: 19, left: 1 };
   assertEq(mergeComeback(a, b).left, 1);
-  assertEq(mergeComeback(b, a).left, 1, "whichever device merges");
-  assertEq(mergeComeback(a, { from: "2026-11-05", away: 6, left: 2 }).from, "2026-11-05");
+  assertEq(mergeComeback(b, a), mergeComeback(a, b), "whichever device merges");
+  const laptop = { from: "2026-10-23", away: 20, left: 2 };
+  const m = mergeComeback(b, laptop);
+  assertEq([m.from, m.left], ["2026-10-22", 1], "a laptop that dated it a day late does not re-grant it");
+  assertEq(mergeComeback(laptop, b), m, "commutative");
+  assertEq(comebackState(m, { "2026-10-03": { cards: 15 }, "2026-10-22": { cards: 15 } }, "2026-10-23"), m,
+           "and the phone's own reading of the same return keeps it");
+  assertEq(mergeComeback(a, { from: "2026-11-05", away: 6, left: 2 }).from, "2026-11-05", "a new return is new");
   assertEq(mergeComeback(null, a), a);
+});
+T("little words: one he deleted on another device is not added back", () => {
+  const lib = {};
+  const added = libAddLittleWords(lib, { "כל": 1792700000000 });
+  assertTrue(added.indexOf("כל") === -1 && !lib["כל"] && !!lib["רק"]);
 });
 T("journal: what a session is, and how hard each card was when he met it", () => {
   assertEq(journalMode({ mode: "15", cards: [{ kind: "word" }] }), "15");

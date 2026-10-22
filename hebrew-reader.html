@@ -4813,6 +4813,16 @@ function mergeJournal(a, b, cap) {
   return cap ? out.slice(-cap) : out;
 }
 
+/* The welcome-back state: the later return wins, and for the same return the side that
+   has spent more of it — a gentle session finished on the phone must not be handed back
+   by a laptop that has not heard about it yet. */
+function mergeComeback(a, b) {
+  const x = a && typeof a === "object" ? a : null, y = b && typeof b === "object" ? b : null;
+  if (!x || !y) return x || y;
+  if (x.from !== y.from) return String(x.from) > String(y.from) ? x : y;
+  return (y.left || 0) < (x.left || 0) ? y : x;
+}
+
 /* Saved messages, keyed by timestamp. Newest first, same as the app writes them. */
 function mergeHistory(a, b, cap) {
   const byTs = {};
@@ -4954,7 +4964,8 @@ const MERGE_RULES = {
      That is the exact failure the note beside COACH_KEY describes shipping twice. */
   "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX),
   "hvr_sessions":   (a, b) => mergeSessions(a, b, SESS_MAX),
-  "hvr_journal":    (a, b) => mergeJournal(a, b, JOURNAL_MAX)
+  "hvr_journal":    (a, b) => mergeJournal(a, b, JOURNAL_MAX),
+  "hvr_comeback":   (a, b) => mergeComeback(a, b)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -46068,6 +46079,13 @@ T("journal: merging keeps the further-along copy of a session and never loses fi
   assertEq(mergeJournal(phone, laptop, 400), mergeJournal(laptop, phone, 400), "commutative");
   assertEq(mergeJournal(m, laptop, 400), m, "idempotent");
   assertEq(mergeJournal(phone, laptop, 2).length, 2, "capped, oldest out");
+});
+T("welcome back syncs: the later return wins, and a spent session stays spent", () => {
+  const a = { from: "2026-10-22", away: 19, left: 2 }, b = { from: "2026-10-22", away: 19, left: 1 };
+  assertEq(mergeComeback(a, b).left, 1);
+  assertEq(mergeComeback(b, a).left, 1, "whichever device merges");
+  assertEq(mergeComeback(a, { from: "2026-11-05", away: 6, left: 2 }).from, "2026-11-05");
+  assertEq(mergeComeback(null, a), a);
 });
 T("journal: what a session is, and how hard each card was when he met it", () => {
   assertEq(journalMode({ mode: "15", cards: [{ kind: "word" }] }), "15");

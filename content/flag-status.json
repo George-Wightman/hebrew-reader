@@ -34,6 +34,9 @@
     "1790516974618-b8hzc": { "status": "addressed", "kind": "hebrew", "at": "2026-10-01T19:40:00Z",
       "note": "That card now reads \"The door of the house is yellow\". Every sentence was read again and eleven more misleading cues fixed (d9e68e2)." },
     "1790516918915-pt6hc": { "status": "addressed", "kind": "hebrew", "at": "2026-10-01T19:40:00Z",
-      "note": "Now cued \"See you, and thanks\". להתראות is the everyday goodbye, but literally \"see you again\", so שלום ותודה was a fair answer (d9e68e2)." }
+      "note": "Now cued \"See you, and thanks\". להתראות is the everyday goodbye, but literally \"see you again\", so שלום ותודה was a fair answer (d9e68e2)." },
+
+    "1792702846046-o8cou": { "status": "addressed", "kind": "idea", "at": "2026-10-22T22:30:00Z",
+      "note": "Say it back now only uses sentences of three words or fewer. That card's spelling is fixed too (f5e72a1)." }
   }
 }

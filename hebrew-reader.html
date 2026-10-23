@@ -2899,8 +2899,12 @@
   .lact-sit { display: block; width: 100%; margin-top: 10px; min-height: 44px; border-radius: 24px;
               border: 1.5px dashed var(--accent); background: transparent; color: var(--ink);
               font: inherit; font-size: .95rem; font-weight: 600; cursor: pointer; }
-  .lpart { font-family: var(--ui); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
-           color: var(--muted); margin-bottom: 6px; }
+  .lroadlab { display: flex; justify-content: space-between; gap: 10px; margin: 2px 4px 0;
+              font-family: var(--ui); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase;
+              color: var(--muted); white-space: nowrap; }
+  .lroadlab span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .lmile { fill: var(--panel); stroke: var(--c-cfc4ab); stroke-width: 1.7; }
+  .lmile.done { fill: var(--gold); stroke: var(--gold); }
   .lact-why { font-family: var(--aside); font-style: italic; font-size: 1.02rem; color: var(--muted);
               margin: -4px 0 10px; line-height: 1.3; }
   .lact-quick button { border-radius: 24px; min-height: 48px; font-size: .95rem; font-weight: 600;
@@ -2943,6 +2947,14 @@
           padding: 8px 14px; margin: -6px 0 18px; }
   .lnewlab { font-size: .72rem; letter-spacing: .04em; text-transform: none; color: var(--muted); }
   .lnew b { font-family: var(--he); font-size: 1.45rem; font-weight: 500; color: var(--hebrew); }
+  /* One line: transliteration leads, the script small beside it, the gloss truncates. */
+  .lnew { flex-wrap: nowrap; max-width: 100%; box-sizing: border-box; white-space: nowrap;
+          align-items: baseline; gap: 7px; padding: 8px 12px; }
+  .lnew b.lnewtr { font-family: var(--display); font-style: italic; font-size: 1.22rem;
+                   color: var(--ink); flex: 0 0 auto; }
+  .lnewhe { font-family: var(--he); font-size: .95rem; color: var(--hebrew); flex: 0 0 auto; }
+  .lnewlab { flex: 0 50 auto; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .lnewen { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .lhe { font-size: 3rem; line-height: 1.3; font-weight: 500; }
   .lhe.long { font-size: 2rem; }
   .ltr { font-size: 1.35rem; font-style: italic; font-weight: 500; }
@@ -28483,17 +28495,6 @@ function sitBuild() {
   if (daily.gentle) out.gentle = daily.gentle;
   return out;
 }
-/* The line a part opens with, or "" mid-part. Pure. */
-function sitPartLine(cards, i) {
-  const c = cards && cards[i];
-  if (!c || !c.part) return "";
-  if (i > 0 && cards[i - 1] && cards[i - 1].part === c.part) return "";
-  const parts = [];
-  cards.forEach(x => { if (x.part && parts.indexOf(x.part) === -1) parts.push(x.part); });
-  let name = SIT_PARTS[c.part] || "";
-  if (c.part === "map" && cards.sitNode) name += ": " + cards.sitNode;
-  return "Part " + (parts.indexOf(c.part) + 1) + " of " + parts.length + " \u00b7 " + name;
-}
 async function sitStart() {
   const hint = document.getElementById("lStartHint");
   const cards = sitBuild();
@@ -31812,6 +31813,99 @@ function learnRenderRoad(i, total) {
   if (el) el.innerHTML = learnRoadStrip(i, total);
 }
 
+/* ---- the sit-down's road (2026-10-23) --------------------------------------------
+   George, in his first sit-down: "The progress bar at the top, it doesn't actually
+   represent anything in this mode because it takes like 6 to move along a step… put
+   milestones in the way. This is broken up into the different stages… I'm just kind of
+   guessing, oh my god, there's more, how long left?"
+
+   The card road windows past LEARN_ROAD_MAX, so on thirty-odd cards the ring sat still
+   while the road slid under it. Here the WHOLE session is one stretch of road with a
+   milestone where each part ends — gold once passed, which is gold's one job — the ink
+   worn up to exactly where he is, and one line under it naming the part, how far into it
+   he is, and roughly how long is left at his own pace. The talk weighs as much as
+   SIT_TALK_WEIGHT cards, because that is about how long it takes, and moves as he lands
+   its words. */
+const SIT_TALK_WEIGHT = 8, SIT_SEC_PER_CARD = 34;
+/* Pure. `talkFrac` is how much of the talk on card `i` is done, 0..1. */
+function sitRoadModel(cards, i, talkFrac) {
+  const wt = c => (c && c.kind === "compose") ? SIT_TALK_WEIGHT : 1;
+  const total = (cards || []).reduce((a, c) => a + wt(c), 0) || 1;
+  const segs = [];
+  let acc = 0;
+  (cards || []).forEach((c, k) => {
+    const last = segs[segs.length - 1];
+    if (!last || last.part !== c.part) segs.push({ part: c.part, from: acc / total, start: k, n: 0 });
+    const sg = segs[segs.length - 1];
+    sg.n++;
+    acc += wt(c);
+    sg.to = acc / total;
+  });
+  let done = 0;
+  for (let k = 0; k < i && k < cards.length; k++) done += wt(cards[k]);
+  const cur = cards[i];
+  if (cur && cur.kind === "compose") done += Math.max(0, Math.min(1, talkFrac || 0)) * SIT_TALK_WEIGHT;
+  const seg = segs.find(sg => i >= sg.start && i < sg.start + sg.n) || segs[segs.length - 1] || null;
+  return { segs: segs, pos: Math.min(1, done / total), seg: seg, segIndex: segs.indexOf(seg),
+           inPart: seg ? i - seg.start : 0, left: Math.max(0, total - done) };
+}
+/* Pure: the two halves of the line under the road. */
+function sitRoadLabel(m, cards, secPerCard, talk) {
+  if (!m || !m.seg) return ["", ""];
+  let name = SIT_PARTS[m.seg.part] || "";
+  if (m.seg.part === "talk" && talk) name += " \u00b7 " + talk.landed + " of " + talk.of + " words";
+  else if (m.seg.n > 1) name += " \u00b7 " + (m.inPart + 1) + " of " + m.seg.n;
+  const mins = Math.round(m.left * (secPerCard || SIT_SEC_PER_CARD) / 60);
+  const left = mins >= 1 ? "about " + mins + " min left" : "nearly done";
+  return [name, left];
+}
+/* His own pace this session, once there is enough of it to mean anything. */
+function sitSecPerCard(s) {
+  try {
+    const e = journalAll().find(x => x && x.id === s.jid);
+    const cs = ((e && e.cards) || []).filter(c => c[0] !== "compose" && c[2] > 0);
+    if (cs.length >= 3) return cs.reduce((a, c) => a + c[2], 0) / cs.length;
+  } catch (e) {}
+  return SIT_SEC_PER_CARD;
+}
+function sitRoadSvg(m) {
+  const N = 40, xs = 18, xe = 502;
+  const pts = [];
+  for (let k = 0; k <= N; k++) pts.push({ x: xs + k * (xe - xs) / N, y: 24 + (campJitter(k, 131) - 0.5) * 8 });
+  const at = f => {
+    const t = Math.max(0, Math.min(1, f)) * N, k = Math.min(N - 1, Math.floor(t)), r = t - k;
+    return { x: pts[k].x + (pts[k + 1].x - pts[k].x) * r, y: pts[k].y + (pts[k + 1].y - pts[k].y) * r };
+  };
+  const now = at(m.pos);
+  const worn = pts.filter(p => p.x < now.x).concat([now]);
+  const ahead = [now].concat(pts.filter(p => p.x > now.x));
+  let svg = '<svg class="lroad" viewBox="0 0 520 48" preserveAspectRatio="none" role="img" ' +
+            'aria-label="' + Math.round(m.pos * 100) + '% of the way">';
+  if (ahead.length > 1) svg += '<path class="lroadpale" d="' + campTrailPath(ahead) + '"/>';
+  if (worn.length > 1) svg += '<path class="lroadworn" d="' + campTrailPath(worn) + '"/>';
+  m.segs.forEach((sg, k) => {
+    if (k === m.segs.length - 1) return;           // the end of the road is not a milestone
+    const p = at(sg.to);
+    const passed = sg.to <= m.pos + 1e-9;
+    svg += '<rect class="lmile' + (passed ? ' done' : '') + '" x="' + campR(p.x - 4.5) + '" y="' +
+           campR(p.y - 7) + '" width="9" height="14" rx="2"/>';
+  });
+  svg += '<circle class="lwaynow" cx="' + campR(now.x) + '" cy="' + campR(now.y) + '" r="6.2"/>' +
+         '<circle class="lwaynowdot" cx="' + campR(now.x) + '" cy="' + campR(now.y) + '" r="2.5"/>';
+  return svg + '</svg>';
+}
+function sitRenderRoad(s, talkFrac, talk) {
+  const el = document.getElementById("lRoad");
+  if (!el) return;
+  const m = sitRoadModel(s.cards, s.i, talkFrac);
+  const lab = sitRoadLabel(m, s.cards, sitSecPerCard(s), talk);
+  el.innerHTML = sitRoadSvg(m) +
+    '<div class="lroadlab"><span></span><span></span></div>';
+  const spans = el.querySelectorAll(".lroadlab span");
+  spans[0].textContent = lab[0];
+  spans[1].textContent = lab[1];
+}
+
 function learnRenderCard() {
   const s = learnSession; if (!s) return;
   journalOpen(s);
@@ -31836,7 +31930,12 @@ function learnRenderCard() {
      another every time he answered — a road that builds itself behind him, saying
      nothing about how far there is left to go. Beats covered answers the question the
      road is actually asked. */
-  if (c.kind === "compose") {
+  if (s.mode === "sit") {
+    /* The sit-down draws the whole session, parts and all — see sitRenderRoad. */
+    const objs = c.kind === "compose" ? ((c.objectives || []).length || 1) : 0;
+    const landed = objs ? objs - composeOutstanding(c).length : 0;
+    sitRenderRoad(s, objs ? landed / objs : 0, objs ? { landed: landed, of: objs } : null);
+  } else if (c.kind === "compose") {
     /* OBJECTIVES, for the same reason a conversation draws beats: the session is now one
        card that grows in place, so there is no card count to draw from at all — and even
        when there was, waymarks built themselves behind him and said nothing about how far
@@ -31862,13 +31961,6 @@ function learnRenderCard() {
      hands you a mic. That is concrete and you touch it, where a pill reading עב → עב
      is a label to decode. And the counter is the road's job now. */
   const meta = LEARN_KINDS[c.kind];
-  /* A sit-down session says where he is at the start of each part — see sitPartLine. */
-  const partLine = sitPartLine(s.cards, s.i);
-  if (partLine) {
-    const pl = document.createElement("div"); pl.className = "lpart";
-    pl.textContent = partLine;
-    card.append(pl);
-  }
   const ask = document.createElement("div"); ask.className = "lask";
   /* Compose is the one kind whose task changes under him: the opening sentence is built
      from the first pair, and after that it is about working the rest of the table in. */
@@ -31895,8 +31987,17 @@ function learnRenderCard() {
     const nw = document.createElement("div"); nw.className = "lnew";
     const lab = document.createElement("span"); lab.className = "lnewlab";
     lab.textContent = learnCarryLabel(c.carry, srsAll());
-    const w = document.createElement("b"); w.dir = "rtl"; w.textContent = c.carry;
+    /* HOW IT SOUNDS FIRST (2026-10-23). George, on הלכתי: "It's quite hard to understand
+       when it's written in Hebrew… Can I have that as the anglicized version… Keep the
+       Hebrew on there, but smaller… Make sure it still stays on one line." He reads the
+       transliteration — it is the line he produces from — so it leads, and the script
+       sits beside it small. One line, the gloss giving way first if it has to. */
+    const tr = trHouse(((lib[c.carry] || {}).tr) || "", c.carry);
+    const w = document.createElement("b"); w.className = "lnewtr";
+    w.textContent = tr || c.carry;
     nw.append(lab, w);
+    if (tr) { const h = document.createElement("span"); h.className = "lnewhe"; h.dir = "rtl";
+              h.textContent = c.carry; nw.append(h); }
     const e = (lib[c.carry] || {}).en || "";
     if (e) { const en = document.createElement("span"); en.className = "lnewen";
              en.textContent = e; nw.append(en); }
@@ -32382,9 +32483,11 @@ function learnStuckPress(btn, c) {
    the app not knowing him, and worse, it hides the thing actually worth saying — this is
    one you have been losing, so here it is inside a sentence where the context can carry
    it, which is the entire reason the rescue machinery exists. */
+/* Short, because it shares one line with the word, its sound and its meaning, and the
+   meaning is the part that must not be cut (2026-10-23). Was "The one you keep losing". */
 function learnCarryLabel(key, srs) {
   return srsStrengthOf(srs || srsAll(), key, "prod") === "new"
-    ? "New in this one" : "The one you keep losing";
+    ? "New" : "Keeps slipping";
 }
 
 function learnMicKinds(c) { return !isHearKind(c.kind); }
@@ -42668,8 +42771,8 @@ T("bankCarried: a listen item cannot rescue a production-weak word", () => {
 });
 T("learnCarryLabel: a word he keeps losing is not a word he has never met", () => {
   const srs = { "חבר": { prod: { n: 4, stab: 1, diff: 5.85, miss: 2, streak: 0 } } };
-  assertEq(learnCarryLabel("חבר", srs), "The one you keep losing");
-  assertEq(learnCarryLabel("מילה", srs), "New in this one", "no record at all is genuinely new");
+  assertEq(learnCarryLabel("חבר", srs), "Keeps slipping");
+  assertEq(learnCarryLabel("מילה", srs), "New", "no record at all is genuinely new");
 });
 T("sentencePlanPrompt: the planner is told which words he actually has", () => {
   /* Two commissions in a row banked nothing — "10 written, 10 rejected", "12 written,
@@ -46144,14 +46247,25 @@ T("sit-down: warm-up, practice, the map, the talk, and the easy win held back to
   const out = sitAssemble(daily, node, talk, srs, today);
   assertEq(out.map(c => c.key || c.kind), ["חם", "קר", "דקה", "מיטה", "sentence", "compose", "בית"]);
   assertEq(out.map(c => c.part), ["warm", "warm", "practice", "map", "map", "talk", "finish"]);
-  out.sitNode = "Family & home";
-  assertEq(sitPartLine(out, 0), "Part 1 of 5 · Warm-up");
-  assertEq(sitPartLine(out, 1), "", "said once, at the start of the part");
-  assertEq(sitPartLine(out, 3), "Part 3 of 5 · On the map: Family & home");
-  assertEq(sitPartLine(out, 6), "Part 5 of 5 · To finish");
   const bare = sitAssemble([W("דקה"), W("מיטה")], null, null, srs, today);
   assertEq(bare.map(c => c.part), ["practice", "practice"], "no node, no key, no wins: still a session");
-  assertEq(sitPartLine([W("a")], 0), "", "an ordinary session has no parts");
+});
+T("sit-down road: the whole session, a milestone per part, the talk weighted, time left at his pace", () => {
+  const P = (part, kind) => ({ kind: kind || "word", part: part });
+  const cards = [P("warm"), P("warm"), P("practice"), P("practice"), P("practice"), P("practice"),
+                 P("talk", "compose"), P("finish")];                     // 7 cards + a talk worth 8 = 15
+  const m0 = sitRoadModel(cards, 0, 0);
+  assertEq(m0.segs.map(s => s.part), ["warm", "practice", "talk", "finish"]);
+  assertEq([m0.pos, m0.left], [0, 15]);
+  const m3 = sitRoadModel(cards, 3, 0);
+  assertEq([m3.seg.part, m3.inPart, m3.pos], ["practice", 1, 3 / 15], "every card moves the ring");
+  assertEq(sitRoadLabel(m3, cards, 60), ["Practice \u00b7 2 of 4", "about 12 min left"]);
+  const mt = sitRoadModel(cards, 6, 0.5);
+  assertEq(mt.pos, (6 + 4) / 15, "half the talk is half its stretch");
+  assertEq(sitRoadLabel(mt, cards, 60, { landed: 2, of: 4 })[0], "Talk it through \u00b7 2 of 4 words");
+  assertEq(sitRoadLabel(sitRoadModel(cards, 7, 0), cards, 20)[1], "nearly done");
+  assertTrue(/<rect class="lmile done"/.test(sitRoadSvg(m3)) && /<rect class="lmile"/.test(sitRoadSvg(m3)),
+             "passed milestones gold, the rest not");
 });
 T("little words: the gate sees them, so בעוד דקה אני בא is not within reach until עוד is met", () => {
   const lib = { "דקה": { tr: "daka", en: "minute" }, "בא": { tr: "ba", en: "come" } };

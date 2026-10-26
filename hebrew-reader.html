@@ -3769,6 +3769,9 @@
       <div id="lEndCoach" class="lcoach" style="display:none"></div>
       <!-- The node unlock. Computed locally and never dependent on the call above. -->
       <div id="lEndFacts" class="lfacts" style="display:none"></div>
+      <!-- A more natural way to say what he said on the prompt cards and in the talk, when
+           there is a key and a connection. Absent otherwise; nothing waits on it. -->
+      <div id="lEndSaid" class="lpex" style="display:none"></div>
       <!-- What the session moved, word by word. The stats room next door already covers
            minutes and cards; this is the half it cannot say. -->
       <div id="lEndWords"></div>
@@ -5015,6 +5018,10 @@ const MERGE_RULES = {
   "hvr_health":     (a, b) => mergeHealth(a, b, HEALTH_MAX),
   "hvr_sessions":   (a, b) => mergeSessions(a, b, SESS_MAX),
   "hvr_journal":    (a, b) => mergeJournal(a, b, JOURNAL_MAX),
+  /* What he said on prompt cards and in talks: union by id, newest kept. The review's
+     marks (rv, better) ride on the entry; mergeById keeps mine, which is fine — either
+     device's review is a review. */
+  "hvr_said":       (a, b) => mergeById(a, b, SAID_MAX),
   "hvr_comeback":   (a, b) => mergeComeback(a, b)
 };
 
@@ -28696,6 +28703,62 @@ function sitTalkFor(node, store, lib, srs, seen, today) {
   return any.length ? any : null;
 }
 
+/* ---- what he said, kept (2026-10-26) ------------------------------------------------
+   Every prompt and talk answer, so two things can happen later that need no network now:
+   I read them at a content top-up and turn the good ones into examples — the ways to say
+   it grow from his own speech rather than from my guesses — and the end screen can ask
+   for "a more natural way to say it" once, after the session, never during it. Synced and
+   merged by id (ids lead with the time, so the cap keeps the newest). */
+const SAID_KEY = "hvr_said", SAID_MAX = 150, SAID_REVIEW_MAX = 12;
+function saidAll() {
+  try { const a = JSON.parse(lsGet(SAID_KEY)); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function saidSave(a) { lsSet(SAID_KEY, JSON.stringify(a.slice(-SAID_MAX))); }
+/* Pure: the entry for one answer. */
+function saidEntry(kind, it, said, tap, hit, at) {
+  return { id: String(at) + "-" + Math.random().toString(36).slice(2, 6), at: at, k: kind,
+           p: it.id || "", en: it.en || "", said: String(said || "").slice(0, 200), tap: tap,
+           hit: Object.keys(hit || {}).filter(k => hit[k]) };
+}
+function saidRecord(kind, it, said, tap, hit) {
+  try { const a = saidAll(); a.push(saidEntry(kind, it, said, tap, hit, Date.now())); saidSave(a); } catch (e) {}
+}
+/* Which answers still want a second opinion: said something, not yet reviewed, from the
+   last week — a failed review leaves them waiting for the next end screen. Pure. */
+function saidPending(a, now) {
+  return (a || []).filter(e => e && e.said && !e.rv && now - (e.at || 0) < 7 * 86400000)
+    .slice(-SAID_REVIEW_MAX);
+}
+function saidReviewPrompt(items) {
+  return "You are a Hebrew coach checking an English speaker's spoken answers. Each was a " +
+    "MACHINE TRANSCRIPT of him speaking, answering a situation he was given in English.\n\n" +
+    items.map((e, i) => i + ". Situation: " + e.en + "\n   He said: " + e.said).join("\n") +
+    "\n\nFor each one, decide whether a native speaker would find it natural and correct " +
+    "enough in everyday conversation. Be generous: a different word choice, a short answer " +
+    "or a small slip a listener would not notice is fine. Ignore spelling the transcript " +
+    "could have produced from correct speech.\n\n" +
+    "Only where it is NOT fine, give the most natural SHORT way to say what he meant, in " +
+    "simple everyday Hebrew, plus its transliteration in this scheme: kh for ח and כ (never " +
+    "ch); the article and one-letter prepositions joined to the word with no hyphen " +
+    "(harekhov, bakheder), with an apostrophe before a vowel (ha'ir, la'avoda); the " +
+    "conjunction ו as ve- (ve'ani). And one plain English line on why.\n\n" +
+    "Return JSON only, no markdown: {\"items\":[{\"i\":0,\"ok\":true}," +
+    "{\"i\":1,\"ok\":false,\"he\":\"\",\"tr\":\"\",\"why\":\"\"}]}";
+}
+/* The model's reply, kept only where it is well-formed. Pure. */
+function saidReviewClean(raw, n) {
+  const out = {};
+  ((raw && Array.isArray(raw.items)) ? raw.items : []).forEach(x => {
+    const i = Number(x && x.i);
+    if (!(i >= 0 && i < n) || out[i]) return;
+    if (x.ok === true || x.ok === "true") { out[i] = { ok: true }; return; }
+    const he = heOnly(x.he);
+    if (!he) return;
+    out[i] = { ok: false, he: he, tr: trHouse(String(x.tr || "").trim(), he), why: String(x.why || "").trim() };
+  });
+  return out;
+}
+
 /* ---- the sit-down session (2026-10-22) -------------------------------------------
    George: "Doing the 15 cards is like not enough. So a sit-down session of, okay, I'm
    doing this now for 30 minutes, boom, let's start. And it's got that easing me in, it's
@@ -32933,6 +32996,7 @@ function promptCommit(tap) {
   const c = s.cards[s.i]; if (!c || c.kind !== "prompt") return;
   const mark = c._mark || promptMark(c.item, c._said || "", c._alts || [], libAll());
   promptBank(s, c, c.item, mark, tap, !!c._hinted);
+  saidRecord("prompt", c.item, c._said, tap, mark.hit);
   try { promptSeenMark(c.item.id); } catch (e) {}
   /* For the stats and the journal, which read these when the card ends. */
   if (c._hinted) learnHints = 1;
@@ -33000,6 +33064,7 @@ function talkTap(tap) {
   const it = talkTurn(c);
   const mark = c._mark || promptMark(it, c._said || "", c._alts || [], libAll());
   promptBank(s, c, it, mark, tap, !!c._hinted);
+  saidRecord("talk", it, c._said, tap, mark.hit);
   if (c._hinted) c._helped = true;
   if (c._said) c._spoke = true;
   const say = talkAnswer(c, tap);
@@ -35143,6 +35208,55 @@ async function learnCoachNote(f) {
   } catch (e) { return null; }
 }
 
+/* "A more natural way to say it" — once, on the end screen, never inside the session. A
+   call that fails or never comes leaves the screen exactly as it was and the answers
+   pending for next time; nothing waits on it. */
+async function saidReview() {
+  const box = document.getElementById("lEndSaid");
+  if (!box) return null;
+  box.style.display = "none";
+  box.innerHTML = "";
+  if (!geminiKeys().length || !navigator.onLine) return null;
+  const items = saidPending(saidAll(), Date.now());
+  if (!items.length) return null;
+  try {
+    const out = await geminiRequest([{ text: saidReviewPrompt(items) }], GEMINI_MODELS,
+                                    { label: "Looking over what you said", timeoutMs: GEN_TIMEOUT_MS });
+    const got = saidReviewClean(extractJSON(String(out || "")), items.length);
+    if (!Object.keys(got).length) return null;
+    const a = saidAll();
+    items.forEach((e, i) => {
+      const r = got[i]; if (!r) return;
+      const x = a.find(y => y.id === e.id); if (!x) return;
+      x.rv = 1;
+      if (!r.ok) x.better = { he: r.he, tr: r.tr, why: r.why };
+    });
+    saidSave(a);
+    const fixes = items.map((e, i) => ({ e: e, r: got[i] })).filter(x => x.r && !x.r.ok);
+    const lab = document.createElement("div"); lab.className = "lheardlab";
+    lab.textContent = fixes.length ? "A more natural way to say it" : "What you said";
+    box.append(lab);
+    if (!fixes.length) {
+      const ok = document.createElement("div"); ok.className = "lpexen";
+      ok.textContent = "Everything you said today would land fine.";
+      box.append(ok);
+    }
+    fixes.forEach(x => {
+      const r = document.createElement("button"); r.type = "button"; r.className = "lpexrow";
+      const you = document.createElement("div"); you.className = "lpexen";
+      you.textContent = x.e.en + " — you said " + x.e.said;
+      const t = document.createElement("div"); t.className = "lpextr"; t.textContent = x.r.tr;
+      const h = document.createElement("div"); h.className = "lpexhe"; h.textContent = x.r.he;
+      const w = document.createElement("div"); w.className = "lpexen"; w.textContent = x.r.why;
+      r.append(you, t, h, w);
+      r.onclick = () => { try { playHe(null, x.r.he); } catch (err) {} };
+      box.append(r);
+    });
+    box.style.display = "";
+    return fixes.length;
+  } catch (e) { return null; }
+}
+
 /* The unlock, and ONLY the unlock. The crossings and the frozen intervals are already
    said twice over — by bars that can now move and by the coach note above — and a third
    copy would be the "four weak signals" the style guide warns about. This one is here
@@ -35643,6 +35757,7 @@ function learnFinish() {
     const facts = learnFacts(s, srsNow, rep);
     learnRenderFacts(facts);
     learnCoachNote(facts);
+    saidReview();
   } catch (e) {}
   lastFinishedPath = s.path || null;
   learnSession = null;
@@ -47028,6 +47143,25 @@ T("sitAssemble: a talk part can be one talk or a few prompt cards", () => {
   const daily = [{ kind: "word", key: "a", words: ["a"] }, { kind: "word", key: "b", words: ["b"] }];
   const out = sitAssemble(daily, null, [{ kind: "prompt", words: [] }, { kind: "prompt", words: [] }], {}, "2026-10-26");
   assertEq(out.filter(c => c.part === "talk").length, 2);
+});
+T("said: an answer is kept with what came out; only unreviewed speech from this week is sent", () => {
+  const now = Date.parse("2026-10-26T12:00:00Z");
+  const e = saidEntry("prompt", PT_SAY, "הלכתי לעיר", "got", { "הלכתי": true }, now);
+  assertEq([e.k, e.en, e.tap, e.hit], ["prompt", PT_SAY.en, "got", ["הלכתי"]]);
+  assertTrue(e.id.indexOf(String(now)) === 0, "ids lead with the time, so the merge cap keeps the newest");
+  const a = [e, Object.assign({}, e, { id: "x1", said: "" }), Object.assign({}, e, { id: "x2", rv: 1 }),
+             Object.assign({}, e, { id: "x3", at: now - 8 * 86400000 })];
+  assertEq(saidPending(a, now).map(x => x.id), [e.id]);
+  const m = MERGE_RULES["hvr_said"]([e], [Object.assign({}, e, { id: "0-old" })]);
+  assertEq(m.length, 2, "both devices' answers survive a sync");
+});
+T("saidReviewClean: ok stays ok, a fix needs Hebrew, a stray index is dropped", () => {
+  const got = saidReviewClean({ items: [{ i: 0, ok: true }, { i: 1, ok: false, he: "הלכתי לעיר", tr: "halakhti la-ir", why: "w" },
+                                        { i: 2, ok: false, he: "" }, { i: 9, ok: true }] }, 3);
+  assertEq(Object.keys(got), ["0", "1"]);
+  assertEq(got[1].tr, "halakhti la'ir", "the house scheme is applied to what comes back");
+  assertTrue(saidReviewPrompt([{ en: "a", said: "b" }]).indexOf("never") !== -1 &&
+             saidReviewPrompt([{ en: "a", said: "b" }]).indexOf("kh for") !== -1, "the prompt carries the scheme");
 });
 
 if (location.search.indexOf("selftest") !== -1) {

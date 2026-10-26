@@ -46,6 +46,12 @@
     "1791064747323-35ywh": { "status": "addressed", "kind": "bug", "at": "2026-10-22T23:59:00Z",
       "note": "A sentence can no longer lean on words you have never met; each new one gets its own card before any sentence uses it (3a02f4a, 0a2b330)." },
     "1791064829996-2kch6": { "status": "addressed", "kind": "idea", "at": "2026-10-22T23:59:00Z",
-      "note": "Noted, thanks. The new end-of-session question (how did that feel?) is the place for this now (8d31e7b)." }
+      "note": "Noted, thanks. The new end-of-session question (how did that feel?) is the place for this now (8d31e7b)." },
+    "1792791249174-avxml": { "status": "addressed", "kind": "bug", "at": "2026-10-26T23:30:00Z",
+      "note": "The other person stays on one side and you on the other now, wherever a line is drawn (efe66a6)." },
+    "1793024516203-yp7w6": { "status": "addressed", "kind": "bug", "at": "2026-10-26T23:30:00Z",
+      "note": "Lines that came without English letters now get them from the words the app knows; a word it can't be sure of stays in Hebrew rather than being guessed (efe66a6, 5fd4af1)." },
+    "1793022891524-4k7gl": { "status": "addressed", "kind": "hebrew", "at": "2026-10-26T23:30:00Z",
+      "note": "You're right, it didn't make sense. That sentence is retired and won't come up again (content v10)." }
   }
 }

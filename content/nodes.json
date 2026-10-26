@@ -1,6 +1,6 @@
 {
- "version": 9,
- "generated": "2026-10-02",
+ "version": 10,
+ "generated": "2026-10-26",
  "retired": [
   {
    "he": "איפה המיטה שלך"
@@ -115,6 +115,10 @@
   },
   {
    "he": "עם אהבה, אמא."
+  },
+  {
+   "he": "אתמול עבדתי רק יום אחד.",
+   "any": true
   }
  ],
  "scenes": [
@@ -9272,6 +9276,814 @@
    "type": "sentence",
    "lvl": 3,
    "for": "לראות"
+  }
+ ],
+ "prompts": [
+  {
+   "mode": "say",
+   "en": "Tell someone you're tired today",
+   "target": [
+    "עייף"
+   ],
+   "examples": [
+    {
+     "he": "אני עייף היום",
+     "tr": "ani ayef hayom",
+     "en": "I'm tired today"
+    },
+    {
+     "he": "היום אני קצת עייף",
+     "tr": "hayom ani ktzat ayef",
+     "en": "I'm a bit tired today"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say you'd like a coffee",
+   "target": [
+    "רוצה"
+   ],
+   "examples": [
+    {
+     "he": "אני רוצה קפה, בבקשה",
+     "tr": "ani rotze kafe, bevakasha",
+     "en": "I'd like a coffee, please"
+    },
+    {
+     "he": "רוצה קפה",
+     "tr": "rotze kafe",
+     "en": "(I) want a coffee"
+    }
+   ]
+  },
+  {
+   "mode": "ask",
+   "en": "Ask someone where the bus is",
+   "target": [
+    "איפה"
+   ],
+   "examples": [
+    {
+     "he": "סליחה, איפה האוטובוס?",
+     "tr": "slikha, eifo ha'otobus?",
+     "en": "Excuse me, where's the bus?"
+    },
+    {
+     "he": "איפה האוטובוס?",
+     "tr": "eifo ha'otobus?",
+     "en": "Where's the bus?"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Tell her you worked from home today",
+   "target": [
+    "עבדתי"
+   ],
+   "examples": [
+    {
+     "he": "היום עבדתי מהבית",
+     "tr": "hayom avadti mehabayit",
+     "en": "Today I worked from home"
+    },
+    {
+     "he": "עבדתי בבית היום",
+     "tr": "avadti babayit hayom",
+     "en": "I worked at home today"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say where you went yesterday",
+   "target": [
+    "הלכתי"
+   ],
+   "examples": [
+    {
+     "he": "אתמול הלכתי לעיר",
+     "tr": "etmol halakhti la'ir",
+     "en": "Yesterday I went into town"
+    },
+    {
+     "he": "הלכתי לחבר אתמול",
+     "tr": "halakhti lekhaver etmol",
+     "en": "I went to a friend's yesterday"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Tell her you were at home all evening",
+   "target": [
+    "הייתי"
+   ],
+   "examples": [
+    {
+     "he": "הייתי בבית כל הערב",
+     "tr": "hayiti babayit kol ha'erev",
+     "en": "I was at home all evening"
+    },
+    {
+     "he": "בערב הייתי בבית",
+     "tr": "ba'erev hayiti babayit",
+     "en": "In the evening I was at home"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Tell someone what you bought today",
+   "target": [
+    "קניתי"
+   ],
+   "examples": [
+    {
+     "he": "היום קניתי לחם",
+     "tr": "hayom kaniti lekhem",
+     "en": "Today I bought bread"
+    },
+    {
+     "he": "קניתי פירות",
+     "tr": "kaniti peirot",
+     "en": "I bought fruit"
+    }
+   ]
+  },
+  {
+   "mode": "ask",
+   "en": "Ask someone when they're coming",
+   "target": [
+    "מתי"
+   ],
+   "examples": [
+    {
+     "he": "מתי את באה?",
+     "tr": "matai at ba'a?",
+     "en": "When are you coming? (to a woman)"
+    },
+    {
+     "he": "מתי אתה בא?",
+     "tr": "matai ata ba?",
+     "en": "When are you coming? (to a man)"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say you don't feel well",
+   "target": [
+    "מרגיש"
+   ],
+   "examples": [
+    {
+     "he": "אני לא מרגיש טוב",
+     "tr": "ani lo margish tov",
+     "en": "I don't feel well"
+    },
+    {
+     "he": "אני מרגיש קצת חולה",
+     "tr": "ani margish ktzat khole",
+     "en": "I feel a bit sick"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Tell her mum you love the food",
+   "target": [
+    "אוהב"
+   ],
+   "examples": [
+    {
+     "he": "אני מאוד אוהב את האוכל",
+     "tr": "ani me'od ohev et ha'okhel",
+     "en": "I really love the food"
+    },
+    {
+     "he": "אני אוהב את זה",
+     "tr": "ani ohev et ze",
+     "en": "I love it"
+    }
+   ]
+  },
+  {
+   "mode": "react",
+   "en": "Answer her — how was work?",
+   "target": [
+    "היה"
+   ],
+   "hear": {
+    "he": "איך היה בעבודה היום?",
+    "tr": "eikh haya ba'avoda hayom?",
+    "en": "How was work today?"
+   },
+   "examples": [
+    {
+     "he": "היה טוב, תודה",
+     "tr": "haya tov, toda",
+     "en": "It was good, thanks"
+    },
+    {
+     "he": "היה בסדר, אני קצת עייף",
+     "tr": "haya beseder, ani ktzat ayef",
+     "en": "It was fine, I'm a bit tired"
+    }
+   ]
+  },
+  {
+   "mode": "react",
+   "en": "Answer — say yes, you'd like to come",
+   "target": [
+    "רוצה"
+   ],
+   "hear": {
+    "he": "אתה רוצה לבוא איתנו לעיר?",
+    "tr": "ata rotze lavo itanu la'ir?",
+    "en": "Do you want to come into town with us?"
+   },
+   "examples": [
+    {
+     "he": "כן, אני רוצה לבוא",
+     "tr": "ken, ani rotze lavo",
+     "en": "Yes, I want to come"
+    },
+    {
+     "he": "כן, רוצה! תודה",
+     "tr": "ken, rotze! toda",
+     "en": "Yes, I'd like to! Thanks"
+    }
+   ]
+  },
+  {
+   "mode": "ask",
+   "en": "Ask how much it costs",
+   "target": [
+    "כמה"
+   ],
+   "examples": [
+    {
+     "he": "כמה זה עולה?",
+     "tr": "kama ze ole?",
+     "en": "How much does it cost?"
+    },
+    {
+     "he": "סליחה, כמה זה?",
+     "tr": "slikha, kama ze?",
+     "en": "Excuse me, how much is it?"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say you need to go home now",
+   "target": [
+    "צריך"
+   ],
+   "examples": [
+    {
+     "he": "אני צריך ללכת הביתה עכשיו",
+     "tr": "ani tzarikh lalekhet habayta akhshav",
+     "en": "I need to go home now"
+    },
+    {
+     "he": "עכשיו אני צריך ללכת",
+     "tr": "akhshav ani tzarikh lalekhet",
+     "en": "I need to go now"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Tell her you saw a lovely dog",
+   "target": [
+    "ראיתי"
+   ],
+   "examples": [
+    {
+     "he": "ראיתי כלב יפה",
+     "tr": "ra'iti kelev yafe",
+     "en": "I saw a lovely dog"
+    },
+    {
+     "he": "היום ראיתי כלב קטן ויפה",
+     "tr": "hayom ra'iti kelev katan veyafe",
+     "en": "Today I saw a lovely little dog"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say you paid for the coffee",
+   "target": [
+    "שילמתי"
+   ],
+   "examples": [
+    {
+     "he": "שילמתי על הקפה",
+     "tr": "shilamti al hakafe",
+     "en": "I paid for the coffee"
+    },
+    {
+     "he": "אני שילמתי, זה בסדר",
+     "tr": "ani shilamti, ze beseder",
+     "en": "I paid, it's fine"
+    }
+   ]
+  },
+  {
+   "mode": "ask",
+   "en": "Ask her why she's tired",
+   "target": [
+    "למה"
+   ],
+   "examples": [
+    {
+     "he": "למה את עייפה?",
+     "tr": "lama at ayefa?",
+     "en": "Why are you tired?"
+    }
+   ]
+  },
+  {
+   "mode": "say",
+   "en": "Say it's cold today",
+   "target": [
+    "קר"
+   ],
+   "examples": [
+    {
+     "he": "קר היום",
+     "tr": "kar hayom",
+     "en": "It's cold today"
+    },
+    {
+     "he": "היום קר מאוד",
+     "tr": "hayom kar me'od",
+     "en": "It's very cold today"
+    }
+   ]
+  }
+ ],
+ "talks": [
+  {
+   "node": "Where you went",
+   "title": "Back from the weekend",
+   "speaker": {
+    "name": "Noa",
+    "he": "נועה"
+   },
+   "turns": [
+    {
+     "they": {
+      "he": "היי! איפה היית?",
+      "tr": "hai! eifo hayita?",
+      "en": "Hi! Where were you?"
+     }
+    },
+    {
+     "you": {
+      "en": "Tell her where you went",
+      "target": [
+       "נסעתי"
+      ],
+      "examples": [
+       {
+        "he": "נסעתי לעיר",
+        "tr": "nasati la'ir",
+        "en": "I went into town"
+       },
+       {
+        "he": "נסעתי לסבתא",
+        "tr": "nasati lesavta",
+        "en": "I went to grandma's"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "איזה כיף! מתי חזרת?",
+       "tr": "eize keif! matai khazarta?",
+       "en": "How fun! When did you get back?"
+      }
+     }
+    },
+    {
+     "you": {
+      "en": "Tell her when you got back",
+      "target": [
+       "חזרתי"
+      ],
+      "examples": [
+       {
+        "he": "חזרתי אתמול",
+        "tr": "khazarti etmol",
+        "en": "I got back yesterday"
+       },
+       {
+        "he": "חזרתי היום בבוקר",
+        "tr": "khazarti hayom baboker",
+        "en": "I got back this morning"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "ואיך היה?",
+       "tr": "ve'eikh haya?",
+       "en": "And how was it?"
+      }
+     }
+    },
+    {
+     "you": {
+      "mode": "open",
+      "en": "Tell her how it was",
+      "examples": [
+       {
+        "he": "היה כיף",
+        "tr": "haya keif",
+        "en": "It was fun"
+       },
+       {
+        "he": "היה מצוין, אבל אני עייף",
+        "tr": "haya metzuyan, aval ani ayef",
+        "en": "It was great, but I'm tired"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "כיף לשמוע!",
+       "tr": "keif lishmo'a!",
+       "en": "Great to hear!"
+      }
+     }
+    },
+    {
+     "they": {
+      "he": "טוב, להתראות!",
+      "tr": "tov, lehitra'ot!",
+      "en": "OK, see you!"
+     }
+    }
+   ]
+  },
+  {
+   "node": "Your day — past",
+   "title": "How was your day?",
+   "speaker": {
+    "name": "Avi",
+    "he": "אבי"
+   },
+   "turns": [
+    {
+     "they": {
+      "he": "מה עשית היום?",
+      "tr": "ma asita hayom?",
+      "en": "What did you do today?"
+     }
+    },
+    {
+     "you": {
+      "en": "Tell him you worked today",
+      "target": [
+       "עבדתי"
+      ],
+      "examples": [
+       {
+        "he": "עבדתי היום",
+        "tr": "avadti hayom",
+        "en": "I worked today"
+       },
+       {
+        "he": "עבדתי בבית",
+        "tr": "avadti babayit",
+        "en": "I worked at home"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "כל היום?",
+       "tr": "kol hayom?",
+       "en": "All day?"
+      }
+     }
+    },
+    {
+     "you": {
+      "mode": "open",
+      "en": "Answer him — all day, or not?",
+      "examples": [
+       {
+        "he": "כן, כל היום",
+        "tr": "ken, kol hayom",
+        "en": "Yes, all day"
+       },
+       {
+        "he": "לא, רק בבוקר",
+        "tr": "lo, rak baboker",
+        "en": "No, only in the morning"
+       }
+      ]
+     },
+     "then": {
+      "yes": {
+       "he": "אז אתה עייף!",
+       "tr": "az ata ayef!",
+       "en": "So you're tired!"
+      },
+      "no": {
+       "he": "טוב, בסדר.",
+       "tr": "tov, beseder.",
+       "en": "OK, fine."
+      }
+     }
+    },
+    {
+     "they": {
+      "he": "ואחר כך?",
+      "tr": "ve'akhar kakh?",
+      "en": "And after that?"
+     }
+    },
+    {
+     "you": {
+      "en": "Tell him where you went afterwards",
+      "target": [
+       "הלכתי"
+      ],
+      "examples": [
+       {
+        "he": "אחר כך הלכתי לעיר",
+        "tr": "akhar kakh halakhti la'ir",
+        "en": "After that I went into town"
+       },
+       {
+        "he": "הלכתי לחבר",
+        "tr": "halakhti lekhaver",
+        "en": "I went to a friend's"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "נחמד! ראית משהו?",
+       "tr": "nekhmad! ra'ita mashehu?",
+       "en": "Nice! Did you see anything?"
+      }
+     }
+    },
+    {
+     "you": {
+      "en": "Tell him one thing you saw",
+      "target": [
+       "ראיתי"
+      ],
+      "examples": [
+       {
+        "he": "ראיתי כלב גדול",
+        "tr": "ra'iti kelev gadol",
+        "en": "I saw a big dog"
+       },
+       {
+        "he": "ראיתי את אמא שלי",
+        "tr": "ra'iti et ima sheli",
+        "en": "I saw my mum"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "איזה כיף!",
+       "tr": "eize keif!",
+       "en": "How nice!"
+      }
+     }
+    },
+    {
+     "they": {
+      "he": "טוב, ביי!",
+      "tr": "tov, bai!",
+      "en": "OK, bye!"
+     }
+    }
+   ]
+  },
+  {
+   "node": "What you bought",
+   "title": "Back from the shop",
+   "speaker": {
+    "name": "Noa",
+    "he": "נועה"
+   },
+   "turns": [
+    {
+     "they": {
+      "he": "מה קנית?",
+      "tr": "ma kanita?",
+      "en": "What did you buy?"
+     }
+    },
+    {
+     "you": {
+      "en": "Tell her what you bought",
+      "target": [
+       "קניתי"
+      ],
+      "examples": [
+       {
+        "he": "קניתי לחם וחלב",
+        "tr": "kaniti lekhem vekhalav",
+        "en": "I bought bread and milk"
+       },
+       {
+        "he": "קניתי פירות",
+        "tr": "kaniti peirot",
+        "en": "I bought fruit"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "כמה שילמת?",
+       "tr": "kama shilamta?",
+       "en": "How much did you pay?"
+      }
+     }
+    },
+    {
+     "you": {
+      "en": "Tell her how much you paid — any amount",
+      "target": [
+       "שילמתי"
+      ],
+      "examples": [
+       {
+        "he": "שילמתי עשרים שקל",
+        "tr": "shilamti esrim shekel",
+        "en": "I paid twenty shekels"
+       },
+       {
+        "he": "לא שילמתי הרבה",
+        "tr": "lo shilamti harbe",
+        "en": "I didn't pay much"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "זה בסדר.",
+       "tr": "ze beseder.",
+       "en": "That's fine."
+      }
+     }
+    },
+    {
+     "you": {
+      "mode": "ask",
+      "en": "Offer her some — ask if she wants any",
+      "target": [
+       "רוצה"
+      ],
+      "examples": [
+       {
+        "he": "את רוצה קצת?",
+        "tr": "at rotza ktzat?",
+        "en": "Do you want some?"
+       },
+       {
+        "he": "רוצה פירות?",
+        "tr": "rotza peirot?",
+        "en": "Want some fruit?"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "כן, תודה!",
+       "tr": "ken, toda!",
+       "en": "Yes, thanks!"
+      }
+     }
+    },
+    {
+     "they": {
+      "he": "להתראות!",
+      "tr": "lehitra'ot!",
+      "en": "See you!"
+     }
+    }
+   ]
+  },
+  {
+   "node": "How it was",
+   "title": "Big news",
+   "speaker": {
+    "name": "Noa",
+    "he": "נועה"
+   },
+   "turns": [
+    {
+     "they": {
+      "he": "יש לי עבודה חדשה!",
+      "tr": "yesh li avoda khadasha!",
+      "en": "I've got a new job!"
+     }
+    },
+    {
+     "you": {
+      "en": "React — say how great that is",
+      "target": [
+       "כיף"
+      ],
+      "examples": [
+       {
+        "he": "איזה כיף!",
+        "tr": "eize keif!",
+        "en": "How great!"
+       },
+       {
+        "he": "כיף לשמוע!",
+        "tr": "keif lishmo'a!",
+        "en": "Great to hear!"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "תודה! זה כיף.",
+       "tr": "toda! ze keif.",
+       "en": "Thanks! It's great."
+      }
+     }
+    },
+    {
+     "you": {
+      "mode": "ask",
+      "en": "Ask her where the job is",
+      "target": [
+       "איפה"
+      ],
+      "examples": [
+       {
+        "he": "איפה העבודה?",
+        "tr": "eifo ha'avoda?",
+        "en": "Where's the job?"
+       },
+       {
+        "he": "איפה את עובדת?",
+        "tr": "eifo at ovedet?",
+        "en": "Where are you working?"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "בעיר.",
+       "tr": "ba'ir.",
+       "en": "In the city."
+      }
+     }
+    },
+    {
+     "you": {
+      "en": "Say something nice about it",
+      "target": [
+       "נחמד"
+      ],
+      "examples": [
+       {
+        "he": "נחמד מאוד!",
+        "tr": "nekhmad me'od!",
+        "en": "Very nice!"
+       },
+       {
+        "he": "זה נחמד!",
+        "tr": "ze nekhmad!",
+        "en": "That's nice!"
+       }
+      ]
+     },
+     "then": {
+      "any": {
+       "he": "תודה!",
+       "tr": "toda!",
+       "en": "Thanks!"
+      }
+     }
+    },
+    {
+     "they": {
+      "he": "טוב, ביי!",
+      "tr": "tov, bai!",
+      "en": "OK, bye!"
+     }
+    }
+   ]
   }
  ]
 }

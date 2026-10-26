@@ -1566,6 +1566,26 @@
   /* The prompt takes the map's face. It is the thing on the card you actually read. */
   .lprompt { font-family: var(--map-display); font-size: 2rem; font-weight: 400;
              margin: 0 0 4px; line-height: 1.25; color: var(--ink); }
+  /* SAY IT YOUR WAY. The situation is a sentence of English, not a word, so the map face
+     a size down; everything after he speaks reuses the heard box and the correction's warm
+     panel, because those already mean "what you said" and "the lesson". */
+  .lprompt.lpsit { font-size: 1.55rem; }
+  .lpfit { font-size: .86rem; color: var(--muted); margin: 6px 0 10px; }
+  .lpfit b { color: var(--accent); font-style: italic; font-weight: 600; }
+  .lpheardtr { font-size: .86rem; font-style: italic; color: var(--accent);
+               direction: ltr; text-align: right; margin-top: 2px; }
+  .lptargets { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+  .lpt { font-size: .76rem; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
+         color: var(--muted); }
+  .lpt.hit { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+  .lpex { width: 100%; margin: 0 0 12px; padding: 8px 12px; border-radius: 10px;
+          background: var(--c-176-137-74-10); border: 1px solid var(--c-176-137-74-28); }
+  .lpexrow { display: block; width: 100%; background: none; border: 0; padding: 6px 0;
+             text-align: right; cursor: pointer; color: inherit; font: inherit; }
+  .lpexrow + .lpexrow { border-top: 1px dashed var(--c-176-137-74-42); }
+  .lpextr { font-size: 1rem; font-style: italic; color: var(--accent); direction: ltr; }
+  .lpexhe { font-family: var(--he); font-size: .95rem; color: var(--hebrew); direction: rtl; }
+  .lpexen { font-size: .78rem; color: var(--muted); direction: ltr; }
   .laudio { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 16px 0; }
   .lspeaker { font-size: 2.5rem; cursor: pointer; background: none; border: 0;
               line-height: 1; padding: 0; transition: transform .12s; }
@@ -1820,9 +1840,14 @@
   .lbubbles { max-height: 190px; overflow-y: auto; direction: rtl; text-align: right;
               padding: 2px 2px 6px; margin-bottom: 10px; }
   /* fit-content so a two-word answer reads as a two-word answer. Logical margins
-     rather than left/right, because the thread is RTL and "start" is the far side. */
+     rather than left/right, because the thread is RTL and "start" is the far side.
+     The bubble carries its OWN direction, because logical margins resolve against the
+     bubble's direction, not its parent's: the coach's newest line and the "…" are drawn
+     straight onto the card, outside the RTL thread, and there "start" was the LEFT. So
+     the coach jumped sides between history and the live line — George, 23 October: "the
+     text keeps on switching sides... It's quite confusing". */
   .lbub { display: block; width: fit-content; max-width: 84%; border-radius: 12px;
-          padding: 6px 11px; margin-bottom: 6px; }
+          padding: 6px 11px; margin-bottom: 6px; direction: rtl; }
   .lbub.them { background: var(--bg); border: 1px solid var(--border);
                margin-inline-start: 0; margin-inline-end: auto; }
   .lbub.you  { background: var(--accent-soft); border: 1px solid var(--c-c8e0dc);
@@ -10276,6 +10301,10 @@ function SYNC_LOCAL_SET() {
        learnIngest deduplicates. Local also sidesteps a counter that could go backwards
        under the default newer-wins rule. */
     CONTENT_V_KEY, CONTENT_LAST_KEY,
+    /* The prompts and talks are the file's, read on each device like the version above;
+       which ones he has had is a rotation marker, not progress — the words carry that.
+       Literals rather than the consts: this set is built during init, before them. */
+    "hvr_prompts", "hvr_promptseen",
     /* A LIVE DIAGNOSTIC FOR THE DEVICE IN YOUR HAND. It shipped syncing, because it is
        hvr_-prefixed and syncKeys is a prefix scan — and under the default array rule the
        laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
@@ -28111,6 +28140,14 @@ function learnBuild(opts) {
   /* Wins first and last — see sessionEaseOrder. After introOrder, and it moves only
      cards that order does not care about, so meeting-before-using still holds. */
   sessionEaseOrder(cards, srsNow, launching, todayISO(), shape === "quick" ? 1 : OPEN_WINS);
+  /* Say it your way: up to three sentence cards become prompt cards — same length of
+     session, more of it spent building his own sentences. See promptPick. */
+  try {
+    promptSwapIn(cards, promptPick(promptsStore(), libAll(), srsNow,
+                                   Math.min(PROMPT_PER_SESSION, Math.floor(size / 5)),
+                                   promptSeenAll(), todayISO()),
+                 shape === "quick" ? 1 : OPEN_WINS);
+  } catch (e) {}
   /* The reply always closes. It's the thing the whole app exists to make possible,
      so the session ends on the real moment rather than on a vocabulary card. */
   if (replyPick) cards.push({ kind: "reply", item: replyPick.it, words: replyPick.it.uses || [] });
@@ -28418,6 +28455,148 @@ function comebackLine(cb) {
   const n = cb.left === 1 ? "next session is" : "next " + (cb.left === 2 ? "two" : cb.left) + " sessions are";
   const away = (cb.away && cb.away !== Infinity) ? " \u2014 " + cb.away + " days away" : "";
   return "Welcome back" + away + ". The " + n + " gentle: only words you've had before.";
+}
+
+/* ---- say it your way: prompt cards (2026-10-26) -----------------------------------
+   Spec: docs/superpowers/specs/2026-10-26-say-it-your-way-design.md. George: "I like the
+   idea of it being a prompt. It doesn't tell me what to say, it tells me what to talk
+   about... My only worry is that if I give a response that's not exact... it's
+   impossible to progress unless I say the exact same thing."
+
+   So a prompt card never asks "was the answer right". It asks three smaller questions,
+   none of which needs the network: did he speak Hebrew (two words or more), did the
+   TARGET words come out (anywhere, in any order, by ear — the tolerances sentence cards
+   already use), and did it mean the thing (his own tap, preselected from the second).
+   Only the target words reach the scheduler, so saying more never costs anything.
+
+   The August conversations were marked on word overlap with 2–3 alternatives and scored a
+   better answer the same as a wrong one (2026-08-27-live-conversation-design.md). The
+   examples here are never matched against — they are shown, for him to compare. */
+const PROMPTS_KEY = "hvr_prompts", PROMPT_SEEN_KEY = "hvr_promptseen";
+const PROMPT_MODES = ["say", "ask", "react", "open"];
+const PROMPT_PER_SESSION = 3;
+/* A Hebrew line from the file: he, tr, en — or null when there is no Hebrew in it. */
+function promptLine(x) {
+  if (!x || typeof x !== "object") return null;
+  const he = heOnly(x.he);
+  if (!he) return null;
+  return { he: he, tr: trHouse(String(x.tr || "").trim(), he), en: String(x.en || "").trim() };
+}
+/* One prompt from the file, in a shape the rest can trust — or null. Pure. The id is the
+   English, which is the only stable name a prompt has on both devices. */
+function promptClean(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const mode = PROMPT_MODES.indexOf(raw.mode) !== -1 ? raw.mode : "say";
+  const en = String(raw.en || "").trim();
+  if (!en) return null;
+  const hear = mode === "react" ? promptLine(raw.hear) : null;
+  if (mode === "react" && !hear) return null;
+  const target = mode === "open" ? [] :
+    (Array.isArray(raw.target) ? raw.target : []).map(t => heOnly(t)).filter(Boolean).slice(0, 2);
+  if (mode !== "open" && !target.length) return null;
+  const examples = (Array.isArray(raw.examples) ? raw.examples : []).map(promptLine).filter(Boolean).slice(0, 3);
+  if (!examples.length) return null;
+  return { id: "p:" + mode + ":" + en.toLowerCase(), mode: mode,
+           node: String(raw.for || raw.node || ""), lvl: Number(raw.lvl) || 1,
+           en: en, hear: hear, target: target, examples: examples };
+}
+function promptsStore() {
+  try { const o = JSON.parse(lsGet(PROMPTS_KEY));
+        if (o && typeof o === "object") return { prompts: Array.isArray(o.prompts) ? o.prompts : [],
+                                                 talks: Array.isArray(o.talks) ? o.talks : [] }; }
+  catch (e) {}
+  return { prompts: [], talks: [] };
+}
+/* The file owns these outright, so a new version replaces them wholesale. Local to the
+   device (SYNC_LOCAL_SET), like the content version that decides when this runs. */
+function promptsApply(data) {
+  if (!data || !Array.isArray(data.prompts)) return 0;
+  const prompts = (data.prompts || []).map(promptClean).filter(Boolean);
+  lsSet(PROMPTS_KEY, JSON.stringify({ prompts: prompts, talks: promptsStore().talks }));
+  return prompts.length;
+}
+function promptSeenAll() {
+  try { const o = JSON.parse(lsGet(PROMPT_SEEN_KEY)); return (o && typeof o === "object") ? o : {}; }
+  catch (e) { return {}; }
+}
+function promptSeenMark(id) {
+  const a = promptSeenAll();
+  const e = a[id] || { n: 0, last: "" };
+  a[id] = { n: (e.n || 0) + 1, last: todayISO() };
+  lsSet(PROMPT_SEEN_KEY, JSON.stringify(a));
+}
+
+/* Did this target come out of his mouth? Every tolerance the drill already trusts: the
+   exact word, one letter off (nearEnough), the library's own forms and one peeled prefix
+   (libKeyFor — with the final letter put back, since heWords took it away), and two
+   words the library spells differently but says the same (heSoundAlike). */
+function promptHeard(t, words, lib) {
+  const T = normHe(t);
+  return words.some(w => w === T || nearEnough(w, T) || libKeyFor(heRefinal(w), lib) === t ||
+                         libKeyFor(w, lib) === t || heSoundAlike(w, T, lib));
+}
+/* The three questions. Pure. `alts` are the recogniser's runners-up, fair evidence for a
+   target exactly as they are on a sentence card. */
+function promptMark(item, said, alts, lib) {
+  const words = heWords(said);
+  const heard = words.concat((alts || []).reduce((a, s) => a.concat(heWords(s)), []));
+  const targets = (item && item.target) || [];
+  const hit = {};
+  targets.forEach(t => { hit[t] = promptHeard(t, heard, lib); });
+  const spoke = words.length >= 2;
+  const got = targets.filter(t => hit[t]).length;
+  const suggest = !targets.length ? (spoke ? "got" : words.length ? "close" : "not")
+    : got === targets.length ? (spoke ? "got" : "close")
+    : got ? "close" : "not";
+  return { hit: hit, spoke: spoke, suggest: suggest };
+}
+/* What each target banks. Heard is clean whatever he tapped — the word came out. Not
+   heard but "Got it" is nearly: the mic misses words, and a wrongly forgiven word costs
+   one `nearly` where a wrong miss costs his trust. Anything else is missed. A hint caps
+   all of it at nearly, as it does everywhere else. Pure. */
+function promptGrades(item, hit, tap, hinted) {
+  const out = {};
+  ((item && item.target) || []).forEach(t => {
+    let g = (hit && hit[t]) ? 2 : tap === "got" ? 1 : 0;
+    if (hinted) g = Math.min(g, 1);
+    out[t] = g;
+  });
+  return out;
+}
+/* Which prompts a session can use: every target a word he already has ready, least-seen
+   first, nothing seen today, no two on the same word. Pure over what it is handed. */
+function promptPick(store, lib, srs, n, seen, today) {
+  if (!(n > 0)) return [];
+  const sn = id => (seen && seen[id]) || { n: 0, last: "" };
+  const pool = ((store && store.prompts) || []).filter(p => p.mode !== "open" &&
+    sn(p.id).last !== today && p.target.every(t => lib[t] && wordReady(t, srs)));
+  pool.sort((a, b) => (sn(a.id).n - sn(b.id).n) || String(sn(a.id).last).localeCompare(String(sn(b.id).last)));
+  const used = new Set(), out = [];
+  for (const p of pool) {
+    if (out.length >= n) break;
+    if (p.target.some(t => used.has(t))) continue;
+    p.target.forEach(t => used.add(t));
+    out.push({ kind: "prompt", item: p, words: p.target.filter(t => lib[t]) });
+  }
+  return out;
+}
+/* In place of sentence cards, spread through the middle of the session — never in the
+   opening wins and never the closer, so the order the session was built in still holds.
+   A sentence card carrying a new word is left alone: it is that word's first use. */
+function promptSwapIn(cards, picks, openN) {
+  const cand = [];
+  for (let i = openN; i < cards.length - 1; i++)
+    if (cards[i] && cards[i].kind === "sentence" && !cards[i].carry) cand.push(i);
+  const n = Math.min(picks.length, cand.length);
+  for (let j = 0; j < n; j++) cards[cand[Math.floor((cand.length / n) * (j + 0.5))]] = picks[j];
+  return n;
+}
+function promptAsk(c) {
+  const m = c && c.item && c.item.mode;
+  return m === "ask" ? "Ask it your way, out loud."
+       : m === "react" ? "Answer them, out loud — your words."
+       : m === "open" ? "Say anything you like about it, out loud."
+       : "Say it your way, out loud.";
 }
 
 /* ---- the sit-down session (2026-10-22) -------------------------------------------
@@ -30113,6 +30292,12 @@ async function contentIngest() {
       retired = before.length - after.length;
       if (retired) { bankSave(after); rebuildTrIndex(); }
     }
+    /* `any: true` is the one exception, and it goes through the retired store rather
+       than the bank: a sentence he FLAGGED as nonsense, whoever wrote it. The flag is his
+       say-so, which is what the src rule above is protecting. retiredAdd is idempotent,
+       so re-applying on every later version costs nothing. */
+    const anyOf = (Array.isArray(data.retired) ? data.retired : []).filter(x => x && x.any && x.he);
+    if (anyOf.length) retired += retiredAdd(anyOf.map(x => ({ he: String(x.he) })), "content: flagged");
   } catch (e) {
     contentNote("retire-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
   }
@@ -30209,6 +30394,10 @@ async function contentIngest() {
   } catch (e) {
     contentNote("scenes-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
   }
+  /* PROMPTS, the same way: written and checked with the file, held whole on the device. */
+  let prompted = 0;
+  try { prompted = promptsApply(data); }
+  catch (e) { contentNote("prompts-threw", { fileVersion: data.version, err: (e && e.message) || String(e) }); }
   /* DID THE WRITE ACTUALLY STICK. Stamping the version after a save that silently failed —
      a full localStorage, a store replaced underneath us — would mean never trying again,
      which is the worst possible failure for a one-shot marker. Cheap to check, and it
@@ -30224,14 +30413,15 @@ async function contentIngest() {
   /* `retired` counts as work: a version whose whole job is withdrawing bad sentences
      banks nothing by design, and treating that as a failed read would re-run it on every
      load forever. */
-  if (!n && !landed && !retired && !scened && !refreshed) {
+  if (!n && !landed && !retired && !scened && !refreshed && !prompted) {
     contentNote("nothing-landed", { fileVersion: data.version, items: data.items.length });
     return 0;
   }
   contentNote("ingested", { fileVersion: data.version, banked: n,
                             items: data.items.length, bank: bankAll().length,
                             reviewed: reviewed, unreviewed: unreviewed,
-                            retired: retired, refreshed: refreshed, scenes: scened });
+                            retired: retired, refreshed: refreshed, scenes: scened,
+                            prompts: prompted });
   /* Stamped even when nothing landed. Everything in the file being a duplicate already is
      a completely normal outcome — a second device, or a re-read after a cache clear — and
      re-walking it on every load from then on would be the one cost this flag exists to
@@ -30542,6 +30732,10 @@ const LEARN_KINDS = {
      card, and what he does with them is the answer. */
   compose:  { glyph: "✎", label: "The coach", dir: "עב → עב", flow: "out",
               ask: "Make a sentence with these, out loud." },
+  /* A situation, not a sentence: his words, the card's meaning. `ask` varies by mode —
+     see promptAsk. */
+  prompt:   { glyph: "🗣", label: "Say it your way", dir: "EN → עב", flow: "out",
+              ask: "Say it your way, out loud." },
   /* Chunks are retrieved WHOLE — that's the entire claim being trained, and it's
      why this card never breaks into per-word chips like every other multi-word
      card does. Assembling it word by word is the habit chunking replaces. */
@@ -30560,7 +30754,7 @@ const LEARN_KINDS = {
 /* Which strength record a card feeds. Listening is receptive knowledge; everything
    else is production — including shadowing, where he is producing Hebrew. */
 const KIND_SIDE = { word: "prod", sentence: "prod", listen: "recv", reply: "prod",
-                    chunk: "prod", shadow: "prod", note: "recv", compose: "prod" };
+                    chunk: "prod", shadow: "prod", note: "recv", compose: "prod", prompt: "prod" };
 /* Kinds that play Hebrew at you and ask what it meant. `note` differs from `listen`
    only in where the audio comes from, so everything downstream treats them alike
    rather than growing a parallel set of branches. */
@@ -31756,10 +31950,34 @@ function composeSpeakNew(c) {
    line drawn after the whole thread, centred on the card — George: "The English response
    from the coach is like not in line with their message. It's just in the middle of the
    screen which is a bit confusing". */
+/* A Hebrew line's sound, built locally from the words the app already knows — for the
+   lines that arrive without one: his own transcript, and a coach reply whose model
+   dropped the field. All or nothing: one word guessed letter-by-letter would teach a
+   spelling the house scheme forbids, so a line with an unknown word gets no line at all.
+   English words in a mixed transcript pass through as themselves. Pure over `lib`. */
+function heLineTr(he, lib) {
+  const toks = String(he || "").split(/\s+/).filter(Boolean);
+  if (!toks.some(t => /[֐-׿]/.test(t))) return "";
+  const out = [];
+  for (const raw of toks) {
+    const word = raw.replace(/[^֐-׿A-Za-z']/g, "");
+    if (!word) continue;
+    if (!/[֐-׿]/.test(word)) { out.push(word); continue; }
+    const bare = word.replace(/[֑-ׇ]/g, "");
+    const e = (lib && (lib[bare] || lib[heRefinal(bare)])) || null;
+    let tr = e && e.tr ? String(e.tr).split("/")[0] : "";
+    if (!tr) { try { const w = lookupWord(bare); if (w && w.tr) tr = String(w.tr).split("/")[0]; } catch (err) {} }
+    if (!tr) return "";
+    out.push(tr);
+  }
+  const end = (String(he).trim().match(/[?!.]$/) || [""])[0];
+  return trHouse(out.join(" ") + end, he);
+}
 function convoBubble(who, he, tr, en) {
   const b = document.createElement("div"); b.className = "lbub " + who;
   const h = document.createElement("div"); h.className = "lbub-he"; h.textContent = he || "";
   b.append(h);
+  if (!tr) tr = heLineTr(he, libAll());
   if (tr) { const t = document.createElement("div"); t.className = "lbub-tr"; t.textContent = trHouse(tr); b.append(t); }
   if (en) { const e = document.createElement("div"); e.className = "lbub-en"; e.textContent = en; b.append(e); }
   return b;
@@ -31964,7 +32182,7 @@ function learnRenderCard() {
   const ask = document.createElement("div"); ask.className = "lask";
   /* Compose is the one kind whose task changes under him: the opening sentence is built
      from the first pair, and after that it is about working the rest of the table in. */
-  ask.textContent = c.kind === "compose" ? composeAsk(c) : meta.ask;
+  ask.textContent = c.kind === "compose" ? composeAsk(c) : c.kind === "prompt" ? promptAsk(c) : meta.ask;
   card.append(ask);
 
   /* Compose renders itself and stops. It shares the prologue above — the road, the card
@@ -31973,6 +32191,8 @@ function learnRenderCard() {
      no grade buttons because he does not grade himself here. Branching inside each of
      those in turn would have left five places quietly asserting c.item exists. */
   if (c.kind === "compose") { learnRenderCompose(card, c, s); return; }
+  /* The same for a prompt card: no target string to reveal, no hint ladder, no chips. */
+  if (c.kind === "prompt") { learnRenderPrompt(card, c, s); return; }
 
   /* THE CARD ADMITS WHAT IT IS DOING. This sentence deliberately contains one word he
      cannot yet say — that is the whole point of it, and everything else in it is a
@@ -32350,9 +32570,13 @@ function learnRenderCompose(card, c, s) {
        them through normHe rather than trusting the pairing. */
     const bestOf = out.best || {};
     const sameSentence = bestOf.he && normHe(bestOf.he) === normHe(out.fix);
-    if (sameSentence && bestOf.tr) {
+    /* And when the model's pairing can't be trusted or it dropped the field, the app's
+       own reading of the words — George, 26 October: "This only has a Hebrew, not the
+       transliteration". heLineTr gives nothing rather than a guess. */
+    const fixTr = (sameSentence && bestOf.tr) || heLineTr(out.fix, lib);
+    if (fixTr) {
       const t = document.createElement("div"); t.className = "lfixtr";
-      t.textContent = bestOf.tr; fix.append(t);
+      t.textContent = fixTr; fix.append(t);
     }
     if (sameSentence && bestOf.en) {
       const e = document.createElement("div"); e.className = "lfixen";
@@ -32454,6 +32678,143 @@ async function composeSend(s, c) {
   try { composeAudit(s, c, out, at); } catch (e) { /* never into the turn */ }
 }
 
+/* THE PROMPT CARD, in two states: the situation and the mic, then what he said beside the
+   ways it could be said, and three taps. Every path out of the first state lands on the
+   second — a mic that heard nothing, typing, or "show me" — so there is no card he can
+   be stuck on. `_stage`, `_said` and `_mark` live on the card for the same reason
+   compose's do: a repaint puts back what was on screen. */
+function learnRenderPrompt(card, c, s) {
+  const lib = libAll();
+  const it = c.item || {};
+  const stage = c._stage || "ask";
+  if (it.mode === "react" && it.hear) {
+    const wrap = document.createElement("div"); wrap.className = "lbubbles";
+    const b = convoBubble("them", it.hear.he, it.hear.tr, it.hear.en);
+    b.style.cursor = "pointer"; b.title = "Hear it again";
+    b.onclick = () => { try { playHe(null, it.hear.he); } catch (e) {} };
+    wrap.append(b); card.append(wrap);
+    if (!c._played) { c._played = true; try { playHe(null, it.hear.he); } catch (e) {} }
+  }
+  const p = document.createElement("div"); p.className = "lprompt lpsit";
+  p.textContent = it.en || "";
+  card.append(p);
+  const targetTr = k => trHouse(((lib[k] || {}).tr) || "", k) || heLineTr(k, lib) || k;
+
+  if (stage === "ask") {
+    if ((it.target || []).length) {
+      const fit = document.createElement("div"); fit.className = "lpfit";
+      if (c._hinted) {
+        fit.append("A word that fits: ");
+        it.target.forEach((k, i) => {
+          if (i) fit.append(" · ");
+          const w = document.createElement("b"); w.textContent = targetTr(k); fit.append(w);
+        });
+      } else {
+        const h = document.createElement("button");
+        h.className = "linkbtn"; h.type = "button"; h.textContent = "Show me a word that fits";
+        h.onclick = () => { c._hinted = true; learnRenderCard(); };
+        fit.append(h);
+      }
+      card.append(fit);
+    }
+    const act = document.createElement("div"); act.className = "lactions";
+    if (speechSupported()) {
+      const mic = document.createElement("button");
+      mic.className = "lmic"; mic.type = "button"; mic.textContent = "Say it";
+      mic.onclick = () => learnSpeakAttempt(mic, c);
+      act.append(mic); card.append(act);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.className = "lnotes"; ta.placeholder = "type it in Hebrew…";
+      card.append(ta);
+      const go = document.createElement("button");
+      go.className = "btn"; go.type = "button"; go.textContent = "Done";
+      go.onclick = () => { learnScoreSpoken(c, ta.value, {}); c._stage = "marked"; learnRenderCard(); };
+      act.append(go); card.append(act);
+    }
+    const skip = document.createElement("button");
+    skip.className = "linkbtn lstuck"; skip.type = "button";
+    skip.textContent = "I'm not sure — show me ways to say it";
+    skip.onclick = () => { learnScoreSpoken(c, "", {}); c._stage = "marked"; learnRenderCard(); };
+    card.append(skip);
+    return;
+  }
+
+  /* stage === "marked" */
+  const mark = c._mark || promptMark(it, "", [], lib);
+  const heard = document.createElement("div"); heard.className = "lheard";
+  const hl = document.createElement("div"); hl.className = "lheardlab";
+  hl.textContent = c._said ? "What you said" : "Nothing said this time";
+  heard.append(hl);
+  if (c._said) {
+    const hh = document.createElement("div"); hh.className = "lheardhe"; hh.textContent = c._said;
+    heard.append(hh);
+    const tr = heLineTr(c._said, lib);
+    if (tr) { const t = document.createElement("div"); t.className = "lpheardtr"; t.textContent = tr; heard.append(t); }
+  }
+  if ((it.target || []).length) {
+    const row = document.createElement("div"); row.className = "lptargets";
+    it.target.forEach(k => {
+      const chip = document.createElement("span");
+      chip.className = "lpt" + (mark.hit[k] ? " hit" : "");
+      chip.textContent = targetTr(k);
+      chip.title = mark.hit[k] ? "You used it" : "Didn't come out this time";
+      row.append(chip);
+    });
+    heard.append(row);
+  }
+  card.append(heard);
+
+  const ex = document.createElement("div"); ex.className = "lpex";
+  const el = document.createElement("div"); el.className = "lheardlab";
+  el.textContent = "Ways to say it — tap to hear";
+  ex.append(el);
+  (it.examples || []).forEach(x => {
+    const r = document.createElement("button"); r.type = "button"; r.className = "lpexrow";
+    const t = document.createElement("div"); t.className = "lpextr"; t.textContent = x.tr || "";
+    const h = document.createElement("div"); h.className = "lpexhe"; h.textContent = x.he;
+    const e = document.createElement("div"); e.className = "lpexen"; e.textContent = x.en || "";
+    r.append(t, h, e);
+    r.onclick = () => { try { playHe(null, x.he); } catch (err) {} };
+    ex.append(r);
+  });
+  card.append(ex);
+
+  const act = document.createElement("div"); act.className = "lactions";
+  [["Not really", "not", "g0"], ["Close", "close", "g1"], ["Got it", "got", "g2"]].forEach(g => {
+    const b = document.createElement("button"); b.type = "button";
+    b.className = "lgrade " + g[2] + (mark.suggest === g[1] ? " suggested" : "");
+    b.textContent = g[0];
+    b.onclick = () => promptCommit(g[1]);
+    act.append(b);
+  });
+  card.append(act);
+  const again = document.createElement("button");
+  again.className = "linkbtn lstuck"; again.type = "button"; again.textContent = "Try it again";
+  again.onclick = () => { c._said = ""; c._alts = []; c._mark = null; c._stage = "ask"; learnRenderCard(); };
+  card.append(again);
+}
+/* His tap. Only the targets reach the scheduler — see promptGrades. */
+function promptCommit(tap) {
+  const s = learnSession; if (!s) return;
+  const c = s.cards[s.i]; if (!c || c.kind !== "prompt") return;
+  const lib = libAll(), srs = srsAll();
+  const mark = c._mark || promptMark(c.item, c._said || "", c._alts || [], lib);
+  const grades = promptGrades(c.item, mark.hit, tap, !!c._hinted);
+  Object.keys(grades).forEach(k => {
+    if (!srsGradable(k, lib)) return;
+    learnMark(s, srs, k);
+    srsAnswer(srs, k, grades[k], "prod", learnLogExtra(c));
+    if (grades[k] === 2) s.strengthened[k] = true; else s.back[k] = true;
+  });
+  srsSave(srs);
+  try { promptSeenMark(c.item.id); } catch (e) {}
+  /* For the stats and the journal, which read these when the card ends. */
+  if (c._hinted) learnHints = 1;
+  if (c._said) learnSpoken = { text: c._said, conf: c._conf || 0 };
+  learnAdvance(tap === "got" && !c._hinted);
+}
+
 function learnStuckLabel(btn, c) {
   const left = learnHintSteps(c).length - learnHints;
   if (left > 0) { btn.textContent = learnHints ? "Still stuck?" : "Stuck?"; return; }
@@ -32496,10 +32857,10 @@ function learnMicKinds(c) { return !isHearKind(c.kind); }
    words against, so a per-word recommendation would be inventing a target. The coach
    decides, and he never grades himself on this card. */
 function learnMicGrades(c) {
-  return !isHearKind(c.kind) && c.kind !== "reply" && c.kind !== "compose";
+  return !isHearKind(c.kind) && c.kind !== "reply" && c.kind !== "compose" && c.kind !== "prompt";
 }
 function learnExpectedHe(c) {
-  if (c.kind === "compose") return "";      // by design: no target string exists
+  if (c.kind === "compose" || c.kind === "prompt") return "";      // by design: no target string exists
   return (c.kind === "word" || c.kind === "chunk") ? c.key : (c.item ? c.item.he : "");
 }
 
@@ -32686,6 +33047,13 @@ function learnSpeakSubmit(card, c, askedAt) {
        confident" is the most useful thing the app can say. */
     const unsure = !!(learnSpoken && learnSpoken.unsure);
     c._stage = "heard";
+    learnRenderCard();
+    if (unsure) learnMicUnsure(document.getElementById("lCard"));
+    return;
+  }
+  if (c.kind === "prompt") {
+    const unsure = !!(learnSpoken && learnSpoken.unsure);
+    c._stage = "marked";
     learnRenderCard();
     if (unsure) learnMicUnsure(document.getElementById("lCard"));
     return;
@@ -33407,7 +33775,7 @@ function learnScoreSpoken(c, text, res) {
      anything reads the transcript, so the chips, the grace check and the adjudicator all
      see "בארבע" where the recogniser wrote "ב4". Compose has no expected sentence and the
      coach reads digits fine, so it is left as heard. */
-  if (c && c.kind !== "compose") {
+  if (c && c.kind !== "compose" && c.kind !== "prompt") {
     const want = learnExpectedHe(c);
     text = heDigitsSpoken(text, want);
     if (res && Array.isArray(res.alts)) {
@@ -33440,6 +33808,18 @@ function learnScoreSpoken(c, text, res) {
     learnSpoken = { text: String(text || ""), status: [], extra: [], english: {},
                     alts: (res && res.alts) || [], conf: (res && res.confidence) || 0,
                     unsure: micUnsure(res && res.confidence), expected: [] };
+    return;
+  }
+  /* A prompt has no sentence to align against either — only its targets, looked for
+     anywhere in what he said. Kept on the card, because the render that shows the result
+     clears learnSpoken with every other per-card variable. */
+  if (c.kind === "prompt") {
+    c._said = String(text || "").trim();
+    c._alts = (res && res.alts) || [];
+    c._mark = promptMark(c.item, c._said, c._alts, lib);
+    c._conf = (res && res.confidence) || 0;
+    learnSpoken = { text: c._said, status: [], extra: [], english: {}, alts: c._alts,
+                    conf: c._conf, unsure: micUnsure(c._conf), expected: [] };
     return;
   }
   expected = heWords(learnExpectedHe(c));
@@ -46330,6 +46710,67 @@ T("voice notes: no writing prompt is framed around grandad any more", () => {
   assertEq(src.match(/grandad|grandfather|grandson|WhatsApp/gi) || [], [],
            "grandad in a prompt the learning side sends");
   assertTrue(!CAMP_SPAWN_FROM_NOTES, "and a voice note no longer grows a node on the map");
+});
+
+/* ---- say it your way (2026-10-26) ---------------------------------------------- */
+T("heLineTr: a line of known words reads in the house scheme, an unknown one gives nothing", () => {
+  const lib = { "אני": { tr: "ani" }, "הלכתי": { tr: "halakhti" }, "עיר": { tr: "ir" } };
+  assertEq(heLineTr("אני הלכתי.", lib), "ani halakhti.");
+  assertEq(heLineTr("אני זזזזקק", lib), "", "one word guessed letter by letter would teach a wrong spelling");
+  assertEq(heLineTr("…", lib), "", "the coach's thinking dots are not a line");
+  assertEq(heLineTr("אני OK", lib), "ani OK", "English in a mixed transcript passes through");
+});
+T("talk bubbles: the coach stays on one side wherever the bubble is drawn", () => {
+  const ltr = document.createElement("div"); ltr.dir = "ltr";
+  const b = convoBubble("them", "שלום", "shalom", "");
+  ltr.append(b); document.body.append(ltr);
+  try { assertEq(getComputedStyle(b).direction, "rtl", "outside the thread it used to flip to the left"); }
+  finally { ltr.remove(); }
+});
+const PT_LIB = { "הלכתי": { tr: "halakhti", en: "I went" }, "עיר": { tr: "ir", en: "city" },
+                 "הייתי": { tr: "hayiti", en: "I was" }, "אתמול": { tr: "etmol", en: "yesterday" } };
+const PT_SAY = promptClean({ mode: "say", en: "Tell her you went into town yesterday", target: ["הלכתי"],
+                             examples: [{ he: "הלכתי לעיר אתמול", tr: "halakhti la'ir etmol", en: "I went into town yesterday" }] });
+T("promptClean: a prompt with no target, no examples or no line to react to is dropped", () => {
+  assertTrue(!!PT_SAY, "a whole one survives");
+  assertEq(PT_SAY.id, "p:say:tell her you went into town yesterday");
+  assertNull(promptClean({ mode: "say", en: "x", target: [], examples: [{ he: "שלום" }] }), "say needs a target");
+  assertNull(promptClean({ mode: "say", en: "x", target: ["שלום"], examples: [] }), "nothing to compare with");
+  assertNull(promptClean({ mode: "react", en: "x", target: ["שלום"], examples: [{ he: "שלום" }] }), "react needs its line");
+  assertEq(promptClean({ mode: "open", en: "x", target: ["שלום"], examples: [{ he: "שלום" }] }).target, [],
+           "open has no targets whatever the file says");
+});
+T("promptMark: his own wording passes; only the target is looked for", () => {
+  assertEq(promptMark(PT_SAY, "אתמול הלכתי לעיר עם חברה", [], PT_LIB).suggest, "got",
+           "a different order and an extra phrase are a pass");
+  assertEq(promptMark(PT_SAY, "הלכתי", [], PT_LIB).suggest, "close", "one word is the word, not a sentence");
+  assertEq(promptMark(PT_SAY, "הייתי בעיר אתמול", [], PT_LIB).suggest, "not", "the target never came out");
+  assertTrue(promptMark(PT_SAY, "הלחתי לעיר", [], PT_LIB).hit["הלכתי"], "one letter off is the mic, not him");
+  assertTrue(promptMark(PT_SAY, "הייתי בעיר", ["הלכתי בעיר"], PT_LIB).hit["הלכתי"], "the runners-up count");
+  assertEq(promptMark(PT_SAY, "", [], PT_LIB).suggest, "not");
+});
+T("promptGrades: heard is clean whatever he taps; Got it over a miss is nearly; a hint caps", () => {
+  assertEq(promptGrades(PT_SAY, { "הלכתי": true }, "not", false), { "הלכתי": 2 });
+  assertEq(promptGrades(PT_SAY, { "הלכתי": false }, "got", false), { "הלכתי": 1 });
+  assertEq(promptGrades(PT_SAY, { "הלכתי": false }, "close", false), { "הלכתי": 0 });
+  assertEq(promptGrades(PT_SAY, { "הלכתי": true }, "got", true), { "הלכתי": 1 });
+});
+T("promptPick: only ready targets, least seen first, never twice in a day or on one word", () => {
+  const srs = { "הלכתי": { prod: srsBandRecord("progressing") }, "הייתי": { prod: srsBandRecord("strong") } };
+  const mk = (en, t) => promptClean({ mode: "say", en: en, target: [t], examples: [{ he: "שלום" }] });
+  const store = { prompts: [mk("a", "הלכתי"), mk("b", "הלכתי"), mk("c", "הייתי"), mk("d", "עיר")] };
+  const seen = { "p:say:a": { n: 3, last: "2026-10-20" } };
+  const got = promptPick(store, PT_LIB, srs, 3, seen, "2026-10-26").map(c => c.item.en);
+  assertEq(got, ["b", "c"], "d's word is not ready; a and b share a word and b is less seen");
+  assertEq(promptPick(store, PT_LIB, srs, 3, { "p:say:b": { n: 1, last: "2026-10-26" } }, "2026-10-26")
+             .map(c => c.item.en), ["a", "c"], "seen today is skipped");
+});
+T("promptSwapIn: replaces middle sentence cards only — never the opening wins, the closer or a new word's first use", () => {
+  const cards = [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({ kind: "sentence", n: i }));
+  cards[5].carry = "x";
+  const picks = [{ kind: "prompt", n: "a" }, { kind: "prompt", n: "b" }];
+  assertEq(promptSwapIn(cards, picks, 3), 2);
+  assertEq(cards.map(c => c.kind === "prompt" ? c.n : c.n), [0, 1, 2, "a", 4, 5, "b", 7]);
 });
 
 if (location.search.indexOf("selftest") !== -1) {

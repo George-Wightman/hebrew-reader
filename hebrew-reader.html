@@ -4020,6 +4020,12 @@
           <p>Forgets the token on this device. Nothing is deleted — your progress stays here and stays in the repository.</p></div>
         <button class="btn secondary" id="syncOffBtn">Turn off</button>
       </div>
+      <div class="setrow" id="remindersRow">
+        <div class="setrow-text"><b>Reminders</b>
+          <p id="remindersDesc">Off.</p>
+          <details><summary>What they say, and when</summary><p>Up to three a day, at about 09:30, 15:00 and 19:00, and only on days you haven't practised yet. They wait if you're on a shift and stop the moment you've done 15 minutes. Your dashboard's planner sends them, so they need sync on: that's how it knows you've practised.</p></details></div>
+        <button class="btn secondary" id="remindersBtn">Turn on</button>
+      </div>
       <p class="note" id="syncStatus"></p>
     </div>
 
@@ -10106,6 +10112,83 @@ document.getElementById("micTestBtn").onclick = async (ev) => {
 };
 
 /* ---- sync controls ---- */
+/* =====================  REMINDERS  =====================
+   Pings from this app, sent by the dashboard's planner (docs/superpowers/specs/
+   2026-11-02-hebrew-nudges-design.md in the dashboard repo). This device's Web Push
+   subscription goes in PUSH_KEY, under its own device id, so it travels in the sync file
+   where the planner reads it. One entry per device: mergeObjUnion is shallow, so a device's
+   whole entry comes from whichever side last wrote it, and only that device writes it.
+   Turning off leaves { off: true } rather than deleting: a deleted entry would come back
+   from the other copy in the union. Turning on writes off: false for the same reason. */
+const PUSH_KEY = "hvr_push";
+/* The planner's public key (its push-config). Public by design; a new one means editing this. */
+const PUSH_VAPID_PUBLIC = "BEnN4HrxPmT5wP6veMQwZtpCi-V0FLWBs63gtoqvnaV0q47aQdLLhyU5llAPcASODmxWFUBFNHLL5OlXSCYd-dQ";
+
+function pushKeyBytes(b64url) {
+  const b64 = (b64url + "===".slice((b64url.length + 3) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+function pushRecordFor(sub) {
+  const j = sub && typeof sub.toJSON === "function" ? sub.toJSON() : sub;
+  if (!j || !j.endpoint || !j.keys) return null;
+  return { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, off: false, ts: Date.now() };
+}
+function pushStoreWith(raw, deviceId, record) {
+  let all = {};
+  try { all = JSON.parse(raw || "{}") || {}; } catch (e) { all = {}; }
+  all[deviceId] = record;
+  return JSON.stringify(all);
+}
+function pushMine() {
+  try { return (JSON.parse(lsGet(PUSH_KEY) || "{}") || {})[syncDeviceId()] || null; } catch (e) { return null; }
+}
+function remindersSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+function remindersPaint() {
+  const desc = document.getElementById("remindersDesc"), btn = document.getElementById("remindersBtn");
+  if (!desc || !btn) return;
+  const mine = pushMine();
+  const on = !!(mine && !mine.off && remindersSupported() && Notification.permission === "granted");
+  btn.textContent = on ? "Turn off" : "Turn on";
+  btn.disabled = !remindersSupported();
+  desc.textContent = !remindersSupported() ? "This browser can't receive them."
+    : on ? (syncConfigured() ? "On, on this device." : "On, but sync is off, so the planner can't see them yet.")
+    : Notification.permission === "denied" ? "Blocked: allow notifications for this app in the phone's settings, then turn on."
+    : "Off. A nudge from your phone on days you haven't practised yet.";
+}
+async function remindersOn() {
+  if (!remindersSupported()) return;
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { remindersPaint(); return; }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription())
+    || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: pushKeyBytes(PUSH_VAPID_PUBLIC) });
+  const record = pushRecordFor(sub);
+  if (!record) throw new Error("The browser gave no subscription");
+  lsSet(PUSH_KEY, pushStoreWith(lsGet(PUSH_KEY), syncDeviceId(), record));
+}
+async function remindersOff() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+  } catch (e) { /* the entry below is what the planner reads */ }
+  lsSet(PUSH_KEY, pushStoreWith(lsGet(PUSH_KEY), syncDeviceId(), { off: true, ts: Date.now() }));
+}
+document.getElementById("remindersBtn").onclick = settingsAction(async () => {
+  const mine = pushMine();
+  try {
+    if (mine && !mine.off && Notification.permission === "granted") await remindersOff();
+    else await remindersOn();
+  } catch (e) {
+    document.getElementById("remindersDesc").textContent = "Couldn't turn them on: " + (e && e.message || e);
+    return;
+  }
+  remindersPaint();
+  if (syncConfigured()) syncRun("reminders", { pushOnly: true, quiet: true }).then(() => remindersPaint());
+});
+
 function syncPaintSettings() {
   const on = syncConfigured();
   const desc = document.getElementById("syncDesc");
@@ -10130,6 +10213,7 @@ function syncPaintSettings() {
     row.style.display = on ? "" : "none";
   });
   syncPaint();
+  remindersPaint();
 }
 document.getElementById("syncToggleBtn").onclick = settingsAction(() => {
   const box = document.getElementById("syncSetup");
@@ -43751,6 +43835,19 @@ T("flagsWaiting: resolving is a mutation too, and also has to reach GitHub", () 
              "the flag itself is old, but the tap that resolved it is not synced yet");
   assertTrue(!flagsWaiting(flags, "2026-08-28T11:00:00Z"));
 });
+T("reminders: a subscription is kept per device, and turning one off leaves the other on", () => {
+  const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: "P", auth: "A" } };
+  const rec = pushRecordFor(sub);
+  assertEq([rec.endpoint, rec.p256dh, rec.auth, rec.off], ["https://fcm.googleapis.com/fcm/send/x", "P", "A", false]);
+  assertEq(pushRecordFor({}), null);
+  const both = pushStoreWith(pushStoreWith("{}", "phone", rec), "laptop", rec);
+  const offPhone = JSON.parse(pushStoreWith(both, "phone", { off: true, ts: 1 }));
+  assertEq([offPhone.phone.off, offPhone.laptop.off], [true, false]);
+  const merged = JSON.parse(mergeKeyMap({ hvr_push: pushStoreWith("{}", "phone", rec) }, { hvr_push: pushStoreWith("{}", "laptop", rec) }, "2", "1").hvr_push);
+  assertEq(Object.keys(merged).sort(), ["laptop", "phone"]);
+  assertEq(pushKeyBytes(PUSH_VAPID_PUBLIC).length, 65);
+});
+
 T("syncRun pushOnly: a flag reaches GitHub mid-drill without pulling data down over it", async () => {
   /* A flag about a 503 sat on the phone for four hours: syncRun refuses to run
      mid-session, and the session he abandoned to close the tab never ended to trigger

@@ -209,3 +209,29 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
 });
+
+/* Reminders (2026-11-02): pings the dashboard's planner sends to the subscription this
+   app publishes in its sync file. Shown with the app's own icon; a tap brings the app
+   forward on its home screen, or opens it there. Nothing else in the worker changes. */
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(self.registration.showNotification(data.title || "Hebrew", {
+    body: data.body || "",
+    tag: data.tag || "hebrew",
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+    data: { url: "./hebrew-reader.html" }
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL("./hebrew-reader.html", self.registration.scope).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = windows.find((c) => c.url.startsWith(self.registration.scope));
+    if (open) return open.focus();
+    return self.clients.openWindow(url);
+  })());
+});

@@ -21459,8 +21459,14 @@ const BANK_MIN_UNSEEN = 18;
    vocabulary, landing on a bank of ~600 — and measured against his real state, 900 made
    bankSave quietly evict level-1 items the moment it arrived, which took five words'
    ONLY sentence with it (cat, dog, horse, jumper, pot). The claude items sync as ~40-byte
-   stubs, so the sync payload grows by ~20KB; localStorage by ~200KB. */
-const BANK_MAX = 1600;
+   stubs, so the sync payload grows by ~20KB; localStorage by ~200KB.
+
+   2400 since 2026-11-03. With the phone's writer off the bank is written ahead in big
+   batches, and content v11 landed his device at ~1,500: one more batch at 1600 would have
+   started evicting level-1 sentences again. The phone-written part no longer grows, so
+   what the extra room costs is claude stubs on the wire (~40 bytes each, ~32KB) and
+   ~350KB of localStorage. */
+const BANK_MAX = 2400;
 function bankAll() {
   try { const a = JSON.parse(lsGet(BANK_KEY)); return Array.isArray(a) ? a : []; }
   catch (e) { return []; }
@@ -29898,7 +29904,12 @@ function wantsApply(store, found, scope, now) {
   });
   return store;
 }
-function wantsNote(found, scope) { wantsSave(wantsApply(wantsAll(), found, scope)); }
+/* A multi-word library entry (מזג אוויר, בדרך כלל) can never be credited by a sentence —
+   bankUses works token by token — so no batch could ever close its want, and it would
+   hold the nudge on for good. Left out here rather than written for in vain. */
+function wantsNote(found, scope) {
+  wantsSave(wantsApply(wantsAll(), (found || []).filter(f => f && f.k && f.k.indexOf(" ") === -1), scope));
+}
 function wantsLiveList(store) {
   const s = store || wantsAll();
   return Object.keys(s).filter(k => wantLive(s[k]))
@@ -30508,20 +30519,22 @@ function learnIngest(data) {
       });
     }
     const same = bankSameWords(it.he, bank);
-    if (same) {
-      /* The pre-written copy takes the place of a phone-written one, keeping its seen
-         count so the rotation does not hand the sentence straight back. Anything else
-         with the same words is refused outright. */
-      if (it.src === "claude" && same.src !== "claude") {
-        bank.splice(bank.indexOf(same), 1);
-        it = Object.assign({}, it, { seen: Math.max(it.seen || 0, same.seen || 0) });
-      } else return;
-    }
+    /* The pre-written copy takes the place of a phone-written one, keeping its seen
+       count so the rotation does not hand the sentence straight back. Anything else
+       with the same words is refused outright. */
+    if (same && !(it.src === "claude" && same.src !== "claude")) return;
     /* Checked against `bank` as it grows, so the guards apply WITHIN a batch too —
        a single generation call that returns "a big house" and "a new house" only
-       banks the first of them. */
-    if (bankNearDuplicate(it.he, type, bank)) return;
-    if (bankFrameFull(it.he, bank)) return;
+       banks the first of them. Without the copy being replaced, which would otherwise
+       read as its own near-duplicate; and that copy is only removed once every check
+       has passed, so a refused replacement leaves the original where it was. */
+    const others = same ? bank.filter(b => b !== same) : bank;
+    if (bankNearDuplicate(it.he, type, others)) return;
+    if (bankFrameFull(it.he, others)) return;
+    if (same) {
+      bank.splice(bank.indexOf(same), 1);
+      it = Object.assign({}, it, { seen: Math.max(it.seen || 0, same.seen || 0) });
+    }
     bank.push({
       id: "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       type: type, he: String(it.he), tr: trHouse(it.tr), en: String(it.en || ""),
@@ -30644,6 +30657,34 @@ function contentNote(stage, extra) {
   return rec;
 }
 
+/* The file's `retired` list, applied. One function so tools/content runs exactly what the
+   phone does (it used to copy the first half by hand and missed the second).
+
+   Plain entries delete a pre-written (`src: "claude"`) item by exact `he` — this file has
+   no business withdrawing anything it did not put there. `any: true` entries go through
+   the retired store instead and so reach any item, whoever wrote it: first a sentence he
+   FLAGGED as nonsense, since 2026-11-03 also the hand sift of the phone-written bank.
+   They do NOT also delete a pre-written item of the same text — that is what a plain entry
+   is for, and conflating the two would take a good sentence down with a bad reply.
+   `qhe` narrows an entry to one reply, and `why` says which kind of withdrawal it was.
+   retiredAdd is idempotent, so re-applying on every later version costs nothing. */
+function contentApplyRetired(data) {
+  const list = Array.isArray(data && data.retired) ? data.retired : [];
+  let n = 0;
+  const kill = new Set(list.filter(x => !(x && x.any))
+    .map(x => String(x && x.he !== undefined ? x.he : x)).filter(Boolean));
+  if (kill.size) {
+    const before = bankAll();
+    const after = before.filter(b => !(b && b.src === "claude" && kill.has(b.he)));
+    n = before.length - after.length;
+    if (n) { bankSave(after); rebuildTrIndex(); }
+  }
+  list.filter(x => x && x.any && x.he).forEach(x => {
+    n += retiredAdd([x.qhe ? { he: String(x.he), qhe: String(x.qhe) } : { he: String(x.he) }],
+                    "content: " + (x.why ? String(x.why) : "flagged"));
+  });
+  return n;
+}
 async function contentIngest() {
   let data = null;
   try {
@@ -30690,22 +30731,8 @@ async function contentIngest() {
      rows are eligible, because this file has no business withdrawing anything it did not
      put there. */
   let retired = 0;
-  try {
-    const kill = new Set((Array.isArray(data.retired) ? data.retired : [])
-      .map(x => String(x && x.he !== undefined ? x.he : x)).filter(Boolean));
-    if (kill.size) {
-      const before = bankAll();
-      const after = before.filter(b => !(b && b.src === "claude" && kill.has(b.he)));
-      retired = before.length - after.length;
-      if (retired) { bankSave(after); rebuildTrIndex(); }
-    }
-    /* `any: true` is the one exception, and it goes through the retired store rather
-       than the bank: a sentence he FLAGGED as nonsense, whoever wrote it. The flag is his
-       say-so, which is what the src rule above is protecting. retiredAdd is idempotent,
-       so re-applying on every later version costs nothing. */
-    const anyOf = (Array.isArray(data.retired) ? data.retired : []).filter(x => x && x.any && x.he);
-    if (anyOf.length) retired += retiredAdd(anyOf.map(x => ({ he: String(x.he) })), "content: flagged");
-  } catch (e) {
+  try { retired = contentApplyRetired(data); }
+  catch (e) {
     contentNote("retire-threw", { fileVersion: data.version, err: (e && e.message) || String(e) });
   }
   /* CORRECTING A SENTENCE WITHOUT WITHDRAWING IT (2026-10-01). learnIngest refuses an
@@ -46427,6 +46454,7 @@ T("bankDedupeWords: one per word set is served, the pre-written one first", () =
 });
 T("learnIngest: a same-words copy is refused, and a pre-written one replaces a phone copy", () => {
   const keep = lsGet(BANK_KEY), keepLib = lsGet(LIB_KEY), keepGen = lsGet(GENSTAT_KEY);
+  const keepFrame = bankFrameFull;
   try {
     const lib = libAll();
     const ks = Object.keys(lib).filter(k => !STOPLIST.has(k) && HEB.test(k) && k.indexOf(" ") === -1).slice(0, 2);
@@ -46439,10 +46467,17 @@ T("learnIngest: a same-words copy is refused, and a pre-written one replaces a p
     assertEq(b.length, 1, "replaced, not added");
     assertEq(b[0].src, "claude");
     assertEq(b[0].seen, 4, "and it keeps what he had already met");
+    /* A replacement that fails a later check must not cost the original. */
+    bankSave([{ id: "p2", type: "sentence", he: ks[0] + " " + ks[1], tr: "a b", en: "x", uses: ks },
+              { id: "p3", type: "sentence", he: ks[0] + " " + ks[0], tr: "a a", en: "x", uses: [ks[0]], src: "claude" }]);
+    bankFrameFull = () => true;
+    learnIngest({ items: [{ he: ks[0] + " " + ks[1] + ".", tr: "a b", en: "z", type: "sentence", src: "claude" }] });
+    assertTrue(bankAll().some(x => x.id === "p2"), "refused, so the phone copy is still there");
   } finally {
     if (keep === null) localStorage.removeItem(BANK_KEY); else lsSet(BANK_KEY, keep);
     if (keepLib === null) localStorage.removeItem(LIB_KEY); else lsSet(LIB_KEY, keepLib);
     if (keepGen === null) localStorage.removeItem(GENSTAT_KEY); else lsSet(GENSTAT_KEY, keepGen);
+    bankFrameFull = keepFrame;
   }
 });
 T("wantsApply: a shortfall opens, counts, and closes once written for", () => {

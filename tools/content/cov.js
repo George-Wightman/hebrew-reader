@@ -7,8 +7,8 @@ P.ctx.__content = JSON.parse(fs.readFileSync(process.env.CONTENT || (repo + 'con
 P.ctx.__extra = extra;
 const out = P.run(`(function () {
   const data = __content;
-  const kill = new Set((data.retired || []).map(x => String(x && x.he !== undefined ? x.he : x)));
-  bankSave(bankAll().filter(b => !(b && b.src === "claude" && kill.has(b.he))));
+  bankSave(bankDropStubs(bankAll()));      // the phone holds no sync stubs
+  contentApplyRetired(data);                 // the app's own retire, both halves
   const n5 = learnIngest({ items: data.items.map(it => Object.assign({}, it, { src: "claude" })) });
   let nx = null;
   if (__extra) nx = learnIngest({ items: __extra.map(it => Object.assign({}, it, { src: "claude" })) });

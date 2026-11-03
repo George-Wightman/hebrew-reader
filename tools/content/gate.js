@@ -8,8 +8,8 @@ const files = process.argv.slice(2);
 P.ctx.__batches = files.map(f => JSON.parse(fs.readFileSync(path.resolve(f), 'utf8')));
 const out = P.run(`(function () {
   const data = __content;
-  const kill = new Set((data.retired || []).map(x => String(x && x.he !== undefined ? x.he : x)));
-  bankSave(bankAll().filter(b => !(b && b.src === "claude" && kill.has(b.he))));
+  bankSave(bankDropStubs(bankAll()));      // the phone holds no sync stubs
+  contentApplyRetired(data);                 // the app's own retire, both halves
   learnIngest({ items: data.items.map(it => Object.assign({}, it, { src: "claude" })) });
   const lib = libAll(), srs = srsAll();
   const unp = practiceNeeds(lib, srs, todayISO(), {}).unproven;
@@ -26,21 +26,25 @@ const out = P.run(`(function () {
       if (!uses.length) why.push("no-uses");
       const unk = bankUnknowns(it.he, lib);
       if (unk.length) why.push("unknown:" + unk.join(","));
-      if (bank.some(b => b.he === it.he && (b.type || "sentence") === it.type)) why.push("exact-dup");
+      const same = bankSameWords(it.he, bank);
+      if (same && same.src === "claude") why.push("same-words:" + same.he);
       if (bankNearDuplicate(it.he, it.type, bank)) {
-        const a = heTokens(it.he);
-        const hit = bank.slice(-80).filter(b => b && b.type === it.type && heTokens(b.he).length === a.length &&
-          heTokens(b.he).filter((t, j) => t !== a[j]).length <= 1).map(b => b.he)[0];
+        const a = heNormTokens(it.he);
+        const hit = bank.slice(-80).filter(b => b && b.type === it.type && heNormTokens(b.he).length === a.length &&
+          heNormTokens(b.he).filter((t, j) => t !== a[j]).length <= 1).map(b => b.he)[0];
         why.push("near-dup:" + hit);
       }
       if (bankFrameFull(it.he, bank)) why.push("frame:" + heTokens(it.he).slice(0, 2).join(" "));
       if (heFinalFormsBad(it.he)) why.push("final-forms");
-      const before = bankAll().length;
+      /* Banked means a claude item with this text now exists: an item that takes the
+         place of a phone-written copy leaves the bank the same length. */
+      const mine = () => bankAll().filter(b => b && b.src === "claude" && b.he === it.he && (b.type || "sentence") === it.type);
+      const had = mine().length;
       learnIngest({ items: [it] });
-      const banked = bankAll().length > before;
+      const banked = mine().length > had;
       let serve = "";
       if (banked) {
-        const b = bankAll()[bankAll().length - 1];
+        const b = mine()[0];
         const k = it.for;
         const cw = bankContentWords(b, lib);
         const nUnp = cw.filter(w => unp.has(w)).length;

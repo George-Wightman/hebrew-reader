@@ -52,6 +52,18 @@
     "1793024516203-yp7w6": { "status": "addressed", "kind": "bug", "at": "2026-10-26T23:30:00Z",
       "note": "Lines that came without English letters now get them from the words the app knows; a word it can't be sure of stays in Hebrew rather than being guessed (efe66a6, 5fd4af1)." },
     "1793022891524-4k7gl": { "status": "addressed", "kind": "hebrew", "at": "2026-10-26T23:30:00Z",
-      "note": "You're right, it didn't make sense. That sentence is retired and won't come up again (content v10)." }
+      "note": "You're right, it didn't make sense. That sentence is retired and won't come up again (content v10)." },
+    "1793308870116-g8dc2": { "status": "addressed", "kind": "bug", "at": "2026-11-03T23:59:00Z",
+      "note": "The same sentence can't come twice any more, even with a full stop or the words in another order. The copies are cleared out and the app's own writer is off (5334cf2, content v11)." },
+    "1793699759460-o3kvi": { "status": "addressed", "kind": "bug", "at": "2026-11-03T23:59:00Z",
+      "note": "Those two were one sentence in two orders with two translations. The app now treats them as one, and won't serve both (5334cf2)." },
+    "1793732249883-0m1vv": { "status": "addressed", "kind": "bug", "at": "2026-11-03T23:59:00Z",
+      "note": "The easy opening sentences are now drawn at random from everything you have got right before, not always the easiest one (5334cf2)." },
+    "1793700154550-w4md8": { "status": "addressed", "kind": "bug", "at": "2026-11-03T23:59:00Z",
+      "note": "A word card now always offers the row of words first, before the first letter (5334cf2)." },
+    "1793654056745-ulego": { "status": "wontdo", "kind": "idea", "at": "2026-11-03T23:59:00Z",
+      "note": "Left as it is, since you said you've got used to it. Say if it still gets in the way." },
+    "1793654271088-q3u7y": { "status": "question", "kind": "idea", "at": "2026-11-03T23:59:00Z",
+      "note": "Looking into the balance between English to Hebrew and Hebrew to English, and what helps most for actually speaking. I'll come back with a proposal." }
   }
 }

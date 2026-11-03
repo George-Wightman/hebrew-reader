@@ -63,7 +63,7 @@
       "note": "A word card now always offers the row of words first, before the first letter (5334cf2)." },
     "1793654056745-ulego": { "status": "wontdo", "kind": "idea", "at": "2026-11-03T23:59:00Z",
       "note": "Left as it is, since you said you've got used to it. Say if it still gets in the way." },
-    "1793654271088-q3u7y": { "status": "question", "kind": "idea", "at": "2026-11-03T23:59:00Z",
-      "note": "Looking into the balance between English to Hebrew and Hebrew to English, and what helps most for actually speaking. I'll come back with a proposal." }
+    "1793654271088-q3u7y": { "status": "addressed", "kind": "idea", "at": "2026-11-04T00:30:00Z",
+      "note": "About a quarter of each session is now listening, starting with words you can already say but have never heard. A listening card has a Didn't catch it button, and two word cards a session check words marked strong (f385293, aaa7db1)." }
   }
 }

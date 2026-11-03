@@ -5028,7 +5028,10 @@ const MERGE_RULES = {
      marks (rv, better) ride on the entry; mergeById keeps mine, which is fine — either
      device's review is a review. */
   "hvr_said":       (a, b) => mergeById(a, b, SAID_MAX),
-  "hvr_comeback":   (a, b) => mergeComeback(a, b)
+  "hvr_comeback":   (a, b) => mergeComeback(a, b),
+  /* What the phone wanted written and did not have. Union by key; a want closed on one
+     device stays closed, one reopened later stays open — see mergeWants. */
+  "hvr_wants":      (a, b) => mergeWants(a, b)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -15835,7 +15838,8 @@ function flagContext(report) {
   try {
     c.content = { status: contentStatusLine(), seen: contentVersion(),
                   claudeItems: bankAll().filter(b => b && b.src === "claude").length,
-                  thin: contentThinNow() };
+                  thin: contentThinNow(),
+                  wants: wantsLiveList().map(w => w.k + ":" + w.why) };
   } catch (e) {}
   try {
     /* think/thoughtTok/skipped ride along because `ms` on its own could not answer "why
@@ -16845,6 +16849,11 @@ UH.content = function (id, st) {
   let thin = [];
   try { thin = contentThinNow() || []; } catch (e) {}
   rows.push({ label: "Thin nodes", value: thin.length ? thin.join(", ") : "none" });
+  try {
+    const w = wantsLiveList();
+    rows.push({ label: "Waiting for Claude", value: w.length
+      ? w.map(x => x.k + " (" + x.why + ")").join(", ") : "nothing" });
+  } catch (e) {}
   return {
     title: "Written content", subtitle: "what arrives from content/nodes.json",
     sections: [
@@ -22120,8 +22129,8 @@ function libWordsTidyIfNeeded() {
    after this no reader can see a stale `uses` — and none can see a retired sentence. */
 function bankPrune(bank, lib, retired) {
   const ret = retired || retiredAll();
-  return bankUsesRefresh(bank, lib).bank
-    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]) && !isRetired(it, ret));
+  return bankDedupeWords(bankUsesRefresh(bank, lib).bank
+    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]) && !isRetired(it, ret)));
 }
 
 /* ---- refusing the same sentence wearing a different hat ----------------------
@@ -22135,8 +22144,42 @@ function bankPrune(bank, lib, retired) {
    differing in at most one position. Deliberately not a general similarity score —
    Hamming-1 rejects the swapped adjective and nothing he would want to keep. */
 function heTokens(he) { return String(he || "").trim().split(/\s+/).filter(Boolean); }
+/* ---- the same words, whatever the dress (2026-11-03) ------------------------------
+   Raw tokens are why `אני רוצה קפה` and `אני רוצה קפה.` were two sentences, and why
+   `אני מאוד עייף היום` / `אני עייף מאוד היום.` reached him back to back with different
+   English. The comparison is on normHe's tokens — punctuation, nikud and final forms
+   gone — and, for "is this the same sentence", on the SET of them in any order and of
+   any card type. Two orders of the same four words is one thing to learn, and serving
+   both only teaches him that one of them gets marked "near". */
+function heNormTokens(he) { return normHe(he).split(" ").filter(Boolean); }
+function heWordsKey(he) { return heNormTokens(he).slice().sort().join(" "); }
+function bankSameWords(he, bank) {
+  const key = heWordsKey(he);
+  if (!key) return null;
+  return (bank || []).find(it => it && it.he && heWordsKey(it.he) === key) || null;
+}
+/* Which of two same-words items to keep: the pre-written one (it has been through the
+   gates), then the one he has met more (its rotation and cooldown state is real). */
+function bankKeepFirst(a, b) {
+  const ca = a.src === "claude" ? 1 : 0, cb = b.src === "claude" ? 1 : 0;
+  if (ca !== cb) return ca > cb;
+  return (a.seen || 0) >= (b.seen || 0);
+}
+/* One item per word set, for serving. Pure; storage is untouched, so a copy that arrives
+   from another device's older build is simply never served. */
+function bankDedupeWords(bank) {
+  const keep = new Map();
+  (bank || []).forEach(it => {
+    if (!it || !it.he) return;
+    const k = heWordsKey(it.he);
+    const m = keep.get(k);
+    if (!m || !bankKeepFirst(m, it)) keep.set(k, it);
+  });
+  const ok = new Set(keep.values());
+  return (bank || []).filter(it => ok.has(it));
+}
 function bankNearDuplicate(he, type, bank) {
-  const a = heTokens(he);
+  const a = heNormTokens(he);
   if (a.length < 2) return false;              // too short for a shape to mean anything
   /* Windowed for the same reason bankFrameFull is — see the note there. An exact
      repeat is still caught by the `he === it.he` check in learnIngest, which is not
@@ -22145,7 +22188,7 @@ function bankNearDuplicate(he, type, bank) {
   if (bank.length > BANK_FRAME_WINDOW) bank = bank.slice(bank.length - BANK_FRAME_WINDOW);
   return bank.some(it => {
     if (!it || it.type !== type) return false;
-    const b = heTokens(it.he);
+    const b = heNormTokens(it.he);
     if (b.length !== a.length) return false;
     let diff = 0;
     for (let i = 0; i < a.length; i++) {
@@ -26942,6 +26985,19 @@ function campWarmWords(node, srs, lib) {
     .filter(k => lib[k] && !STOPLIST.has(k) && srsGradable(k, lib));
 }
 function campWarm(node, force) {
+  if (node && !PHONE_WRITES_SENTENCES) {
+    /* Writer off (2026-11-03): a node short of material is a want, not a commission. */
+    try {
+      const lib = libAll(), srs = srsAll();
+      const k = "node:" + (node.name || node.id);
+      const store = wantsAll();
+      const short = campWarmWords(node, srs, lib).length && campWarmNeeded(node, lib, srs);
+      if (short) wantsApply(store, [{ k: k, why: "node", have: 0 }], []);
+      else if (wantLive(store[k])) store[k].done = Date.now();
+      wantsSave(store);
+    } catch (e) {}
+    return Promise.resolve(0);
+  }
   if (!node || !geminiKeys().length) return Promise.resolve(0);
   const srs = srsAll(), lib = libAll();
   const weak = campWarmWords(node, srs, lib);
@@ -29039,16 +29095,26 @@ function learnTrim(cards, limit, launched, winItems) {
 
 /* The sentences sessionEaseOrder will find: from `pool` (learnBuild's ranked list, fresh
    before recent), sentence or listen items carrying nothing unready and no word launched
-   today, whose cardEase is at least EASE_MIN. Fresh ones first, so the same handful does
-   not open every session; the easiest first within that. Pure. */
-function sessionWinPicks(pool, srs, today, launched, n) {
+   today, whose cardEase is at least EASE_MIN.
+
+   DRAWN, NOT RANKED (2026-11-03). It used to take the easiest first, and the easiest is
+   the same sentence every time: אני רוצה קפה opened session after session — "why does
+   this one keep coming up cuz it's obviously something I can say really easily". George:
+   "the sure wins is something that I want... sentences that I've got right a few times,
+   but there's a pool, so there's a bit of a noise about it." So every sentence that
+   clears the bar is equally likely: ones he has met before first, then fresh easy ones,
+   and anything from the last few sessions only to fill. `rand` is injectable for the
+   suite. Pure apart from it. */
+function sessionWinPicks(pool, srs, today, launched, n, rand) {
   const L = new Set(launched || []);
-  return (pool || [])
+  const r = rand || Math.random;
+  const ok = (pool || [])
     .filter(x => x && x.it && (x.it.type === "sentence" || x.it.type === "listen") && !x.carry &&
                  !(x.it.uses || []).some(w => L.has(w)))
-    .map((x, i) => ({ x: x, i: i, e: cardEase({ kind: x.it.type, words: x.it.uses || [] }, srs, today) }))
-    .filter(y => y.e >= EASE_MIN)
-    .sort((a, b) => ((a.x.recent ? 1 : 0) - (b.x.recent ? 1 : 0)) || (b.e - a.e) || (a.i - b.i))
+    .filter(x => cardEase({ kind: x.it.type, words: x.it.uses || [] }, srs, today) >= EASE_MIN);
+  const tier = x => x.recent ? 2 : (x.it.seen || 0) > 0 ? 0 : 1;
+  return ok.map(x => ({ x: x, t: tier(x), k: r() }))
+    .sort((a, b) => (a.t - b.t) || (a.k - b.k))
     .slice(0, Math.max(0, n || 0))
     .map(y => y.x);
 }
@@ -29783,6 +29849,82 @@ function dayClaim(key, cap) {
 const BREADTH_RUNS_PER_DAY = 3, BREADTH_DAY_KEY = "hvr_breadthday";
 function breadthRunClaim() { return dayClaim(BREADTH_DAY_KEY, BREADTH_RUNS_PER_DAY); }
 
+/* ---- the phone no longer writes sentences (2026-11-03) ------------------------
+   George, after three flags that were all the same sentence twice: "I feel like the API is
+   just shit and doesn't have the intelligence for it... I think the API doing it is what is
+   kind of the problem here." Every duplicate he hit came from this writer — a full stop or
+   a swapped word order slipped past a guard that compared raw text — and 302 of the 1,257
+   items in his bank were its work.
+
+   So the writer is OFF and the bank is written ahead, by Claude, against the same
+   triggers this function used to answer. What the triggers now do instead is WRITE DOWN
+   what they wanted (hvr_wants), which is how the app tells him it is time to ask for
+   more, and what the generate-node-content skill reads first.
+   Spec: docs/superpowers/specs/2026-11-03-claude-writes-the-bank-design.md.
+
+   Switched off, not deleted: the commission pipeline's gates are what the content tools
+   verify against. */
+const PHONE_WRITES_SENTENCES = false;
+const WANTS_KEY = "hvr_wants";
+/* { [key]: { why, n, first, last, have, done } } — key is a library word, or "node:<name>".
+   Live while last > done. Never deleted, only closed: a deletion on one device would be
+   resurrected by the other's copy at the next merge, the same reason flags tombstone. */
+function wantsAll() {
+  try { const o = JSON.parse(lsGet(WANTS_KEY));
+        return (o && typeof o === "object" && !Array.isArray(o)) ? o : {}; }
+  catch (e) { return {}; }
+}
+function wantsSave(v) { lsSet(WANTS_KEY, JSON.stringify(v)); }
+function wantLive(e) { return !!(e && (e.last || 0) > (e.done || 0)); }
+/* Pure over `store`. `found` is this run's complete picture — [{ k, why, have }] — so
+   anything live and NOT in it has been written for since, and closes. `scope` names the
+   whys this run looked at, so the daily top-up does not close a node want that only
+   campWarm can see, and campWarm does not close the daily ones. */
+function wantsApply(store, found, scope, now) {
+  const t = now || Date.now();
+  const seen = new Set();
+  (found || []).forEach(f => {
+    if (!f || !f.k) return;
+    seen.add(f.k);
+    const e = store[f.k] || { n: 0, first: t, last: 0, done: 0 };
+    if (!wantLive(e)) { e.first = t; e.n = 0; }
+    e.why = f.why; e.have = f.have || 0; e.n = (e.n || 0) + 1; e.last = t;
+    store[f.k] = e;
+  });
+  const sc = new Set(scope || []);
+  Object.keys(store).forEach(k => {
+    const e = store[k];
+    if (!seen.has(k) && wantLive(e) && sc.has(e.why)) e.done = t;
+  });
+  return store;
+}
+function wantsNote(found, scope) { wantsSave(wantsApply(wantsAll(), found, scope)); }
+function wantsLiveList(store) {
+  const s = store || wantsAll();
+  return Object.keys(s).filter(k => wantLive(s[k]))
+    .map(k => Object.assign({ k: k }, s[k]))
+    .sort((a, b) => (a.first || 0) - (b.first || 0));
+}
+function mergeWants(a, b) {
+  const out = {};
+  [a, b].forEach(src => {
+    if (!src || typeof src !== "object") return;
+    Object.keys(src).forEach(k => {
+      const e = src[k], m = out[k];
+      if (!e || typeof e !== "object") return;
+      if (!m) { out[k] = Object.assign({}, e); return; }
+      const newer = (e.last || 0) >= (m.last || 0) ? e : m;
+      out[k] = Object.assign({}, newer, {
+        n: Math.max(m.n || 0, e.n || 0),
+        first: Math.min(m.first || Infinity, e.first || Infinity),
+        last: Math.max(m.last || 0, e.last || 0),
+        done: Math.max(m.done || 0, e.done || 0)
+      });
+    });
+  });
+  return out;
+}
+
 async function learnTopUp(quiet) {
   const lib = libAll();
   const srs = srsAll();
@@ -29804,8 +29946,11 @@ async function learnTopUp(quiet) {
   const retired = bankRetire(full, level);
   if (retired.length !== full.length) bankSave(retired);
   const bank = bankPrune(retired, lib);
-  if (!geminiKeys().length) return 0;           // no key: library-only session, no error
+  if (PHONE_WRITES_SENTENCES && !geminiKeys().length) return 0;   // no key: library-only session
   let made = 0;
+  /* With the writer off, every pass below still asks its question; the answer goes here
+     instead of into a commission. */
+  const wanted = [];
 
   /* ---- pass one: rescue ------------------------------------------------------
      THE PASS THAT DID NOT EXIST, and the reason a weak word could never recover.
@@ -29845,6 +29990,10 @@ async function learnTopUp(quiet) {
     });
     const starved = rescue.filter(k => (stock[k] || 0) < RESCUE_MIN_EACH);
     let introStarved = intro.filter(k => (stock[k] || 0) < INTRO_MIN_EACH);
+    starved.forEach(k => wanted.push({ k: k, why: "rescue", have: stock[k] || 0 }));
+    introStarved.forEach(k => { if (starved.indexOf(k) === -1)
+                                  wanted.push({ k: k, why: "intro", have: stock[k] || 0 }); });
+    if (!PHONE_WRITES_SENTENCES) { starved.length = 0; introStarved = []; }
     if (introStarved.length && !dayClaim(INTRO_DAY_KEY, INTRO_RUNS_PER_DAY)) introStarved = [];
     /* TWO COMMISSIONS NOW, because the two lists stand on different ground (2026-09-29):
        a weak word is carried by STRONG words, a never-met one by READY words — see
@@ -29879,6 +30028,12 @@ async function learnTopUp(quiet) {
      for it? See breadthBrief. */
   const aim = breadthBrief(lib, srs, bank, practiceNeeds(lib, srs, todayISO(), archiveAll()));
   const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
+  if (!PHONE_WRITES_SENTENCES) {
+    const have = new Set(wanted.map(w => w.k));
+    aim.write.forEach(k => { if (!have.has(k)) wanted.push({ k: k, why: "due", have: 0 }); });
+    wantsNote(wanted, ["rescue", "intro", "due"]);
+    return 0;
+  }
   if (unseen >= BANK_MIN_UNSEEN && !aim.write.length) return made;
   /* With ~280 due words uncovered on the day this shipped, "anything uncovered" is
      true on every session start for weeks. Capped so that is three runs a day rather
@@ -30352,7 +30507,16 @@ function learnIngest(data) {
         introduced.push({ hebrew: g.he || t, translit: g.tr || "", english: g.en || "" });
       });
     }
-    if (bank.some(b => b.he === it.he && b.type === type)) return;
+    const same = bankSameWords(it.he, bank);
+    if (same) {
+      /* The pre-written copy takes the place of a phone-written one, keeping its seen
+         count so the rotation does not hand the sentence straight back. Anything else
+         with the same words is refused outright. */
+      if (it.src === "claude" && same.src !== "claude") {
+        bank.splice(bank.indexOf(same), 1);
+        it = Object.assign({}, it, { seen: Math.max(it.seen || 0, same.seen || 0) });
+      } else return;
+    }
     /* Checked against `bank` as it grows, so the guards apply WITHIN a batch too —
        a single generation call that returns "a big house" and "a new house" only
        banks the first of them. */
@@ -30386,7 +30550,7 @@ function learnIngest(data) {
          Cleared naturally — once he approves the word in Pending it is a library word,
          and this list is then satisfied. */
       pend: pend,
-      uses: uses, seen: 0, added: todayISO()
+      uses: uses, seen: it.seen || 0, added: todayISO()
     });
     n++;
   });
@@ -30581,7 +30745,9 @@ async function contentIngest() {
      harness in tools/ now makes possible. This is the safety net under it, not a
      replacement for it. */
   let reviewed = 0, unreviewed = 0;
-  try {
+  /* Off with the writer (2026-11-03): Gemini no longer gets to retire gate-checked,
+     Claude-written Hebrew. The native-speaker check is the ground truth. */
+  if (PHONE_WRITES_SENTENCES) try {
     const have = bankAll();
     const held = new Set(have.map(b => (b && b.type ? b.type : "sentence") + " " + (b && b.he)));
     const fresh = [], dupes = [];
@@ -30824,7 +30990,7 @@ function contentNeedsReview(bank, ok, lib, srs) {
     .map(x => x.it);
 }
 async function contentReviewTick() {
-  if (!geminiKeys().length) return 0;
+  if (!PHONE_WRITES_SENTENCES || !geminiKeys().length) return 0;
   const todo = contentNeedsReview(bankAll(), contentOkAll(), libAll(), srsAll())
     .slice(0, CONTENT_REVIEW_BATCH);
   if (todo.length < 2) return 0;               // learnReviewItems will not review fewer
@@ -31875,10 +32041,26 @@ function learnStatsOpen(on) {
 /* "Time to go to Claude, the plans are laid out" — George's own words for what this
    should say. Names the nodes rather than announcing a state, because "Going places and
    How it was are running short" is a fact he can act on and "content is low" is a nag. */
+/* With the phone's writer off (2026-11-03) the other half of "time to go to Claude": words
+   the session wanted sentences for and found none. George: "making a way for the app to
+   realize, okay... I wanted to pull a sentence like this, I didn't have it, prompt me to
+   then come back to you." A handful is ordinary churn between batches; past WANTS_NUDGE it
+   is worth a trip to the computer. */
+const WANTS_NUDGE = 5;
+function wantsWordsLive() { return wantsLiveList().filter(w => w.k.indexOf("node:") !== 0); }
 function learnRenderThin() {
   const el = document.getElementById("lContentThin");
   if (!el) return;
   const thin = contentThinNow();
+  let words = [];
+  try { words = wantsWordsLive(); } catch (e) {}
+  if (!thin.length && words.length >= WANTS_NUDGE) {
+    el.style.display = "";
+    el.textContent = words.length + " of your words have run out of fresh sentences. " +
+                     "Next time you're at a computer, ask Claude to write some.";
+    mePaint();
+    return;
+  }
   if (!thin.length) { el.style.display = "none"; el.textContent = ""; mePaint(); return; }
   el.style.display = "";
   el.innerHTML = "";
@@ -32124,7 +32306,7 @@ document.getElementById("lStartBtn").onclick = async () => {
        in the background below, for next time. George: "not on click but preload say
        while I do one lesson its loading in hte next one". */
     if (!learnHasServable()) {
-      hint.textContent = "Writing you some practice…";
+      if (PHONE_WRITES_SENTENCES) hint.textContent = "Writing you some practice…";
       const added = await learnTopUp();
       if (added) hint.textContent = "Wrote " + added + " new practice items.";
     }
@@ -34316,7 +34498,12 @@ function learnHintSteps(c) {
     String(he || "").trim().split(/\s+/)
       .map(w => w.replace(/[^֐-׿]/g, "")[0] || "").filter(Boolean).join(" ");
   const steps = [];
-  const prime = hintPrimeStep(c, lib, hard);
+  /* A word card offers the choices whatever the word's strength (2026-11-03). Strength
+     filters which words of a SENTENCE are worth a chip; on a word card there is only the
+     one word, and asking for a hint on it is the evidence it is not strong right now.
+     George, sent straight to "Starts with א" on אביב: "Why did this just give me the
+     starting letter or not option of words?" */
+  const prime = hintPrimeStep(c, lib, c.kind === "word" && c.key ? [c.key] : hard);
   /* Every rung declares what it exposed, and only that is charged for. "all" is for the
      rungs that genuinely hand over the target; a slow replay and a restatement of THEIR
      question expose nothing about your answer and cost nothing. */
@@ -36793,13 +36980,16 @@ T("campBuild: wider material is bounded, and a sentence with no node word is ref
 
     /* `he` has to be real Hebrew: bankUsesRefresh recomputes `uses` from it and bankPrune
        drops anything left with none. */
-    const mk = (id, ws) => ({ id: id, type: "sentence", he: ws.join(" "),
-                              tr: id, en: id, uses: ws, lvl: 1, seen: 0 });
+    /* `tail` is grammar only, there to make each sentence a different one: the serving
+       path refuses two items with the same words (bankDedupeWords, 2026-11-03). */
+    const TAILS = ["", "גם", "לא"];
+    const mk = (id, ws, j) => ({ id: id, type: "sentence", he: ws.join(" ") + (j ? " " + TAILS[j] : ""),
+                                 tr: id, en: id, uses: ws, lvl: 1, seen: 0 });
     const bank = [];
     /* Plenty of pure consolidation, so an unbounded wider slice has something to beat. */
-    own.forEach((w, i) => { for (let j = 0; j < 3; j++) bank.push(mk("own" + i + "_" + j, [w, "גדול"])); });
+    own.forEach((w, i) => { for (let j = 0; j < 3; j++) bank.push(mk("own" + i + "_" + j, [w, "גדול"], j)); });
     /* Wider: a stretch word, each also carrying a node word, as the batch is written. */
-    for (let i = 0; i < 6; i++) bank.push(mk("str" + i, [own[i % own.length], "מטוס"]));
+    for (let i = 0; i < 6; i++) bank.push(mk("str" + i, [own[i % own.length], "מטוס"], i >= own.length ? 1 : 0));
     /* And the one that must never be served. It IS servable — מטוס is in the session's
        carry set and טוב is ready — but it holds not one word of this node. This is the
        case `x.hits > 0 || x.carry` admitted and `x.hits > 0` refuses. */
@@ -43290,6 +43480,21 @@ T("contentIngest: reviews what is new, never re-buys what it holds, never loses 
       return d.items.length;
     };
 
+    /* With the phone's writer off (2026-11-03) the review is off too: Gemini no longer
+       gets a say over gate-checked, Claude-written Hebrew. What has to hold then is that
+       nothing is sent to it and nothing is dropped on its account. */
+    if (!PHONE_WRITES_SENTENCES) {
+      localStorage.removeItem(CONTENT_V_KEY);
+      lsSet(BANK_KEY, JSON.stringify([]));
+      learnReviewItems = async d => { seenByReview.push(d.items.length); return { items: [] }; };
+      window.fetch = file([{ he: "הראש שלי מלא", tr: "harosh sheli male", type: "sentence" },
+                           { he: "כואב לי הראש", tr: "ko'ev li harosh", type: "sentence" }]);
+      await contentIngest();
+      assertEq(seenByReview.length, 0, "the reviewer is never asked");
+      assertEq(got.length, 2, "and nothing is dropped on its say-so");
+      return;
+    }
+
     /* ONE: an item already banked is not sent to the reviewer. A re-ingest — a second
        device, a cache clear, the resident-app re-check — must cost nothing. */
     localStorage.removeItem(CONTENT_V_KEY);
@@ -45236,6 +45441,21 @@ T("hintPrimeStep: nothing to offer when he already has all of it", () => {
   assertEq(hard, [], "every word is his");
   assertNull(hintPrimeStep(c, HINT_LIB, hard), "so the rung must not fire at all");
 });
+/* George on אביב, which the app read as strong: "Why did this just give me the starting
+   letter or not option of words?" A word card's only word is the one he asked help with. */
+T("learnHintSteps: a word card offers the choices first, even for a word read as strong", () => {
+  const keepLib = libAll, keepSrs = srsAll;
+  try {
+    const srs = { "מחשב": { prod: srsBandRecord("strong"), recv: srsBlank() } };
+    libAll = () => HINT_LIB;
+    srsAll = () => srs;
+    const steps = learnHintSteps({ kind: "word", key: "מחשב", words: ["מחשב"] });
+    assertTrue(steps.length >= 2, "choices, then the first letter");
+    assertTrue(Array.isArray(steps[0].chips) && steps[0].chips.some(ch => ch.he === "מחשב"),
+               "the first rung is the row of words, and the answer is in it");
+    assertEq(steps[steps.length - 1].label, "Starts with");
+  } finally { libAll = keepLib; srsAll = keepSrs; }
+});
 /* The scaffolding rung. George: "if hte sentence is 'I dont have a computer' What I
    might struggle with is computer, and thats what I want in the hint." */
 T("learnScaffold: spells out what he owns, blanks what he does not", () => {
@@ -46184,6 +46404,62 @@ T("bankNearDuplicate: two genuinely different sentences both survive", () => {
   assertTrue(!bankNearDuplicate("זה בית חדש", "listen", bank),
              "the same words as a listening line is a different exercise");
 });
+/* The three flags of 2026-11-03: each was the same words twice, and every pair had got
+   past the guards above by punctuation or word order. */
+T("bankSameWords: punctuation, order and card type do not make a new sentence", () => {
+  const bank = [{ type: "sentence", he: "אני מאוד עייף היום" },
+                { type: "reply", he: "לא תודה, אני רוצה מים" }];
+  assertTrue(!!bankSameWords("אני עייף מאוד היום.", bank), "the back-to-back pair he flagged");
+  assertTrue(!!bankSameWords("לא תודה אני רוצה מים", bank), "a comma is not a new sentence");
+  assertTrue(!!bankSameWords("אני מאוד עייף היום", [{ type: "listen", he: "אני מאוד עייף היום!" }]),
+             "nor is the same line filed as a listening card");
+  assertTrue(!bankSameWords("אני מאוד עייף", bank), "a word fewer is a different sentence");
+  assertTrue(bankNearDuplicate("אני רוצה קפה", "sentence", [{ type: "sentence", he: "אני רוצה קפה." }]),
+             "and the one-token-apart check now reads past a full stop");
+});
+T("bankDedupeWords: one per word set is served, the pre-written one first", () => {
+  const g = { id: "g", he: "אני רוצה קפה", seen: 3 };
+  const c = { id: "c", he: "אני רוצה קפה.", src: "claude", seen: 0 };
+  const x = { id: "x", he: "אני רוצה תה" };
+  assertEq(bankDedupeWords([g, x, c]).map(i => i.id), ["x", "c"]);
+  const g2 = { id: "g2", he: "קפה אני רוצה", seen: 1 };
+  assertEq(bankDedupeWords([g2, g]).map(i => i.id), ["g"], "between two phone-written, the more met");
+});
+T("learnIngest: a same-words copy is refused, and a pre-written one replaces a phone copy", () => {
+  const keep = lsGet(BANK_KEY), keepLib = lsGet(LIB_KEY), keepGen = lsGet(GENSTAT_KEY);
+  try {
+    const lib = libAll();
+    const ks = Object.keys(lib).filter(k => !STOPLIST.has(k) && HEB.test(k) && k.indexOf(" ") === -1).slice(0, 2);
+    if (ks.length < 2) return;
+    bankSave([{ id: "p1", type: "sentence", he: ks[0] + " " + ks[1], tr: "a b", en: "x", seen: 4, uses: ks }]);
+    assertEq(learnIngest({ items: [{ he: ks[1] + " " + ks[0] + ".", tr: "b a", en: "y", type: "listen" }] }), 0,
+             "the same two words reversed, punctuated and re-typed is refused");
+    learnIngest({ items: [{ he: ks[0] + " " + ks[1] + "!", tr: "a b", en: "z", type: "sentence", src: "claude" }] });
+    const b = bankAll();
+    assertEq(b.length, 1, "replaced, not added");
+    assertEq(b[0].src, "claude");
+    assertEq(b[0].seen, 4, "and it keeps what he had already met");
+  } finally {
+    if (keep === null) localStorage.removeItem(BANK_KEY); else lsSet(BANK_KEY, keep);
+    if (keepLib === null) localStorage.removeItem(LIB_KEY); else lsSet(LIB_KEY, keepLib);
+    if (keepGen === null) localStorage.removeItem(GENSTAT_KEY); else lsSet(GENSTAT_KEY, keepGen);
+  }
+});
+T("wantsApply: a shortfall opens, counts, and closes once written for", () => {
+  const s = {};
+  wantsApply(s, [{ k: "אביב", why: "rescue", have: 0 }], ["rescue"], 100);
+  wantsApply(s, [{ k: "אביב", why: "rescue", have: 1 }], ["rescue"], 200);
+  assertEq(wantsLiveList(s).map(w => w.k), ["אביב"]);
+  assertEq(s["אביב"].n, 2);
+  wantsApply(s, [{ k: "node:Your day", why: "node" }], ["node"], 250);
+  wantsApply(s, [], ["rescue"], 300);
+  assertEq(wantsLiveList(s).map(w => w.k), ["node:Your day"],
+           "the rescue closed; the node want is outside this run's scope and stays");
+  const other = { "אביב": { why: "rescue", n: 5, first: 50, last: 280, done: 0 } };
+  const m = mergeWants(s, other);
+  assertTrue(!wantLive(m["אביב"]), "closed on one device stays closed when the other last saw it earlier");
+  assertEq(m["אביב"].n, 5);
+});
 T("bankFrameFull: a template family is stopped at three", () => {
   const bank = [{ he: "זה בית גדול" }, { he: "זה בית חדש" }];
   assertTrue(!bankFrameFull("זה בית קטן", bank), "three is allowed");
@@ -46947,7 +47223,7 @@ T("session order: three sure wins open it, one more closes it, the rest keep the
   sessionEaseOrder(thin, srs, [], today);
   assertEq(thin, [easy[0], hard1, hard2], "a thin day gets fewer wins, never fake ones");
 });
-T("sure wins: sentences he very likely still has, fresh before recent, never a launched word", () => {
+T("sure wins: drawn at random from what clears the bar — met before, then fresh, recent only to fill", () => {
   const today = "2026-10-22";
   const rec = (stab) => ({ stab: stab, diff: 3, n: 5, last: "2026-10-20", due: "2026-11-30", miss: 0 });
   const srs = { "חם": { prod: rec(100) }, "קר": { prod: rec(90) }, "דקה": { prod: rec(1) } };
@@ -46957,9 +47233,19 @@ T("sure wins: sentences he very likely still has, fresh before recent, never a l
   const launched = it("d", ["חם", "רק"]), carried = Object.assign(it("e", ["קר"]), { carry: "x" });
   const shadowy = it("f", ["חם"], "reply");
   const recent = Object.assign(it("g", ["חם"]), { recent: true });
+  a.it.seen = 2;
   const got = sessionWinPicks([recent, hard, launched, carried, shadowy, b, a], srs, today, ["רק"], 3);
-  assertEq(got.map(x => x.it.he), ["a", "b", "g"], "easy, fresh first, recent only to fill");
+  assertEq(got.map(x => x.it.he), ["a", "b", "g"], "met before, then fresh, recent only to fill");
   assertEq(sessionWinPicks([hard], srs, today, [], 3), [], "nothing easy, nothing picked");
+  /* The flag: the easiest sentence must not win every draw. Ten equally-met easy items,
+     drawn with different random streams, must not all open on the same one. */
+  const many = Array.from({ length: 10 }, (_, i) => Object.assign(it("s" + i, [i % 2 ? "חם" : "קר"]),
+                                                                   { it: { he: "s" + i, uses: [i % 2 ? "חם" : "קר"], type: "sentence", seen: 1 } }));
+  let seed = 1;
+  const lcg = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const firsts = new Set();
+  for (let t = 0; t < 20; t++) firsts.add(sessionWinPicks(many, srs, today, [], 1, lcg)[0].it.he);
+  assertTrue(firsts.size >= 5, "twenty draws open on at least five different sentences, got " + firsts.size);
 });
 T("trimming to size never drops a launched word's card or a reserved win", () => {
   const win = { he: "w" };

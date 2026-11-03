@@ -99,9 +99,8 @@ Read from his synced state on 2026-11-03.
    `{ [word]: { why: "rescue"|"intro"|"due"|"node", n, first, last, have } }`, plus node
    shortfalls keyed `node:<name>`. It merges across devices by word (max `n`, earliest
    `first`, latest `last`). An entry clears itself once the word's unseen stock is back
-   above its floor. The session also records the moment that matters most: a card it
-   **wanted and could not fill** (a due word that fell back to a bare word card because no
-   servable sentence carried it).
+   above its floor. *As built:* a due word with no servable sentence is the breadth pass's
+   `aim.write` and is recorded as `due`, so no separate hook in `learnBuild` was needed.
 3. **It tells him.** When `hvr_wants` holds live entries, the content status line and the
    flag panel say plainly that Claude has sentences to write, with the count. The
    `generate-node-content` skill reads `hvr_wants` first.
@@ -110,7 +109,9 @@ Read from his synced state on 2026-11-03.
    that matches anything in the whole bank, any type. `bankNearDuplicate` compares
    `normHe` tokens rather than raw ones. At serve time, a session never holds two items
    that share their words, which protects him from copies already sitting on other
-   devices.
+   devices. *As built:* `bankPrune` runs `bankDedupeWords`, which keeps the pre-written
+   copy, otherwise the more-met one, and a pre-written item arriving at ingest replaces a
+   phone-written copy and keeps its `seen`.
 5. **Sure wins from a shuffled pool.** Eligible as now (`cardEase ≥ EASE_MIN`, not carry,
    no launched word), plus seen before. Anything served in the last two sessions is left
    out unless the pool would otherwise be too small. A random draw, with no sort by ease.
@@ -131,9 +132,10 @@ Every item in the phone-equivalent bank (`tools/content` probe, after ingest) is
 
 Of each group, the best one is kept: the pre-written one when quality is equal, since
 that is the one the gates have seen. The rest are retired through `content/nodes.json`'s
-`retired` list. **This needs one change:** today the file's `retired` list only deletes
-`src: "claude"` items. Phase 1 makes it also delete matching Gemini items and add them to
-`hvr_retired`, so a sift reaches every device.
+`retired` list: plain entries for pre-written items, `{ he, any: true }` (already supported)
+for phone-written ones, which goes through `hvr_retired`. Same-words copies need no entry:
+Phase 1's serving dedupe already drops them on every device, and an `any` retire would hit
+the kept copy too, since `retiredKey` normalises the same way.
 
 ## Phase 3: writing ahead (Claude, big)
 

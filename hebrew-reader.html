@@ -20993,8 +20993,15 @@ function srsAnswer(srs, key, grade, side, extra, todayOverride) {
      already writes onto every log entry, and it is what srsCalibration can be filtered
      by — so reading the cue from the same field means the bonus and the receipt for it
      describe exactly the same population of answers and can never drift apart. */
+  /* THE COACH NO LONGER CREDITS (2026-11-03). Its right answers carried the 1.3 bonus
+     below, and were given in under two seconds with no target to be wrong against: 47 of
+     his 60 "strong" words had never been answered on a bare word card, and אביב read as
+     strong on sentence and compose credit alone. The coach never records a miss either
+     (composeCredit), so it now moves no schedule at all; the answer is still logged.
+     Spec: 2026-11-03-both-directions-design.md, Phase 2.2. */
+  const composeWin = !!(extra && extra.kd === "compose" && grade === 2);
   const cue = (extra && extra.kd === "compose") ? SRS_CUE_UNPROMPTED : 1;
-  const r = srsApply(srs, key, grade, side, todayOverride, cue);
+  const r = composeWin ? srsSide(srs, key, side) : srsApply(srs, key, grade, side, todayOverride, cue);
   /* How long he took, as a decaying average rather than a lifetime one — the same
      reasoning that made `miss` stop being a running total. How fast he can produce it
      TODAY is the fluency signal; a slow fortnight in July should not hold the number
@@ -22587,6 +22594,28 @@ const FLEX_DUE_CARDS = 2;
    Hebrew→English direction is the one that gains more (Terai et al., 2021). Two at
    least in a full session; a Quick one gets one. Only with a voice to hear. */
 const LISTEN_SHARE = 0.25;
+/* "STRONG" GETS CHECKED ON ITS OWN (2026-11-03). 47 of the 60 words read as strong had
+   never been answered on a bare word card — every right answer came inside a sentence,
+   which hands him every other word as context. אביב had eleven, all like that, and missed
+   its first bare card; George: "definitely not something that I would say I'm strong at".
+   Redefining strong outright would drop the list to about 13 overnight and take most of
+   the bank's support words with it, so the success rate would collapse. Instead a Full
+   session spends two word cards on such words: right confirms, wrong demotes through
+   the ordinary scheduler, at the rate he practises. Quick has no room. */
+const SPOT_CHECKS = { quick: 0, balanced: 2 };
+/* Strong-to-say words with no right answer on a word card in the log, nearest due first.
+   Pure: `log` is hvr_srslog's entries. */
+function spotCheckWords(lib, srs, log, n, exclude) {
+  const ok = new Set();
+  (log || []).forEach(e => { if (e && e.kd === "word" && (e.s || "prod") === "prod" && e.g === 2) ok.add(e.k); });
+  const ex = new Set(exclude || []);
+  const dueOf = k => String((srs[k] && srs[k].prod && srs[k].prod.due) || "");
+  return Object.keys(lib || {})
+    .filter(k => srsGradable(k, lib) && !ex.has(k) && !ok.has(k) &&
+                 srsStrengthOf(srs, k, "prod") === "strong")
+    .sort((a, b) => dueOf(a).localeCompare(dueOf(b)) || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, Math.max(0, n || 0));
+}
 function listenRoom(size) {
   return Math.max(size >= 10 ? 2 : 1, Math.round((size || 0) * LISTEN_SHARE));
 }
@@ -26428,10 +26457,11 @@ function composeCredit(s, c, out) {
   const heard = bankUses(c._said || "", lib).concat(composeAltKeys(c, lib));
   const keys = heard.filter((k, i) => heard.indexOf(k) === i)
                     .filter(k => !bad.has(k) && srsGradable(k, lib));
+  /* Logged, and returned so the card can count what landed — but no longer credited and
+     no longer reported as strengthened: see srsAnswer, 2026-11-03. */
   keys.forEach(k => {
     learnMark(s, srs, k);
     srsAnswer(srs, k, 2, "prod", learnLogExtra(c));
-    s.strengthened[k] = true;
   });
   if (keys.length) srsSave(srs);
   return keys;
@@ -28237,6 +28267,11 @@ function learnBuild(opts) {
   const stuckPicks = stuck.slice(0, shape === "quick" ? 1 : FLEX_DUE_CARDS);
   stuckPicks.forEach(k => cards.push({ kind: "word", key: k, words: [k] }));
 
+  /* Spot checks — see SPOT_CHECKS. Not on a gentle comeback, which is wins on purpose. */
+  const spotPicks = (gentle || only) ? [] :
+    spotCheckWords(lib, srsNow, srsLogAll(), SPOT_CHECKS[shape] || 0, launching.concat(stuckPicks));
+  spotPicks.forEach(k => cards.push({ kind: "word", key: k, words: [k], spot: true }));
+
   /* Chunks and notes are chosen HERE, before the bank room is worked out, though they
      are not pushed until below. They used to be picked afterwards, which meant the
      bank took a fixed allocation and everything else was added on top — and whatever
@@ -28357,7 +28392,7 @@ function learnBuild(opts) {
   }
 
   shuffleArr(cards);
-  learnTrim(cards, size - (replyPick ? 1 : 0), launching,
+  learnTrim(cards, size - (replyPick ? 1 : 0), launching.concat(spotPicks),
             winPicks.concat(listenPicks).map(x => x.it));
   /* Meet it, then use it: a word launched today comes before any sentence carrying it. */
   introOrder(cards, launching);
@@ -31627,30 +31662,9 @@ function learnRenderCalib() {
       ? " Faded rows have too few answers to trust yet." : "");
   box.append(note);
 
-  /* THE RECEIPT FOR SRS_CUE_UNPROMPTED. The coach's answers get a stability bonus on the
-     argument that unprompted production is a harder retrieval than the model can see —
-     which is a belief, not a measurement. This is the measurement: the same Brier score
-     over coach answers alone, against everything else.
-
-     Read, never acted on. A scheduler that tuned its own bonus from outcomes that bonus
-     inflated is precisely the failure the 2026-08-30 spec warned about; a person reading
-     two numbers and changing a constant is not. If the coach's score is much WORSE than
-     the rest, 1.3 is too high and the schedules it writes are running ahead of him. */
-  const log = srsLogAll();
-  const coach = srsCalibration(log.filter(e => e && e.kd === "compose"));
-  if (coach.n >= CALIB_MIN_BAND) {
-    const rest = srsCalibration(log.filter(e => e && e.kd !== "compose"));
-    const cue = document.createElement("div"); cue.className = "lstatnote";
-    cue.textContent = "The coach is scheduled " + SRS_CUE_UNPROMPTED + "× harder than " +
-      "everything else, because saying a word with nothing in front of you is a harder " +
-      "recall than the schedule can otherwise tell. Checking that: coach answers score " +
-      coach.brier.toFixed(3) + " over " + coach.n + ", everything else " +
-      (rest.n ? rest.brier.toFixed(3) + " over " + rest.n : "—") + ". " +
-      (rest.n && coach.brier > rest.brier + 0.05
-        ? "The coach is running ahead of you — that multiplier is too high."
-        : "Close enough that the bonus is not hurting the timing.");
-    box.append(cue);
-  }
+  /* The receipt for SRS_CUE_UNPROMPTED — coach answers' Brier score against everything
+     else — used to render here. Gone since the coach stopped crediting at all (see
+     srsAnswer, 2026-11-03): there is no bonus left to audit. */
 }
 function learnVoiceBanner() {
   document.getElementById("lVoiceBanner").style.display =
@@ -38400,8 +38414,10 @@ T("srsAnswer: the bonus is read off the same tag the calibration split reads", (
     const plain = mk(), coach = mk();
     srsAnswer(plain, "מילה", 2, "prod", { kd: "sentence" }, "2026-09-02");
     srsAnswer(coach, "מילה", 2, "prod", { kd: "compose" }, "2026-09-02");
-    assertTrue(coach["מילה"].prod.stab > plain["מילה"].prod.stab,
-               "the coach answer stretches the schedule further than the sentence card");
+    /* Was "stretches the schedule further" — the 1.3 bonus. Since 2026-11-03 a coach
+       answer credits nothing at all (see srsAnswer). */
+    assertEq(coach["מילה"].prod.stab, mk()["מילה"].prod.stab, "the coach answer moves nothing");
+    assertTrue(plain["מילה"].prod.stab > mk()["מילה"].prod.stab, "the sentence card does");
     const noTag = mk();
     srsAnswer(noTag, "מילה", 2, "prod", null, "2026-09-02");
     assertEq(noTag["מילה"].prod.stab, plain["מילה"].prod.stab,
@@ -43047,9 +43063,9 @@ T("composeCredit: credits what he said, and can never record a miss", () => {
     const s = { strengthened: {}, back: {} };
     const c = { kind: "compose", _said: k1 + " " + k2 };
     const got = composeCredit(s, c, { bad: [k2] });
-    assertEq(got, [k1], "the word he used well is credited");
-    const srs = srsAll();
-    assertTrue(!!(srs[k1] && srs[k1].prod && srs[k1].prod.n), "and actually written");
+    assertEq(got, [k1], "the word he used well is counted as landed");
+    /* Was "and actually written": since 2026-11-03 the coach credits nothing. */
+    assertTrue(!s.strengthened[k1], "but not credited, nor reported as strengthened");
     assertTrue(!s.back[k2], "the fumbled one is not marked as gone backwards");
     /* The strongest form of the claim: nothing at all was written for it, so a later
        session sees a word that was never asked, not a word that was failed. */
@@ -44772,6 +44788,32 @@ T("hearShort: a word due to be heard with no listen line he could be served", ()
   const got = hearShort(c.lib, c.srs, bank, practiceNeeds(c.lib, c.srs, c.today));
   assertEq(got.map(w => w.k), ["hear:שמע"], "a sentence to say is not a line to hear");
   assertEq(got[0].why, "hear");
+});
+T("spotCheckWords: strong words never answered right on a bare word card, nearest due first", () => {
+  const c = RNDS();
+  c.srs["ישן"].prod.due = "2026-02-01";
+  const log = [{ k: "אתמ", s: "prod", g: 2, kd: "word" },     // confirmed on a word card
+               { k: "שמע", s: "prod", g: 2, kd: "sentence" }];  // only inside a sentence
+  assertEq(spotCheckWords(c.lib, c.srs, log, 5), ["ישן", "שמע"],
+           "the weak and progressing words are not strong, and אתמ is confirmed");
+  assertEq(spotCheckWords(c.lib, c.srs, log, 1), ["ישן"]);
+  assertEq(spotCheckWords(c.lib, c.srs, log, 5, ["ישן"]), ["שמע"], "exclusions hold");
+  assertEq(spotCheckWords(c.lib, c.srs, log, 0), []);
+});
+T("srsAnswer: a right answer on the coach no longer moves the word; a miss still does", () => {
+  const keepPush = srsLogPush;
+  try {
+    srsLogPush = () => null;
+    const srs = { "מילה": { prod: { due: "2026-01-05", last: "2026-01-01", stab: 4, diff: 5, n: 3,
+                                     miss: 0, lapses: 0, lastAt: 1 }, recv: srsBlank() } };
+    const before = JSON.stringify(srs["מילה"].prod);
+    srsAnswer(srs, "מילה", 2, "prod", { kd: "compose" }, "2026-01-06");
+    assertEq(JSON.stringify(srs["מילה"].prod), before, "no credit from the coach");
+    srsAnswer(srs, "מילה", 0, "prod", { kd: "compose" }, "2026-01-06");
+    assertTrue(srs["מילה"].prod.miss > 0, "a fumble in his own sentence is still evidence");
+    srsAnswer(srs, "מילה", 2, "prod", { kd: "word" }, "2026-01-07");
+    assertTrue(srs["מילה"].prod.last === "2026-01-07", "and every other card credits as before");
+  } finally { srsLogPush = keepPush; }
 });
 T("learnCommitMissed: every word still at got-it becomes a miss, nearly stays nearly", () => {
   const keepMarks = learnMarks, keepCommit = learnCommit;

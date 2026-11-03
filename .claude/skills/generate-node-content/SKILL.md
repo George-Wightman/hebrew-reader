@@ -15,11 +15,29 @@ written, 10 rejected", "12 written, 12 rejected") and one write took 137 seconds
 
 So breadth is written here instead, in batches, with his whole library in context.
 
-**What is NOT moved:** the rescue writer. A sentence for the word he failed *yesterday*
-depends on state that does not exist at generation time, so `sentenceCommission` stays in
-the app and stays the fallback. Do not try to replace it.
+**Since 2026-11-03 everything is moved, rescue included.** The phone's writer is off
+(`PHONE_WRITES_SENTENCES = false`; spec `docs/superpowers/specs/2026-11-03-claude-writes-the-bank-design.md`)
+because its output was the source of the duplicates George kept hitting. So this skill is
+now the ONLY source of new bank sentences, and it has to write ahead of the four triggers
+the phone used to answer: rescue (a weak word under 2 *unseen* sentences on strong
+support), introduce (the next words in `learnTargets` order, under 2 unseen), breadth (a
+due word with nothing servable) and node (a live node under `CONTENT_AMPLE_ITEMS`).
+Unseen stock runs down as he practises, so write to 3-4 per word, not to the floor, and
+look 80 intro words ahead, not 3.
 
-Design: `docs/superpowers/specs/2026-08-31-prebaked-node-content-design.md`.
+**Start from `hvr_wants`.** When a trigger fires the phone now records it there instead
+of commissioning (`{word: {why, n, first, last, have, done}}`, live while `last > done`),
+and the start screen tells him to come to you once five words are waiting. Read it first:
+it is the list of what he actually ran out of. Then measure forward per word as the
+2026-11-03 run did (unseen servable stock by status, carry rules as `bankServable` has
+them: a weak word on strong support only, a new word on ready support, one unready word
+per sentence).
+
+**The bank holds phone-written items too** (302 on 2026-11-03, ~220 still served). The
+retire list can reach them with `{ he, any: true, why }`, narrowed to one reply with
+`qhe`; a pre-written item with the same words replaces a phone copy and keeps its `seen`,
+which is how to correct one (only if every word in it is in his library). The tools
+apply retirement through the app's own `contentApplyRetired`.
 
 ## The one rule that makes this worth doing
 

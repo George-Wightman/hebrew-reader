@@ -1,5 +1,5 @@
 {
- "version": 11,
+ "version": 12,
  "generated": "2026-11-03",
  "retired": [
   {
@@ -12258,6 +12258,694 @@
    "type": "sentence",
    "lvl": 2,
    "for": "זיעה"
+  },
+  {
+   "he": "אתה רוצה אורז?",
+   "tr": "ata rotze orez?",
+   "en": "Do you want rice?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אורז"
+  },
+  {
+   "he": "האורז חם, אתה רוצה?",
+   "tr": "ha'orez kham, ata rotze?",
+   "en": "The rice is hot, do you want some?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אורז"
+  },
+  {
+   "he": "רק כוס אחת, בבקשה.",
+   "tr": "rak kos akhat, bevakasha.",
+   "en": "Just one cup, please.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אחת"
+  },
+  {
+   "he": "יש לי רק ספר אחד.",
+   "tr": "yesh li rak sefer ekhad.",
+   "en": "I've only got one book.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אחד"
+  },
+  {
+   "he": "יום אחד אני רוצה לנסוע לעיר.",
+   "tr": "yom ekhad ani rotze linso'a la'ir.",
+   "en": "One day I want to go to the city.",
+   "type": "listen",
+   "lvl": 3,
+   "for": "אחד"
+  },
+  {
+   "he": "אמא שלך בבית?",
+   "tr": "ima shelkha babayit?",
+   "en": "Is your mum home?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אמא"
+  },
+  {
+   "he": "אמא אומרת שלום.",
+   "tr": "ima omeret shalom.",
+   "en": "Mum says hello.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אמא"
+  },
+  {
+   "he": "אמא שלך מדברת אנגלית?",
+   "tr": "ima shelkha medaberet anglit?",
+   "en": "Does your mum speak English?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אנגלית"
+  },
+  {
+   "he": "סבא לא מדבר אנגלית.",
+   "tr": "saba lo medaber anglit.",
+   "en": "Grandpa doesn't speak English.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אנגלית"
+  },
+  {
+   "he": "יש לנו ארבעה כלבים.",
+   "tr": "yesh lanu arba'a klavim.",
+   "en": "We've got four dogs.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ארבעה"
+  },
+  {
+   "he": "ארבעה ימים בעיר?",
+   "tr": "arba'a yamim ba'ir?",
+   "en": "Four days in the city?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ארבעה"
+  },
+  {
+   "he": "בבקשה, זה בשבילך.",
+   "tr": "bevakasha, ze bishvilkha.",
+   "en": "Here you go, this is for you.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "בבקשה"
+  },
+  {
+   "he": "אתה שותה קפה בבוקר?",
+   "tr": "ata shote kafe baboker?",
+   "en": "Do you drink coffee in the morning?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "בוקר"
+  },
+  {
+   "he": "אתה רוצה חלב בתה?",
+   "tr": "ata rotze khalav bate?",
+   "en": "Do you want milk in your tea?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חלב"
+  },
+  {
+   "he": "סבתא רוצה חלב בקפה.",
+   "tr": "savta rotza khalav bakafe.",
+   "en": "Grandma wants milk in her coffee.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חלב"
+  },
+  {
+   "he": "התה חם מדי.",
+   "tr": "hate kham midei.",
+   "en": "The tea's too hot.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חם"
+  },
+  {
+   "he": "היה יום חם.",
+   "tr": "haya yom kham.",
+   "en": "It was a hot day.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "יום"
+  },
+  {
+   "he": "יום טוב בעבודה?",
+   "tr": "yom tov ba'avoda?",
+   "en": "Good day at work?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "יום"
+  },
+  {
+   "he": "הילד שלך גדול!",
+   "tr": "hayeled shelkha gadol!",
+   "en": "Your boy's got big!",
+   "type": "listen",
+   "lvl": 1,
+   "for": "ילד"
+  },
+  {
+   "he": "איפה הילד?",
+   "tr": "eifo hayeled?",
+   "en": "Where's the boy?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "ילד"
+  },
+  {
+   "he": "הילדה שלי לומדת עברית.",
+   "tr": "hayalda sheli lomedet ivrit.",
+   "en": "My daughter's learning Hebrew.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ילדה"
+  },
+  {
+   "he": "הילדה שלך גדולה!",
+   "tr": "hayalda shelkha gdola!",
+   "en": "Your girl's got big!",
+   "type": "listen",
+   "lvl": 1,
+   "for": "ילדה"
+  },
+  {
+   "he": "הילדים בבית?",
+   "tr": "hayeladim babayit?",
+   "en": "Are the kids home?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "ילדים"
+  },
+  {
+   "he": "הילדים אוהבים עוגה.",
+   "tr": "hayeladim ohavim uga.",
+   "en": "The kids love cake.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ילדים"
+  },
+  {
+   "he": "הבית שלך יפה מאוד.",
+   "tr": "habayit shelkha yafe me'od.",
+   "en": "Your house is really lovely.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "יפה"
+  },
+  {
+   "he": "אתה רוצה לאכול משהו?",
+   "tr": "ata rotze le'ekhol mashehu?",
+   "en": "Do you want something to eat?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "לאכול"
+  },
+  {
+   "he": "מתי אתה רוצה לאכול?",
+   "tr": "matai ata rotze le'ekhol?",
+   "en": "When do you want to eat?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "לאכול"
+  },
+  {
+   "he": "הכלב הלבן שלך?",
+   "tr": "hakelev halavan shelkha?",
+   "en": "Is the white dog yours?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "לבן"
+  },
+  {
+   "he": "הבית הלבן של סבא.",
+   "tr": "habayit halavan shel saba.",
+   "en": "Grandpa's white house.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "לבן"
+  },
+  {
+   "he": "טוב, להתראות!",
+   "tr": "tov, lehitra'ot!",
+   "en": "Okay, see you!",
+   "type": "listen",
+   "lvl": 1,
+   "for": "להתראות"
+  },
+  {
+   "he": "להתראות, יום טוב!",
+   "tr": "lehitra'ot, yom tov!",
+   "en": "See you, have a good day!",
+   "type": "listen",
+   "lvl": 1,
+   "for": "להתראות"
+  },
+  {
+   "he": "קר בלילה.",
+   "tr": "kar balaila.",
+   "en": "It's cold at night.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "לילה"
+  },
+  {
+   "he": "אתה עובד בלילה?",
+   "tr": "ata oved balaila?",
+   "en": "Do you work at night?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "לילה"
+  },
+  {
+   "he": "סבא רוצה לדבר איתך.",
+   "tr": "saba rotze ledaber itkha.",
+   "en": "Grandpa wants to talk to you.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "סבא"
+  },
+  {
+   "he": "סבא שלך בא היום?",
+   "tr": "saba shelkha ba hayom?",
+   "en": "Is your grandpa coming today?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "סבא"
+  },
+  {
+   "he": "איזה ספר אתה קורא?",
+   "tr": "eize sefer ata kore?",
+   "en": "Which book are you reading?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ספר"
+  },
+  {
+   "he": "הספר הזה טוב.",
+   "tr": "hasefer haze tov.",
+   "en": "This book is good.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "ספר"
+  },
+  {
+   "he": "עוגה? היא מתוקה מאוד.",
+   "tr": "uga? hi metuka me'od.",
+   "en": "Cake? It's very sweet.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "עוגה"
+  },
+  {
+   "he": "סבתא עושה עוגה.",
+   "tr": "savta osa uga.",
+   "en": "Grandma's making a cake.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "עוגה"
+  },
+  {
+   "he": "אתה צריך משהו?",
+   "tr": "ata tzarikh mashehu?",
+   "en": "Do you need anything?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "צריך"
+  },
+  {
+   "he": "אתה לא צריך לשלם.",
+   "tr": "ata lo tzarikh leshalem.",
+   "en": "You don't need to pay.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "צריך"
+  },
+  {
+   "he": "הקפה פה רע.",
+   "tr": "hakafe po ra.",
+   "en": "The coffee here is bad.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "רע"
+  },
+  {
+   "he": "אני מרגיש רע היום.",
+   "tr": "ani margish ra hayom.",
+   "en": "I feel bad today.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "רע"
+  },
+  {
+   "he": "מה אתה שותה?",
+   "tr": "ma ata shote?",
+   "en": "What are you drinking?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "שותה"
+  },
+  {
+   "he": "סבא שותה תה בערב.",
+   "tr": "saba shote te ba'erev.",
+   "en": "Grandpa drinks tea in the evening.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "שותה"
+  },
+  {
+   "he": "יש לי שלושה ילדים.",
+   "tr": "yesh li shlosha yeladim.",
+   "en": "I've got three children.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "שלושה"
+  },
+  {
+   "he": "שלושה ימים בשבוע.",
+   "tr": "shlosha yamim bashavu'a.",
+   "en": "Three days a week.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "שלושה"
+  },
+  {
+   "he": "סבא שמח מאוד.",
+   "tr": "saba same'akh me'od.",
+   "en": "Grandpa's very happy.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "שמח"
+  },
+  {
+   "he": "אתה שמח בעבודה?",
+   "tr": "ata same'akh ba'avoda?",
+   "en": "Are you happy at work?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "שמח"
+  },
+  {
+   "he": "סבתא אוהבת פירות.",
+   "tr": "savta ohevet peirot.",
+   "en": "Grandma loves fruit.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אוהב"
+  },
+  {
+   "he": "מה אתה אוהב לאכול?",
+   "tr": "ma ata ohev le'ekhol?",
+   "en": "What do you like to eat?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אוהב"
+  },
+  {
+   "he": "הקפה מתוק מדי.",
+   "tr": "hakafe matok midei.",
+   "en": "The coffee's too sweet.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "מתוק"
+  },
+  {
+   "he": "זה הספר האחרון שלי.",
+   "tr": "ze hasefer ha'akharon sheli.",
+   "en": "That's my last book.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אחרון"
+  },
+  {
+   "he": "זה השבוע האחרון שלי בעבודה.",
+   "tr": "ze hashavu'a ha'akharon sheli ba'avoda.",
+   "en": "It's my last week at work.",
+   "type": "listen",
+   "lvl": 3,
+   "for": "אחרון"
+  },
+  {
+   "he": "החבר שלך גבוה!",
+   "tr": "hakhaver shelkha gavoha!",
+   "en": "Your friend's tall!",
+   "type": "listen",
+   "lvl": 1,
+   "for": "גבוה"
+  },
+  {
+   "he": "הבית גבוה מאוד.",
+   "tr": "habayit gavoha me'od.",
+   "en": "The house is really tall.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "גבוה"
+  },
+  {
+   "he": "יש לך דירה חדשה?",
+   "tr": "yesh lekha dira khadasha?",
+   "en": "Have you got a new flat?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חדש"
+  },
+  {
+   "he": "הספר החדש של סבא.",
+   "tr": "hasefer hakhadash shel saba.",
+   "en": "Grandpa's new book.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "חדש"
+  },
+  {
+   "he": "יהיה קר בערב.",
+   "tr": "yihiye kar ba'erev.",
+   "en": "It'll be cold this evening.",
+   "type": "listen",
+   "lvl": 3,
+   "for": "יהיה"
+  },
+  {
+   "he": "יהיה גשם היום?",
+   "tr": "yihiye geshem hayom?",
+   "en": "Will it rain today?",
+   "type": "listen",
+   "lvl": 3,
+   "for": "יהיה"
+  },
+  {
+   "he": "מתי האוטובוס בא?",
+   "tr": "matai ha'otobus ba?",
+   "en": "When's the bus coming?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "מתי"
+  },
+  {
+   "he": "זה היום הראשון שלך?",
+   "tr": "ze hayom harishon shelkha?",
+   "en": "Is it your first day?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ראשון"
+  },
+  {
+   "he": "האוטובוס הראשון בבוקר.",
+   "tr": "ha'otobus harishon baboker.",
+   "en": "The first bus in the morning.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "ראשון"
+  },
+  {
+   "he": "אני נוסע לשבוע.",
+   "tr": "ani nose'a leshavu'a.",
+   "en": "I'm going away for a week.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "שבוע"
+  },
+  {
+   "he": "איך המשפחה?",
+   "tr": "eikh hamishpakha?",
+   "en": "How's the family?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "משפחה"
+  },
+  {
+   "he": "נעים פה בערב.",
+   "tr": "na'im po ba'erev.",
+   "en": "It's nice here in the evening.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "נעים"
+  },
+  {
+   "he": "השולחן הזה חדש?",
+   "tr": "hashulkhan haze khadash?",
+   "en": "Is this table new?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "שולחן"
+  },
+  {
+   "he": "יש לך דירה גדולה בעיר?",
+   "tr": "yesh lekha dira gdola ba'ir?",
+   "en": "Have you got a big flat in the city?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "דירה"
+  },
+  {
+   "he": "יש לך חבר בעיר?",
+   "tr": "yesh lekha khaver ba'ir?",
+   "en": "Have you got a friend in the city?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חבר"
+  },
+  {
+   "he": "רק קצת, תודה.",
+   "tr": "rak ktzat, toda.",
+   "en": "Just a little, thanks.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "קצת"
+  },
+  {
+   "he": "אתה מדבר קצת עברית?",
+   "tr": "ata medaber ktzat ivrit?",
+   "en": "Do you speak a little Hebrew?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "קצת"
+  },
+  {
+   "he": "סליחה, איפה הדלת?",
+   "tr": "slikha, eifo hadelet?",
+   "en": "Sorry, where's the door?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "דלת"
+  },
+  {
+   "he": "החדר שלך קטן.",
+   "tr": "hakheder shelkha katan.",
+   "en": "Your room's small.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "חדר"
+  },
+  {
+   "he": "יש מיטה חדשה בחדר.",
+   "tr": "yesh mita khadasha bakheder.",
+   "en": "There's a new bed in the room.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "מיטה"
+  },
+  {
+   "he": "מה עשית אתמול?",
+   "tr": "ma asita etmol?",
+   "en": "What did you do yesterday?",
+   "type": "listen",
+   "lvl": 3,
+   "for": "אתמול"
+  },
+  {
+   "he": "אתמול היה גשם.",
+   "tr": "etmol haya geshem.",
+   "en": "It rained yesterday.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "אתמול"
+  },
+  {
+   "he": "האוטובוס בא?",
+   "tr": "ha'otobus ba?",
+   "en": "Is the bus coming?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אוטובוס"
+  },
+  {
+   "he": "אתה אוכל בשר?",
+   "tr": "ata okhel basar?",
+   "en": "Do you eat meat?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "בשר"
+  },
+  {
+   "he": "אבא שלך בעבודה?",
+   "tr": "aba shelkha ba'avoda?",
+   "en": "Is your dad at work?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אבא"
+  },
+  {
+   "he": "אתה בסדר?",
+   "tr": "ata beseder?",
+   "en": "Are you okay?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "בסדר"
+  },
+  {
+   "he": "מה אתה לומד בעיר?",
+   "tr": "ma ata lomed ba'ir?",
+   "en": "What are you studying in the city?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "לומד"
+  },
+  {
+   "he": "קר, ויש גשם.",
+   "tr": "kar, veyesh geshem.",
+   "en": "It's cold, and it's raining.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "גשם"
+  },
+  {
+   "he": "סבא נוסע באוטובוס לעיר.",
+   "tr": "saba nose'a ba'otobus la'ir.",
+   "en": "Grandpa's taking the bus to the city.",
+   "type": "listen",
+   "lvl": 3,
+   "for": "נוסע"
+  },
+  {
+   "he": "סליחה, אני עייף היום.",
+   "tr": "slikha, ani ayef hayom.",
+   "en": "Sorry, I'm tired today.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "סליחה"
+  },
+  {
+   "he": "כמה זמן אתה פה?",
+   "tr": "kama zman ata po?",
+   "en": "How long are you here for?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "כמה"
+  },
+  {
+   "he": "כמה כלבים יש לסבא?",
+   "tr": "kama klavim yesh lesaba?",
+   "en": "How many dogs has grandpa got?",
+   "type": "listen",
+   "lvl": 2,
+   "for": "כמה"
   }
  ],
  "prompts": [

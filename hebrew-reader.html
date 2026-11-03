@@ -22580,6 +22580,16 @@ const CARRY_CARDS = 3;
    within days, few enough that isolated recall stays the exception. Quick gets one, and
    only in place of its phrase. */
 const FLEX_DUE_CARDS = 2;
+/* LISTENING HAS ITS OWN SHARE (2026-11-03). A listen card used to win a slot only by
+   covering words due to be SAID, and then lost ties to sentences covering the same
+   words, so 123 cards in three weeks were all production. About one in four is now
+   reserved for hearing — Nation's input strand at a quarter, and at his level the
+   Hebrew→English direction is the one that gains more (Terai et al., 2021). Two at
+   least in a full session; a Quick one gets one. Only with a voice to hear. */
+const LISTEN_SHARE = 0.25;
+function listenRoom(size) {
+  return Math.max(size >= 10 ? 2 : 1, Math.round((size || 0) * LISTEN_SHARE));
+}
 /* The most of a session that review material may occupy. The rest is always kept
    for words he hasn't drilled yet, so no amount of accumulated failure can stop
    new words appearing. */
@@ -27908,7 +27918,51 @@ function practiceNeeds(lib, srs, today, arch) {
   due.sort((a, b) => (fam[b] - fam[a]) ||
                      String(srs[a].prod.due).localeCompare(String(srs[b].prod.due)) ||
                      (a < b ? -1 : a > b ? 1 : 0));
-  return { need: need, due: due, unproven: unproven };
+  const recv = practiceNeedsRecv(lib, srs, today);
+  return { need: need, due: due, unproven: unproven,
+           recvNeed: recv.need, recvDue: recv.due, unheard: recv.unheard };
+}
+
+/* THE OTHER SIDE OF THE SAME LIST (2026-11-03). Everything above reads `prod`, and so
+   did everything that picks a card — so from October nothing asked for an understanding
+   review at all: 40 recv reviews in August, 51 in September, none since. George: "if
+   I'm actually having a conversation with someone, I need to be able to decode or
+   understand and interpret what it is they're saying, right?"
+
+   Same weights as production, read off `recv`. One addition: a word STRONG for
+   production that has never been heard is UNHEARD, and scores above anything merely
+   due. He can already say it, so hearing it should be a win — that is what opens the
+   strand gently. `unheard` is listed first in `due` for the same reason.
+
+   Only words ready for production take part. A word weak on both sides is not rescued
+   by hearing it (spec, Phase 1.3), and bankServable would refuse its sentences anyway.
+   Spec: docs/superpowers/specs/2026-11-03-both-directions-design.md. */
+function practiceNeedsRecv(lib, srs, today) {
+  const need = {}, due = [], unheard = [], late = {};
+  Object.keys(lib || {}).forEach(k => {
+    if (!srsGradable(k, lib) || !wordReady(k, srs)) return;
+    const r = srs && srs[k] && srs[k].recv;
+    if (!r || !r.n) {
+      if (srsStrengthOf(srs, k, "prod") !== "strong") return;
+      need[k] = NEED_DUE + NEED_OVERDUE_MAX + 1;
+      unheard.push(k);
+      return;
+    }
+    if (r.due && r.due <= today) {
+      late[k] = srsDaysSince(r.due, today) || 0;
+      need[k] = NEED_DUE + Math.min(NEED_OVERDUE_MAX, Math.floor(late[k] / 7));
+      due.push(k);
+      return;
+    }
+    const ago = srsDaysSince(r.last, today);
+    if (ago === null) return;
+    if (ago < NEED_RECENT_DAYS) need[k] = NEED_RECENT;
+    else if (ago < 7) need[k] = NEED_WEEK;
+  });
+  const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  unheard.sort(byKey);
+  due.sort((a, b) => (late[b] - late[a]) || byKey(a, b));
+  return { need: need, due: unheard.concat(due), unheard: unheard };
 }
 
 /* ---- picking sentences by what they cover ------------------------------------
@@ -28129,6 +28183,18 @@ function learnBuild(opts) {
                                    shape === "quick" ? QUICK_WINS : gentle ? GENTLE_WINS : OPEN_WINS + 1);
   winPicks.forEach(x => cards.push({ kind: x.it.type, item: x.it, words: x.it.uses || [] }));
 
+  /* THE LISTENING SHARE — see LISTEN_SHARE. Picked by what it covers on the `recv` side,
+     the same way the sentences below are picked on `prod`, so it goes to unheard and
+     overdue words first. A win that happened to be a listen card counts toward it.
+     Every word ready to say: hearing a word he cannot yet say is not what rescues it. */
+  const listenPicks = wantListen ? learnPickBank(
+    ranked.filter(x => x.it.type === "listen" && shadowPicks.indexOf(x) === -1 &&
+                       winPicks.indexOf(x) === -1 &&
+                       bankContentWords(x.it, lib).every(w => wordReady(w, srsNow))),
+    Math.max(0, listenRoom(size) - winPicks.filter(x => x.it.type === "listen").length),
+    level, { need: needs.recvNeed, unproven: needs.unproven }, { lib: lib, srs: srsNow }) : [];
+  listenPicks.forEach(x => cards.push({ kind: "listen", item: x.it, words: x.it.uses || [] }));
+
   /* ---- the soft launch -----------------------------------------------------
      George: "use the word cards to introduce new words, for instance those in the
      library that are 'never seen' ... Once I know a word even weakly it makes more
@@ -28163,7 +28229,9 @@ function learnBuild(opts) {
      its own — this is a stopgap by design, not the mechanism. */
   const unpCount = x => bankContentWords(x.it, lib).filter(w => needs.unproven.has(w)).length;
   const carried = new Set();
-  rankedAll.forEach(x => { if (unpCount(x) <= 1) bankContentWords(x.it, lib).forEach(w => carried.add(w)); });
+  /* Listen items grade `recv`, so they cannot reach a word due to be SAID. */
+  rankedAll.forEach(x => { if (x.it.type !== "listen" && unpCount(x) <= 1)
+                             bankContentWords(x.it, lib).forEach(w => carried.add(w)); });
   const stuck = needs.due.filter(k => !carried.has(k) && launching.indexOf(k) === -1 &&
                                       (!only || only.indexOf(k) !== -1));
   const stuckPicks = stuck.slice(0, shape === "quick" ? 1 : FLEX_DUE_CARDS);
@@ -28199,8 +28267,10 @@ function learnBuild(opts) {
   const bankRoom = Math.max(0, learnBankRoom(size, cards.length - winPicks.length, chunkPicks.length,
                                              notePicks.length, replyPick ? 1 : 0, shape) -
                                winPicks.length);
-  const bankPool = ranked.filter(x => x.it.type !== "reply" && shadowPicks.indexOf(x) === -1 &&
-                                      winPicks.indexOf(x) === -1);
+  /* No listen items: they have their own share above, and scored here by what they
+     cover on the production side they credited the other one. */
+  const bankPool = ranked.filter(x => x.it.type !== "reply" && x.it.type !== "listen" &&
+                                      shadowPicks.indexOf(x) === -1 && winPicks.indexOf(x) === -1);
   /* The level mix, in place of the old `.slice(0, bankRoom)` off an easiest-first
      list. Mostly his own level, with a deliberate reach above it — "it should be
      trying ot push me". pickByLevel preserves bankPool's ordering inside each level,
@@ -28287,7 +28357,8 @@ function learnBuild(opts) {
   }
 
   shuffleArr(cards);
-  learnTrim(cards, size - (replyPick ? 1 : 0), launching, winPicks.map(x => x.it));
+  learnTrim(cards, size - (replyPick ? 1 : 0), launching,
+            winPicks.concat(listenPicks).map(x => x.it));
   /* Meet it, then use it: a word launched today comes before any sentence carrying it. */
   introOrder(cards, launching);
   /* Wins first and last — see sessionEaseOrder. After introOrder, and it moves only
@@ -29936,6 +30007,20 @@ function mergeWants(a, b) {
   return out;
 }
 
+/* Words due to be HEARD (unheard first) with no listen item he could be served that
+   contains them — the listening share's shortfall, written down the same way the
+   sentence writer's is. Keyed "hear:<word>", because the same word can be short of a
+   sentence to say and a line to hear at once, and those are two different asks. Pure. */
+function hearShort(lib, srs, bank, needs) {
+  const have = {};
+  (bank || []).forEach(it => {
+    if (!it || it.type !== "listen" || !bankServable(it, lib, srs)) return;
+    bankContentWords(it, lib).forEach(w => { have[w] = (have[w] || 0) + 1; });
+  });
+  return ((needs && needs.recvDue) || []).filter(k => !have[k])
+    .map(k => ({ k: "hear:" + k, why: "hear", have: 0 }));
+}
+
 async function learnTopUp(quiet) {
   const lib = libAll();
   const srs = srsAll();
@@ -30037,12 +30122,14 @@ async function learnTopUp(quiet) {
      items unseen the shelf never read as low, so it never wrote for them either. Now
      it asks the same list the session reads: is anything due with nothing written
      for it? See breadthBrief. */
-  const aim = breadthBrief(lib, srs, bank, practiceNeeds(lib, srs, todayISO(), archiveAll()));
+  const needsNow = practiceNeeds(lib, srs, todayISO(), archiveAll());
+  const aim = breadthBrief(lib, srs, bank, needsNow);
   const unseen = bank.filter(it => !it.seen && bankServable(it, lib, srs)).length;
   if (!PHONE_WRITES_SENTENCES) {
     const have = new Set(wanted.map(w => w.k));
     aim.write.forEach(k => { if (!have.has(k)) wanted.push({ k: k, why: "due", have: 0 }); });
-    wantsNote(wanted, ["rescue", "intro", "due"]);
+    hearShort(lib, srs, bank, needsNow).forEach(w => wanted.push(w));
+    wantsNote(wanted, ["rescue", "intro", "due", "hear"]);
     return 0;
   }
   if (unseen >= BANK_MIN_UNSEEN && !aim.write.length) return made;
@@ -32081,9 +32168,11 @@ function learnRenderThin() {
   const thin = contentThinNow();
   let words = [];
   try { words = wantsWordsLive(); } catch (e) {}
-  if (!thin.length && words.length >= WANTS_NUDGE) {
+  /* A word short of a line to say and one to hear is still one word. */
+  const nWords = new Set(words.map(w => w.k.replace(/^hear:/, ""))).size;
+  if (!thin.length && nWords >= WANTS_NUDGE) {
     el.style.display = "";
-    el.textContent = words.length + " of your words have run out of fresh sentences. " +
+    el.textContent = nWords + " of your words have run out of fresh sentences to say or hear. " +
                      "Next time you're at a computer, ask Claude to write some.";
     mePaint();
     return;
@@ -34881,6 +34970,16 @@ function learnReveal() {
     cont.className = "btn"; cont.type = "button"; cont.textContent = "Continue";
     cont.onclick = () => learnCommit();
     act.append(cont);
+    /* On a hearing card the chips start at "got it", which is right for a sentence he
+       read and said, and wrong for one he heard and did not follow: the meaning check
+       only ever SUGGESTS, so pressing Continue past a wrong guess credited every word.
+       One tap says so honestly. */
+    if (isHearKind(c.kind)) {
+      const miss = document.createElement("button");
+      miss.className = "btn secondary"; miss.type = "button"; miss.textContent = "Didn't catch it";
+      miss.onclick = () => learnCommitMissed();
+      act.append(miss);
+    }
     /* The standing "tap any word to see what it means" line is gone. It rendered under
        the chips on every multi-word card forever, and instruction you have read three
        hundred times is wallpaper. The chips carry it in their own title attribute. */
@@ -35219,6 +35318,14 @@ function learnCommit() {
   struggleSave(str);
   if (pendingChanged) { pendingSave(pending); renderLibrary(); }
   learnAdvance(clean);
+}
+
+/* "Didn't catch it" on a hearing card: every word still marked got-it becomes a miss;
+   one he marked nearly stays nearly. Then the ordinary commit. */
+function learnCommitMissed() {
+  if (!learnMarks) return;
+  learnMarks = learnMarks.map(m => m === 0 ? 1 : m);
+  learnCommit();
 }
 
 function learnAdvance(clean) {
@@ -44628,6 +44735,53 @@ T("practiceNeeds: reports the words the app only assumed", () => {
   const c = NDS(), n = practiceNeeds(c.lib, c.srs, c.today);
   assertTrue(n.unproven.has("מדו"));
   assertTrue(!n.unproven.has("דוא"));
+});
+const RNDS = () => {
+  const rec = (due, last, extra) => Object.assign({ due: due, last: last, stab: 30, diff: 3, n: 5,
+                                                    miss: 0, lapses: 0, lastAt: 1 }, extra || {});
+  const lib = { "שמע": {}, "ישן": {}, "אתמ": {}, "חלש": {}, "בינ": {} };
+  const srs = {
+    "שמע": { prod: rec("2026-03-01", "2026-01-01"), recv: srsBlank() },
+    "ישן": { prod: rec("2026-03-01", "2026-01-01"), recv: rec("2025-12-01", "2025-11-01") },
+    "אתמ": { prod: rec("2026-03-01", "2026-01-01"), recv: rec("2026-03-01", "2026-01-09") },
+    "חלש": { prod: rec("2026-01-09", "2026-01-01", { stab: 1, diff: 9, miss: 4, lapses: 3 }), recv: srsBlank() },
+    "בינ": { prod: rec("2026-03-01", "2026-01-01", { stab: 5 }), recv: srsBlank() }
+  };
+  return { lib: lib, srs: srs, today: "2026-01-10" };
+};
+T("practiceNeeds: the recv side is scheduled, unheard strong words first", () => {
+  const c = RNDS(), n = practiceNeeds(c.lib, c.srs, c.today);
+  assertEq(n.unheard, ["שמע"], "strong to say, never heard");
+  assertEq(n.recvDue, ["שמע", "ישן"], "unheard leads, then the overdue one");
+  assertTrue(n.recvNeed["שמע"] > n.recvNeed["ישן"], "unheard outranks merely due");
+  assertEq(n.recvNeed["אתמ"], NEED_RECENT, "heard yesterday counts against");
+  assertTrue(!n.recvNeed["חלש"], "weak to say: hearing it does not rescue it");
+  assertTrue(!n.recvNeed["בינ"], "progressing and never heard waits until it is strong");
+  assertTrue(!n.need["שמע"], "and the production list is unchanged by any of it");
+});
+T("listenRoom: about one card in four, two at least in a full session", () => {
+  assertEq(listenRoom(15), 4);
+  assertEq(listenRoom(20), 5);
+  assertEq(listenRoom(10), 3);
+  assertEq(listenRoom(5), 1, "a Quick session gets one");
+});
+T("hearShort: a word due to be heard with no listen line he could be served", () => {
+  const c = RNDS();
+  const bank = [{ id: "l1", type: "listen", he: "x", uses: ["ישן"] },
+                { id: "s1", type: "sentence", he: "y", uses: ["שמע"] }];
+  const got = hearShort(c.lib, c.srs, bank, practiceNeeds(c.lib, c.srs, c.today));
+  assertEq(got.map(w => w.k), ["hear:שמע"], "a sentence to say is not a line to hear");
+  assertEq(got[0].why, "hear");
+});
+T("learnCommitMissed: every word still at got-it becomes a miss, nearly stays nearly", () => {
+  const keepMarks = learnMarks, keepCommit = learnCommit;
+  let seen = null;
+  try {
+    learnMarks = [0, 2, 0, 1];
+    learnCommit = () => { seen = learnMarks.slice(); };
+    learnCommitMissed();
+    assertEq(seen, [1, 2, 1, 1]);
+  } finally { learnMarks = keepMarks; learnCommit = keepCommit; }
 });
 const PKI = (id, uses, extra) => ({ it: Object.assign({ id: id, he: id, uses: uses, lvl: 2, seen: 0 }, extra || {}) });
 const PKLIB = { "א1": {}, "ב1": {}, "ג1": {}, "ד1": {}, "ה1": {}, "ו1": {} };

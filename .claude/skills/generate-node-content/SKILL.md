@@ -33,6 +33,14 @@ it is the list of what he actually ran out of. Then measure forward per word as 
 them: a weak word on strong support only, a new word on ready support, one unready word
 per sentence).
 
+**`hear:<word>` wants are listening lines, not sentences to say** (since 2026-11-03, spec
+`2026-11-03-both-directions-design.md`). A quarter of every session is now `listen` cards
+picked by the `recv` side (`practiceNeeds(...).recvDue`, unheard strong words first), and
+`hearShort` records a word due to be heard that no servable listen item contains. Write
+`"type": "listen"` items for these: things someone would say TO him (questions, offers,
+news), every word ready to say. A listen item with the same words as an existing
+sentence is refused by the same-words dedupe, so it must be worded differently.
+
 **The bank holds phone-written items too** (302 on 2026-11-03, ~220 still served). The
 retire list can reach them with `{ he, any: true, why }`, narrowed to one reply with
 `qhe`; a pre-written item with the same words replaces a phone copy and keeps its `seen`,

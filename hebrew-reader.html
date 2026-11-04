@@ -20544,12 +20544,17 @@ function alignSpoken(expected, said) {
      The second clause is the precondition, and it is why this ships behind the held mic
      rather than in front of it. */
   const gap = new Array(E).fill(false);
+  /* What he said IN each slot — the said word the alignment paired with it, "" for a
+     deletion. Kept since 2026-11-04 so the log can say "הילכתי for הלכתי" rather than
+     only "missed": the pattern, not just the miss. */
+  const heard = new Array(E).fill("");
   const extra = [];
   let i = E, j = S;
   while (i > 0 || j > 0) {
     const s = (i > 0 && j > 0) ? sub(expected[i - 1], said[j - 1]) : 0;
     if (i > 0 && j > 0 && cost[i][j] === cost[i - 1][j - 1] + s) {
       status[i - 1] = s === 0 ? "matched" : s === 0.5 ? "near" : "missed";
+      heard[i - 1] = said[j - 1];
       if (s === 1) extra.push(said[j - 1]);
       i--; j--;
     } else if (i > 0 && cost[i][j] === cost[i - 1][j] + 1) {
@@ -20559,7 +20564,7 @@ function alignSpoken(expected, said) {
       j--;
     }
   }
-  return { status: status, extra: extra.reverse(), gap: gap };
+  return { status: status, extra: extra.reverse(), gap: gap, heard: heard };
 }
 
 /* ---- did his guess at the MEANING land? -------------------------------------
@@ -34574,7 +34579,7 @@ function learnScoreSpoken(c, text, res) {
   learnSpoken = { text: String(text || ""), status: a.status, extra: a.extra, english: {},
                   alts: alts, conf: (res && res.confidence) || 0,
                   unsure: micUnsure(res && res.confidence), expected: expected,
-                  soundPairs: soundPairs, gap: a.gap || [] };
+                  soundPairs: soundPairs, gap: a.gap || [], heard: a.heard || [] };
 
   /* The he-IL recogniser transcribes English perfectly well — the finding that made
      this worth building. So "you reached for the English word" is detectable, and
@@ -35334,7 +35339,41 @@ function learnLogExtra(c) {
   if (!learnCardTokens && (learnSuggested === 0 || learnSuggested === 1 || learnSuggested === 2))
     e.sg = learnSuggested;
   if (learnHints > 0) e.h = learnHints;
+  /* A whole-card answer (word, chunk) has no slots to align, so the transcript itself. */
+  if (!learnCardTokens && learnSpoken && learnSpoken.text) e.sd = String(learnSpoken.text).slice(0, 40);
   return e;
+}
+
+/* A first guess at the kind of slip, from what he said in a word's slot. Rules, not AI:
+   the stored `hd` lets the weekly report (and Claude reading it) look closer.
+     none  — nothing of his landed there: he left it out
+     form  — he said the right word in another form (gender, tense, person)
+     swap  — he said a different word of his (יפה for נעים)
+     sound — sounds alike: a mishearing, or a near-miss like הילכתי for הלכתי.
+             Whether he overrode the grade is what tells those two apart.
+     other — anything else. */
+function learnErrType(hd, tok, lib) {
+  hd = String(hd || "").replace(/[^֐-׿]/g, "");
+  if (!hd) return "none";
+  const target = tok && (tok.key || tok.he);
+  if (hd === (tok && tok.he)) return "same";
+  const k = libKeyFor(hd, lib);
+  if (k && target && k === target) return "form";
+  if (k && k !== target) return "swap";
+  if (tok && tok.he && (heSoundAlike(hd, tok.he, lib) || heSkeleton(hd) === heSkeleton(tok.he))) return "sound";
+  return "other";
+}
+
+/* What he did on the card on screen, beyond answering it — reset on every render,
+   written into the journal with the card. cb/ca coach before/after the reveal, w word
+   panels opened, y "why is it this word" asked, r replays, o grades he moved off the
+   app's suggestion. Zeros are left out when it is written. */
+let learnActs = {};
+function learnAct(name) {
+  try {
+    if (!learnSession) return;
+    learnActs[name] = (learnActs[name] || 0) + 1;
+  } catch (e) {}
 }
 
 /* The per-word marks as the APP set them — mic alignment, then AI softening — before
@@ -35358,6 +35397,9 @@ function learnGrade(grade) {
      counted as clean for the stats and the measured level. Any help at all makes the
      card not-clean, which is unchanged; what changed is that this no longer decides what
      each individual word banks. */
+  /* Before the hint cap: it is HIS grade against the app's that counts as an override. */
+  if ((learnSuggested === 0 || learnSuggested === 1 || learnSuggested === 2) && grade !== learnSuggested)
+    learnActs.o = (learnActs.o || 0) + 1;
   const helped = learnHints > 0;
   if (helped) grade = Math.min(grade, 1);
   /* A chunk's SRS key is the whole phrase, which is deliberately NOT a library
@@ -35422,6 +35464,17 @@ function learnCommit() {
       const extra = learnLogExtra(c);
       const sg = learnWordSuggested(i);
       if (sg !== null) extra.sg = sg;
+      /* His mark against the app's, before any hint cap — a capped grade is not a choice. */
+      const mine = MARK_GRADE[m];
+      if (sg !== null && sg !== mine) learnActs.o = (learnActs.o || 0) + 1;
+      /* What he said in this slot, and a first guess at what kind of slip it was —
+         only where there is something to explain: a word not got, or a grade he moved. */
+      if (learnSpoken && Array.isArray(learnSpoken.heard) &&
+          learnSpoken.heard.length === learnCardTokens.length && (grade !== 2 || (sg !== null && sg !== mine))) {
+        const hd = String(learnSpoken.heard[i] || "");
+        extra.hd = hd.slice(0, 24) || "-";
+        extra.et = learnErrType(hd, t, lib);
+      }
       srsAnswer(srs, t.key, grade, side, extra);
       if (grade === 2) s.strengthened[t.key] = true; else s.back[t.key] = true;
     } else if (grade !== 2) {
@@ -43252,6 +43305,24 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
+});
+T("evidence: the alignment keeps what he said in each slot", () => {
+  const a = alignSpoken(["אני", "הלכתי", "לעיר"], ["אני", "הילכתי", "לעיר"]);
+  assertEq(a.heard, ["אני", "הילכתי", "לעיר"], "substitution keeps his word");
+  const b = alignSpoken(["אני", "הלכתי", "לעיר"], ["אני", "לעיר"]);
+  assertEq(b.heard[1], "", "a word he left out has nothing in its slot");
+});
+T("evidence: a slip gets a first-guess type from what he said", () => {
+  /* 4 Nov: הילכתי for הלכתי; יפה when he meant נעים. */
+  const lib = { "הלכתי": { en: "I went" }, "יפה": { en: "pretty" }, "נעים": { en: "pleasant" },
+                "גדול": { en: "big" } };
+  assertEq(learnErrType("", { he: "הלכתי", key: "הלכתי" }, lib), "none", "said nothing there");
+  assertEq(learnErrType("יפה", { he: "נעים", key: "נעים" }, lib), "swap", "another of his words");
+  assertEq(learnErrType("הילכתי", { he: "הלכתי", key: "הלכתי" }, lib), "sound", "stem near-miss");
+  assertEq(learnErrType("קפה", { he: "הלכתי", key: "הלכתי" }, lib), "other", "unrelated");
+  assertEq(learnErrType("הלכתי", { he: "הלכתי", key: "הלכתי" }, lib), "same", "said right, marked down");
+  if (genderBaseOf("גדולה") === "גדול")
+    assertEq(learnErrType("גדולה", { he: "גדול", key: "גדול" }, lib), "form", "right word, wrong form");
 });
 T("log: each answer names its sentence, the app's suggestion and the hints", () => {
   /* 2026-11-04: strong words missed with no way to tell his slip from the mic's. */

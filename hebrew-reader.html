@@ -31349,11 +31349,12 @@ function learnTokens(c) {
   const lib = libAll();
   return he.map((raw, i) => {
     const bare = raw.replace(/[^֐-׿]/g, "");
-    let key = null;
-    if (lib[bare]) key = bare;
-    else if (bare.length > 2 && BANK_PREFIXES.indexOf(bare[0]) !== -1 && lib[bare.slice(1)])
-      key = bare.slice(1);
-    return { tr: tr[i], he: bare, key: key };
+    /* libKeyFor, the same resolver the gates and bankUses credit a sentence with. This
+       used to be exact spelling or one stripped prefix only, so every inflected form —
+       הופך in a sentence written for להפוך — came out keyless: the tapped card said "Not
+       one of your words yet" about the very word the sentence was teaching, and a miss
+       on it went to the struggle tally instead of that word's schedule (2026-11-04). */
+    return { tr: tr[i], he: bare, key: bare ? libKeyFor(bare, lib) : null };
   });
 }
 
@@ -35060,13 +35061,42 @@ function learnWordInfo(tok, item) {
   const lib = libAll();
   const g = item ? glossMap(item)[tok.he] : null;
   const e = tok.key ? lib[tok.key] : null;
-  const d = DICT[tok.he] || (tok.key ? DICT[tok.key] : null);
+  let d = DICT[tok.he] || (tok.key ? DICT[tok.key] : null);
+  /* Last resort before the AI: an inflected form of a word that is not his yet, which
+     the built-in form table can still name. Display only — it never sets tok.key, so
+     nothing is graded against a word he has not banked. */
+  let of = "";
+  if (!g && !e && !d) {
+    const lemma = duoLemmaOf(tok.he);
+    if (lemma && DICT[lemma]) { d = DICT[lemma]; of = lemma; }
+  }
+  const en = (g && g.en) || (e && e.en) || (d ? d[1] : "");
   return {
     he: tok.he,
-    tr: (g && g.tr) || tok.tr || (e && e.tr) || (d ? String(d[0]).split("/")[0] : ""),
-    en: (g && g.en) || (e && e.en) || (d ? d[1] : ""),
+    tr: (g && g.tr) || tok.tr || (e && e.tr) || (d && !of ? String(d[0]).split("/")[0] : ""),
+    en: en && of ? "form of " + of + " (" + String(d[0]).split("/")[0] + "): " + en : en,
     why: (g && g.why) || ""
   };
+}
+
+/* Inflected spelling -> base word, from DUO_FORMS. Built once on first use; tries the
+   word as written, then with one prefix letter off (בהופך, שהופכת). */
+let DUO_LEMMA_IDX = null;
+function duoLemmaOf(he) {
+  if (!he) return null;
+  if (!DUO_LEMMA_IDX) {
+    DUO_LEMMA_IDX = {};
+    Object.keys(DUO_FORMS).forEach(lemma => {
+      const t = DUO_FORMS[lemma] || {};
+      Object.keys(t).forEach(tag => {
+        const f = t[tag] && t[tag][0];
+        if (f && !DUO_LEMMA_IDX[f]) DUO_LEMMA_IDX[f] = lemma;
+      });
+    });
+  }
+  if (DUO_LEMMA_IDX[he]) return DUO_LEMMA_IDX[he];
+  if (he.length > 2 && BANK_PREFIXES.indexOf(he[0]) !== -1) return DUO_LEMMA_IDX[he.slice(1)] || null;
+  return null;
 }
 
 /* Written onto the item in memory AND in storage: the card is holding its own copy
@@ -43149,6 +43179,23 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
+});
+T("learn chips: a tapped word resolves exactly as the gates credit it", () => {
+  /* 2026-11-04: הופך in a sentence for להפוך showed "Not one of your words yet",
+     because the chips matched exact spelling while the gates used libKeyFor. */
+  const lib = libAll();
+  const c = { kind: "sentence", item: { he: "הילד הופך את הכוס.", tr: "hayeled hofekh et hakos." } };
+  const toks = learnTokens(c);
+  assertTrue(Array.isArray(toks) && toks.length === 4, "four chips");
+  toks.forEach(t => assertEq(t.key, libKeyFor(t.he, lib), "chip key for " + t.he));
+});
+T("learn word card: a form of an unbanked word is named through the form table", () => {
+  assertEq(duoLemmaOf("הופך"), "להפוך", "present form");
+  assertEq(duoLemmaOf("שהופכת"), "להפוך", "behind a prefix");
+  assertNull(duoLemmaOf("זזזזז"), "nothing for nonsense");
+  const info = learnWordInfo({ he: "הופכים", tr: "hofkhim", key: null }, null);
+  assertTrue(info.en.indexOf("form of להפוך") === 0, "names the base word: " + info.en);
+  assertEq(info.tr, "hofkhim", "keeps the sentence's own transliteration");
 });
 T("compose: the card carries no target for anything to align against", () => {
   const c = { kind: "compose", objectives: ["בית"], item: null };

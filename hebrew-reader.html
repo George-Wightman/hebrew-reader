@@ -32747,6 +32747,7 @@ function learnRenderCard() {
   card.innerHTML = "";
   learnRevealed = false;
   learnCardTokens = null; learnMarks = null;   // stale marks must never carry over
+  learnMarksAuto = null;
   learnHints = 0; learnHinted = {}; learnHintAll = false;
   learnNote = "";                              // and neither must a previous card's help
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
@@ -33928,6 +33929,7 @@ async function learnAdjudicate(c, spoken, askedAt) {
     /* Marks he has already corrected by hand are left alone — only a standing
        "missed" is softened, so this can never undo a deliberate tap. */
     if (learnMarks && learnMarks[i] === 1) { learnMarks[i] = 2; moved++; }
+    if (learnMarksAuto && learnMarksAuto[i] === 1) learnMarksAuto[i] = 2;   // the app softened it, not him
   });
   /* Words genuinely softened on a card he was still looking at — the only outcome that
      was ever worth paying for. */
@@ -34125,6 +34127,7 @@ async function learnGrace(c, spoken, askedAt) {
     spoken.status[i] = "near";
     won++;
     if (learnMarks && learnMarks[i] === 1) { learnMarks[i] = 2; moved++; }
+    if (learnMarksAuto && learnMarksAuto[i] === 1) learnMarksAuto[i] = 2;   // the app softened it, not him
   });
   if (!won) return;
   try { statsBump({ graceWon: won }); } catch (e) {}
@@ -34970,6 +34973,7 @@ function learnReveal() {
       learnSpoken.status.forEach((st, i) => {
         learnMarks[i] = st === "matched" ? 0 : st === "near" ? 2 : 1;
       });
+      learnMarksAuto = learnMarks.slice();
     }
     const row = document.createElement("div"); row.className = "ltrow";
     const detail = document.createElement("div");
@@ -35319,7 +35323,29 @@ function learnLogExtra(c) {
     if (learnSpoken.conf) e.cf = Math.round(learnSpoken.conf * 100) / 100;
     if (learnSpoken.unsure) e.u = 1;
   }
+  /* WHICH SENTENCE, AND WHO DECIDED (2026-11-04). On the night he missed יפה, שולחן and
+     ספר — words at stability 70-110 — there was no way to tell a real slip from a
+     recogniser mishearing that he accepted, and the sentences themselves had to be
+     reverse-engineered from which words were graded together. `id` names the bank item;
+     `sg` is the grade the app put in front of him before he touched anything (per word,
+     learnCommit overwrites it from learnMarksAuto), so `g !== sg` is an override; `h` is
+     how many hint rungs he took. */
+  if (c && c.item && c.item.id) e.id = String(c.item.id).slice(0, 40);
+  if (!learnCardTokens && (learnSuggested === 0 || learnSuggested === 1 || learnSuggested === 2))
+    e.sg = learnSuggested;
+  if (learnHints > 0) e.h = learnHints;
   return e;
+}
+
+/* The per-word marks as the APP set them — mic alignment, then AI softening — before
+   any tap of his. null when the mic graded nothing (no speech, or not confident). */
+let learnMarksAuto = null;
+const MARK_GRADE = [2, 0, 1];      // mark 0 got it, 1 missed, 2 nearly -> grade
+function learnWordSuggested(i, auto) {
+  const a = auto === undefined ? learnMarksAuto : auto;
+  if (!a || a[i] === undefined) return null;
+  const g = MARK_GRADE[a[i]];
+  return g === undefined ? null : g;
 }
 
 function learnGrade(grade) {
@@ -35393,7 +35419,10 @@ function learnCommit() {
     if (t.key) {
       if (!srsGradable(t.key, lib)) return;
       learnMark(s, srs, t.key);
-      srsAnswer(srs, t.key, grade, side, learnLogExtra(c));
+      const extra = learnLogExtra(c);
+      const sg = learnWordSuggested(i);
+      if (sg !== null) extra.sg = sg;
+      srsAnswer(srs, t.key, grade, side, extra);
       if (grade === 2) s.strengthened[t.key] = true; else s.back[t.key] = true;
     } else if (grade !== 2) {
       /* Not one of his words yet, but he just fumbled it. Tally it, and once
@@ -43223,6 +43252,26 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
+});
+T("log: each answer names its sentence, the app's suggestion and the hints", () => {
+  /* 2026-11-04: strong words missed with no way to tell his slip from the mic's. */
+  const saved = [learnCardTokens, learnSuggested, learnHints, learnSpoken, learnMarksAuto];
+  try {
+    learnCardTokens = null; learnSuggested = 0; learnHints = 2; learnSpoken = null;
+    const e = learnLogExtra({ kind: "sentence", item: { id: "bm123" } });
+    assertEq(e.id, "bm123", "the sentence");
+    assertEq(e.sg, 0, "the whole-card suggestion");
+    assertEq(e.h, 2, "the hint rungs");
+    learnCardTokens = [{}]; learnHints = 0;
+    const w = learnLogExtra({ kind: "word", key: "x" });
+    assertTrue(!("sg" in w) && !("h" in w) && !("id" in w), "chips carry their own; nothing to name");
+    assertEq(learnWordSuggested(0, [0, 1, 2]), 2, "mark 0 is got it");
+    assertEq(learnWordSuggested(1, [0, 1, 2]), 0, "mark 1 is missed");
+    assertEq(learnWordSuggested(2, [0, 1, 2]), 1, "mark 2 is nearly");
+    assertNull(learnWordSuggested(0, null), "no mic, no suggestion");
+  } finally {
+    [learnCardTokens, learnSuggested, learnHints, learnSpoken, learnMarksAuto] = saved;
+  }
 });
 T("refresh: a word he has probably forgotten gets its own card, worst first, capped", () => {
   /* 2026-11-04: להפוך, 36 days unseen at stab 2.4, came back inside a sentence. */

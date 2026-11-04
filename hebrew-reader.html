@@ -15551,14 +15551,51 @@ function sessRecord(c, node, now) {
       ok: String((t && t.out && t.out.ok) || ""),
       why: String((t && t.out && t.out.why) || "")
     }));
-    const list = sessAll().concat([{
+    const rec = {
       id: syncDeviceId() + "-" + at, at: at, node: String(node || ""),
       lvl: learnerLevel(), objectives: ((c && c.objectives) || []).slice(0, 8),
       turns: turns
-    }]).slice(-SESS_MAX);
+    };
+    const list = sessAll().concat([rec]).slice(-SESS_MAX);
     lsSet(SESS_KEY, JSON.stringify(list));
+    try { coachLogRecord(rec, libAll()); } catch (e) {}
     return list;
   } catch (e) { return sessAll(); }
+}
+
+/* ---- the coach as evidence of real use (2026-11-04) ------------------------------
+   hvr_sessions keeps the last eight conversations whole; this keeps a few hundred as
+   numbers, so "is he speaking more Hebrew than a month ago" has an answer. Per
+   conversation: turns, Hebrew and English words in what he said (the mic transcribes
+   mixed speech), the library words he produced, the verdict counts, which objectives he
+   hit, and each correction's `why`, short, for the weekly report to sort into kinds.
+   Spec: 2026-11-04-learning-evidence-design.md, Phase 4. Pure apart from the store. */
+function coachLogSummary(rec, lib) {
+  const turns = (rec && rec.turns) || [];
+  const said = turns.map(t => String((t && t.said) || "")).join(" ");
+  const he = (said.match(/[א-ת]+/g) || []).length;
+  const en = (said.match(/[A-Za-z]+/g) || []).length;
+  const words = bankUses(said, lib || {}).slice(0, 40);
+  const ok = {};
+  turns.forEach(t => { const v = (t && t.ok) || "none"; ok[v] = (ok[v] || 0) + 1; });
+  const obj = (rec && rec.objectives) || [];
+  return {
+    id: rec.id, at: rec.at, node: rec.node || "", lvl: rec.lvl || null,
+    n: turns.length, he: he, en: en, words: words, ok: ok,
+    obj: obj, hit: obj.filter(o => words.indexOf(o) !== -1),
+    why: turns.map(t => String((t && t.why) || "").slice(0, 120)).filter(Boolean).slice(0, 12)
+  };
+}
+function coachLogAll() {
+  try { const v = JSON.parse(lsGet(COACHLOG_KEY)); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+function coachLogRecord(rec, lib) {
+  if (!rec || !rec.id || !(rec.turns || []).length) return null;
+  const s = coachLogSummary(rec, lib);
+  const list = coachLogAll().filter(x => x && x.id !== s.id).concat([s]).slice(-COACHLOG_MAX);
+  lsSet(COACHLOG_KEY, JSON.stringify(list));
+  return s;
 }
 
 /* Keyed by id — device plus timestamp — so two devices' sessions both survive and a
@@ -43402,6 +43439,18 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
+});
+T("evidence: a coach conversation is kept as numbers that outlive the transcript", () => {
+  const lib = { "הלכתי": { en: "I went" }, "עבדתי": { en: "I worked" }, "עיר": { en: "city" } };
+  const s = coachLogSummary({ id: "d-1", at: 1, node: "n", lvl: 2, objectives: ["הלכתי", "ראיתי"],
+    turns: [{ said: "הלכתי לעיר", ok: "clean", why: "" },
+            { said: "I think עבדתי there", ok: "minor", why: "say avadti sham, not there" }] }, lib);
+  assertEq(s.n, 2, "turns");
+  assertEq([s.he, s.en], [3, 3], "Hebrew and English words he said");
+  assertTrue(s.words.indexOf("הלכתי") !== -1 && s.words.indexOf("עבדתי") !== -1, "his words, produced");
+  assertEq(s.hit, ["הלכתי"], "the objective he hit");
+  assertEq(s.ok, { clean: 1, minor: 1 }, "verdicts");
+  assertEq(s.why, ["say avadti sham, not there"], "the correction, kept");
 });
 T("evidence: what he does on a card is counted for that card only", () => {
   const saved = [learnSession, learnActs];

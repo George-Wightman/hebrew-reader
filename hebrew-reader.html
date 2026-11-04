@@ -28391,11 +28391,20 @@ function learnBuild(opts) {
       cards.push({ kind: "word", key: fill[i], words: [fill[i]] });
   }
 
+  /* Refreshers — see refreshPicks. Chosen from the cards actually picked, so only words
+     this session will ask him to use get one. They take the place of the last ordinary
+     cards in the trim, never of the sentence that needed them. */
+  const refresh = refreshPicks(cards, srsNow, todayISO(),
+                               REFRESH_CARDS[shape] || REFRESH_CARDS.balanced);
+  refresh.forEach(x => cards.push({ kind: "word", key: x.key, words: [x.key], refresh: true }));
+  const refreshKeys = refresh.map(x => x.key);
+
   shuffleArr(cards);
-  learnTrim(cards, size - (replyPick ? 1 : 0), launching.concat(spotPicks),
-            winPicks.concat(listenPicks).map(x => x.it));
-  /* Meet it, then use it: a word launched today comes before any sentence carrying it. */
-  introOrder(cards, launching);
+  learnTrim(cards, size - (replyPick ? 1 : 0), launching.concat(spotPicks, refreshKeys),
+            winPicks.concat(listenPicks).map(x => x.it).concat(refresh.map(x => x.item)));
+  /* Meet it, then use it: a word launched — or refreshed — today comes before any
+     sentence carrying it. */
+  introOrder(cards, launching.concat(refreshKeys));
   /* Wins first and last — see sessionEaseOrder. After introOrder, and it moves only
      cards that order does not care about, so meeting-before-using still holds. */
   sessionEaseOrder(cards, srsNow, launching, todayISO(), shape === "quick" ? 1 : OPEN_WINS);
@@ -28586,6 +28595,41 @@ function introScaffold(lib, srs) {
     .sort((a, b) => ((unp.has(a) ? 1 : 0) - (unp.has(b) ? 1 : 0)) || (stabOf(b) - stabOf(a)))
     .slice(0, INTRO_SCAFFOLD_MAX);
 }
+/* ---- forgotten words come back on their own first (2026-11-04) -------------------
+   A word is let into a sentence by its BAND (wordReady), and the band has no time in it:
+   להפוך, last said 36 days earlier with stab 2.4, was still `weak`-and-carried and came
+   back as הילד הופך את הכוס — a conjugated form, inside a sentence, nothing to meet it
+   by. George: "Introducing something in a sentence is too much ... if it predicts I've
+   probably forgotten a word, it comes up just to refresh it."
+
+   So: any word he HAS met whose predicted recall is under REFRESH_R, sitting in a
+   sentence-like card this session, gets a bare word card — lowest recall first, capped,
+   because a session of nothing but refreshers is the overload he worried about. The rest
+   wait for the next session. Never-met words are introWords' job; words that already
+   have a word card are skipped. Returns [{ key, item }] — `item` is the card that
+   needed it, which learnTrim must keep alongside. Pure. */
+const REFRESH_R = 0.5;
+const REFRESH_CARDS = { balanced: 3, quick: 1 };
+function refreshPicks(cards, srs, today, n, nowMs) {
+  if (!(n > 0)) return [];
+  const carded = new Set((cards || []).filter(c => c.kind === "word").map(c => c.key));
+  const best = {};
+  (cards || []).forEach(c => {
+    if (!c || c.kind === "word" || c.kind === "note" || !c.item) return;
+    (c.words || []).forEach(w => {
+      if (carded.has(w)) return;
+      const rec = srs[w] && srs[w].prod;
+      if (!rec || !rec.n) return;
+      const r = srsR(rec, today, nowMs);
+      if (r >= REFRESH_R) return;
+      if (!best[w] || r < best[w].r) best[w] = { key: w, item: c.item, r: r };
+    });
+  });
+  return Object.keys(best).map(k => best[k])
+    .sort((a, b) => a.r - b.r).slice(0, n)
+    .map(x => ({ key: x.key, item: x.item }));
+}
+
 /* A word card before any sentence that uses the same launched word. Moves the word card
    up to just ahead of the first such sentence; everything else keeps the shuffle it got.
    Mutates and returns `cards`. */
@@ -43179,6 +43223,36 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   const why = p.slice(p.indexOf("\nwhy \u2014"), p.indexOf("\nbest \u2014"));
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
+});
+T("refresh: a word he has probably forgotten gets its own card, worst first, capped", () => {
+  /* 2026-11-04: להפוך, 36 days unseen at stab 2.4, came back inside a sentence. */
+  const today = "2026-11-04";
+  const srs = {
+    A: { prod: { n: 3, stab: 2, last: "2026-10-01" } },   // R ≈ 0.17
+    B: { prod: { n: 9, stab: 100, last: "2026-11-01" } }, // fresh
+    C: { prod: { n: 2, stab: 2, last: "2026-10-20" } },   // R ≈ 0.45
+    E: { prod: { n: 2, stab: 1, last: "2026-09-01" } },   // gone, but already carded
+    F: { prod: { n: 2, stab: 1, last: "2026-09-01" } }    // gone, but only in a note
+  };
+  const s1 = { kind: "sentence", item: { id: "s1" }, words: ["B", "C", "D"] };
+  const s2 = { kind: "listen", item: { id: "s2" }, words: ["A", "B"] };
+  const cards = [s1, s2,
+    { kind: "word", key: "E", words: ["E"] },
+    { kind: "sentence", item: { id: "s3" }, words: ["E", "B"] },
+    { kind: "note", item: { id: "note:1" }, words: ["F"] }];
+  const got = refreshPicks(cards, srs, today, 3);
+  assertEq(got.map(x => x.key), ["A", "C"], "faded met words only, lowest recall first");
+  assertTrue(got[0].item === s2.item, "and it names the card that needed it");
+  assertEq(refreshPicks(cards, srs, today, 1).map(x => x.key), ["A"], "the cap holds");
+  assertEq(refreshPicks(cards, srs, today, 0), [], "and zero means none");
+});
+T("refresh: the refresher comes before the sentence and survives the trim", () => {
+  const s = { kind: "sentence", item: { id: "s" }, words: ["A", "B"] };
+  const cards = [s, { kind: "chunk", key: "x", words: ["x"] }, { kind: "word", key: "A", words: ["A"] }];
+  introOrder(cards, ["A"]);
+  assertEq(cards[0].key, "A", "word card first");
+  learnTrim(cards, 2, ["A"], [s.item]);
+  assertEq(cards.map(c => c.key || c.item.id), ["A", "s"], "the chunk goes, not the pair");
 });
 T("learn chips: a tapped word resolves exactly as the gates credit it", () => {
   /* 2026-11-04: הופך in a sentence for להפוך showed "Not one of your words yet",

@@ -17897,6 +17897,8 @@ function coachDockRender() {
 }
 
 function coachDockOpen(on) {
+  /* Help asked for mid-card: before the answer is shown it means he didn't have it. */
+  try { if (on && learnSession && learnScreenShowing() === "lRun") learnAct(learnRevealed ? "ca" : "cb"); } catch (e) {}
   const dock = document.getElementById("coachDock");
   const haze = document.getElementById("coachHaze");
   if (!dock) return;
@@ -21075,7 +21077,7 @@ function wordWeekBump(store, key, side, grade, extra, first, today) {
   if (grade === 0) c[1]++;
   if (grade === 1) c[2]++;
   if (extra && extra.h > 0) c[3]++;
-  if (extra && (extra.sg === 0 || extra.sg === 1 || extra.sg === 2) && extra.sg !== grade) c[4]++;
+  if (extra && extra.ov) c[4]++;
   if (first) c[5]++;
   const weeks = Object.keys(store).sort();
   weeks.slice(0, Math.max(0, weeks.length - WORDWEEK_WEEKS)).forEach(x => { delete store[x]; });
@@ -29283,7 +29285,10 @@ function journalCard(s, c, clean, sec, hinted) {
     const a = journalAll();
     const e = a.find(x => x && x.id === s.jid);
     if (!e) return;
-    e.cards.push([c.kind, clean ? 1 : 0, sec || 0, hinted ? 1 : 0, (s.jUnready || [])[s.i] || 0]);
+    /* 6th: what he did beyond answering (learnActsNow), 7th: the bank item. Both added
+       2026-11-04; older rows simply have five. */
+    e.cards.push([c.kind, clean ? 1 : 0, sec || 0, hinted ? 1 : 0, (s.jUnready || [])[s.i] || 0,
+                  learnActsNow() || 0, (c.item && c.item.id) ? String(c.item.id).slice(0, 40) : (c.key || "")]);
     e.end = Date.now();
     journalSave(a);
   } catch (e) {}
@@ -35013,12 +35018,12 @@ function learnReveal() {
     if (btns[0]) {
       btns[0].className = "lplay"; btns[0].type = "button";
       btns[0].textContent = "Hear it"; btns[0].title = "Play again (R)";
-      btns[0].onclick = () => playHe(answerKey, he);
+      btns[0].onclick = () => { learnAct("r"); playHe(answerKey, he); };
     }
     if (btns[1]) {
       btns[1].className = "lplay slow"; btns[1].type = "button";
       btns[1].textContent = "Slowly"; btns[1].title = "Play slower (Shift+R)";
-      btns[1].onclick = () => playHe(answerKey, he, true);
+      btns[1].onclick = () => { learnAct("r"); playHe(answerKey, he, true); };
     }
   }
 
@@ -35079,6 +35084,7 @@ function learnReveal() {
       chip.onclick = () => {
         if (openIdx === i) { closeDetail(); return; }   // tapping the open word closes it
         openIdx = i;
+        learnAct("w");
         learnFillWordPanel(detail, t, c, i, repaint, closeDetail);
         detail.style.display = "";
         repaint(); syncPadOffset();
@@ -35317,6 +35323,7 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
    tenth of the day's transcription budget. (It had a twin in learnWhy, the sentence-level
    "why is it phrased like that", until that became a handoff to the coach on 2026-09-08.) */
 async function learnExplainWord(btn, panel, tok, c) {
+  learnAct("y");
   btn.disabled = true; btn.textContent = "Asking…";
   busy(true);
   try {
@@ -35410,6 +35417,9 @@ function learnLogExtra(c) {
   if (!learnCardTokens && (learnSuggested === 0 || learnSuggested === 1 || learnSuggested === 2))
     e.sg = learnSuggested;
   if (learnHints > 0) e.h = learnHints;
+  /* `ov`: he moved the grade off the app's suggestion. Per word on chip cards (learnCommit
+     sets it); here for a whole-card grade, which learnGrade has already counted. */
+  if (!learnCardTokens) { const a = learnActsNow(); if (a && a.o) e.ov = 1; }
   /* A whole-card answer (word, chunk) has no slots to align, so the transcript itself. */
   if (!learnCardTokens && learnSpoken && learnSpoken.text) e.sd = String(learnSpoken.text).slice(0, 40);
   return e;
@@ -35440,11 +35450,26 @@ function learnErrType(hd, tok, lib) {
    panels opened, y "why is it this word" asked, r replays, o grades he moved off the
    app's suggestion. Zeros are left out when it is written. */
 let learnActs = {};
+/* Keyed to the card rather than reset on render: learnRenderCard runs again whenever
+   something async lands, and a reset there would wipe what he did a second ago. */
+function learnActsKey() {
+  const s = learnSession;
+  return s ? (s.jid || "") + ":" + s.i : "";
+}
 function learnAct(name) {
   try {
     if (!learnSession) return;
+    const k = learnActsKey();
+    if (learnActs._k !== k) learnActs = { _k: k };
     learnActs[name] = (learnActs[name] || 0) + 1;
   } catch (e) {}
+}
+/* The current card's acts, zeros and the key left out; null when there are none. */
+function learnActsNow() {
+  if (learnActs._k !== learnActsKey()) return null;
+  const out = {};
+  Object.keys(learnActs).forEach(x => { if (x !== "_k" && learnActs[x]) out[x] = learnActs[x]; });
+  return Object.keys(out).length ? out : null;
 }
 
 /* The per-word marks as the APP set them — mic alignment, then AI softening — before
@@ -35470,7 +35495,7 @@ function learnGrade(grade) {
      each individual word banks. */
   /* Before the hint cap: it is HIS grade against the app's that counts as an override. */
   if ((learnSuggested === 0 || learnSuggested === 1 || learnSuggested === 2) && grade !== learnSuggested)
-    learnActs.o = (learnActs.o || 0) + 1;
+    learnAct("o");
   const helped = learnHints > 0;
   if (helped) grade = Math.min(grade, 1);
   /* A chunk's SRS key is the whole phrase, which is deliberately NOT a library
@@ -35537,7 +35562,7 @@ function learnCommit() {
       if (sg !== null) extra.sg = sg;
       /* His mark against the app's, before any hint cap — a capped grade is not a choice. */
       const mine = MARK_GRADE[m];
-      if (sg !== null && sg !== mine) learnActs.o = (learnActs.o || 0) + 1;
+      if (sg !== null && sg !== mine) { learnAct("o"); extra.ov = 1; }
       /* What he said in this slot, and a first guess at what kind of slip it was —
          only where there is something to explain: a word not got, or a grade he moved. */
       if (learnSpoken && Array.isArray(learnSpoken.heard) &&
@@ -36717,6 +36742,7 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     const slow = ev.shiftKey;   // Shift+R: the same deliberately-slow pass the "slowly" button gives
     const c = learnSession.cards[learnSession.i];
+    learnAct("r");
     if (learnRevealed) playHe(cardAudioKey(c, "answer"), c.kind === "word" ? c.key : learnExpectedHe(c), slow);   // a chunk card has no item
     else learnSpeakPrompt(slow);
   } else if (learnRevealed && !learnCardTokens &&
@@ -43377,12 +43403,26 @@ T("composePrompt: the why line has to be readable by someone who cannot read Heb
   assertTrue(why.indexOf("transliteration") !== -1, "the why line must be transliterated");
   assertTrue(why.indexOf("brackets") !== -1, "with the English alongside it");
 });
+T("evidence: what he does on a card is counted for that card only", () => {
+  const saved = [learnSession, learnActs];
+  try {
+    learnSession = { jid: "j1", i: 0, cards: [] };
+    learnActs = {};
+    assertNull(learnActsNow(), "nothing yet");
+    learnAct("w"); learnAct("w"); learnAct("cb");
+    assertEq(learnActsNow(), { w: 2, cb: 1 }, "two word panels, coach before the answer");
+    learnSession.i = 1;
+    assertNull(learnActsNow(), "the next card starts clean");
+    learnAct("r");
+    assertEq(learnActsNow(), { r: 1 }, "and counts its own");
+  } finally { [learnSession, learnActs] = saved; }
+});
 T("evidence: the weekly summary counts every answer, first meetings included", () => {
   assertEq(weekOf("2026-11-04"), "2026-11-02", "a Wednesday's week starts Monday");
   assertEq(weekOf("2026-11-02"), "2026-11-02", "Monday is its own week");
   assertEq(weekOf("2026-11-08"), "2026-11-02", "Sunday belongs to the week before");
   const s = {};
-  wordWeekBump(s, "הלכתי", "prod", 0, { sg: 2 }, true, "2026-11-04");
+  wordWeekBump(s, "הלכתי", "prod", 0, { sg: 2, ov: 1 }, true, "2026-11-04");
   wordWeekBump(s, "הלכתי", "prod", 1, { h: 1 }, false, "2026-11-05");
   wordWeekBump(s, "הלכתי", "recv", 2, {}, false, "2026-11-05");
   assertEq(s["2026-11-02"]["הלכתי"], [2, 1, 1, 1, 1, 1], "answers, missed, nearly, hinted, overridden, first");

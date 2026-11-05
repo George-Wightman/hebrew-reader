@@ -24,6 +24,7 @@ the baseline when checking a new batch).
 | `introcov.js [batch.json …]` | Unseen, servable intro sentences for the next words the session will launch. |
 | `scenegate.js scenes.json` | `sceneAcceptable` for each pre-written scene against its node, with the words that were not within reach. |
 | `vocab.js` | His strong and progressing words with verified forms and the `{UNPROVEN}` mark — what to write from. Writes `vocab.txt` in the working directory. |
+| `report.js [weeks]` | The weekly coaching report: practice and where sessions ended, accuracy by card and time of day, mic suggestions he overrode, hints, kinds of slip and "said X for Y", most-missed words, help-seeking per card, coach Hebrew share and words produced, word trends, and where he stands now. Read it when he asks how he is doing. |
 | `suspects.js` | Library entries that misroute: prefix+grammar keys, keys that are forms of other keys, grammar words resolving elsewhere. |
 
 Run them from the scratch folder, so candidate files and outputs land there too.

@@ -10161,6 +10161,7 @@ function remindersPaint() {
   btn.disabled = !remindersSupported();
   desc.textContent = !remindersSupported() ? "This browser can't receive them."
     : on ? (syncConfigured() ? "On, on this device." : "On, but sync is off, so the planner can't see them yet.")
+    : mine && mine.off && mine.lost ? "The phone switched these off (" + new Date(mine.ts).toLocaleDateString() + "). Check Android Settings → Apps → this app → Notifications, then turn on."
     : Notification.permission === "denied" ? "Blocked: allow notifications for this app in the phone's settings, then turn on."
     : "Off. A nudge from your phone on days you haven't practised yet.";
 }
@@ -10182,6 +10183,55 @@ async function remindersOff() {
     if (sub) await sub.unsubscribe();
   } catch (e) { /* the entry below is what the planner reads */ }
   lsSet(PUSH_KEY, pushStoreWith(lsGet(PUSH_KEY), syncDeviceId(), { off: true, ts: Date.now() }));
+}
+/* CHECKED ON EVERY OPEN (2026-11-09). His phone's subscription twice died within a day of
+   being made, Google answered the planner "no such subscription", the planner retired it
+   in silence, and this row went on saying "On" for days. The browser is the only thing
+   that knows the truth, so ask it each time the app opens and compare with what was
+   published. Pure: returns what to do, the caller does it.
+     "ok"       - nothing to do
+     "lost"     - permission is no longer granted: publish off, and say so
+     "renew"    - permission granted but the subscription is gone: make a new one
+     "changed"  - the browser holds a different subscription than the one published */
+function remindersDrift(mine, permission, sub) {
+  if (!mine || mine.off) return "ok";
+  if (permission !== "granted") return "lost";
+  if (!sub) return "renew";
+  const j = typeof sub.toJSON === "function" ? sub.toJSON() : sub;
+  return j && j.endpoint === mine.endpoint ? "ok" : "changed";
+}
+async function remindersCheck() {
+  if (!remindersSupported()) return;
+  const mine = pushMine();
+  if (!mine || mine.off) return;
+  let reg, sub;
+  try {
+    reg = await navigator.serviceWorker.ready;
+    sub = await reg.pushManager.getSubscription();
+  } catch (e) { return; }
+  const drift = remindersDrift(mine, Notification.permission, sub);
+  if (drift === "ok") return;
+  /* Recorded in hvr_health so the cause reaches Claude through the sync: "lost" with
+     the permission state means Android or Chrome took the permission away; "renew"
+     means the permission held and the subscription was dropped anyway. */
+  healthNote("push-" + drift, "permission " + Notification.permission + ", subscription " + (sub ? "present" : "none"));
+  if (drift === "lost") {
+    lsSet(PUSH_KEY, pushStoreWith(lsGet(PUSH_KEY), syncDeviceId(), { off: true, lost: Notification.permission, ts: Date.now() }));
+  } else {
+    try {
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: pushKeyBytes(PUSH_VAPID_PUBLIC) });
+      const record = pushRecordFor(sub);
+      if (record) lsSet(PUSH_KEY, pushStoreWith(lsGet(PUSH_KEY), syncDeviceId(), record));
+    } catch (e) {
+      healthNote("push-renew-failed", String(e && e.message || e).slice(0, 120));
+      return;
+    }
+  }
+  remindersPaint();
+  if (syncConfigured()) syncRun("reminders", { pushOnly: true, quiet: true }).catch(() => {});
+}
+if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0 && !/[?&]selftest\b/.test(location.search)) {
+  window.addEventListener("load", () => { setTimeout(() => { remindersCheck().catch(() => {}); }, 3000); });
 }
 document.getElementById("remindersBtn").onclick = settingsAction(async () => {
   const mine = pushMine();
@@ -44617,6 +44667,18 @@ T("reminders: a subscription is kept per device, and turning one off leaves the 
   const merged = JSON.parse(mergeKeyMap({ hvr_push: pushStoreWith("{}", "phone", rec) }, { hvr_push: pushStoreWith("{}", "laptop", rec) }, "2", "1").hvr_push);
   assertEq(Object.keys(merged).sort(), ["laptop", "phone"]);
   assertEq(pushKeyBytes(PUSH_VAPID_PUBLIC).length, 65);
+});
+T("reminders: on open, a published subscription the browser no longer holds is caught", () => {
+  const mine = { endpoint: "https://fcm.googleapis.com/fcm/send/x", off: false };
+  const same = { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: {} };
+  const other = { toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/y", keys: {} }) };
+  assertEq(remindersDrift(mine, "granted", same), "ok");
+  assertEq(remindersDrift(mine, "granted", null), "renew", "permission held, subscription gone");
+  assertEq(remindersDrift(mine, "default", same), "lost", "the permission was taken away");
+  assertEq(remindersDrift(mine, "denied", null), "lost");
+  assertEq(remindersDrift(mine, "granted", other), "changed");
+  assertEq(remindersDrift({ off: true }, "denied", null), "ok", "off is off: nothing to check");
+  assertEq(remindersDrift(null, "granted", null), "ok");
 });
 
 T("syncRun pushOnly: a flag reaches GitHub mid-drill without pulling data down over it", async () => {

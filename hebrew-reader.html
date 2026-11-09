@@ -20684,7 +20684,7 @@ function matchMeaning(guess, expectedEn) {
   if (!need || !said) return null;
   return said === need ? "good" : "uncertain";
 }
-function learnCheckMeaning(noteEl, expectedEn) {
+function learnCheckMeaning(noteEl, expectedEn, c) {
   const verdict = matchMeaning(noteEl.value, expectedEn);
   learnSuggested = verdict === "good" ? 2 : null;
   if (!verdict) return;
@@ -20693,6 +20693,80 @@ function learnCheckMeaning(noteEl, expectedEn) {
   v.textContent = verdict === "good" ? "✓ Matches the model answer."
     : "Different wording — compare the meaning below and choose your grade.";
   noteEl.insertAdjacentElement("afterend", v);
+  if (verdict === "uncertain" && c && c.kind === "listen" && c.item && learnSession) {
+    v.textContent = "Checking your meaning…";
+    learnAskMeaning(v, c, noteEl.value, learnSession.i).catch(() => {});
+  }
+}
+
+/* ---- the meaning check (2026-11-09) -------------------------------------------
+   Exact wording was the only thing that could suggest a grade, so every other answer
+   left every chip at "got it" and banked it so. George, on a card where he had the
+   words but not quite the sense: "I didn't get this perfect, I got it close… I don't
+   really know how to change the mark." One cheap call judges the MEANING, word by word,
+   and fills the chips as a suggestion — the same standing the mic's alignment has on a
+   sentence card. Spec: 2026-11-09-listen-meaning-and-kept-answers-design.md. */
+let learnMeaningNote = "";       // the check's one line, when his meaning differed; kept in the journal
+let learnMarksTouched = {};      // chips he set himself: the check never overwrites them
+function meaningCheckPrompt(item, answer, tokens) {
+  const words = (tokens || []).map((t, i) => i + ": " + t.he + " (" + t.tr + ")").join("\n");
+  return "An English speaker learning Hebrew heard this Hebrew sentence and said what he thought it meant.\n\n" +
+    "Hebrew: " + item.he + "\nTransliteration: " + item.tr + "\nMeaning: \"" + (item.en || "") + "\"\n" +
+    "His answer: \"" + String(answer || "").slice(0, 300) + "\"\n\n" +
+    (words ? "The Hebrew words, numbered:\n" + words + "\n\n" : "") +
+    "Judge MEANING, not wording: a paraphrase that means the same thing is fully right, and so is " +
+    "loose English word order. For each numbered word say whether his answer shows he understood it: " +
+    "\"got\", \"nearly\" (he had the word but not quite its sense here — wrong tense, person, or a " +
+    "near-synonym that changes the meaning), or \"missed\" (absent, or wrong). Small function words " +
+    "count as got unless his answer clearly contradicts them.\n\n" +
+    "Return JSON only, no markdown: {\"marks\":[\"got\",...],\"grade\":2,\"note\":\"\"}\n" +
+    "marks: one per numbered word, in order (empty list if there are none).\n" +
+    "grade: 2 if the whole meaning landed, 1 if close, 0 if not.\n" +
+    "note: empty if the meaning landed. Otherwise ONE short line to him, saying exactly where his " +
+    "meaning differs, e.g. \"You said 'today' — יום אחד is 'one day'.\"";
+}
+/* Pure: the model's reply, checked, in learnMarks' encoding (0 got, 1 missed, 2 nearly).
+   null when it can't be trusted: a marks list of the wrong length is a different
+   sentence's answer, and a guess dressed as a verdict is worse than no verdict. */
+function meaningMarksFrom(data, n) {
+  if (!data || typeof data !== "object") return null;
+  const code = { got: 0, missed: 1, nearly: 2 };
+  let marks = null;
+  if (n > 0) {
+    if (!Array.isArray(data.marks) || data.marks.length !== n) return null;
+    marks = data.marks.map(m => code[String(m).toLowerCase()]);
+    if (marks.some(m => m === undefined)) return null;
+  }
+  const g = Number(data.grade);
+  const grade = g === 0 || g === 1 || g === 2 ? g : null;
+  if (n === 0 && grade === null) return null;
+  return { marks: marks, grade: grade, note: String(data.note || "").trim().slice(0, 200) };
+}
+async function learnAskMeaning(v, c, answer, askedAt) {
+  const toks = learnTokens(c) || [];
+  let out;
+  try {
+    out = await geminiRequest([{ text: meaningCheckPrompt(c.item, answer, toks) }],
+                              GEMINI_MODELS_FAST, { label: "Checking your meaning" });
+  } catch (e) {
+    if (v.isConnected) v.textContent = "Couldn't check the meaning — compare it below and choose your grade.";
+    return;
+  }
+  /* Stale: he has moved on, and these marks belong to a card that is gone. */
+  if (!learnSession || learnSession.i !== askedAt || learnSession.cards[askedAt] !== c || !v.isConnected) return;
+  const r = meaningMarksFrom(extractJSON(out), learnCardTokens ? learnCardTokens.length : 0);
+  if (!r) { v.textContent = "Couldn't check the meaning — compare it below and choose your grade."; return; }
+  learnMeaningNote = r.note;
+  v.className = "lmeaning " + (r.note ? "uncertain" : "good");
+  v.textContent = r.note ? r.note : "✓ Same meaning.";
+  if (learnCardTokens && r.marks && learnMarks) {
+    r.marks.forEach((m, i) => { if (!learnMarksTouched[i]) learnMarks[i] = m; });
+    learnMarksAuto = r.marks.slice();
+    if (learnPanelCtl) learnPanelCtl.repaint();
+  } else if (!learnCardTokens && r.grade !== null) {
+    learnSuggested = r.grade;
+    if (learnSuggestPaint) learnSuggestPaint();
+  }
 }
 
 /* ---- spaced repetition ----------------------------------------------------- */
@@ -29366,6 +29440,18 @@ function journalOpen(s) {
                  gentle: !!s.gentle, fin: false, feel: "", cards: [] });
   } catch (e) { /* the journal is a record, never a reason a session cannot start */ }
 }
+/* Pure. On a hearing card the box IS the answer (his English meaning, typed or spoken
+   into it); on every other card the transcript is, and the box is a fallback for when
+   he typed rather than spoke. Capped: this rides every sync for a year. */
+function journalAnswerOf(kind, note, spoken, meaningNote) {
+  const typed = String(note || "").trim(), said = String(spoken || "").trim();
+  const a = (isHearKind(kind) ? (typed || said) : (said || typed)).slice(0, 100);
+  const m = String(meaningNote || "").trim().slice(0, 200);
+  if (!a && !m) return 0;
+  const out = { a: a };
+  if (m) out.m = m;
+  return out;
+}
 function journalCard(s, c, clean, sec, hinted) {
   if (!s || !s.jid) return;
   try {
@@ -29374,8 +29460,12 @@ function journalCard(s, c, clean, sec, hinted) {
     if (!e) return;
     /* 6th: what he did beyond answering (learnActsNow), 7th: the bank item. Both added
        2026-11-04; older rows simply have five. */
+    /* 8th (2026-11-09): what he actually said, and the meaning check's note when his
+       meaning differed — so a long-term review can see the errors he keeps making, not
+       just that he made one. 0 when there is nothing to keep. */
     e.cards.push([c.kind, clean ? 1 : 0, sec || 0, hinted ? 1 : 0, (s.jUnready || [])[s.i] || 0,
-                  learnActsNow() || 0, (c.item && c.item.id) ? String(c.item.id).slice(0, 40) : (c.key || "")]);
+                  learnActsNow() || 0, (c.item && c.item.id) ? String(c.item.id).slice(0, 40) : (c.key || ""),
+                  journalAnswerOf(c.kind, learnNote, learnSpoken && learnSpoken.text, learnMeaningNote)]);
     e.end = Date.now();
     journalSave(a);
   } catch (e) {}
@@ -32918,6 +33008,7 @@ function learnRenderCard() {
   learnMarksAuto = null;
   learnHints = 0; learnHinted = {}; learnHintAll = false;
   learnNote = "";                              // and neither must a previous card's help
+  learnMeaningNote = ""; learnMarksTouched = {};
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
   learnSuggestPaint = null;                    // nor a repaint bound to buttons now gone
   /* A listen must never span two cards. Stopping it is not enough on its own — the
@@ -35028,7 +35119,7 @@ function learnReveal() {
   /* Only matching wording suggests Got it. A different answer may be a good
      paraphrase or the opposite meaning; leave its grade to the learner. */
   if (isHearKind(c.kind) && noteEl && noteEl.value.trim()) {
-    learnCheckMeaning(noteEl, en);
+    learnCheckMeaning(noteEl, en, c);
   }
 
   /* Reply is the only kind with a genuinely separate question — qhe/qtr/qen are
@@ -35397,7 +35488,7 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
   [["Missed", 1, "g0"], ["Nearly", 2, "g1"], ["Got it", 0, "g2"]].forEach(([label, mark, cls]) => {
     const b = document.createElement("button");
     b.className = "lgrade " + cls; b.type = "button"; b.textContent = label;
-    b.onclick = () => { learnMarks[i] = mark; close(); };
+    b.onclick = () => { learnMarks[i] = mark; learnMarksTouched[i] = true; close(); };
     grades.append(b);
   });
   panel.append(grades);
@@ -47401,6 +47492,61 @@ T("meaning: uncertain feedback clears a suggestion and never claims an answer is
     learnCheckMeaning(input, "");
     assertNull(learnSuggested);
   } finally { learnSuggested = keep; }
+});
+T("meaning check: the reply is trusted only when it fits this card", () => {
+  assertEq(meaningMarksFrom({ marks: ["got", "nearly", "missed"], grade: 1, note: " You said today " }, 3),
+           { marks: [0, 2, 1], grade: 1, note: "You said today" }, "in learnMarks' encoding");
+  assertNull(meaningMarksFrom({ marks: ["got", "got"], grade: 2 }, 3), "another sentence's answer");
+  assertNull(meaningMarksFrom({ marks: ["got", "maybe", "got"], grade: 2 }, 3), "an unknown mark is no mark");
+  assertNull(meaningMarksFrom(null, 3));
+  assertEq(meaningMarksFrom({ marks: [], grade: 2, note: "" }, 0), { marks: null, grade: 2, note: "" }, "no chips: the card's grade");
+  assertNull(meaningMarksFrom({ grade: 7 }, 0), "no chips and no grade is nothing");
+  const p = meaningCheckPrompt({ he: "יום אחד", tr: "yom ekhad", en: "One day" }, "today",
+                               [{ he: "יום", tr: "yom" }, { he: "אחד", tr: "ekhad" }]);
+  assertTrue(p.indexOf("\"today\"") !== -1 && p.indexOf("0: יום (yom)") !== -1 && p.indexOf("1: אחד (ekhad)") !== -1);
+  assertTrue(/paraphrase/.test(p), "meaning, not wording");
+});
+T("meaning check: fills the chips he hasn't touched, records them as the app's, and ignores a card he left", async () => {
+  const keep = [learnSession, learnCardTokens, learnMarks, learnMarksAuto, learnMarksTouched, learnMeaningNote, learnPanelCtl, geminiRequest];
+  const c = { kind: "listen", item: { id: "x", he: "יום אחד אני רוצה", tr: "yom ekhad ani rotze", en: "One day I want" } };
+  const v = document.createElement("div"); document.body.append(v);
+  try {
+    learnSession = { i: 3, cards: [{}, {}, {}, c] };
+    learnCardTokens = [{}, {}, {}, {}];
+    learnMarks = [0, 0, 0, 0];
+    learnMarksTouched = { 2: true };            // he marked the third word himself
+    learnMarks[2] = 1;
+    let repainted = 0;
+    learnPanelCtl = { repaint: () => repainted++, close: () => {} };
+    geminiRequest = async () => JSON.stringify({ marks: ["nearly", "got", "got", "got"], grade: 1, note: "You said 'today'; it's 'one day'." });
+    await learnAskMeaning(v, c, "today I want", 3);
+    assertEq(learnMarks, [2, 0, 1, 0], "his own mark stands");
+    assertEq(learnMarksAuto, [2, 0, 0, 0], "the app's suggestion, so sg/ov can tell who decided");
+    assertEq(learnMeaningNote, "You said 'today'; it's 'one day'.");
+    assertTrue(v.textContent.indexOf("one day") !== -1 && repainted === 1);
+    /* He moved on before the answer came back: nothing is touched. */
+    learnSession = { i: 4, cards: [{}, {}, {}, c, {}] };
+    learnMarks = [0, 0, 0, 0]; learnMeaningNote = "";
+    await learnAskMeaning(v, c, "today I want", 3);
+    assertEq(learnMarks, [0, 0, 0, 0]);
+    assertEq(learnMeaningNote, "");
+    /* The call fails: the card behaves as before, and says so. */
+    learnSession = { i: 3, cards: [{}, {}, {}, c] };
+    geminiRequest = async () => { throw new Error("offline"); };
+    await learnAskMeaning(v, c, "today I want", 3);
+    assertEq(learnMarks, [0, 0, 0, 0]);
+    assertTrue(v.textContent.indexOf("Couldn't check") !== -1);
+  } finally {
+    v.remove();
+    [learnSession, learnCardTokens, learnMarks, learnMarksAuto, learnMarksTouched, learnMeaningNote, learnPanelCtl, geminiRequest] = keep;
+  }
+});
+T("journal: each card keeps what he said, and the meaning check's note", () => {
+  assertEq(journalAnswerOf("listen", "  today I want to go  ", "", "You said 'today'."), { a: "today I want to go", m: "You said 'today'." });
+  assertEq(journalAnswerOf("sentence", "scratch", "ani rotze", ""), { a: "ani rotze" }, "spoken wins on a saying card");
+  assertEq(journalAnswerOf("word", "typed it", "", ""), { a: "typed it" }, "typed when he didn't speak");
+  assertEq(journalAnswerOf("listen", "", "", ""), 0, "nothing to keep");
+  assertEq(journalAnswerOf("listen", "x".repeat(300), "", "").a.length, 100, "capped: it syncs for a year");
 });
 
 /* ---- Atlas (2026-09-23) ------------------------------------------------------- */

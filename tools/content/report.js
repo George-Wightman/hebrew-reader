@@ -92,6 +92,16 @@ const out = run(`(() => {
       L.push("  on " + nCards + " cards: coach before answering " + acts.cb + ", after " + acts.ca + " · word meanings " + acts.w + " · why " + acts.y + " · replays " + acts.r + " · grades moved " + acts.o);
     else L.push("  help-seeking: not recorded before 2026-11-04");
 
+    /* 7b. Meaning slips: listen cards where the meaning check said his sense was off
+       (the journal's 8th element, since 2026-11-09). His words, then the check's note. */
+    const slips = [];
+    J.forEach(j => (j.cards || []).forEach(c => { const x = c[7]; if (x && typeof x === "object" && x.m) slips.push(x); }));
+    const kept = J.reduce((s, j) => s + (j.cards || []).filter(c => c[7] && typeof c[7] === "object").length, 0);
+    if (slips.length) {
+      L.push("  meaning slips: " + slips.length);
+      slips.slice(0, 8).forEach(x => L.push('    "' + x.a + '" -> ' + x.m));
+    } else if (kept) L.push("  meaning slips: none (" + kept + " answers kept)");
+
     /* 8. The coach */
     if (C.length) {
       const he = C.reduce((s, c) => s + c.he, 0), enw = C.reduce((s, c) => s + c.en, 0);

@@ -93,6 +93,14 @@ def main():
             pos[third][0] += 1; pos[third][1] += c[1]
     print("\nclean by position: " + ", ".join(f"{k} {v[1] / v[0]:.0%}" for k, v in pos.items() if v[0]))
 
+    # What he actually said, kept since 2026-11-09: the journal card's 8th element,
+    # {a: his answer, m: the meaning check's note when his sense was off}.
+    slips = [c[7] for e in rows for c in (e.get("cards") or []) if len(c) > 7 and isinstance(c[7], dict) and c[7].get("m")]
+    if slips:
+        print(f"\n== meaning slips ({len(slips)}) ==")
+        for x in slips[-10:]:
+            print(f'  "{x.get("a", "")}" -> {x["m"]}')
+
 
 if __name__ == "__main__":
     main()

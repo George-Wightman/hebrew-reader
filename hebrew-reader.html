@@ -764,6 +764,7 @@
      one voice on paper and in a panel alike. */
   .uh-ansa { font-family: var(--display); font-size: .92rem; line-height: 1.55;
              white-space: pre-wrap; }
+  .uh-ansa .uh-word { background: var(--accent-soft); border-radius: 4px; padding: 0 3px; }
   .uh-ansa.bad { color: var(--bad); font-family: inherit; font-size: .86rem; }
   .uh-ans .uh-note { margin-top: 7px; }
   /* AN EARLIER SITTING. Readable and copyable, never sent — George: "if it was a
@@ -1660,6 +1661,9 @@
   .lchipw.miss { background: var(--c-fbe4e2); color: var(--c-b3403a); border-color: var(--c-e0a9a4); text-decoration: line-through; }
   .lchipw.near { background: var(--c-fdf0e7); color: var(--c-a86a34); border-color: var(--unknown-border); }
   .lchipw.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* The word the coach's last answer was about. Dashed, so it never reads as the open
+     word (.active) or as a mark (.miss, .near): it is a pointer, not a grade. */
+  .lchipw.coachword { outline: 2px dashed var(--accent); outline-offset: 2px; }
   .ltaphint { color: var(--muted); font-size: .78rem; margin-top: 9px; }
 
   /* One shared panel for the tapped word — replaced, never stacked, so the card
@@ -1678,6 +1682,7 @@
   .lwd-grades { display: flex; gap: 7px; justify-content: center; margin-top: 11px; flex-wrap: wrap; }
   .lwd-grades .lgrade { padding: 6px 14px; font-size: .84rem; }
   .lwd-miss { color: var(--muted); font-size: .85rem; }
+  .lwd-base { color: var(--muted); font-size: .82rem; margin-top: 2px; }
 
   /* Scratch space for the two card kinds whose prompt is spoken once and then gone.
      Never graded, never saved — it exists so working memory isn't the bottleneck. */
@@ -17458,9 +17463,9 @@ function uhTurnBlock(turn, past) {
   box.append(q);
   const a = document.createElement("div");
   a.className = "uh-ansa" + (turn.err ? " bad" : "");
-  a.textContent = turn.busy ? "Thinking…"
-                : turn.err ? "Could not ask: " + turn.err
-                : turn.a;
+  if (turn.busy) a.textContent = "Thinking…";
+  else if (turn.err) a.textContent = "Could not ask: " + turn.err;
+  else coachAnswerFill(a, turn.a, turn.word);
   box.append(a);
   /* NOT RIGHT, on the answer it is about. George: "the answers its been giving seem to be
      kinda poop aswell". Tuning the prompt needs the actual bad answers, and they never
@@ -17627,6 +17632,7 @@ function coachTidy(v) {
   if (!v || typeof v !== "object") return out;
   const turn = t => ({ q: String((t && t.q) || ""), a: String((t && t.a) || ""),
                        err: String((t && t.err) || ""), subject: String((t && t.subject) || ""),
+                       word: String((t && t.word) || ""),
                        ts: Number((t && t.ts) || 0) || 0 });
   if (Array.isArray(v.live)) out.live = v.live.filter(Boolean).map(turn).slice(-COACH_TURN_MAX);
   out.liveAt = Number(v.liveAt) || 0;
@@ -17816,7 +17822,12 @@ function coachPrompt(rep, thread, subject, question, who, asr, attempt, focus) {
     "— never hair, which reads as the English word.\n" +
     "- ve- for ו as it is really spoken, not the formal u- or va-: ve'ani, vegvina.\n" +
     "- No diacritics, and no nikud on the Hebrew.\n\n" +
-    "Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
+    "Be brief — two or three sentences unless he asked for detail. He is on a phone.\n\n" +
+    /* {answer, word}: the app rings `word` on the card and in the answer, so the one
+       thing the answer turns on is the thing his eye lands on (2026-11-11). */
+    "ANSWER AS JSON ONLY, no markdown: {\"answer\": \"...\", \"word\": \"...\"}\n" +
+    "answer = what you say to him. word = the ONE Hebrew word the answer turns on, in Hebrew " +
+    "script exactly as it appears on his card or in your answer, or \"\" if there is none.\n" +
     /* Labelled by what the turn was about, and flagged when that is not what is on his
        screen now: "card 24" told the model nothing, and an old answer about another
        sentence read as though it were about this one. */
@@ -17852,6 +17863,40 @@ function coachPrompt(rep, thread, subject, question, who, asr, attempt, focus) {
     "\n\n=== HIS QUESTION ===\n" + question;
 }
 
+/* The model's reply as {answer, word}. A reply that is not that JSON is still an answer —
+   the raw text, with nothing to ring — never a failure. Pure. */
+function coachParseAnswer(raw) {
+  const text = String(raw || "").trim();
+  let data = null;
+  try { data = extractJSON(text); } catch (e) {}
+  if (data && typeof data === "object" && typeof data.answer === "string" && data.answer.trim())
+    return { answer: data.answer.trim(), word: String(data.word || "").trim() };
+  return { answer: text, word: "" };
+}
+/* Same word, whatever the nikud, final letters or punctuation. Pure. */
+function coachWordNorm(w) {
+  return String(w || "").replace(/[\u0591-\u05C7]/g, "")
+    .replace(/[^\u05D0-\u05EA]/g, "").replace(/[ךםןףץ]/g, ch => ({ "ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ" })[ch]);
+}
+function coachSameWord(a, b) {
+  const x = coachWordNorm(a);
+  return !!x && x === coachWordNorm(b);
+}
+/* The answer's text with `word` ringed wherever it appears. textContent pieces only — the
+   answer is model output and never becomes markup. */
+function coachAnswerFill(el, text, word) {
+  el.textContent = "";
+  const w = String(word || "").trim();
+  if (!w || String(text).indexOf(w) === -1) { el.textContent = text; return; }
+  String(text).split(w).forEach((part, i) => {
+    if (i) {
+      const m = document.createElement("span");
+      m.className = "uh-word"; m.textContent = w;
+      el.append(m);
+    }
+    if (part) el.append(document.createTextNode(part));
+  });
+}
 function uhAskParts(rep, question, thread, subject, asr, attempt, focus) {
   return [{ text: coachPrompt(rep, thread, subject, question, null, asr, attempt, focus) }];
 }
@@ -17893,7 +17938,7 @@ async function uhAsk(rep, question, at, asr) {
   coachSave(store);
   coachBusy = { q: question, subject: subject };
   coachPaint();
-  let a = "", err = "";
+  let a = "", err = "", word = "";
   try {
     /* FLASH AGAIN (2026-11-11), while the strong pool is above its reserve. This call ran
        on the Lite-first list on the theory that the coach would be asked all day, and it
@@ -17906,13 +17951,20 @@ async function uhAsk(rep, question, at, asr) {
        so it is only his last try when the question was asked FROM that card. */
     const card = coachCardContext(here);
     const parts = uhAskParts(rep, question, store.live, subject, asr, card.attempt, card.focus);
-    a = String(await geminiRequest(parts, aiModelsFor("coach"),
-                                   { label: "The coach — a question" }) || "").trim();
+    const got = coachParseAnswer(String(await geminiRequest(parts, aiModelsFor("coach"),
+                                   { label: "The coach — a question" }) || ""));
+    a = got.answer; word = got.word;
   } catch (e) {
     err = (e && e.message) || String(e);
   }
-  store = coachAppend(coachAll(), { q: question, a: a, err: err,
+  store = coachAppend(coachAll(), { q: question, a: a, err: err, word: word,
                                     subject: subject, ts: Date.now() }, Date.now());
+  /* Ring it on the card he asked from. learnCoachWord is per card, so a later card is
+     never ringed by an answer about this one. */
+  if (here.kind === "card" && word) {
+    learnCoachWord = word;
+    try { learnPanelCtl.repaint(); } catch (e) {}
+  }
   coachSave(store);
   coachBusy = null;
   coachPaint();
@@ -20811,6 +20863,7 @@ function learnCheckMeaning(noteEl, expectedEn, c) {
    really know how to change the mark." One cheap call judges the MEANING, word by word,
    and fills the chips as a suggestion — the same standing the mic's alignment has on a
    sentence card. Spec: 2026-11-09-listen-meaning-and-kept-answers-design.md. */
+let learnCoachWord = "";        // the word the coach's last answer was about, ringed on the chips
 let learnTapped = null;          // {he, tr, en, why}: the word he last tapped on this card, for the coach
 let learnMeaningNote = "";       // the check's one line, when his meaning differed; kept in the journal
 let learnMarksTouched = {};      // chips he set himself: the check never overwrites them
@@ -33114,7 +33167,7 @@ function learnRenderCard() {
   learnMarksAuto = null;
   learnHints = 0; learnHinted = {}; learnHintAll = false;
   learnNote = "";                              // and neither must a previous card's help
-  learnMeaningNote = ""; learnMarksTouched = {}; learnTapped = null;
+  learnMeaningNote = ""; learnMarksTouched = {}; learnTapped = null; learnCoachWord = "";
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
   learnSuggestPaint = null;                    // nor a repaint bound to buttons now gone
   /* A listen must never span two cards. Stopping it is not enough on its own — the
@@ -35359,7 +35412,8 @@ function learnReveal() {
       const paint = () => {
         chip.className = "lchipw" + (long ? " long" : "") +
           (learnMarks[i] === 1 ? " miss" : learnMarks[i] === 2 ? " near" : "") +
-          (openIdx === i ? " active" : "");
+          (openIdx === i ? " active" : "") +
+          (coachSameWord(learnCoachWord, t.he) ? " coachword" : "");
         chip.title = learnMarks[i] === 1 ? "Marked wrong"
                    : learnMarks[i] === 2 ? "Marked nearly"
                    : "Tap to see what it means, or to mark it";
@@ -35492,7 +35546,8 @@ function learnWordInfo(tok, item) {
     he: tok.he,
     tr: (g && g.tr) || tok.tr || (e && e.tr) || (d && !of ? String(d[0]).split("/")[0] : ""),
     en: en && of ? "form of " + of + " (" + String(d[0]).split("/")[0] + "): " + en : en,
-    why: (g && g.why) || ""
+    why: (g && g.why) || "",
+    here: (g && g.here) || ""
   };
 }
 
@@ -35527,6 +35582,7 @@ function learnSaveGloss(item, he, patch) {
   if (patch.tr && !g.tr) g.tr = patch.tr;
   if (patch.en && !g.en) g.en = patch.en;
   if (patch.why) g.why = patch.why;
+  if (patch.here) g.here = patch.here;
   const bank = bankAll();
   const b = bank.filter(x => x.id === item.id)[0];
   if (b) { b.gloss = item.gloss; bankSave(bank); }
@@ -35535,16 +35591,27 @@ function learnSaveGloss(item, he, patch) {
 function learnFillWordPanel(panel, tok, c, i, repaint, close) {
   const info = learnWordInfo(tok, c.item);
   panel.innerHTML = "";
+  panel.dataset.he = tok.he;
+  /* The coach reads this: "this word" in his next question means the one he just opened. */
+  learnTapped = { he: tok.he, tr: info.tr, en: info.here || info.en, why: info.why };
 
   const he = document.createElement("div");
   he.className = "lwd-he"; he.dir = "rtl"; he.textContent = info.he;
   const tr = document.createElement("div"); tr.className = "lwd-tr"; tr.textContent = info.tr;
   panel.append(he, tr);
 
+  /* IN THIS SENTENCE FIRST. The dictionary sense follows only when it says something
+     the sentence sense does not. */
+  const asking = !info.here && !info.why && !!c.item && geminiKeys().length > 0;
   const en = document.createElement("div");
-  en.className = "lwd-en" + (info.en ? "" : " lwd-miss");
-  en.textContent = info.en || "Not one of your words yet.";
-  panel.append(en);
+  en.className = "lwd-en" + (info.here || info.en ? "" : " lwd-miss");
+  en.textContent = info.here || info.en || (asking ? "" : "Not one of your words yet.");
+  if (en.textContent) panel.append(en);
+  if (info.here && info.en && info.here.toLowerCase().indexOf(info.en.toLowerCase()) === -1) {
+    const base = document.createElement("div"); base.className = "lwd-base";
+    base.textContent = "on its own: " + info.en;
+    panel.append(base);
+  }
 
   if (info.why) {
     const w = document.createElement("div"); w.className = "lwd-why"; w.textContent = info.why;
@@ -35564,12 +35631,14 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
      together into "Why is it this word?Ask the coach" on the first card that showed both. */
   if (geminiKeys().length) {
     const links = document.createElement("div"); links.className = "lwd-links";
-    if (!info.why && c.item) {
+    /* Asked straight away now, not behind a button (2026-11-11): "if we could have that
+       for like, every word … in the grand scheme of 500 calls a day, it's not the end of
+       the world." The button is the status line while it runs, and the retry if it fails. */
+    if (asking) {
       const ask = document.createElement("button");
       ask.className = "linkbtn"; ask.type = "button";
-      ask.textContent = "Why is it this word?";
-      ask.onclick = () => learnExplainWord(ask, panel, tok, c);
       links.append(ask);
+      learnExplainWord(ask, panel, tok, c);
     }
     const coach = document.createElement("button");
     coach.className = "linkbtn"; coach.type = "button";
@@ -35609,27 +35678,46 @@ function learnFillWordPanel(panel, tok, c, i, repaint, close) {
    strong pool was never buying anything here, and two taps on a card used to cost a
    tenth of the day's transcription budget. (It had a twin in learnWhy, the sentence-level
    "why is it phrased like that", until that became a handoff to the coach on 2026-09-08.) */
+/* WHAT IT MEANS HERE, asked on every tap that has nothing saved (2026-11-11). George:
+   "maybe I understand what this word might mean in isolation, but in the sentence, what
+   does this word mean? … It's usually when it's got a prefix or a suffix." So `here` is
+   the meaning in this sentence with any prefix or suffix spelled out, which is the thing
+   a dictionary entry and "Not one of your words yet" both fail to say. Asked once per
+   word per item: the answer is saved on the item, and LEARN_WORD_ASKED stops a second
+   tap re-asking while the first is in flight. */
+const LEARN_WORD_ASKED = {};
+function learnExplainPrompt(item, he) {
+  return "An English speaker learning to SPEAK conversational Hebrew tapped one word in this " +
+    "sentence:\n\n" + item.he + "\n" + (item.tr || "") + "\n\"" + (item.en || "") + "\"\n\n" +
+    "The word he tapped: " + he + "\n\n" +
+    "Return JSON only, no markdown: {\"tr\":\"\",\"here\":\"\",\"en\":\"\",\"why\":\"\"}\n" +
+    "tr = how that one word is pronounced, plain English letters, no diacritics. Use kh for " +
+    "ח and כ, and join a prefix to the word with an apostrophe before a vowel: bakheder, ha'ir.\n" +
+    "here = what this word means IN THIS SENTENCE, in a few words. If it carries a prefix or " +
+    "suffix, split it out: \"to him (le- 'to' + -o 'him')\", \"in the room (ba- 'in the' + kheder " +
+    "'room')\", \"that I (she- 'that' + ani 'I')\".\n" +
+    "en = the base word's own dictionary meaning.\n" +
+    "why = one short sentence on why it takes this form here — tense, gender or number " +
+    "agreement, word order, or an idiom that doesn't translate literally — so the rule " +
+    "carries into his next sentence. Empty if there is nothing special about its form.";
+}
 async function learnExplainWord(btn, panel, tok, c) {
+  const askKey = (c.item.id || c.item.he) + "|" + tok.he;
+  if (LEARN_WORD_ASKED[askKey]) return;
+  LEARN_WORD_ASKED[askKey] = true;
   learnAct("y");
-  btn.disabled = true; btn.textContent = "Asking…";
-  busy(true);
+  btn.disabled = true; btn.textContent = "Checking what it means here…";
   try {
-    const out = await geminiRequest([{ text:
-      "An English speaker learning to SPEAK conversational Hebrew tapped one word in this " +
-      "sentence:\n\n" + c.item.he + "\n" + c.item.tr + "\n\"" + (c.item.en || "") + "\"\n\n" +
-      "The word he tapped: " + tok.he + "\n\n" +
-      "Return JSON only, no markdown: {\"tr\":\"\",\"en\":\"\",\"why\":\"\"}\n" +
-      "tr = how that one word is pronounced, plain English letters, no diacritics.\n" +
-      "en = what that one word means on its own.\n" +
-      "why = one or two short sentences on why it takes this form here — tense, an attached " +
-      "prefix, gender or number agreement, word order, or an idiom that doesn't translate " +
-      "literally. Give the rule so it carries into his next sentence. If it is an ordinary word " +
-      "with nothing special about its form, say instead what job it does in this sentence."
-    }], GEMINI_MODELS_FAST, { label: "Explaining that word" });
+    const out = await geminiRequest([{ text: learnExplainPrompt(c.item, tok.he) }],
+                                    GEMINI_MODELS_FAST, { label: "Explaining that word" });
     const data = extractJSON(out) || {};
     learnSaveGloss(c.item, tok.he, {
-      tr: String(data.tr || ""), en: String(data.en || ""), why: String(data.why || "")
+      tr: String(data.tr || ""), en: String(data.en || ""), why: String(data.why || ""),
+      here: String(data.here || "")
     });
+    /* He may have closed the panel, opened another word, or moved on by now. The answer
+       is saved either way; only the panel he is still looking at is redrawn. */
+    if (!panel.isConnected || panel.dataset.he !== tok.he) return;
     /* Rebuild rather than patch: the panel now has a new source of truth for the
        pronunciation and meaning too, not just the note. Reuses the live card's own
        repaint/close — rebuilding with throwaway callbacks would leave the grade
@@ -35638,9 +35726,12 @@ async function learnExplainWord(btn, panel, tok, c) {
     learnFillWordPanel(panel, tok, c, idx, learnPanelCtl.repaint, learnPanelCtl.close);
     syncPadOffset();
   } catch (e) {
+    /* Free to ask again on the next tap: a failure is not an answer. */
+    delete LEARN_WORD_ASKED[askKey];
     btn.disabled = false;
-    btn.textContent = /limit/.test(e.message) ? "Daily AI limit reached" : "Couldn't ask — " + e.message;
-  } finally { busy(false); }
+    btn.textContent = /limit/.test(e.message) ? "Daily AI limit reached" : "Couldn't check — tap to try again";
+    btn.onclick = () => learnExplainWord(btn, panel, tok, c);
+  }
 }
 
 /* Help is always available and always honest about what it cost: a hinted answer can
@@ -41096,6 +41187,74 @@ T("coachAttemptText: a hearing card sends his English answer and the meaning che
   assertTrue(a.indexOf("רק is 'just'") !== -1);
   assertTrue(coachAttemptText(null, { answer: "the coffee is bad", note: "" })
              .indexOf("found his meaning right") !== -1);
+});
+T("coachParseAnswer: {answer, word}, and plain text is still an answer", () => {
+  assertEq(JSON.stringify(coachParseAnswer('{"answer": "It is לו, to him.", "word": "לו"}')),
+           JSON.stringify({ answer: "It is לו, to him.", word: "לו" }));
+  assertEq(coachParseAnswer('```json\n{"answer":"x","word":""}\n```').answer, "x", "fenced is fine");
+  const plain = coachParseAnswer("Just text, no JSON.");
+  assertEq(plain.answer, "Just text, no JSON."); assertEq(plain.word, "");
+  assertEq(coachParseAnswer('{"word":"לו"}').answer, '{"word":"לו"}', "no answer field: the raw reply, not nothing");
+  assertTrue(coachPrompt({ title: "x", sections: [] }, [], "", "q", { gender: "m", level: 2 }, null, "", null)
+             .indexOf("ANSWER AS JSON ONLY") !== -1);
+});
+T("coachSameWord: the same word whatever its nikud, final letters or punctuation", () => {
+  assertTrue(coachSameWord("לו", "לו"));
+  assertTrue(coachSameWord("שלום", "שלומ"), "final mem");
+  assertTrue(coachSameWord("לוֹ", "לו."), "nikud and punctuation");
+  assertTrue(!coachSameWord("לו", "הוא"));
+  assertTrue(!coachSameWord("", ""), "nothing is not a match");
+});
+T("coachAnswerFill: rings the word, and never turns the answer into markup", () => {
+  const el = document.createElement("div");
+  coachAnswerFill(el, "Use לו here — לו means to him. <b>x</b>", "לו");
+  assertEq(el.querySelectorAll(".uh-word").length, 2);
+  assertEq(el.querySelectorAll("b").length, 0, "model text stays text");
+  assertEq(el.textContent, "Use לו here — לו means to him. <b>x</b>");
+  coachAnswerFill(el, "no word here", "לו");
+  assertEq(el.querySelectorAll(".uh-word").length, 0);
+});
+T("learnFillWordPanel: a word with nothing saved asks what it means HERE, once", async () => {
+  const keep = { req: geminiRequest, keys: geminiKeys, toks: learnCardTokens, ctl: learnPanelCtl,
+                 tapped: learnTapped };
+  const item = { id: "selftest-panel-" + Date.now(), he: "אמרתי לו שאני עייף",
+                 tr: "amarti lo she'ani ayef", en: "I told him I'm tired", gloss: [] };
+  const tok = { he: "לו", tr: "lo", key: "" };
+  let calls = 0, release;
+  const gate = new Promise(r => { release = r; });
+  try {
+    geminiKeys = () => ["k"];
+    geminiRequest = async parts => {
+      calls++;
+      assertTrue(parts[0].text.indexOf("IN THIS SENTENCE") !== -1, "asks for the meaning here");
+      await gate;
+      return '{"tr":"lo","here":"to him (le- \'to\' + -o \'him\')","en":"to","why":""}';
+    };
+    learnCardTokens = [tok];
+    learnPanelCtl = { repaint: () => {}, close: () => {} };
+    const panel = document.createElement("div");
+    document.body.append(panel);
+    const c = { item: item };
+    learnFillWordPanel(panel, tok, c, 0, () => {}, () => {});
+    assertEq(calls, 1, "asked on the tap, no button press");
+    assertEq(learnTapped.he, "לו", "and the coach now knows which word he opened");
+    learnFillWordPanel(panel, tok, c, 0, () => {}, () => {});
+    assertEq(calls, 1, "a second tap while the first is out does not ask again");
+    release();
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    assertTrue(panel.textContent.indexOf("to him (le-") !== -1, "the panel shows the meaning here: " + panel.textContent);
+    assertEq(panel.textContent.indexOf("on its own:"), -1,
+             "no base line when the sentence sense already says it ('to' is in 'to him')");
+    assertEq(learnTapped.en, "to him (le- 'to' + -o 'him')", "the coach gets the sentence sense");
+    learnFillWordPanel(panel, tok, c, 0, () => {}, () => {});
+    assertEq(calls, 1, "saved on the item, so never asked twice");
+    panel.remove();
+  } finally {
+    geminiRequest = keep.req; geminiKeys = keep.keys; learnCardTokens = keep.toks;
+    learnPanelCtl = keep.ctl; learnTapped = keep.tapped;
+    delete LEARN_WORD_ASKED[item.id + "|לו"];
+  }
 });
 T("coachScreenText: the card, not the inspector", () => {
   const rep = { title: "Say the whole sentence", subtitle: "אמרתי לו שאני עייף", sections: [

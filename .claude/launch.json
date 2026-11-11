@@ -11,7 +11,7 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8779", "--directory", "C:\\Users\\gwigh\\My Drive (georgewight03@gmail.com)\\Dashboard"],
+      "runtimeArgs": ["-m", "http.server", "8779", "--directory", "../Dashboard"],
       "port": 8779,
       "autoPort": false
     }

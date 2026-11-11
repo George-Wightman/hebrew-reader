@@ -15716,6 +15716,14 @@ const FLAG_MAX = 40;
 /* Trimmed harder than the log's 1200, and three calls rather than twenty: a flag is a
    permanent record that rides every sync, where the log is a transient local one. */
 const FLAG_AI_PREVIEW = 400, FLAG_AI_CALLS = 3;
+/* HEAD AND TAIL of a request, not just the head. Every prompt opens with the same few
+   hundred characters of instructions and ends with what is actually being asked. The
+   10 Nov flag about the coach kept the opening and lost his question. Pure. */
+function flagAiReq(req) {
+  const s = String(req || "");
+  if (s.length <= FLAG_AI_PREVIEW * 2) return s;
+  return s.slice(0, FLAG_AI_PREVIEW / 2) + "\n…\n" + s.slice(-FLAG_AI_PREVIEW * 1.5);
+}
 
 function flagAll() {
   try { const v = JSON.parse(lsGet(FLAG_KEY)); return Array.isArray(v) ? v : []; }
@@ -15941,7 +15949,7 @@ function flagContext(report) {
     c.ai = aiLogAll().slice(0, FLAG_AI_CALLS).map(e => ({
       label: e.label, ok: e.ok, model: e.model, ms: e.ms, err: e.err,
       think: e.think, thoughtTok: e.thoughtTok, outTok: e.outTok, skipped: e.skipped,
-      req: String(e.req || "").slice(0, FLAG_AI_PREVIEW),
+      req: flagAiReq(e.req),
       res: String(e.res || "").slice(0, FLAG_AI_PREVIEW)
     }));
   } catch (e) {}
@@ -17796,18 +17804,19 @@ async function uhAsk(rep, question, at, asr) {
   coachPaint();
   let a = "", err = "";
   try {
-    /* GEMINI_MODELS_FAST, reversing the comment this call used to carry. That comment
-       argued the strong pool was worth it "against a cap of 20 a day that real use never
-       approaches" — true of a rare debug question, false the moment this becomes the
-       thing he asks all day. The fast pool is 500 and is lite-first with flash as its own
-       fallback, so a lite failure already escalates without new code. His call, and the
-       reasoning is in the spec so nobody restores it by accident. */
+    /* FLASH AGAIN (2026-11-11), while the strong pool is above its reserve. This call ran
+       on the Lite-first list on the theory that the coach would be asked all day, and it
+       never was: about one question a week, against a strong pool sitting at 0 of 20.
+       On Lite it answered a question he had not asked, in 18.7s, and he flagged it "just
+       actually unusable and useless". aiModelsFor still steps down to Lite once a heavy
+       day reaches the reserve, so this degrades rather than fails. See
+       2026-11-11-coach-on-flash-and-three-flags-design.md. */
     /* learnSpoken belongs to the card on screen (it is cleared when the card changes),
        so it is only his last try when the question was asked FROM that card. */
     let attempt = "";
     try { if (here.kind === "card") attempt = coachAttemptText(learnSpoken); } catch (e) {}
     const parts = uhAskParts(rep, question, store.live, subject, asr, attempt);
-    a = String(await geminiRequest(parts, GEMINI_MODELS_FAST,
+    a = String(await geminiRequest(parts, aiModelsFor("coach"),
                                    { label: "The coach — a question" }) || "").trim();
   } catch (e) {
     err = (e && e.message) || String(e);
@@ -18153,6 +18162,10 @@ function coachHearPrompt(screen, recent) {
     "Hebrew, and he mixes the two freely — often an English question with Hebrew words " +
     "in it.\n\n" +
     "- English words in English. Hebrew words in Hebrew script, without nikud.\n" +
+    "- When he speaks English, write English. Never render English speech in Hebrew " +
+    "script, and never swap it for the Hebrew sentence he is looking at.\n" +
+    "- Most of what he says is a QUESTION about the Hebrew, not an attempt to say it. " +
+    "Keep every word of the question.\n" +
     "- Write the word he ACTUALLY said, even when it is the wrong word or mispronounced. " +
     "Never write the word he should have said instead.\n" +
     "- Do not translate. Do not answer the question. Do not add anything he did not say.\n" +
@@ -18189,7 +18202,9 @@ async function coachHear(blob) {
   const raw = await geminiRequest([
     { text: coachHearPrompt(ctx.screen, ctx.recent) },
     { inline_data: { mime_type: "audio/wav", data: bytesToBase64(a.wav) } }
-  ], GEMINI_MODELS_FAST, { label: "The coach — hearing you", timeoutMs: COACH_HEAR_TIMEOUT_MS,
+  /* Flash, for the same reason as uhAsk: on Lite this returned the card's own sentence
+     for a question he asked about it (10 Nov), and turned English into garbled Hebrew. */
+  ], aiModelsFor("coach"), { label: "The coach — hearing you", timeoutMs: COACH_HEAR_TIMEOUT_MS,
                            totalMs: COACH_HEAR_TIMEOUT_MS + 5000 });
   let data = null;
   try { data = extractJSON(raw); } catch (e) {}
@@ -35292,7 +35307,9 @@ function learnReveal() {
     const cont = document.createElement("button");
     cont.className = "btn"; cont.type = "button"; cont.textContent = "Continue";
     cont.onclick = () => learnCommit();
-    act.append(cont);
+    /* CONTINUE GOES LAST, so it is on the right, where the forward action is everywhere
+       else. With it first, his thumb went to Continue by habit on a card he had not
+       followed (flag, 9 Nov). */
     /* On a hearing card the chips start at "got it", which is right for a sentence he
        read and said, and wrong for one he heard and did not follow: the meaning check
        only ever SUGGESTS, so pressing Continue past a wrong guess credited every word.
@@ -35303,6 +35320,7 @@ function learnReveal() {
       miss.onclick = () => learnCommitMissed();
       act.append(miss);
     }
+    act.append(cont);
     /* The standing "tap any word to see what it means" line is gone. It rendered under
        the chips on every multi-word card forever, and instruction you have read three
        hundred times is wallpaper. The chips carry it in their own title attribute. */
@@ -40752,6 +40770,25 @@ T("coachHearPrompt: both languages in their own script, and the card is spelling
   assertTrue(p.indexOf("Do not assume he said any of it") !== -1);
   assertTrue(p.indexOf("להיות") !== -1 && p.indexOf("He asked: x") !== -1);
   assertEq(coachHearPrompt("", "").indexOf("on his screen"), -1, "no context, no context section");
+  assertTrue(p.indexOf("Never render English speech in Hebrew script") !== -1,
+             "10 Nov: Lite turned an English question into garbled Hebrew");
+});
+T("coach: hearing and answering both ask aiModelsFor, not the Lite pool", () => {
+  /* 10 Nov: both on Lite, the strong pool at 0 of 20, and he called it useless. If
+     either goes back to GEMINI_MODELS_FAST, read the spec before doing it. */
+  assertTrue(/aiModelsFor\("coach"\)/.test(String(coachHear)), "the hearing");
+  assertTrue(!/GEMINI_MODELS_FAST/.test(String(coachHear)));
+  assertTrue(/aiModelsFor\("coach"\)/.test(String(uhAsk)), "the answer");
+  assertTrue(!/GEMINI_MODELS_FAST/.test(String(uhAsk)));
+});
+T("flagAiReq: keeps the question at the end of a long prompt", () => {
+  const long = "INSTRUCTIONS ".repeat(200) + "His question: what is lo?";
+  const r = flagAiReq(long);
+  assertTrue(r.indexOf("His question: what is lo?") !== -1, "the tail survives");
+  assertTrue(r.indexOf("INSTRUCTIONS") === 0, "and so does the head");
+  assertTrue(r.length <= FLAG_AI_PREVIEW * 2 + 5, "and it stays short: " + r.length);
+  assertEq(flagAiReq("short"), "short");
+  assertEq(flagAiReq(null), "");
 });
 T("coachDockRecordFlow: what he said lands in the box after what is there, and never sends", async () => {
   const realReady = coachVoiceReady, realRec = coachRecord, realHear = coachHear, realAsk = uhAsk;

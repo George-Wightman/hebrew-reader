@@ -66,6 +66,12 @@
     "1793654056745-ulego": { "status": "wontdo", "kind": "idea", "at": "2026-11-03T23:59:00Z",
       "note": "Left as it is, since you said you've got used to it. Say if it still gets in the way." },
     "1793654271088-q3u7y": { "status": "addressed", "kind": "idea", "at": "2026-11-04T00:30:00Z",
-      "note": "About a quarter of each session is now listening, starting with words you can already say but have never heard. A listening card has a Didn't catch it button, and two word cards a session check words marked strong (f385293, aaa7db1)." }
+      "note": "About a quarter of each session is now listening, starting with words you can already say but have never heard. A listening card has a Didn't catch it button, and two word cards a session check words marked strong (f385293, aaa7db1)." },
+    "1794324061801-gtmvu": { "status": "addressed", "kind": "bug", "at": "2026-11-11T12:00:00Z",
+      "note": "The coach is back on the better model (Flash) for both hearing you and answering, and it's told to keep your English as English. On a very heavy day it still drops to the lighter one (fc42f7c)." },
+    "1794259855022-bbsyf": { "status": "addressed", "kind": "idea", "at": "2026-11-11T12:00:00Z",
+      "note": "Continue is now on the right and Didn't catch it on the left (fc42f7c)." },
+    "1794260124308-3in2z": { "status": "addressed", "kind": "bug", "at": "2026-11-11T12:00:00Z",
+      "note": "Now reads 'Sunday, a new start.' (daecd9d)." }
   }
 }

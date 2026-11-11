@@ -5,6 +5,42 @@ These are the mechanical gotchas that have each cost real time before. They appl
 to any change, however small — the deliberate feature pipeline lives in the
 `brainstorm-to-ship` skill, but these rules are not conditional on using it.
 
+## Where things live in the file
+
+Sections are marked `/* =====================  NAME  ===================== */`. Grep the name;
+line numbers drift. Roughly in file order:
+
+| Area | Banners to grep | State |
+|---|---|---|
+| Boot and safety | `WHICH BUILD AM I ON?`, `SAFE STORAGE`, `NIGHT`, `A REQUEST THAT CANNOT HANG` | live |
+| Sync | `SYNC — MERGE`, `SYNC — TRANSPORT`, `THE PAYLOAD, COMPRESSED`, `EXPORT / IMPORT` | live |
+| Word data | `DICTIONARY`, `CATEGORIES`, `DUOLINGO VOCABULARY`, `WORD FORMS`, `LIBRARY`, `WORD STRENGTH` | live — Learn reads all of it |
+| **Words tab** | `GLOSSING`, `AUDIO → TRANSCRIPT`, `VOICE NOTES KEPT`, `HISTORY`, `THE INBOX`, `THE WORD MAP`, `SENTENCE PAD`, `ASK + EXPLAIN`, `XLSX WRITER`, `ARCHIVE`, `SHELVES` | **dormant** — the app's original purpose; George no longer uses it and chose on 2026-11-11 to leave it in place. Don't build on it, don't delete it. |
+| Diagnostics | `WHAT THE AI IS DOING`, `WHEN IT RUNS WORSE THAN DESIGNED` (the health ledger), `THINGS TO CHANGE` (flags), `UNDER THE HOOD` | live |
+| Learn | `LEARN PAGE`, `ONE LIST` (what a session deals), `SESSION SURVIVAL`, `THE REVIEW`, `RECENCY` | live — the point of the app |
+| The map | `THE CAMPAIGN`, `A NODE SESSION`, `A SCENE BEFORE EACH PLACE`, `WRITING THE NEXT CHAPTER` | live |
+| Coach | `ASKING THE COACH`, `BUILDING SENTENCES WITH A COACH` | live |
+| Content | `COMMISSIONING SENTENCES` (phone writer, off: `PHONE_WRITES_SENTENCES = false`), `CONTENT WRITTEN AHEAD OF TIME` (`content/nodes.json`) | live |
+| Tests | `SELF TESTS` — about a quarter of the file | live |
+
+**The one-off migrations stay.** About twenty functions are guarded by a `hvr_*_v1` marker and
+have already run on every device (`libAddCoreIfNeeded`, `fixBatchSrc`, the `srsv2` and
+`pathscores` upgrades and so on). They look like dead code and are not: several seed a fresh
+install, and the rest are what upgrades an old backup when it is imported. Together they are
+under 1% of the file. Looked at and deliberately kept on 2026-11-11.
+
+**A schedule record with no library entry is usually a chunk**, not an orphan — `כל טוב`,
+`בוקר טוב`, the teens. Chunks are scheduled under their own text. Don't "clean them up".
+
+## Storage is shared with the dashboard
+
+`localStorage`'s allowance (about 5M characters) belongs to the web address, and the dashboard
+is served from the same `george-wightman.github.io`. On 2026-11-11 its map cache filled the
+allowance and this app's next save failed. The dashboard now keeps maps in IndexedDB, and
+`lsSet` here makes room and retries (`storageReclaim`). If storage is ever full again, read the
+`storage-*` entries in `hvr_health` in progress.json first: they name what was holding the
+space, including keys that are not this app's. The Settings meter counts the whole address.
+
 ## Verifying a change actually landed
 
 **A plain reload is not enough.** `sw.js` is stale-while-revalidate: it serves the

@@ -18862,6 +18862,22 @@ async function geminiRequest(parts, models, opts) {
     aiStarPaint();
   }
 }
+/* WHY THE STRONGER MODEL WAS PASSED OVER (2026-11-11). The ledger said "flash → flash-lite"
+   seventy-six times across two devices and could not say whether that was a timeout, the
+   per-minute limit, the day's quota or Google being overloaded — four different problems
+   with four different fixes. Pure, and one of a handful of fixed phrases, because the
+   ledger keeps one entry per distinct detail: a reason with a number in it would flood it.
+   Order is "what is least our fault first": a refused key or a spent day explains itself,
+   a timeout is the one worth chasing. */
+function downshiftWhy(st) {
+  st = st || {};
+  if (st.key) return "key refused";
+  if (st.day) return "daily limit";
+  if (st.rate) return "per-minute limit";
+  if (st.http) return /empty/.test(st.http) ? "empty reply" : "overloaded";
+  if (st.net) return "timed out";
+  return "unknown";
+}
 async function geminiSend(parts, models, opts) {
   opts = opts || {};
   const keys = geminiKeys();
@@ -18871,6 +18887,7 @@ async function geminiSend(parts, models, opts) {
   let lastNetErr = null;        // a timeout or a dead socket, which is not a quota problem
   let lastHttpErr = null;       // a 5xx: Google's server, not our request and not our quota
   let lastKeyErr = null;        // a key Google refused outright — not quota, not the server
+  let sawDayGone = false;       // a 429 with no short retry hint: that model's day is spent
   const started = Date.now();
   /* AN INTERACTIVE CALL HAS A DEADLINE AS A WHOLE, not only per attempt (2026-10-01).
      The per-request timeout moves on to the next key and then the next model, which is
@@ -18949,7 +18966,7 @@ async function geminiSend(parts, models, opts) {
           const minuteLimit = rateLimitWaitMs(text, 0) !== null;
           if (minuteLimit) sawRateHint = true;
           const ms = opts.waitOnRateLimit ? rateLimitWaitMs(text, waits) : null;
-          if (ms === null) { spent = true; dayGone = !minuteLimit; break; }
+          if (ms === null) { spent = true; dayGone = !minuteLimit; if (dayGone) sawDayGone = true; break; }
           waits++;
           await new Promise(r => setTimeout(r, ms));
         }
@@ -18985,7 +19002,9 @@ async function geminiSend(parts, models, opts) {
             if (wanted && model !== wanted)
               healthNote("model-downshift",
                          wanted.replace("gemini-", "").replace("-latest", "") + " → " +
-                         model.replace("gemini-", "").replace("-latest", ""));
+                         model.replace("gemini-", "").replace("-latest", "") + " — " +
+                         downshiftWhy({ key: lastKeyErr, day: sawDayGone, rate: sawRateHint,
+                                        http: lastHttpErr, net: lastNetErr }));
             aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
@@ -45653,6 +45672,15 @@ function fakeStore(cap, init) {
     key: i => Object.keys(m)[i], get length() { return Object.keys(m).length; }, _m: m
   };
 }
+T("downshiftWhy: names the one reason, and a timeout only when nothing else explains it", () => {
+  assertEq(downshiftWhy({ net: "it took too long" }), "timed out");
+  assertEq(downshiftWhy({ http: "HTTP 503" }), "overloaded");
+  assertEq(downshiftWhy({ http: "an empty reply" }), "empty reply");
+  assertEq(downshiftWhy({ rate: true, net: "x" }), "per-minute limit");
+  assertEq(downshiftWhy({ day: true, rate: true }), "daily limit");
+  assertEq(downshiftWhy({ key: "key 1 was refused", day: true }), "key refused");
+  assertEq(downshiftWhy({}), "unknown");
+});
 T("storageCensus: counts keys that are not this app's, and says whose is whose", () => {
   const c = storageCensus({ "hvr_library": "x".repeat(89), "dash_maps": "y".repeat(491), "hvr_srs": "{}" });
   assertEq(c.mine, 100 + 9, "hvr_library is 11 + 89, hvr_srs is 7 + 2");

@@ -16822,6 +16822,10 @@ UH.card = function (id, st) {
       { label: "Position", value: (s.i + 1) + " of " + (s.cards || []).length +
                                   " · " + (s.got || 0) + " right so far" },
       { label: "Hebrew", value: he || "—" },
+      /* The line he reads aloud from. The coach used to work it out for itself and could
+         contradict the card (2026-11-11). */
+      { label: "Transliteration", value: (he && he === it.he && it.tr) ||
+                                         (st.lib[he] && st.lib[he].tr) || card.tr || "—" },
       /* A word card's item carries no `en` of its own — the gloss lives in the library
          entry the card was built from. Reading "English —" on a card that plainly has
          one is the panel looking broken over a lookup it could have done itself. */
@@ -17680,10 +17684,26 @@ function coachWho() {
    Hebrew question does not get better for having a stability figure next to it. A
    subject with neither section (a word, a node) is named by its title alone. */
 const COACH_SCREEN_SECTIONS = ["This card", "The conversation"];
+/* AND ONLY THESE ROWS OF THE CARD (2026-11-11). Position, grading side, bank id, level,
+   difficulty and "Carrying … handed to you deliberately" are the inspector's: none of
+   them helps answer a Hebrew question, and a model handed "carrying" will try to make
+   something of it. The subtitle went too — it was the Hebrew a third time. */
+const COACH_CARD_ROWS = ["Kind", "Hebrew", "Transliteration", "English"];
+/* Earlier turns sent with a question. A sitting can run long, and turn nine about another
+   card is more likely to mislead than help. */
+const COACH_HIST_MAX = 6;
 function coachScreenText(rep) {
   if (!rep) return "";
-  const keep = (rep.sections || []).filter(sec => COACH_SCREEN_SECTIONS.indexOf(sec.name) !== -1);
-  return uhText({ title: rep.title, subtitle: rep.subtitle, sections: keep });
+  const keep = (rep.sections || [])
+    .filter(sec => COACH_SCREEN_SECTIONS.indexOf(sec.name) !== -1)
+    .map(sec => sec.name !== "This card" ? sec : Object.assign({}, sec, {
+      rows: (sec.rows || []).filter(r => COACH_CARD_ROWS.indexOf(r.label) !== -1 &&
+                                         r.value && r.value !== "—")
+    }));
+  /* A card's title is its Kind row again; anything else is named by its title alone. */
+  const isCard = keep.some(sec => sec.name === "This card");
+  return isCard ? uhText({ title: "", sections: keep }).replace(/^\n+/, "")
+                : uhText({ title: rep.title, sections: keep });
 }
 
 /* What actually goes to the model: who he is, how to answer the four things he asks, the
@@ -17700,17 +17720,52 @@ function coachScreenText(rep) {
    and which the card report never carried (2026-10-01). Pure over a learnSpoken-shaped
    object; "" when there is no attempt to describe. Final letters restored, as in every
    other place a model is shown these words. */
-function coachAttemptText(sp) {
-  if (!sp || !Array.isArray(sp.expected) || !sp.expected.length) return "";
-  const status = sp.status || [];
-  const missed = sp.expected.filter((w, i) => status[i] && status[i] !== "matched");
-  return "The card wanted: " + heShownAll(sp.expected) + "\n" +
-    "The mic heard him say: " + (String(sp.text || "").trim() || "(nothing)") + "\n" +
-    (missed.length ? "Marked as not said: " + heShownAll(missed) + "\n"
-                   : "Every word was marked as said.\n");
+/* WORD BY WORD (2026-11-11). This used to end "Marked as not said: לו שאני", which threw
+   away the one fact his question was about: that הוא sat where לו belonged. alignSpoken
+   already knows what landed in each slot (`heard`) and how near it was; the coach gets
+   that, a line per word.
+
+   `listen` is a hearing card's side of it — his English answer and the meaning check's
+   note — which never reached the coach before. Either half may be absent. */
+function coachAttemptText(sp, listen) {
+  const out = [];
+  const L = listen || {};
+  if (L.answer) {
+    out.push("He said it meant: \"" + String(L.answer).trim().slice(0, 300) + "\"");
+    out.push(L.note ? "The meaning check told him: " + L.note
+                    : "The meaning check found his meaning right.");
+  }
+  if (sp && Array.isArray(sp.expected) && sp.expected.length) {
+    const status = sp.status || [], heard = sp.heard || [];
+    out.push("The mic heard: " + (String(sp.text || "").trim() || "(nothing)"));
+    out.push("Word by word, what the card wanted and what the mic heard in its place:");
+    sp.expected.forEach((w, i) => {
+      const st = status[i], h = String(heard[i] || "").trim();
+      const want = heShownAll([w]);
+      if (st === "matched") out.push("  " + want + " — said");
+      else if (st === "near") out.push("  " + want + " — nearly: heard " + (h ? heShownAll([h]) : "something close"));
+      else out.push("  " + want + " — not said" + (h && h !== w ? ": heard " + heShownAll([h]) + " instead" : ""));
+    });
+    /* `extra` carries substitutions too, and those are already on their own line. */
+    const added = (Array.isArray(sp.extra) ? sp.extra : []).filter(x => heard.indexOf(x) === -1);
+    if (added.length) out.push("He also said: " + heShownAll(added));
+  }
+  if (!out.length) return "";
+  if (sp && (sp.expected || []).length)
+    out.push("How sure the mic was: " + (sp.unsure ? "LOW — what it heard may not be what he said"
+                                                  : "high — treat what it heard as what he said"));
+  return out.join("\n") + "\n";
 }
-function coachPrompt(rep, thread, subject, question, who, asr, attempt) {
-  const hist = (thread || []).filter(t => t && t.a && !t.err);
+/* One line of the rubric, not five: the coach needs to know where to pitch, not the
+   whole scale (2026-11-11). Pure. */
+function coachLevelLine(level) {
+  const line = LEVEL_RUBRIC.split("\n").filter(l => l.indexOf("LEVEL " + level + " ") === 0)[0];
+  return line ? line.replace(/^LEVEL \d+ — /, "") : "";
+}
+/* `focus` is the word he last tapped on this card and what the panel told him about it,
+   or null. Context, not a control: there is no chip for it. */
+function coachPrompt(rep, thread, subject, question, who, asr, attempt, focus) {
+  const hist = (thread || []).filter(t => t && t.a && !t.err).slice(-COACH_HIST_MAX);
   const w = who || coachWho();
   return "You are a warm, brisk Hebrew coach. The person asking you is an English speaker " +
     "learning conversational Hebrew " + LEARNER_FOR + ". Everyday " +
@@ -17732,21 +17787,22 @@ function coachPrompt(rep, thread, subject, question, who, asr, attempt) {
     "- Is this right, or he just gives you a sentence: yes or no first. If no, the " +
     "corrected sentence and one line on why.\n" +
     "- Why is it X and not Y: the rule in a sentence or two, shown on his own example.\n" +
-    "- If the question is unclear, answer the likeliest reading and say which you took.\n" +
     /* THE 27 SEP ANSWER began "Ah, you mean the B in lehiyot?" — a guess, stated as
        understanding, about a word his speech had been turned into. Naming the word first
        puts a wrong reading in the first line, where he sees it, and asking is better than
        an answer to a question he did not ask. */
     "- WHEN HIS QUESTION TURNS ON A PARTICULAR HEBREW WORD OR PHRASE, open with one short " +
     "line naming it in Hebrew and how it is said — \"You're asking about להיות (lihyot) —\" " +
-    "— then answer. If you cannot tell which word he means, do not guess: ask him which, " +
-    "in one short question, and stop there.\n" +
+    "— then answer. A word he TAPPED, or a word marked below as not said, is the likeliest " +
+    "one. If none of those settles it and you cannot tell which word he means, do not " +
+    "guess: ask him which, in one short question, and stop there.\n" +
     "You cannot see his progress, his schedule or how the app works, so say nothing about " +
     "them.\n\n" +
     "HE IS SPEAKING AS A " + (w.gender === "f" ? "WOMAN" : "MAN") + ". Anything you hand " +
     "him to say agrees with that — ani rotze from a man, ani rotza from a woman.\n\n" +
-    "HIS LEVEL IS " + w.level + " OF 5.\n" + LEVEL_RUBRIC + "\n" +
-    "Pitch what you give him there or a little above it.\n\n" +
+    "HIS LEVEL IS " + w.level + " OF 5: " + coachLevelLine(w.level) + " Pitch Hebrew you " +
+    "give him there or a little above. The card may be harder than his level; that is " +
+    "deliberate, so explain it rather than simplify it.\n\n" +
     /* He READS the transliteration — it is the line he actually produces from — so a
        second convention here teaches two spellings for one sound. CLAUDE.md calls this
        non-negotiable. */
@@ -17761,16 +17817,26 @@ function coachPrompt(rep, thread, subject, question, who, asr, attempt) {
     "- ve- for ו as it is really spoken, not the formal u- or va-: ve'ani, vegvina.\n" +
     "- No diacritics, and no nikud on the Hebrew.\n\n" +
     "Be brief — two or three sentences unless he asked for detail. He is on a phone.\n" +
+    /* Labelled by what the turn was about, and flagged when that is not what is on his
+       screen now: "card 24" told the model nothing, and an old answer about another
+       sentence read as though it were about this one. */
     (hist.length ? "\n=== EARLIER IN THIS CONVERSATION ===\n" + hist.map(t =>
-        (t.subject ? "(about " + t.subject + ")\n" : "") +
+        (t.subject ? (t.subject === subject ? "(about this same card)\n"
+                                            : "(about something else: " + t.subject + ")\n") : "") +
         "He asked: " + t.q + "\nYou said: " + t.a).join("\n\n") + "\n" : "") +
-    "\n=== WHAT IS ON HIS SCREEN" + (subject ? " (" + subject + ")" : "") +
+    "\n=== WHAT IS ON HIS SCREEN" +
+    (subject && coachScreenText(rep).indexOf(subject) === -1 ? " (" + subject + ")" : "") +
     " ===\nBackground, so you know where he is. It is not the limit of what you know " +
     "about Hebrew.\n" + (coachScreenText(rep) || "(nothing in particular)") +
     (attempt ? "\n\n=== HIS LAST TRY AT THIS CARD ===\nWhat he has just said on this card, " +
       "and how it was marked. A question like \"why is it this word\" or \"why was that " +
-      "wrong\" is most likely about this. The mic can mishear him too, so what it heard is " +
-      "not proof of what he said.\n" + attempt : "") +
+      "wrong\" is most likely about this. Do not blame the microphone unless it says LOW " +
+      "below.\n" + attempt : "") +
+    (focus && focus.he ? "\n\n=== THE WORD HE TAPPED ===\nJust before asking, he tapped " +
+      focus.he + (focus.tr ? " (" + focus.tr + ")" : "") + " on this card" +
+      (focus.en ? ", and was told it means: " + focus.en : "") +
+      (focus.why ? " (" + focus.why + ")" : "") + ". \"This word\" or \"that\" means this one. " +
+      "Do not contradict what he was told unless it was wrong, and if it was, say so.\n" : "") +
     /* THE SAFETY NET FOR WHEN HE FORGETS THE SWITCH. Only ever set for a question he
        DICTATED under the English recogniser — typed text means what it says, and a
        Hebrew-set mic transcribes Hebrew correctly by definition. */
@@ -17786,8 +17852,33 @@ function coachPrompt(rep, thread, subject, question, who, asr, attempt) {
     "\n\n=== HIS QUESTION ===\n" + question;
 }
 
-function uhAskParts(rep, question, thread, subject, asr, attempt) {
-  return [{ text: coachPrompt(rep, thread, subject, question, null, asr, attempt) }];
+function uhAskParts(rep, question, thread, subject, asr, attempt, focus) {
+  return [{ text: coachPrompt(rep, thread, subject, question, null, asr, attempt, focus) }];
+}
+/* What a turn is ABOUT, in words the model and he can both use: a card is its Hebrew, not
+   "card 24". Anything else keeps the inspector's own label. */
+function coachSubject(here, rep) {
+  if (here && here.kind === "card" && rep) {
+    const row = ((rep.sections || [])[0] || { rows: [] }).rows.filter(r => r.label === "Hebrew")[0];
+    if (row && row.value && row.value !== "—") return row.value;
+  }
+  try { return uhLabelFor(here.kind, here.id, uhState()); } catch (e) { return ""; }
+}
+/* The card on screen's side of the question: his last try at it, and the word he last
+   tapped. learnSpoken, learnNote, learnMeaningNote and learnTapped all belong to the card
+   on screen (they are cleared when it changes), so they only apply to a question asked
+   FROM that card. */
+function coachCardContext(here) {
+  const out = { attempt: "", focus: null };
+  if (!here || here.kind !== "card") return out;
+  try {
+    const s = learnSession, c = s && s.cards && s.cards[s.i];
+    const listen = c && isHearKind(c.kind) && learnNote
+      ? { answer: learnNote, note: learnMeaningNote } : null;
+    out.attempt = coachAttemptText(learnSpoken, listen);
+  } catch (e) {}
+  try { if (learnTapped && learnTapped.he) out.focus = learnTapped; } catch (e) {}
+  return out;
 }
 
 let coachBusy = null;     // { q, subject } while a call is in flight; the thread holds the rest
@@ -17797,7 +17888,7 @@ let coachBusy = null;     // { q, subject } while a call is in flight; the threa
    uhHere(), which is the same call flagContext makes for the same reason. */
 async function uhAsk(rep, question, at, asr) {
   const here = at || uhStack[uhStack.length - 1] || { kind: "root", id: "" };
-  const subject = uhLabelFor(here.kind, here.id, uhState());
+  const subject = coachSubject(here, rep);
   let store = coachRollIdle(coachAll(), Date.now());
   coachSave(store);
   coachBusy = { q: question, subject: subject };
@@ -17813,9 +17904,8 @@ async function uhAsk(rep, question, at, asr) {
        2026-11-11-coach-on-flash-and-three-flags-design.md. */
     /* learnSpoken belongs to the card on screen (it is cleared when the card changes),
        so it is only his last try when the question was asked FROM that card. */
-    let attempt = "";
-    try { if (here.kind === "card") attempt = coachAttemptText(learnSpoken); } catch (e) {}
-    const parts = uhAskParts(rep, question, store.live, subject, asr, attempt);
+    const card = coachCardContext(here);
+    const parts = uhAskParts(rep, question, store.live, subject, asr, card.attempt, card.focus);
     a = String(await geminiRequest(parts, aiModelsFor("coach"),
                                    { label: "The coach — a question" }) || "").trim();
   } catch (e) {
@@ -20721,6 +20811,7 @@ function learnCheckMeaning(noteEl, expectedEn, c) {
    really know how to change the mark." One cheap call judges the MEANING, word by word,
    and fills the chips as a suggestion — the same standing the mic's alignment has on a
    sentence card. Spec: 2026-11-09-listen-meaning-and-kept-answers-design.md. */
+let learnTapped = null;          // {he, tr, en, why}: the word he last tapped on this card, for the coach
 let learnMeaningNote = "";       // the check's one line, when his meaning differed; kept in the journal
 let learnMarksTouched = {};      // chips he set himself: the check never overwrites them
 function meaningCheckPrompt(item, answer, tokens) {
@@ -33023,7 +33114,7 @@ function learnRenderCard() {
   learnMarksAuto = null;
   learnHints = 0; learnHinted = {}; learnHintAll = false;
   learnNote = "";                              // and neither must a previous card's help
-  learnMeaningNote = ""; learnMarksTouched = {};
+  learnMeaningNote = ""; learnMarksTouched = {}; learnTapped = null;
   learnSpoken = null; learnSuggested = null;   // nor what he said on the card before
   learnSuggestPaint = null;                    // nor a repaint bound to buttons now gone
   /* A listen must never span two cards. Stopping it is not enough on its own — the
@@ -40972,9 +41063,9 @@ T("coachPrompt: warns the coach only about a question dictated in English", () =
 });
 T("coachPrompt: carries his last try at the card, and only when there is one", () => {
   const rep = { title: "x", sections: [] };
-  const att = coachAttemptText({ expected: ["להיות"], text: "לשתות", status: ["missed"] });
-  assertTrue(att.indexOf("The card wanted: להיות") !== -1 && att.indexOf("heard him say: לשתות") !== -1);
-  assertTrue(att.indexOf("Marked as not said: להיות") !== -1);
+  const att = coachAttemptText({ expected: ["להיות"], text: "לשתות", status: ["missed"], heard: ["לשתות"] });
+  assertTrue(att.indexOf("The mic heard: לשתות") !== -1, att);
+  assertTrue(att.indexOf("להיות — not said: heard לשתות instead") !== -1, att);
   assertEq(coachAttemptText({ expected: ["בקיצ"], text: "בקיץ", status: ["matched"] }).indexOf("בקיצ"), -1,
            "final letters restored before a model sees them");
   assertEq(coachAttemptText(null), "");
@@ -40984,6 +41075,69 @@ T("coachPrompt: carries his last try at the card, and only when there is one", (
   assertTrue(p.indexOf("=== HIS QUESTION ===") > p.indexOf("HIS LAST TRY"), "the question stays last");
   assertEq(coachPrompt(rep, [], "", "q", null, null, "").indexOf("HIS LAST TRY"), -1);
   assertTrue(p.indexOf("do not guess: ask him which") !== -1, "it asks rather than guesses");
+});
+T("coachAttemptText: the 10 Nov slip, word by word — הוא where לו belonged", () => {
+  /* The flag that started this. The old text said "Marked as not said: לו שאני" and
+     lost the substitution his question was about. */
+  const att = coachAttemptText({ text: "אמרתי הוא אני עייף", expected: ["אמרתי", "לו", "שאני", "עייף"],
+    status: ["matched", "missed", "near", "matched"], heard: ["אמרתי", "הוא", "אני", "עייף"],
+    extra: ["הוא"], unsure: false });
+  assertTrue(att.indexOf("אמרתי — said") !== -1, att);
+  assertTrue(att.indexOf("לו — not said: heard הוא instead") !== -1, att);
+  assertTrue(att.indexOf("שאני — nearly: heard אני") !== -1, att);
+  assertEq(att.indexOf("He also said"), -1, "a substitution is not said twice");
+  assertTrue(att.indexOf("How sure the mic was: high") !== -1);
+  assertTrue(coachAttemptText({ text: "x", expected: ["לו"], status: ["missed"], unsure: true })
+             .indexOf("LOW") !== -1, "low confidence is the one case the mic may be blamed");
+});
+T("coachAttemptText: a hearing card sends his English answer and the meaning check's note", () => {
+  const a = coachAttemptText(null, { answer: "one more please", note: "רק is 'just', not 'more'." });
+  assertTrue(a.indexOf("He said it meant: \"one more please\"") !== -1, a);
+  assertTrue(a.indexOf("רק is 'just'") !== -1);
+  assertTrue(coachAttemptText(null, { answer: "the coffee is bad", note: "" })
+             .indexOf("found his meaning right") !== -1);
+});
+T("coachScreenText: the card, not the inspector", () => {
+  const rep = { title: "Say the whole sentence", subtitle: "אמרתי לו שאני עייף", sections: [
+    { name: "This card", rows: [
+      { label: "Kind", value: "sentence — Say the whole sentence" },
+      { label: "Grades", value: "production (saying it)" },
+      { label: "Position", value: "24 of 29 · 12 right so far" },
+      { label: "Hebrew", value: "אמרתי לו שאני עייף" },
+      { label: "Transliteration", value: "amarti lo she'ani ayef" },
+      { label: "English", value: "I told him I'm tired" },
+      { label: "From the bank", value: "אמרתי לו שאני עייף" },
+      { label: "Level", value: "4 · difficulty 14" },
+      { label: "Carrying", value: "אמרתי — progressing, handed to you deliberately" }] },
+    { name: "Its words", rows: [{ label: "אמרתי", value: "progressing" }] }] };
+  const t = coachScreenText(rep);
+  ["Grades", "Position", "From the bank", "difficulty", "Carrying", "Its words"].forEach(x =>
+    assertEq(t.indexOf(x), -1, "dropped: " + x));
+  assertTrue(t.indexOf("Transliteration: amarti lo she'ani ayef") !== -1, t);
+  assertEq(t.split("אמרתי לו שאני עייף").length - 1, 1, "the Hebrew once, not three times");
+  assertEq(coachSubject({ kind: "card", id: "" }, rep), "אמרתי לו שאני עייף", "a turn is about its sentence");
+});
+T("coachPrompt: one level line, the tapped word, and earlier turns that say what they were about", () => {
+  const rep = { title: "x", sections: [] };
+  const p = coachPrompt(rep, [
+    { q: "old", a: "old answer", subject: "הקפה פה רע." },
+    { q: "same", a: "same answer", subject: "אמרתי לו שאני עייף" }],
+    "אמרתי לו שאני עייף", "why this?", { gender: "m", level: 2 }, null, "",
+    { he: "לו", tr: "lo", en: "to him", why: "" });
+  assertTrue(p.indexOf("HIS LEVEL IS 2 OF 5: one simple present-tense verb") !== -1, "his level, in one line");
+  assertEq(p.indexOf("LEVEL 4 —"), -1, "and not the whole rubric");
+  assertEq(p.indexOf("likeliest reading"), -1, "one rule for an unclear question, not two");
+  assertTrue(p.indexOf("=== THE WORD HE TAPPED ===") !== -1 && p.indexOf("tapped לו (lo)") !== -1);
+  assertTrue(p.indexOf("told it means: to him") !== -1);
+  assertTrue(p.indexOf("(about something else: הקפה פה רע.)") !== -1);
+  assertTrue(p.indexOf("(about this same card)") !== -1);
+  assertEq(coachPrompt(rep, [], "", "q", { gender: "m", level: 2 }, null, "", null)
+           .indexOf("THE WORD HE TAPPED"), -1, "no tap, no section");
+  const many = [];
+  for (let i = 0; i < COACH_HIST_MAX + 3; i++) many.push({ q: "q" + i, a: "a" + i });
+  const pm = coachPrompt(rep, many, "", "q", { gender: "m", level: 2 }, null, "", null);
+  assertEq(pm.indexOf("He asked: q0\n"), -1, "the oldest turns of a long sitting are not sent");
+  assertTrue(pm.indexOf("He asked: q" + (COACH_HIST_MAX + 2)) !== -1);
 });
 T("micListen: without continuous the endpointer still ends it — the coach's box needs that", async () => {
   const res = await micFakeRun(get => {

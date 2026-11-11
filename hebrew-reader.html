@@ -4413,15 +4413,117 @@ function storageFailed(k, e) {
       + "copy of what's still here before closing the tab."
       : "A save failed, so changes made from now on may not survive a reload. Open "
       + "Settings → Export everything to get a copy of what's still here.",
-    "storage write failed on key '" + k + "': " + (e && (e.name + ": " + e.message)));
+    "storage write failed on key '" + k + "': " + (e && (e.name + ": " + e.message))
+      + " | " + storageCensusLine(storageEverything()));
+  /* The screen is not the record. The ledger syncs, so what was filling the store reaches
+     Claude with the next progress.json instead of depending on him copying the detail.
+     storageBroken is already set, so a failure inside this cannot come back round. */
+  if (full) { try { healthNote("storage-full", storageCensusLine(storageEverything())); } catch (x) {} }
+}
+
+/* THE ALLOWANCE IS PER ADDRESS, NOT PER APP (2026-11-11).
+
+   George: "storage write failed on key 'hvr_session': QuotaExceededError". hvr_session is
+   six kilobytes. It was the victim, not the cause — it is written on every card, so it is
+   simply the first write to arrive once the store is full.
+
+   Everything this app keeps came to 1.08M characters that day, about a fifth of the ~5M
+   the browser allows. The rest belonged to the dashboard, which is served from the same
+   github.io address and therefore draws on the SAME allowance: its painted map files are
+   cached under dash_maps at up to a megabyte a city, written inside a try/catch that
+   swallows the failure, so it fills whatever is left and says nothing. The Settings meter
+   could not see any of it, because it only ever counted hvr_ keys — it would have read
+   "41% used" on a store with no room left.
+
+   So three things, all here:
+     storageEverything / storageCensus   count EVERY key at this address, whoever owns it
+     storageReclaim                      on a full store, drop what can be rebuilt, retry
+     the health ledger                   says what was full of what, and it syncs
+
+   WHAT MAY BE DROPPED, in order, stopping the moment the write lands. Nothing here is
+   his progress and every one of them is rebuilt or re-fetched on its own:
+     - residue of deleted features that nothing in this file reads any more
+     - the AI log and the navigation trail: live diagnostics, twenty and thirty entries
+     - dash_maps: the dashboard's offline copy of its map files, which it re-downloads
+       the next time it opens online. Another app's key, taken deliberately — a grade he
+       has just earned is worth more than a picture that is one fetch away.
+     - the pre-re-file undo snapshot: a whole library from one moment, kept for an Undo
+   Literals, not the consts: this runs from lsSet, which is called during boot before most
+   of them are declared, and a TDZ throw inside a catch would lose the write AND the alarm. */
+const STORAGE_EXPENDABLE = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder",
+                            "hvr_ailog", "hvr_trail", "dash_maps", "hvr_prerebase"];
+function storageIsFull(e) {
+  return !!(e && (e.name === "QuotaExceededError" ||
+                  e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22 || e.code === 1014));
+}
+/* Every key at this address, as {name: raw}. Not exportKeys(): that is the hvr_ prefix
+   scan, and the point of this is the keys that are not ours. */
+function storageEverything(store) {
+  const out = {};
+  try {
+    const s = store || localStorage;
+    for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k != null) out[k] = s.getItem(k) || ""; }
+  } catch (e) {}
+  return out;
+}
+/* Pure. Characters, not bytes — the browser charges two bytes a character, and the
+   callers that want bytes double it. `top` is every key, largest first. */
+function storageCensus(keys) {
+  const rows = Object.keys(keys || {}).map(k => ({ k: k, n: k.length + String(keys[k] == null ? "" : keys[k]).length }));
+  rows.sort((a, b) => b.n - a.n || (a.k < b.k ? -1 : 1));
+  let mine = 0, other = 0;
+  rows.forEach(r => { if (r.k.indexOf("hvr_") === 0) mine += r.n; else other += r.n; });
+  return { total: mine + other, mine: mine, other: other, top: rows };
+}
+/* One line for the ledger and the alarm's Copy button. Rounded to a tenth of a megabyte
+   so the ledger's one-entry-per-detail rule holds: the same full store on Tuesday and on
+   Wednesday is one entry counted twice, not two. */
+function storageCensusLine(keys) {
+  const c = storageCensus(keys);
+  const mb = n => (n * 2 / 1048576).toFixed(1) + "MB";
+  return "this app " + mb(c.mine) + ", other pages at this address " + mb(c.other)
+    + "; biggest: " + c.top.slice(0, 5).map(r => r.k + " " + mb(r.n)).join(", ");
+}
+/* Drops expendables one at a time and retries the write after each. Returns the names it
+   dropped, or null if the write still does not fit — in which case what it dropped stays
+   dropped, which is right: the store is full and they were the least valuable thing in it.
+   Takes the store so the suite can drive it against a fake with a ceiling. */
+function storageReclaimWith(store, k, v, expendable) {
+  const dropped = [];
+  for (const x of (expendable || [])) {
+    if (x === k) continue;
+    try { if (store.getItem(x) === null) continue; store.removeItem(x); } catch (e) { continue; }
+    dropped.push(x);
+    try { store.setItem(k, v); return dropped; } catch (e) { /* not enough yet — keep going */ }
+  }
+  return null;
+}
+let _reclaiming = false;
+function storageReclaim(k, v) {
+  if (_reclaiming) return false;
+  _reclaiming = true;
+  try {
+    const before = storageCensusLine(storageEverything());
+    const dropped = storageReclaimWith(localStorage, k, v, STORAGE_EXPENDABLE);
+    if (!dropped) return false;
+    /* Still inside the guard, so if even this note does not fit it goes to the alarm
+       rather than reclaiming a second time on its own behalf. */
+    try { healthNote("storage-reclaimed", "dropped " + dropped.join(", ") + " to save " + k + " — was: " + before); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+  finally { _reclaiming = false; }
 }
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 /* Returns whether the write actually landed. Most callers ignore it — they have no
    better plan than carrying on — but the alarm above fires regardless, so a silent
-   failure is no longer possible. */
+   failure is no longer possible. A FULL store gets one attempt at making room first
+   (storageReclaim); the alarm is for when that was not enough. */
 function lsSet(k, v) {
   try { localStorage.setItem(k, v); syncNoteWrite(k); return true; }
-  catch (e) { storageFailed(k, e); return false; }
+  catch (e) {
+    if (storageIsFull(e) && storageReclaim(k, v)) { syncNoteWrite(k); return true; }
+    storageFailed(k, e); return false;
+  }
 }
 /* WHEN THIS DEVICE LAST CHANGED SOMETHING THAT SYNCS (2026-10-01). The blob used to be
    stamped with the moment of the sync, so "the newer blob wins" meant "whichever device
@@ -8314,6 +8416,26 @@ function storageSummary(r) {
       : ", and they are the part that grows as you add words.");
 }
 
+/* What the rest of the address is holding. Pure: a census and the budget in, a sentence
+   and whether it is tight out. Silent when nothing else is stored here — which is every
+   device where only this app has ever been opened. The browser's real ceiling is nearer
+   10MB than the 5MB this file has always measured against, so "tight" is judged against
+   the real one; crying wolf at 50% would teach him to ignore the line. */
+const LS_REAL_BUDGET_BYTES = 10 * 1024 * 1024;
+const LS_TIGHT_SHARE = 0.8;
+function storageSharedLine(census, budget) {
+  const c = census || { total: 0, mine: 0, other: 0, top: [] };
+  const tight = (c.total * 2) / LS_REAL_BUDGET_BYTES >= LS_TIGHT_SHARE;
+  if (!c.other) return { text: "", tight: tight };
+  const big = c.top.filter(r => r.k.indexOf("hvr_") !== 0)[0];
+  return {
+    tight: tight,
+    text: "Other pages at this address (the dashboard) hold another " + fmtBytes(c.other * 2)
+      + " from the same allowance" + (big ? ", most of it in " + big.k : "") + "."
+      + (tight ? " Together that is nearly all of it — tell Claude." : "")
+  };
+}
+
 /* A generated form must be written in Hebrew. Sounds too obvious to check — but
    the first live run returned תהي� for "you (f) will be", with U+064A ARABIC
    LETTER YEH twice where יod belongs. Best-of-three did catch it, at the cost of
@@ -9962,8 +10084,11 @@ function paintStorageRow() {
     const keys = {};
     exportKeys().forEach(k => { keys[k] = lsGet(k); });
     const r = storageReport(keys, libAll());
-    el.textContent = storageSummary(r);
-    el.style.color = r.over ? "var(--bad)" : "";
+    /* The allowance belongs to the address, not the app (see storageReclaim), so the
+       line that matters is the one about everything else stored here. */
+    const shared = storageSharedLine(storageCensus(storageEverything()), LS_BUDGET_BYTES);
+    el.textContent = storageSummary(r) + (shared.text ? " " + shared.text : "");
+    el.style.color = (r.over || shared.tight) ? "var(--bad)" : "";
   } catch (e) {
     el.textContent = "Couldn't measure it — " + e.message;
   }
@@ -36871,7 +36996,9 @@ function learnEndButtons() {
     again.textContent = "Another session";
     again.onclick = () => learnRenderStart();
     done.textContent = "Done for now";
-    done.onclick = () => setView("words");
+    /* Back to the map, not to Words. Words was home when this was written; it has not
+       been for months, and landing there was also what made the app reopen there. */
+    done.onclick = () => { setView("learn"); learnRenderStart(); };
   }
 }
 
@@ -37199,7 +37326,22 @@ themeApply();
 setInterval(themeApply, 60000);
 try { document.addEventListener("visibilitychange", () => { if (!document.hidden) themeApply(); }); }
 catch (e) {}
-setView(lsGet(VIEW_KEY) || "learn");
+/* ALWAYS LEARN. This used to reopen whatever view was showing last, and George:
+   "sometimes it just opens onto that page [Words]... I don't really use that section
+   anymore... Stop it from doing that." Two things fed it: "Done for now" at the end of an
+   ordinary session sent him to Words (learnEndButtons), and that visit was then remembered
+   as the place to reopen. Words is still one tap away; it is just never the front door.
+   VIEW_KEY is still written by setView — a dozen places read it to ask "which view is
+   showing right now" — it is only no longer read here. */
+setView("learn");
+/* Say so BEFORE it is full. The ledger syncs, so a store creeping towards the ceiling
+   reaches Claude with the next progress.json rather than arriving as an alarm mid-card. */
+try {
+  if (!SELFTEST_RUN) {
+    const everything = storageEverything();
+    if (storageSharedLine(storageCensus(everything)).tight) healthNote("storage-high", storageCensusLine(everything));
+  }
+} catch (e) {}
 /* Last, so a hint about an empty library is only shown once the library has actually
    been seeded and rendered. */
 migrationHintCheck();
@@ -45490,6 +45632,82 @@ T("storageSummary: states the words, the banks and the headroom in plain English
   assertTrue(/2 words/.test(s), s);
   assertTrue(/1 with form banks/.test(s), s);
   assertTrue(/%/.test(s), "must say how much of the allowance is gone: " + s);
+});
+
+/* ---- A full store, and whose it was (2026-11-11) ---- */
+/* A store with a ceiling, charged the way the browser charges: key and value, per
+   character. Throws the real error name, because storageIsFull reads it. */
+function fakeStore(cap, init) {
+  const m = Object.assign({}, init || {});
+  const used = () => Object.keys(m).reduce((n, k) => n + k.length + m[k].length, 0);
+  return {
+    getItem: k => (k in m ? m[k] : null),
+    removeItem: k => { delete m[k]; },
+    setItem: (k, v) => {
+      const was = m[k]; m[k] = String(v);
+      if (used() > cap) {
+        if (was === undefined) delete m[k]; else m[k] = was;
+        const e = new Error("exceeded the quota"); e.name = "QuotaExceededError"; throw e;
+      }
+    },
+    key: i => Object.keys(m)[i], get length() { return Object.keys(m).length; }, _m: m
+  };
+}
+T("storageCensus: counts keys that are not this app's, and says whose is whose", () => {
+  const c = storageCensus({ "hvr_library": "x".repeat(89), "dash_maps": "y".repeat(491), "hvr_srs": "{}" });
+  assertEq(c.mine, 100 + 9, "hvr_library is 11 + 89, hvr_srs is 7 + 2");
+  assertEq(c.other, 500, "dash_maps is 9 + 491 and belongs to the dashboard");
+  assertEq(c.total, 609);
+  assertEq(c.top[0].k, "dash_maps", "largest first, whoever owns it");
+});
+T("storageCensusLine: names the biggest key even when it is another app's", () => {
+  const line = storageCensusLine({ "hvr_library": "x".repeat(1000), "dash_maps": "y".repeat(3000000) });
+  assertTrue(/biggest: dash_maps 5\.7MB/.test(line), line);
+  assertTrue(/other pages at this address 5\.7MB/.test(line), line);
+});
+T("storageEverything: reads every key in the store, not only hvr_", () => {
+  const all = storageEverything(fakeStore(1000, { "hvr_a": "1", "dash_maps": "22" }));
+  assertEq(Object.keys(all).sort().join(","), "dash_maps,hvr_a");
+});
+T("storageReclaim: a full store drops what can be rebuilt and the write lands", () => {
+  const s = fakeStore(200, { "hvr_library": "L".repeat(60), "dash_maps": "M".repeat(100), "hvr_ailog": "A".repeat(10) });
+  let threw = false;
+  try { s.setItem("hvr_session", "S".repeat(40)); } catch (e) { threw = storageIsFull(e); }
+  assertTrue(threw, "the fixture must actually be full, or this proves nothing");
+  const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE);
+  assertEq(JSON.stringify(dropped), JSON.stringify(["hvr_ailog", "dash_maps"]),
+           "cheapest first, and it stops as soon as the write fits");
+  assertEq(s.getItem("hvr_session"), "S".repeat(40));
+  assertEq(s.getItem("hvr_library"), "L".repeat(60), "his words are never what makes room");
+});
+T("storageReclaim: stops at the first drop that is enough", () => {
+  const s = fakeStore(200, { "hvr_library": "L".repeat(60), "dash_maps": "M".repeat(60), "hvr_ailog": "A".repeat(50) });
+  const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE);
+  assertEq(JSON.stringify(dropped), JSON.stringify(["hvr_ailog"]));
+  assertEq(s.getItem("dash_maps"), "M".repeat(60), "the dashboard's maps survive when the log was enough");
+});
+T("storageReclaim: says so when nothing it may drop is enough", () => {
+  const s = fakeStore(100, { "hvr_library": "L".repeat(85) });
+  assertEq(storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE), null);
+  assertEq(s.getItem("hvr_library"), "L".repeat(85));
+  assertEq(s.getItem("hvr_session"), null);
+});
+T("storageReclaim: never drops progress, whatever the list is asked to grow into", () => {
+  ["hvr_library", "hvr_srs", "hvr_bank", "hvr_stats", "hvr_campaign", "hvr_srslog", "hvr_journal",
+   "hvr_session", "hvr_flags", "hvr_health", "dash_data"].forEach(k =>
+    assertTrue(STORAGE_EXPENDABLE.indexOf(k) === -1, k + " must never be expendable"));
+});
+T("storageSharedLine: silent alone, names the dashboard's share, and says when it is tight", () => {
+  assertEq(storageSharedLine(storageCensus({ "hvr_library": "x".repeat(1000) })).text, "");
+  const some = storageSharedLine(storageCensus({ "hvr_library": "x".repeat(1000), "dash_maps": "y".repeat(1048576) }));
+  assertTrue(/dashboard/.test(some.text) && /2\.0MB/.test(some.text) && /dash_maps/.test(some.text), some.text);
+  assertTrue(!some.tight, "2MB of 10 is not tight");
+  const full = storageSharedLine(storageCensus({ "hvr_library": "x".repeat(1100000), "dash_maps": "y".repeat(3200000) }));
+  assertTrue(full.tight && /tell Claude/.test(full.text), full.text);
+});
+T("the end of a session goes back to the map, never to Words", () => {
+  const src = learnEndButtons.toString();
+  assertTrue(src.indexOf('setView("words")') === -1, "Done for now must not land on Words");
 });
 
 /* ---- Morning-use fixes: forgiving an isolated miss ---- */

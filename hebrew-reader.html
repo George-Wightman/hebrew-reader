@@ -18121,9 +18121,12 @@ async function uhAsk(rep, question, at, asr, audio) {
                              card.attempt, card.focus);
     if (audio) parts.push({ inline_data: { mime_type: "audio/wav", data: audio } });
     const got = coachParseAnswer(String(await geminiRequest(parts, aiModelsFor("coach"),
+      /* Flash, thinking at its minimum, for COACH_FLASH_PATIENCE_MS; then Lite. */
       audio ? { label: "The coach — hearing and answering", timeoutMs: COACH_VOICE_TIMEOUT_MS,
-                totalMs: COACH_VOICE_TIMEOUT_MS + 5000 }
-            : { label: "The coach — a question" }) || ""));
+                totalMs: COACH_VOICE_TIMEOUT_MS + COACH_FLASH_PATIENCE_MS + 5000,
+                patienceMs: COACH_FLASH_PATIENCE_MS, think: "minimal" }
+            : { label: "The coach — a question",
+                patienceMs: COACH_FLASH_PATIENCE_MS, think: "minimal" }) || ""));
     a = got.answer; word = got.word; heard = got.heard;
     if (!a && !(audio && !heard)) err = "no answer came back";
   } catch (e) {
@@ -18355,9 +18358,13 @@ function coachDockHush() {
    and actually pick it up." */
 const COACH_REC_MAX_MS = 60 * 1000;
 const COACH_REC_MIN_S = 0.4;              // shorter than this is a tap, not a question
-/* Hearing AND answering in one call, on Flash, with audio: longer than a typed question
-   needs, and GEN_TIMEOUT_MS is the figure the app already uses for its heavy calls. */
-const COACH_VOICE_TIMEOUT_MS = 45000;
+/* How long the coach waits on Flash before asking Lite instead (2026-11-12). Flash was
+   given 45s per key and the whole call 50s, so a slow Flash spent the budget and Lite was
+   never asked: "a solid minute before it responded", and once, nothing at all. */
+const COACH_FLASH_PATIENCE_MS = 10000;
+/* What Lite then gets — hearing AND answering in one call, with audio, so longer than a
+   typed question needs. Only the last model in the list waits this long now. */
+const COACH_VOICE_TIMEOUT_MS = 30000;
 const COACH_VOICE_CONSENT_KEY = "hvr_coachvoiceok";
 let coachRec = null;                      // { mr, stream } while recording
 let coachRecPending = false;              // getUserMedia asked, not yet answered
@@ -18746,8 +18753,11 @@ function aiModalOpen(on) {
    reasoning outright, and this model both judges his Hebrew and writes the Hebrew he
    imitates. "low" spends nothing when nothing is needed and can still think on a
    turn that earns it, which is the behaviour we want on the harder cards. */
-function thinkingChain(model) {
-  return /lite/.test(String(model))
+function thinkingChain(model, level) {
+  /* "minimal" asked for by name (the coach, 2026-11-12): the better model, without the
+     time it spends thinking first. Same fallbacks as Lite, so a Flash that refuses the
+     level still lands on budget 0 and the refusal is recorded. */
+  return (/lite/.test(String(model)) || level === "minimal")
     ? [{ thinkingConfig: { thinkingLevel: "minimal" } },
        { thinkingConfig: { thinkingBudget: 0 } }, null]
     : [{ thinkingConfig: { thinkingLevel: "low" } },
@@ -18808,9 +18818,9 @@ const GEMINI_MAX_ATTEMPTS = 2;
    because the live conversation turn wants a much shorter leash than everything else:
    there, a slow answer is worse than no answer — the scripted line is sitting right
    there and the "…" is on screen while it waits. */
-async function geminiFetchWithRetry(url, body, timeoutMs) {
+async function geminiFetchWithRetry(url, body, timeoutMs, attempts) {
   let resp = null;
-  for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < (attempts || GEMINI_MAX_ATTEMPTS); attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));   // 700ms, then 1400ms
     resp = await fetchWithTimeout(url, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -18900,7 +18910,26 @@ function downshiftWhy(st) {
   if (st.rate) return "per-minute limit";
   if (st.http) return /empty/.test(st.http) ? "empty reply" : "overloaded";
   if (st.net) return "timed out";
+  if (st.slow) return "slow a moment ago";
   return "unknown";
+}
+
+/* PATIENCE (2026-11-12). An interactive call with opts.patienceMs gives every model but the
+   last that long, ONE attempt on ONE key, and then moves straight to the next model. The
+   coach used to give Flash 45s on key one, then 45s more on key two, inside a 50s deadline
+   that ran out before Lite was ever asked: about a minute and a half of "Thinking…" and
+   then nothing. George: "If it isn't getting an immediate reply from Flash … give it 10
+   seconds. If it works, it works."
+
+   A model that just failed that way is skipped by the next patient call for a while, so
+   one bad spell costs him one 10-second wait rather than one per question. Memory only:
+   a reload forgets it, which is the right length of grudge to hold against Google. */
+const AI_SLOW_HOLD_MS = 10 * 60 * 1000;
+const aiSlowSince = {};
+function aiSlowMark(model, now) { aiSlowSince[model] = now || Date.now(); }
+function aiSlowNow(model, now) {
+  const t = aiSlowSince[model];
+  return !!t && ((now || Date.now()) - t) < AI_SLOW_HOLD_MS;
 }
 async function geminiSend(parts, models, opts) {
   opts = opts || {};
@@ -18918,6 +18947,9 @@ async function geminiSend(parts, models, opts) {
      right for a background writer and wrong for "Listening back…": four 30s attempts,
      each re-uploading the recording, is two minutes of a disabled mic. */
   const deadline = opts.totalMs ? started + opts.totalMs : 0;
+  const modelList = models || GEMINI_MODELS;
+  const patience = opts.patienceMs || 0;
+  let skippedSlow = false;
   /* WHAT WAS ACTUALLY ATTEMPTED. lastGeminiTiming answers this on success and is
      stamped nowhere else, so a failed call logged `model: ""` and the log could not
      say which model faltered, on which key, or how far down the list it got. That is
@@ -18934,7 +18966,15 @@ async function geminiSend(parts, models, opts) {
   const _q0 = aiQAll();
   const _turn = (_aiKeyTurn = (_aiKeyTurn + 1) % 1000);
   walk:
-  for (const model of (models || GEMINI_MODELS)) {
+  for (const model of modelList) {
+    /* Patient only with a model that has another behind it: the last one gets the call's
+       ordinary timeout, because there is nothing left to hand over to. */
+    const hurry = patience > 0 && model !== modelList[modelList.length - 1];
+    if (hurry && aiSlowNow(model)) {
+      lastGeminiTried.push(model.replace("gemini-", "").replace("-latest", "") + " (slow just now)");
+      skippedSlow = true;
+      continue;
+    }
     const start = aiKeyPick(_q0, keys, aiPoolFor(model), _turn);
     for (let n = 0; n < keys.length; n++) {
       if (deadline && Date.now() >= deadline) {
@@ -18956,7 +18996,7 @@ async function geminiSend(parts, models, opts) {
          slow request. `null` is now the last resort behind two configs rather than the
          only alternative to one, and every rejection is recorded on lastThinkingSkips
          so the log can name what was refused instead of only what worked. */
-      for (const cfg of thinkingChain(model)) {
+      for (const cfg of thinkingChain(model, opts.think)) {
         const body = { contents: [{ parts: parts }] };
         if (cfg) body.generationConfig = cfg;
         let resp = null, text = "", waits = 0, spent = false, dayGone = false;
@@ -18974,7 +19014,9 @@ async function geminiSend(parts, models, opts) {
              exactly 20.0s without ever asking gemini-flash-lite, which was sitting at 5 of
              15 per minute and 13 of 500 for the day with nothing to do. */
           try {
-            resp = await geminiFetchWithRetry(geminiURLFor(model, key), body, opts.timeoutMs);
+            resp = hurry
+              ? await geminiFetchWithRetry(geminiURLFor(model, key), body, patience, 1)
+              : await geminiFetchWithRetry(geminiURLFor(model, key), body, opts.timeoutMs);
           } catch (e) { netErr = (e && e.message) || "the request failed"; resp = null; break; }
           if (resp.ok) break;
           text = await resp.text();
@@ -18996,7 +19038,12 @@ async function geminiSend(parts, models, opts) {
         }
         /* The next MODEL, not the same one without its thinking config: a request that
            ran out of time is not a request that was misconfigured. */
-        if (netErr) { lastNetErr = netErr; break; }
+        if (netErr) {
+          lastNetErr = netErr;
+          /* Slow is the MODEL, not the key: the other key would wait just as long. */
+          if (hurry) { aiSlowMark(model); continue walk; }
+          break;
+        }
         if (resp.ok) {
           const json = await resp.json();
           const out = ((((json.candidates || [])[0] || {}).content || {}).parts || [])
@@ -19028,7 +19075,7 @@ async function geminiSend(parts, models, opts) {
                          wanted.replace("gemini-", "").replace("-latest", "") + " → " +
                          model.replace("gemini-", "").replace("-latest", "") + " — " +
                          downshiftWhy({ key: lastKeyErr, day: sawDayGone, rate: sawRateHint,
-                                        http: lastHttpErr, net: lastNetErr }));
+                                        http: lastHttpErr, net: lastNetErr, slow: skippedSlow }));
             aiQNote(model, "ok", keyId, opts.label || "");
             return out;
           }
@@ -19076,7 +19123,11 @@ async function geminiSend(parts, models, opts) {
            list exists for; it is not a reason to stop walking it.
            Deliberately narrower than the netErr break above: only 5xx, so a 401 or a 403
            still throws at once rather than retrying a broken key against every model. */
-        if (resp.status >= 500) { lastHttpErr = "HTTP " + resp.status; break; }
+        if (resp.status >= 500) {
+          lastHttpErr = "HTTP " + resp.status;
+          if (hurry) { aiSlowMark(model); continue walk; }
+          break;
+        }
         throw new Error("HTTP " + resp.status);      // not a quota problem — don't blame the key
       }
     }
@@ -42814,6 +42865,65 @@ T("geminiSend: a timeout is this model failing, not the call failing", async () 
     geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
     selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
     /* The success branch writes an "ok" into the live quota counter, too. */
+    if (wasQ == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, wasQ);
+  }
+});
+/* ---- the coach's patience with Flash (2026-11-12) ---- */
+T("geminiSend: a patient call gives Flash one short try on one key, then asks Lite", async () => {
+  /* George waited "a solid minute" for the coach, and once gave up: Flash had 45s on each
+     of two keys inside a 50s deadline, so Lite was never reached. */
+  const realFetch = geminiFetchWithRetry, realKeys = geminiKeys;
+  const wasHealth = lsGet(HEALTH_KEY), wasHealthMem = healthMem, wasQ = lsGet(AI_Q_KEY);
+  const wasSlow = Object.assign({}, aiSlowSince);
+  try {
+    Object.keys(aiSlowSince).forEach(k => delete aiSlowSince[k]);
+    geminiKeys = () => ["k1", "k2"];
+    const asked = [];
+    geminiFetchWithRetry = (url, body, ms, attempts) => {
+      const lite = url.indexOf("gemini-flash-lite") !== -1;
+      asked.push({ m: lite ? "lite" : "flash", ms: ms, attempts: attempts || 0,
+                   think: JSON.stringify((body.generationConfig || {}).thinkingConfig || null) });
+      if (!lite) return Promise.reject(new Error("the request took longer than 10s"));
+      return Promise.resolve({ ok: true, json: async () => ({
+        candidates: [{ content: { parts: [{ text: "answered" }] } }] }) });
+    };
+    const opts = { patienceMs: 10000, timeoutMs: 30000, think: "minimal" };
+    assertEq(await geminiSend([{ text: "x" }], GEMINI_MODELS, opts), "answered");
+    const flash = asked.filter(a => a.m === "flash");
+    assertEq(flash.length, 1, "Flash once — not again on the second key");
+    assertEq(flash[0].ms, 10000, "with the patience as its timeout");
+    assertEq(flash[0].attempts, 1, "and no same-model retry");
+    assertTrue(/minimal/.test(flash[0].think), "thinking at its minimum: " + flash[0].think);
+    assertEq(asked[asked.length - 1].ms, 30000, "Lite, the last, gets the ordinary timeout");
+
+    /* The next question in the same spell does not wait on Flash at all. */
+    asked.length = 0;
+    assertEq(await geminiSend([{ text: "x" }], GEMINI_MODELS, opts), "answered");
+    assertEq(asked.filter(a => a.m === "flash").length, 0, "Flash skipped while it is slow");
+
+    /* A 503 counts the same as a timeout. */
+    Object.keys(aiSlowSince).forEach(k => delete aiSlowSince[k]);
+    asked.length = 0;
+    geminiFetchWithRetry = (url, body, ms, attempts) => {
+      const lite = url.indexOf("gemini-flash-lite") !== -1;
+      asked.push({ m: lite ? "lite" : "flash" });
+      if (!lite) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("overloaded") });
+      return Promise.resolve({ ok: true, json: async () => ({
+        candidates: [{ content: { parts: [{ text: "answered" }] } }] }) });
+    };
+    assertEq(await geminiSend([{ text: "x" }], GEMINI_MODELS, opts), "answered");
+    assertEq(asked.filter(a => a.m === "flash").length, 1, "one overloaded answer is enough");
+
+    /* And a call that asked for no patience is exactly as before: Flash on both keys. */
+    Object.keys(aiSlowSince).forEach(k => delete aiSlowSince[k]);
+    asked.length = 0;
+    assertEq(await geminiSend([{ text: "x" }], GEMINI_MODELS, {}), "answered");
+    assertEq(asked.filter(a => a.m === "flash").length, 2, "background calls still walk every key");
+  } finally {
+    geminiFetchWithRetry = realFetch; geminiKeys = realKeys;
+    Object.keys(aiSlowSince).forEach(k => delete aiSlowSince[k]);
+    Object.assign(aiSlowSince, wasSlow);
+    selftestPut(HEALTH_KEY, wasHealth); healthMem = wasHealthMem;
     if (wasQ == null) localStorage.removeItem(AI_Q_KEY); else lsSet(AI_Q_KEY, wasQ);
   }
 });

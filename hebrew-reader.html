@@ -5151,7 +5151,9 @@ const MERGE_RULES = {
   "hvr_srs":        (a, b) => mergeSrs(a, b),
   "hvr_stats":      (a, b) => mergeStats(a, b),
   "hvr_archive":    (a, b) => mergeArchive(a, b),
-  "hvr_bank":       (a, b) => bankDropStubs(mergeById(a, b, BANK_MAX)),
+  /* Only Claude's sentences survive a merge (2026-11-12): the phone's Gemini sentences were
+     deleted, and without this the other side's copy would bring them straight back. */
+  "hvr_bank":       (a, b) => bankDropStubs(mergeById(bankOnlyClaudes(a), bankOnlyClaudes(b), BANK_MAX)),
   "hvr_pathscores": (a, b) => mergePathScores(a, b),
   "hvr_history":    (a, b) => mergeHistory(a, b, 100),
   "hvr_ai_q":       (a, b) => mergeAiQ(a, b),
@@ -22780,22 +22782,40 @@ function libWordsTidyIfNeeded() {
    `uses` came out empty fails `.some(u => lib[u])` and would be thrown away by the very
    call that was supposed to rescue it. Every read path in the app goes through here, so
    after this no reader can see a stale `uses` — and none can see a retired sentence. */
-/* ONLY CLAUDE'S SENTENCES ARE SERVED (2026-11-12). The phone's writer was switched off on
+/* ONLY CLAUDE'S SENTENCES ARE KEPT, OR SERVED (2026-11-12). The phone's writer was switched off on
    2026-11-03, but the ~350 sentences it had already written stayed in the bank and kept
    being dealt: 15 of 93 cards in the week before this, among them a listen card he was
    marked wrong on. George: "AI should not be writing sentences. We came to this conclusion
    that only you write the sentences." Every item that came in through content/nodes.json
-   carries src "claude" (contentApply stamps it); the writer's items carry none. They are
-   left in storage rather than deleted, so this is one constant to undo, and nothing else
-   about the bank (ids, seen counts, sync) moves. */
+   carries src "claude" (contentApply stamps it); the writer's items carry none.
+
+   First they were only hidden. Then George: "If we're not going to serve them, just get
+   rid of them … you can write all the sentences because you're better at doing it." So
+   they are deleted on load, and the bank's merge rule drops them from both sides, which is
+   what stops a synced copy resurrecting them. A merge never sees Claude's items lose their
+   src: bankSlimForSync keeps it on the stubs, and bankDropStubs is applied after. */
 const BANK_CLAUDE_ONLY = true;
 function bankIsClaudes(it) { return !!it && it.src === "claude"; }
+function bankOnlyClaudes(bank) {
+  const a = Array.isArray(bank) ? bank : [];
+  return BANK_CLAUDE_ONLY ? a.filter(bankIsClaudes) : a;
+}
 function bankPrune(bank, lib, retired) {
   const ret = retired || retiredAll();
   return bankDedupeWords(bankUsesRefresh(bank, lib).bank
     .filter(it => it && it.he && (!BANK_CLAUDE_ONLY || bankIsClaudes(it)) &&
                   (it.uses || []).some(u => lib[u]) && !isRetired(it, ret)));
 }
+/* On every load, not once behind a marker: it is a no-op when there is nothing to remove,
+   and a device that has not synced since will have them again until it does. */
+function bankPurgeNotClaudes() {
+  try {
+    const all = bankAll(), kept = bankOnlyClaudes(all);
+    if (kept.length !== all.length) bankSave(kept);
+    return all.length - kept.length;
+  } catch (e) { return 0; }
+}
+bankPurgeNotClaudes();
 
 /* ---- refusing the same sentence wearing a different hat ----------------------
    George: "its looking quite basic sentences a lot 'this is a big house' 'this is
@@ -38152,7 +38172,9 @@ T("bank sync: content that came from a public file does not ride the private rep
   const c1 = merged.find(x => x.id === "c1"), r1 = merged.find(x => x.id === "r1");
   assertEq(c1.he, "אני הולך הביתה", "my full copy survives their stub");
   assertEq(c1.seen, 3, "and the higher seen count wins");
-  assertEq(r1.he, "מה שלומך", "while their rescue sentence arrives whole, as it must");
+  /* Until 2026-11-12 a phone-written rescue sentence arrived whole here. The phone's
+     sentences are deleted now, and the merge is what keeps them deleted. */
+  assertTrue(!r1, "a phone-written sentence does not survive the merge");
   /* A device that has never fetched content/nodes.json receives only stubs. Those are not
      bank items — bankPrune would refuse them for lack of `he` — so they are not stored. */
   assertEq(MERGE_RULES["hvr_bank"]([], [{ id: "c9", src: "claude", seen: 0 }]).length, 0);
@@ -40996,6 +41018,14 @@ T("shadowSlotWords / shadowSlotFill: one slot per Hebrew word, filled in order, 
   assertEq(eng.length, 4, "a word past the last slot gets a slot of its own");
   assertTrue(eng.every(f => f.en), "every one of them marked as English");
   assertTrue(eng[3].extra && !eng[2].extra);
+});
+T("bank merge: the phone's AI sentences are dropped from both sides, Claude's kept (2026-11-12)", () => {
+  const mine = [{ id: "c1", he: "שלום", src: "claude", seen: 2 }, { id: "g1", he: "אני רוצה קפה", seen: 4 }];
+  const theirs = [{ id: "c2", src: "claude", seen: 1 },                       // a slimmed stub
+                  { id: "g2", he: "אמא עייפה", src: "" }, { id: "c1", src: "claude", seen: 5 }];
+  const out = MERGE_RULES["hvr_bank"](mine, theirs);
+  assertEq(out.map(it => it.id), ["c1"], "AI items gone from both sides; the stub is dropped as before");
+  assertEq(out[0].seen, 5, "and Claude's item still merges its seen count");
 });
 T("bankPrune: a sentence the phone's AI wrote is never served, only Claude's (2026-11-12)", () => {
   const lib = { "כלב": { en: "dog" }, "קטן": { en: "small" } };

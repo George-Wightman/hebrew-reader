@@ -3306,6 +3306,20 @@
   /* The bars that interrupt: alarm and update offer keep their colours and jobs, with the
      app's type and a softer edge. */
   .updatebar, .alarm { font-family: var(--ui); }
+  /* Shadow cards: one slot per Hebrew word, filling as he speaks (2026-11-12, spec
+     2026-11-12-shadow-word-slots-design.md). The layout tells him to say the Hebrew back,
+     so the card no longer looks like a listen card. */
+  .lslots { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end;
+    gap: 10px 16px; direction: rtl; margin: 4px 0 18px; }
+  .lslot { font-family: var(--he); font-size: 1.7rem; line-height: 1.25; color: var(--ink);
+    min-width: calc(var(--n, 3) * .62em + .5em); padding: 0 4px 3px; text-align: center;
+    border-bottom: 2px solid var(--muted); }
+  .lslot.on { border-bottom-color: var(--ink); }
+  .lslot.en { font-family: var(--ui); font-size: 1.15rem; direction: ltr; color: var(--bad);
+    border-bottom-color: var(--bad); }
+  .lslot.extra { border-bottom-style: dashed; }
+  .lslots.ltr { direction: ltr; }
+  .lmiclive.slotted { display: none; }
 </style>
 </head>
 <body>
@@ -33539,6 +33553,7 @@ function learnRenderCard() {
     turtle.onclick = () => learnSpeakPrompt(true);
     row.append(spk, turtle);
     card.append(row);
+    if (c.kind === "shadow" && hasHeVoice()) card.append(learnSlotsEl(c.item.he));
     if (!hasHeVoice()) {
       const p = document.createElement("div"); p.className = "lprompt";
       p.textContent = ((c.kind === "reply")
@@ -34281,6 +34296,9 @@ function learnMicLiveBox(card) {
   lab.textContent = "Listening";
   box = document.createElement("div");
   box.className = "lmiclive empty"; box.dir = "rtl";
+  /* A shadow card's slots ARE its live transcript; this box stays (it holds the text)
+     but is not shown. */
+  if (card.querySelector(".lslots")) box.classList.add("slotted");
   box.textContent = "listening…";
   const act = card.querySelector(".lactions");
   if (act) { card.insertBefore(lab, act); card.insertBefore(box, act); }
@@ -34293,6 +34311,54 @@ function learnMicLiveLabel(card, txt) {
 function learnMicLiveSet(box, txt) {
   box.textContent = txt || "listening…";
   box.classList.toggle("empty", !txt);
+  const card = box.parentNode;
+  const slots = card && card.querySelector && card.querySelector(".lslots");
+  if (slots) learnSlotsPaint(slots, txt || "");
+}
+
+/* ---- shadow cards: the words as slots (2026-11-12) ---------------------------------
+   George answered a "say it back" card with the meaning, because it opened exactly like
+   a "what did it mean" card: "I just respond to what it looks like." One slot per Hebrew
+   word, sized to the word, right to left, is a card that can only be answered in Hebrew.
+   Pure helpers first; the DOM pieces only lay their output out. */
+function shadowSlotWords(he) {
+  return heTokens(he).map(w => w.replace(/[^֐-׿'"׳״]/g, ""))
+    .filter(w => /[א-ת]/.test(w));
+}
+/* In order, as he says them: slot i gets the i-th word heard, and anything past the last
+   slot is an extra. A word in Latin letters is English, and is marked as such. */
+function shadowSlotFill(words, heard) {
+  const said = String(heard || "").replace(/[\u200E\u200F]/g, "").trim().split(/\s+/).filter(Boolean);
+  const n = Math.max(words.length, said.length);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = said[i] || "";
+    out.push({ len: (words[i] || t).length || 3, text: t, en: /[A-Za-z]/.test(t), extra: i >= words.length });
+  }
+  return out;
+}
+function learnSlotsEl(he) {
+  const box = document.createElement("div");
+  box.className = "lslots"; box.dir = "rtl";
+  box.dataset.words = JSON.stringify(shadowSlotWords(he));
+  learnSlotsPaint(box, "");
+  return box;
+}
+function learnSlotsPaint(box, heard) {
+  let words = [];
+  try { words = JSON.parse(box.dataset.words || "[]"); } catch (e) {}
+  box.innerHTML = "";
+  const fills = shadowSlotFill(words, heard);
+  /* English laid out right to left reads backwards ("tall is friend you"), so a row that
+     came back in English runs the way English does. */
+  box.classList.toggle("ltr", fills.some(f => f.en));
+  fills.forEach(f => {
+    const sl = document.createElement("span");
+    sl.className = "lslot" + (f.text ? " on" : "") + (f.en ? " en" : "") + (f.extra ? " extra" : "");
+    sl.style.setProperty("--n", String(f.len));
+    sl.textContent = f.text || "\u00a0";
+    box.append(sl);
+  });
 }
 function learnMicLiveClear(card) {
   const b = card.querySelector(".lmiclive"); if (b) b.remove();
@@ -35495,6 +35561,9 @@ function learnReveal() {
      this. */
   const ladder = card.querySelector(".lstuck");
   if (ladder) ladder.remove();
+  /* The slots were the way in. The answer and "What it heard you say" are the record. */
+  const slots = card.querySelector(".lslots");
+  if (slots) slots.remove();
 
   /* Frozen rather than cleared. Its whole value is being an honest record of what
      you thought BEFORE you knew, sitting right above the real answer — editing it
@@ -40911,6 +40980,22 @@ T("bankPrune: a retired sentence is never served", () => {
   const store = {};
   retiredAdd([{ he: "קצת כלב" }], "t", store);
   assertEq(bankPrune(bank, lib, store).map(it => it.id), ["b"]);
+});
+T("shadowSlotWords / shadowSlotFill: one slot per Hebrew word, filled in order, English shown as English", () => {
+  assertEq(shadowSlotWords("החבר שלך גבוה!"), ["החבר", "שלך", "גבוה"], "punctuation is not a slot");
+  assertEq(shadowSlotWords("מה נשמע? - טוב, תודה."), ["מה", "נשמע", "טוב", "תודה"], "nor is a dash");
+  const w = shadowSlotWords("החבר שלך גבוה!");
+  const empty = shadowSlotFill(w, "");
+  assertEq(empty.length, 3);
+  assertTrue(empty.every(f => !f.text && !f.extra), "nothing said: three blanks");
+  assertEq(empty.map(f => f.len), [4, 3, 4], "sized to the word");
+  const part = shadowSlotFill(w, "החבר שלך");
+  assertEq(part.map(f => f.text), ["החבר", "שלך", ""], "fills from the first word");
+  /* The flag this exists for: the recogniser's RLM mark, then English. */
+  const eng = shadowSlotFill(w, "\u200fyou friend is tall");
+  assertEq(eng.length, 4, "a word past the last slot gets a slot of its own");
+  assertTrue(eng.every(f => f.en), "every one of them marked as English");
+  assertTrue(eng[3].extra && !eng[2].extra);
 });
 T("bankPrune: a sentence the phone's AI wrote is never served, only Claude's (2026-11-12)", () => {
   const lib = { "כלב": { en: "dog" }, "קטן": { en: "small" } };

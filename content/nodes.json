@@ -1,5 +1,5 @@
 {
- "version": 13,
+ "version": 14,
  "generated": "2026-11-12",
  "retired": [
   {
@@ -1260,6 +1260,269 @@
     }
    ],
    "made": "2026-09-29"
+  },
+  {
+   "node": "The Right Way",
+   "title": "Coffee in town",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "הקפה פה טוב, נכון?",
+     "tr": "hakafe po tov, nakhon?",
+     "en": "The coffee here is good, isn't it?"
+    },
+    {
+     "s": 1,
+     "he": "באמת טוב.",
+     "tr": "be'emet tov.",
+     "en": "Really good."
+    },
+    {
+     "s": 0,
+     "he": "רגע, אתה רוצה עוד כוס?",
+     "tr": "rega, ata rotze od kos?",
+     "en": "Wait, do you want another cup?"
+    },
+    {
+     "s": 1,
+     "he": "אולי. פשוט אני עייף היום.",
+     "tr": "ulai. pashut ani ayef hayom.",
+     "en": "Maybe. I'm just tired today."
+    },
+    {
+     "s": 0,
+     "he": "נכון, גם אני. אז עוד קפה!",
+     "tr": "nakhon, gam ani. az od kafe!",
+     "en": "True, me too. So, more coffee!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "באמת",
+     "tr": "be'emet",
+     "en": "really"
+    },
+    {
+     "he": "רגע",
+     "tr": "rega",
+     "en": "a moment; wait"
+    },
+    {
+     "he": "פשוט",
+     "tr": "pashut",
+     "en": "simply, just"
+    }
+   ],
+   "made": "2026-11-12"
+  },
+  {
+   "node": "More and More",
+   "title": "Another plate",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "אתה רוצה יותר אורז?",
+     "tr": "ata rotze yoter orez?",
+     "en": "Do you want more rice?"
+    },
+    {
+     "s": 1,
+     "he": "כן, בבקשה! קצת יותר.",
+     "tr": "ken, bevakasha! ktzat yoter.",
+     "en": "Yes please! A bit more."
+    },
+    {
+     "s": 0,
+     "he": "כמו אתמול? הרבה?",
+     "tr": "kmo etmol? harbe?",
+     "en": "Like yesterday? Lots?"
+    },
+    {
+     "s": 1,
+     "he": "כן, כמו אתמול. האורז פה מצוין.",
+     "tr": "ken, kmo etmol. ha'orez po metzuyan.",
+     "en": "Yes, like yesterday. The rice here is excellent."
+    },
+    {
+     "s": 0,
+     "he": "זה מקום מצוין.",
+     "tr": "ze makom metzuyan.",
+     "en": "It's a great place."
+    },
+    {
+     "s": 1,
+     "he": "אז אני בא לפה מחר!",
+     "tr": "az ani ba lepo makhar!",
+     "en": "Then I'm coming back tomorrow!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "מקום",
+     "tr": "makom",
+     "en": "place"
+    }
+   ],
+   "made": "2026-11-12"
+  },
+  {
+   "node": "What is Happening",
+   "title": "Out on the street",
+   "speakers": [
+    {
+     "name": "Noa",
+     "he": "נועה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "מה קורה ברחוב?",
+     "tr": "ma kore barekhov?",
+     "en": "What's going on in the street?"
+    },
+    {
+     "s": 1,
+     "he": "אני לא יודע. אני רואה הרבה ילדים.",
+     "tr": "ani lo yode'a. ani ro'e harbe yeladim.",
+     "en": "I don't know. I can see lots of kids."
+    },
+    {
+     "s": 0,
+     "he": "מישהו מדבר שם?",
+     "tr": "mishehu medaber sham?",
+     "en": "Is someone talking over there?"
+    },
+    {
+     "s": 1,
+     "he": "כן! ילד אחד מקבל עוגה.",
+     "tr": "ken! yeled ekhad mekabel uga.",
+     "en": "Yes! A boy is getting a cake."
+    },
+    {
+     "s": 0,
+     "he": "עוגה? לפני האוכל?",
+     "tr": "uga? lifnei ha'okhel?",
+     "en": "Cake? Before dinner?"
+    },
+    {
+     "s": 1,
+     "he": "אולי יש לו יום הולדת!",
+     "tr": "ulai yesh lo yom huledet!",
+     "en": "Maybe it's his birthday!"
+    }
+   ],
+   "gloss": [
+    {
+     "he": "קורה",
+     "tr": "kore",
+     "en": "happens; is going on"
+    },
+    {
+     "he": "מישהו",
+     "tr": "mishehu",
+     "en": "someone"
+    },
+    {
+     "he": "מקבל",
+     "tr": "mekabel",
+     "en": "gets, receives"
+    },
+    {
+     "he": "לפני",
+     "tr": "lifnei",
+     "en": "before; ago"
+    },
+    {
+     "he": "הולדת",
+     "tr": "huledet",
+     "en": "birth (יום הולדת, birthday)"
+    }
+   ],
+   "made": "2026-11-12"
+  },
+  {
+   "node": "Trying to See",
+   "title": "Down the road",
+   "speakers": [
+    {
+     "name": "Dana",
+     "he": "דנה"
+    },
+    {
+     "name": "Avi",
+     "he": "אבי"
+    }
+   ],
+   "lines": [
+    {
+     "s": 0,
+     "he": "מה מגיע בדרך? אני מנסה, אבל אני לא רואה.",
+     "tr": "ma magi'a baderekh? ani menasa, aval ani lo ro'a.",
+     "en": "What's coming down the road? I'm trying, but I can't see."
+    },
+    {
+     "s": 1,
+     "he": "זה האוטובוס?",
+     "tr": "ze ha'otobus?",
+     "en": "Is it the bus?"
+    },
+    {
+     "s": 0,
+     "he": "אני לא יודעת. הוא עדיין קטן.",
+     "tr": "ani lo yoda'at. hu adayin katan.",
+     "en": "I don't know. It still looks small."
+    },
+    {
+     "s": 1,
+     "he": "אני חייב להגיע לעבודה.",
+     "tr": "ani khayav lehagi'a la'avoda.",
+     "en": "I have to get to work."
+    },
+    {
+     "s": 0,
+     "he": "הוא מגיע! בוא.",
+     "tr": "hu magi'a! bo.",
+     "en": "It's coming! Come on."
+    }
+   ],
+   "gloss": [
+    {
+     "he": "מנסה",
+     "tr": "menase",
+     "en": "try, tries"
+    },
+    {
+     "he": "חייב",
+     "tr": "khayav",
+     "en": "must, have to"
+    }
+   ],
+   "made": "2026-11-12"
   }
  ],
  "items": [
@@ -12942,6 +13205,1142 @@
    "type": "listen",
    "lvl": 2,
    "for": "כמה"
+  },
+  {
+   "he": "נכון, היום קר.",
+   "tr": "nakhon, hayom kar.",
+   "en": "That's right, it's cold today.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "נכון"
+  },
+  {
+   "he": "זה לא נכון, אני לא עייף.",
+   "tr": "ze lo nakhon, ani lo ayef.",
+   "en": "That's not true, I'm not tired.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נכון"
+  },
+  {
+   "he": "מה שאמרת נכון.",
+   "tr": "ma she'amarta nakhon.",
+   "en": "What you said is right.",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "נכון"
+  },
+  {
+   "he": "האוטובוס בא בבוקר, נכון?",
+   "tr": "ha'otobus ba baboker, nakhon?",
+   "en": "The bus comes in the morning, right?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נכון"
+  },
+  {
+   "he": "נכון, אני עייף עכשיו.",
+   "tr": "nakhon, ani ayef akhshav.",
+   "en": "True, I'm tired now.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "נכון"
+  },
+  {
+   "he": "נכון מאוד, הקפה פה טוב.",
+   "tr": "nakhon me'od, hakafe po tov.",
+   "en": "Very true, the coffee here is good.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נכון"
+  },
+  {
+   "he": "אכלתי, ואחר כך שתיתי קפה.",
+   "tr": "akhalti, ve'akhar kakh shatiti kafe.",
+   "en": "I ate, and afterwards I drank coffee.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כך"
+  },
+  {
+   "he": "כך אמא אומרת.",
+   "tr": "kakh ima omeret.",
+   "en": "That's what mom says.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כך"
+  },
+  {
+   "he": "אני עייף, כך שאני הולך לישון.",
+   "tr": "ani ayef, kakh she'ani holekh lishon.",
+   "en": "I'm tired, so I'm going to sleep.",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כך"
+  },
+  {
+   "he": "אחר כך נדבר.",
+   "tr": "akhar kakh nedaber.",
+   "en": "We'll talk later.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כך"
+  },
+  {
+   "he": "הוא מדבר כמו סבא.",
+   "tr": "hu medaber kmo saba.",
+   "en": "He talks like grandpa.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמו"
+  },
+  {
+   "he": "אני שמח כמו ילד.",
+   "tr": "ani same'akh kmo yeled.",
+   "en": "I'm as happy as a kid.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמו"
+  },
+  {
+   "he": "הכלב לבן כמו חלב.",
+   "tr": "hakelev lavan kmo khalav.",
+   "en": "The dog is as white as milk.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כמו"
+  },
+  {
+   "he": "היום קר כמו בלילה.",
+   "tr": "hayom kar kmo balaila.",
+   "en": "Today it's as cold as at night.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כמו"
+  },
+  {
+   "he": "אני רוצה תה, כמו אתמול.",
+   "tr": "ani rotze te, kmo etmol.",
+   "en": "I want tea, like yesterday.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמו"
+  },
+  {
+   "he": "אמא מדברת אנגלית כמו אבא.",
+   "tr": "ima medaberet anglit kmo aba.",
+   "en": "Mom speaks English like dad.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כמו"
+  },
+  {
+   "he": "אין עוגה כמו העוגה של אמא.",
+   "tr": "ein uga kmo ha'uga shel ima.",
+   "en": "There's no cake like mom's cake.",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כמו"
+  },
+  {
+   "he": "אני אוכל אורז כמו אבא.",
+   "tr": "ani okhel orez kmo aba.",
+   "en": "I eat rice like dad does.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמו"
+  },
+  {
+   "he": "את מדברת כמו אמא שלך!",
+   "tr": "at medaberet kmo ima shelakh!",
+   "en": "You talk like your mom!",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כמו"
+  },
+  {
+   "he": "אני רואה את אמא בעיר.",
+   "tr": "ani ro'e et ima ba'ir.",
+   "en": "I can see mom in the city.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "רואה"
+  },
+  {
+   "he": "אתה רואה את הכלב שם?",
+   "tr": "ata ro'e et hakelev sham?",
+   "en": "Do you see the dog over there?",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "רואה"
+  },
+  {
+   "he": "אני לא רואה את אבא, איפה הוא?",
+   "tr": "ani lo ro'e et aba, eifo hu?",
+   "en": "I can't see dad, where is he?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רואה"
+  },
+  {
+   "he": "בעיר אני רואה הרבה ילדים.",
+   "tr": "ba'ir ani ro'e harbe yeladim.",
+   "en": "In the city I see lots of kids.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רואה"
+  },
+  {
+   "he": "אמא רואה שאני עייף.",
+   "tr": "ima ro'a she'ani ayef.",
+   "en": "Mom can see I'm tired.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רואה"
+  },
+  {
+   "he": "אני רואה שלושה ילדים.",
+   "tr": "ani ro'e shlosha yeladim.",
+   "en": "I see three children.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "רואה"
+  },
+  {
+   "he": "אתה רואה את סבא היום?",
+   "tr": "ata ro'e et saba hayom?",
+   "en": "Are you seeing grandpa today?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רואה"
+  },
+  {
+   "he": "אני רואה שאתה שמח.",
+   "tr": "ani ro'e she'ata same'akh.",
+   "en": "I can see you're happy.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רואה"
+  },
+  {
+   "he": "אני הולך לעיר כדי לאכול.",
+   "tr": "ani holekh la'ir kedei le'ekhol.",
+   "en": "I'm going to the city to eat.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כדי"
+  },
+  {
+   "he": "אני שותה קפה כדי לעבוד.",
+   "tr": "ani shote kafe kedei la'avod.",
+   "en": "I drink coffee so I can work.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כדי"
+  },
+  {
+   "he": "אמא באה כדי לאכול עוגה.",
+   "tr": "ima ba'a kedei le'ekhol uga.",
+   "en": "Mom is coming over to eat cake.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "כדי"
+  },
+  {
+   "he": "אני לומד עברית כדי לדבר עם סבא.",
+   "tr": "ani lomed ivrit kedei ledaber im saba.",
+   "en": "I'm learning Hebrew so I can talk with grandpa.",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "כדי"
+  },
+  {
+   "he": "איפה הדרך לעיר?",
+   "tr": "eifo haderekh la'ir?",
+   "en": "Where's the road to the city?",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "דרך"
+  },
+  {
+   "he": "בדרך לעבודה אני שותה קפה.",
+   "tr": "baderekh la'avoda ani shote kafe.",
+   "en": "On the way to work I drink coffee.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "דרך"
+  },
+  {
+   "he": "האוטובוס בדרך.",
+   "tr": "ha'otobus baderekh.",
+   "en": "The bus is on its way.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "דרך"
+  },
+  {
+   "he": "האיש רוצה מים.",
+   "tr": "ha'ish rotze mayim.",
+   "en": "The man wants water.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "איש"
+  },
+  {
+   "he": "סבא נראה שמח היום.",
+   "tr": "saba nir'e same'akh hayom.",
+   "en": "Grandpa looks happy today.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "נראה"
+  },
+  {
+   "he": "הבית נראה גדול.",
+   "tr": "habayit nir'e gadol.",
+   "en": "The house looks big.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "נראה"
+  },
+  {
+   "he": "אכלתי שם פעם אחת.",
+   "tr": "akhalti sham pa'am akhat.",
+   "en": "I ate there once.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "פעם"
+  },
+  {
+   "he": "אני לומד עברית שנה.",
+   "tr": "ani lomed ivrit shana.",
+   "en": "I've been learning Hebrew for a year.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שנה"
+  },
+  {
+   "he": "אני לא יכול למצוא את הכלב!",
+   "tr": "ani lo yakhol limtzo et hakelev!",
+   "en": "I can't find the dog!",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "למצוא"
+  },
+  {
+   "he": "אבא תמיד שותה תה בערב.",
+   "tr": "aba tamid shote te ba'erev.",
+   "en": "Dad always drinks tea in the evening.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "תמיד"
+  },
+  {
+   "he": "אני מדבר עם אמא שעה ביום.",
+   "tr": "ani medaber im ima sha'a beyom.",
+   "en": "I talk with mom for an hour a day.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שעה"
+  },
+  {
+   "he": "סבא הולך שעה בבוקר.",
+   "tr": "saba holekh sha'a baboker.",
+   "en": "Grandpa walks for an hour in the morning.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שעה"
+  },
+  {
+   "he": "הראש של הכלב קטן.",
+   "tr": "harosh shel hakelev katan.",
+   "en": "The dog's head is small.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ראש"
+  },
+  {
+   "he": "אני רוצה לשאול משהו.",
+   "tr": "ani rotze lish'ol mashehu.",
+   "en": "I want to ask something.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לשאול"
+  },
+  {
+   "he": "אתמול היה יום רע, שבוע רע.",
+   "tr": "etmol haya yom ra, shavu'a ra.",
+   "en": "Yesterday was a bad day, a bad week.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שבוע"
+  },
+  {
+   "he": "סוף סוף, האוטובוס!",
+   "tr": "sof sof, ha'otobus!",
+   "en": "Finally, the bus!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "סוף"
+  },
+  {
+   "he": "אתה יכול לשמור את הספר?",
+   "tr": "ata yakhol lishmor et hasefer?",
+   "en": "Can you keep the book?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לשמור"
+  },
+  {
+   "he": "הכלב בין הילדים.",
+   "tr": "hakelev bein hayeladim.",
+   "en": "The dog is between the children.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "בין"
+  },
+  {
+   "he": "אני רוצה להפוך את העוגה.",
+   "tr": "ani rotze lahafokh et ha'uga.",
+   "en": "I want to turn the cake over.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "להפוך"
+  },
+  {
+   "he": "סליחה, דקה.",
+   "tr": "slikha, daka.",
+   "en": "Sorry, one minute.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "דקה"
+  },
+  {
+   "he": "דקה, אני מדבר עם אמא.",
+   "tr": "daka, ani medaber im ima.",
+   "en": "One minute, I'm talking to mom.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "דקה"
+  },
+  {
+   "he": "אלו הספרים שלי.",
+   "tr": "elu hasfarim sheli.",
+   "en": "These are my books.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "אלו"
+  },
+  {
+   "he": "המספר של אבא, בבקשה.",
+   "tr": "hamispar shel aba, bevakasha.",
+   "en": "Dad's number, please.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "מספר"
+  },
+  {
+   "he": "יש משהו בעין שלי.",
+   "tr": "yesh mashehu ba'ayin sheli.",
+   "en": "There's something in my eye.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עין"
+  },
+  {
+   "he": "אמא מקווה שאתה בא.",
+   "tr": "ima mekava she'ata ba.",
+   "en": "Mom hopes you're coming.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מקווה"
+  },
+  {
+   "he": "הבית של סבא קרוב.",
+   "tr": "habayit shel saba karov.",
+   "en": "Grandpa's house is close.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "קרוב"
+  },
+  {
+   "he": "אני עובד פה חודש.",
+   "tr": "ani oved po khodesh.",
+   "en": "I've been working here a month.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חודש"
+  },
+  {
+   "he": "אבא רוצה לשלוח לסבא ספר.",
+   "tr": "aba rotze lishlo'akh lesaba sefer.",
+   "en": "Dad wants to send grandpa a book.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לשלוח"
+  },
+  {
+   "he": "התה כמעט קר.",
+   "tr": "hate kim'at kar.",
+   "en": "The tea is almost cold.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמעט"
+  },
+  {
+   "he": "הכוס כמעט מלאה.",
+   "tr": "hakos kim'at mele'a.",
+   "en": "The glass is almost full.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כמעט"
+  },
+  {
+   "he": "אני צריך לקנות לחם.",
+   "tr": "ani tzarikh liknot lekhem.",
+   "en": "I need to buy bread.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לקנות"
+  },
+  {
+   "he": "אמא רוצה לקנות עוגה.",
+   "tr": "ima rotza liknot uga.",
+   "en": "Mom wants to buy a cake.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לקנות"
+  },
+  {
+   "he": "שלוש כוסות קפה.",
+   "tr": "shalosh kosot kafe.",
+   "en": "Three cups of coffee.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שלוש"
+  },
+  {
+   "he": "יש לי שלוש שאלות.",
+   "tr": "yesh li shalosh she'elot.",
+   "en": "I have three questions.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שלוש"
+  },
+  {
+   "he": "הבית מלא ילדים.",
+   "tr": "habayit male yeladim.",
+   "en": "The house is full of kids.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מלא"
+  },
+  {
+   "he": "אני מלא, תודה.",
+   "tr": "ani male, toda.",
+   "en": "I'm full, thanks.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "מלא"
+  },
+  {
+   "he": "בלילה אבא רוצה סרט, ואמא רוצה תה.",
+   "tr": "balaila aba rotze seret, ve'ima rotza te.",
+   "en": "At night dad wants a film, and mom wants tea.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "סרט"
+  },
+  {
+   "he": "קל לשכוח.",
+   "tr": "kal lishko'akh.",
+   "en": "It's easy to forget.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לשכוח"
+  },
+  {
+   "he": "סבא רוצה לשבת.",
+   "tr": "saba rotze lashevet.",
+   "en": "Grandpa wants to sit down.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לשבת"
+  },
+  {
+   "he": "עוגה עם אהבה.",
+   "tr": "uga im ahava.",
+   "en": "Cake made with love.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "אהבה"
+  },
+  {
+   "he": "אמא עושה אוכל באהבה.",
+   "tr": "ima osa okhel be'ahava.",
+   "en": "Mom cooks with love.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "אהבה"
+  },
+  {
+   "he": "הילד אוהב ליצור.",
+   "tr": "hayeled ohev litzor.",
+   "en": "The boy loves making things.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ליצור"
+  },
+  {
+   "he": "ארבע כוסות מים.",
+   "tr": "arba kosot mayim.",
+   "en": "Four glasses of water.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ארבע"
+  },
+  {
+   "he": "יש פה מאה ספרים.",
+   "tr": "yesh po me'a sfarim.",
+   "en": "There are a hundred books here.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "מאה"
+  },
+  {
+   "he": "עשר דקות, בבקשה.",
+   "tr": "eser dakot, bevakasha.",
+   "en": "Ten minutes, please.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עשר"
+  },
+  {
+   "he": "שש כוסות קפה ביום!",
+   "tr": "shesh kosot kafe beyom!",
+   "en": "Six cups of coffee a day!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שש"
+  },
+  {
+   "he": "זה יום של התחלה.",
+   "tr": "ze yom shel hatkhala.",
+   "en": "It's a day for new starts.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "התחלה"
+  },
+  {
+   "he": "הקיץ עונה חמה.",
+   "tr": "hakayitz ona khama.",
+   "en": "Summer is a hot season.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עונה"
+  },
+  {
+   "he": "הקיץ הוא העונה שלי.",
+   "tr": "hakayitz hu ha'ona sheli.",
+   "en": "Summer is my season.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עונה"
+  },
+  {
+   "he": "זה הגיוני.",
+   "tr": "ze hegyoni.",
+   "en": "That makes sense.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "הגיוני"
+  },
+  {
+   "he": "הוא שחקן טוב.",
+   "tr": "hu sakhkan tov.",
+   "en": "He's a good actor.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שחקן"
+  },
+  {
+   "he": "זה עמוק מדי.",
+   "tr": "ze amok midai.",
+   "en": "It's too deep.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עמוק"
+  },
+  {
+   "he": "יש פה מים, זה עמוק?",
+   "tr": "yesh po mayim, ze amok?",
+   "en": "There's water here, is it deep?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עמוק"
+  },
+  {
+   "he": "הספר כבד מדי.",
+   "tr": "hasefer kaved midai.",
+   "en": "The book is too heavy.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כבד"
+  },
+  {
+   "he": "אני עובד שמונה שעות.",
+   "tr": "ani oved shmone sha'ot.",
+   "en": "I work eight hours.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שמונה"
+  },
+  {
+   "he": "האוטובוס בא בשמונה.",
+   "tr": "ha'otobus ba bishmone.",
+   "en": "The bus comes at eight.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שמונה"
+  },
+  {
+   "he": "אני לא רוצה לשבור את הכוס.",
+   "tr": "ani lo rotze lishbor et hakos.",
+   "en": "I don't want to break the glass.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לשבור"
+  },
+  {
+   "he": "יש שמש היום.",
+   "tr": "yesh shemesh hayom.",
+   "en": "It's sunny today.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שמש"
+  },
+  {
+   "he": "בשמש חם מדי.",
+   "tr": "bashemesh kham midai.",
+   "en": "It's too hot in the sun.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שמש"
+  },
+  {
+   "he": "לסבא יש שישה ילדים.",
+   "tr": "lesaba yesh shisha yeladim.",
+   "en": "Grandpa has six kids.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שישה"
+  },
+  {
+   "he": "אני צריך לרשום את זה.",
+   "tr": "ani tzarikh lirshom et ze.",
+   "en": "I need to write that down.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לרשום"
+  },
+  {
+   "he": "הרחוב רחב.",
+   "tr": "harekhov rakhav.",
+   "en": "The street is wide.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "רחב"
+  },
+  {
+   "he": "השולחן רחב וגדול.",
+   "tr": "hashulkhan rakhav vegadol.",
+   "en": "The table is wide and big.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "רחב"
+  },
+  {
+   "he": "הכלב הוא חיה טובה.",
+   "tr": "hakelev hu khaya tova.",
+   "en": "A dog is a good animal.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "חיה"
+  },
+  {
+   "he": "התפוח ירוק.",
+   "tr": "hatapu'akh yarok.",
+   "en": "The apple is green.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ירוק"
+  },
+  {
+   "he": "הספר שלי כחול.",
+   "tr": "hasefer sheli kakhol.",
+   "en": "My book is blue.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כחול"
+  },
+  {
+   "he": "אין שמן בבית.",
+   "tr": "ein shemen babayit.",
+   "en": "There's no oil at home.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שמן"
+  },
+  {
+   "he": "לחם עם שמן.",
+   "tr": "lekhem im shemen.",
+   "en": "Bread with oil.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שמן"
+  },
+  {
+   "he": "יש לי כלב חום.",
+   "tr": "yesh li kelev khum.",
+   "en": "I have a brown dog.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "חום"
+  },
+  {
+   "he": "אני צריך עשרים דקות.",
+   "tr": "ani tzarikh esrim dakot.",
+   "en": "I need twenty minutes.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עשרים"
+  },
+  {
+   "he": "עשרים ילדים בחדר אחד!",
+   "tr": "esrim yeladim bekheder ekhad!",
+   "en": "Twenty kids in one room!",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "עשרים"
+  },
+  {
+   "he": "הפועל עובד ברחוב.",
+   "tr": "hapo'el oved barekhov.",
+   "en": "The worker is working in the street.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "פועל"
+  },
+  {
+   "he": "פועל אחד שותה קפה.",
+   "tr": "po'el ekhad shote kafe.",
+   "en": "One worker is drinking coffee.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "פועל"
+  },
+  {
+   "he": "הילד מסתכל בספר.",
+   "tr": "hayeled mistakel basefer.",
+   "en": "The boy is looking at the book.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "מסתכל"
+  },
+  {
+   "he": "הכלב מסתכל, הוא רוצה עוגה.",
+   "tr": "hakelev mistakel, hu rotze uga.",
+   "en": "The dog is watching, he wants cake.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "מסתכל"
+  },
+  {
+   "he": "אני הולך לישון בתשע.",
+   "tr": "ani holekh lishon betesha.",
+   "en": "I go to sleep at nine.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "תשע"
+  },
+  {
+   "he": "כף לעוגה, בבקשה.",
+   "tr": "kaf la'uga, bevakasha.",
+   "en": "A spoon for the cake, please.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כף"
+  },
+  {
+   "he": "אני תלמיד, אני לומד עברית.",
+   "tr": "ani talmid, ani lomed ivrit.",
+   "en": "I'm a student, I'm learning Hebrew.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "תלמיד"
+  },
+  {
+   "he": "החדר צר מדי.",
+   "tr": "hakheder tzar midai.",
+   "en": "The room is too narrow.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "צר"
+  },
+  {
+   "he": "שבעים שנה!",
+   "tr": "shiv'im shana!",
+   "en": "Seventy years!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שבעים"
+  },
+  {
+   "he": "שבעים ילדים באוטובוס?!",
+   "tr": "shiv'im yeladim ba'otobus?!",
+   "en": "Seventy kids on the bus?!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "שבעים"
+  },
+  {
+   "he": "יש פיל בעיר?!",
+   "tr": "yesh pil ba'ir?!",
+   "en": "There's an elephant in the city?!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "פיל"
+  },
+  {
+   "he": "הלחם יבש מדי.",
+   "tr": "halekhem yavesh midai.",
+   "en": "The bread is too dry.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "יבש"
+  },
+  {
+   "he": "אני רוצה לתמוך באבא.",
+   "tr": "ani rotze litmokh be'aba.",
+   "en": "I want to support dad.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "לתמוך"
+  },
+  {
+   "he": "המשפחה שלי צריכה לתמוך בסבא.",
+   "tr": "hamishpakha sheli tzrikha litmokh besaba.",
+   "en": "My family needs to support grandpa.",
+   "type": "sentence",
+   "lvl": 3,
+   "for": "לתמוך"
+  },
+  {
+   "he": "יש לי משהו בכיס.",
+   "tr": "yesh li mashehu bakis.",
+   "en": "I've got something in my pocket.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "כיס"
+  },
+  {
+   "he": "אפס, אחד, שתיים.",
+   "tr": "efes, ekhad, shtayim.",
+   "en": "Zero, one, two.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "אפס"
+  },
+  {
+   "he": "איזה פרי אתה אוהב?",
+   "tr": "eize pri ata ohev?",
+   "en": "Which fruit do you like?",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "פרי"
+  },
+  {
+   "he": "יש ציפור בבית!",
+   "tr": "yesh tzipor babayit!",
+   "en": "There's a bird in the house!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ציפור"
+  },
+  {
+   "he": "אבא צריך לשקול את זה.",
+   "tr": "aba tzarikh lishkol et ze.",
+   "en": "Dad needs to think it over.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לשקול"
+  },
+  {
+   "he": "אמא רוצה לשקול את התפוחים.",
+   "tr": "ima rotza lishkol et hatapukhim.",
+   "en": "Mom wants to weigh the apples.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "לשקול"
+  },
+  {
+   "he": "יש לה טבעת יפה.",
+   "tr": "yesh la taba'at yafa.",
+   "en": "She has a beautiful ring.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "טבעת"
+  },
+  {
+   "he": "הילד לא אוכל גזר.",
+   "tr": "hayeled lo okhel gezer.",
+   "en": "The boy doesn't eat carrots.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "גזר"
+  },
+  {
+   "he": "איזה ירק זה?",
+   "tr": "eize yerek ze?",
+   "en": "What vegetable is that?",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ירק"
+  },
+  {
+   "he": "יש פה ריח טוב.",
+   "tr": "yesh po re'akh tov.",
+   "en": "It smells good in here.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "ריח"
+  },
+  {
+   "he": "איזה ריח! מה אמא עושה?",
+   "tr": "eize re'akh! ma ima osa?",
+   "en": "What a smell! What's mom making?",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "ריח"
+  },
+  {
+   "he": "אין מלח באוכל.",
+   "tr": "ein melakh ba'okhel.",
+   "en": "There's no salt in the food.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "מלח"
+  },
+  {
+   "he": "שלושים שנה עבדתי שם.",
+   "tr": "shloshim shana avadti sham.",
+   "en": "I worked there for thirty years.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שלושים"
+  },
+  {
+   "he": "סבא היה עיתונאי.",
+   "tr": "saba haya itonai.",
+   "en": "Grandpa was a journalist.",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עיתונאי"
+  },
+  {
+   "he": "אף אחד לא בבית.",
+   "tr": "af ekhad lo babayit.",
+   "en": "Nobody's home.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "אף"
+  },
+  {
+   "he": "אין ענן בשמיים.",
+   "tr": "ein anan bashamayim.",
+   "en": "There's not a cloud in the sky.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "שמיים"
+  },
+  {
+   "he": "אבא רוצה להרכיב את השולחן.",
+   "tr": "aba rotze leharkiv et hashulkhan.",
+   "en": "Dad wants to put the table together.",
+   "type": "sentence",
+   "lvl": 2,
+   "for": "להרכיב"
+  },
+  {
+   "he": "יש עכבר בחדר!",
+   "tr": "yesh akhbar bakheder!",
+   "en": "There's a mouse in the room!",
+   "type": "sentence",
+   "lvl": 1,
+   "for": "עכבר"
+  },
+  {
+   "he": "אתה אטי היום, אתה עייף?",
+   "tr": "ata iti hayom, ata ayef?",
+   "en": "You're slow today, are you tired?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אטי"
+  },
+  {
+   "he": "בבוקר אני אטי.",
+   "tr": "baboker ani iti.",
+   "en": "I'm slow in the mornings.",
+   "type": "listen",
+   "lvl": 1,
+   "for": "אטי"
+  },
+  {
+   "he": "איזה טעם אתה רוצה?",
+   "tr": "eize ta'am ata rotze?",
+   "en": "Which flavour do you want?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "טעם"
+  },
+  {
+   "he": "זה חמוץ מדי בשבילי.",
+   "tr": "ze khamutz midai bishvili.",
+   "en": "It's too sour for me.",
+   "type": "listen",
+   "lvl": 2,
+   "for": "חמוץ"
+  },
+  {
+   "he": "מחר אתה בא?",
+   "tr": "makhar ata ba?",
+   "en": "Are you coming tomorrow?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "מחר"
+  },
+  {
+   "he": "מה אתה עושה מחר?",
+   "tr": "ma ata ose makhar?",
+   "en": "What are you doing tomorrow?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "מחר"
+  },
+  {
+   "he": "אתה רוצה לחם?",
+   "tr": "ata rotze lekhem?",
+   "en": "Do you want bread?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "לחם"
+  },
+  {
+   "he": "יש לחם בבית?",
+   "tr": "yesh lekhem babayit?",
+   "en": "Is there bread at home?",
+   "type": "listen",
+   "lvl": 1,
+   "for": "לחם"
   }
  ],
  "prompts": [

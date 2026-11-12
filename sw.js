@@ -39,6 +39,7 @@ const SHELL = [
   "./hebrew-reader.html",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
+  "./icons/badge-96.png",
   "./icons/icon.svg",
   /* The Atlas type (2026-09-23). Without these the app still opens offline, but in
      Georgia — a first launch on the Underground would look like a different app. */
@@ -220,7 +221,10 @@ self.addEventListener("push", (event) => {
     body: data.body || "",
     tag: data.tag || "hebrew",
     icon: "./icons/icon-192.png",
-    badge: "./icons/icon-192.png",
+    /* The status-bar icon. Android draws it from the image's transparency alone, so the
+       full icon (opaque paper background) came out as a white square (flag, 2026-11-12).
+       badge-96 is the ש and its full stop in white on transparent. */
+    badge: "./icons/badge-96.png",
     data: { url: "./hebrew-reader.html" }
   }));
 });

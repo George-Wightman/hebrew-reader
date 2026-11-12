@@ -80,6 +80,8 @@
     "1794485007506-5kfb7": { "status": "addressed", "kind": "bug", "at": "2026-11-12T16:00:00Z",
       "note": "The coach now gives Flash ten seconds with its thinking turned right down, then asks the lighter model instead of waiting a minute. After a slow spell it skips Flash for ten minutes (21c8f37)." },
     "1794485328144-cxg20": { "status": "addressed", "kind": "idea", "at": "2026-11-12T16:00:00Z",
-      "note": "Notifications now show the ש in the status bar instead of a white square, and the dashboard's show its own logo." }
+      "note": "Notifications now show the ש in the status bar instead of a white square, and the dashboard's show its own logo." },
+    "1794485149190-my2k2": { "status": "addressed", "kind": "idea", "at": "2026-11-12T17:00:00Z",
+      "note": "The mic heard English, so none of the Hebrew counted. 'Say it back' cards now show a blank for each Hebrew word, and they fill as you speak. English shows up red, so you can see straight away that it wants the Hebrew back." }
   }
 }

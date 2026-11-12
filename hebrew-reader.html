@@ -4451,7 +4451,19 @@ function storageFailed(k, e) {
    Literals, not the consts: this runs from lsSet, which is called during boot before most
    of them are declared, and a TDZ throw inside a catch would lose the write AND the alarm. */
 const STORAGE_EXPENDABLE = ["hvr_convo", "hvr_lastmsg", "hvr_laneorder",
-                            "hvr_ailog", "hvr_trail", "dash_maps", "hvr_prerebase"];
+                            "hvr_ailog", "hvr_trail", "dash_data_previous", "dash_maps",
+                            "hvr_prerebase"];
+/* MAKE ROOM WITH ROOM TO SPARE (2026-11-12). The first version stopped the moment the one
+   write fitted, which left the store at the brim: the very next write — usually the
+   health note saying what had just been dropped — failed again and raised the alarm
+   anyway (his flag of 11 Nov, 20:48). So once the write lands it carries on dropping until
+   this much more would also fit. Characters, about 200KB: a dozen flags, a session, the
+   ledger, with plenty over.
+   dash_data_previous is the dashboard's recovery copy of its whole document, written on
+   every sync that changes it — the same size as the document, 4.4MB on his phone that
+   night, and the thing that actually filled the store. The dashboard drops it itself
+   when its own save does not fit; the document is in its sync repo regardless. */
+const STORAGE_HEADROOM = 100000;
 function storageIsFull(e) {
   return !!(e && (e.name === "QuotaExceededError" ||
                   e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22 || e.code === 1014));
@@ -4488,15 +4500,27 @@ function storageCensusLine(keys) {
    dropped, or null if the write still does not fit — in which case what it dropped stays
    dropped, which is right: the store is full and they were the least valuable thing in it.
    Takes the store so the suite can drive it against a fake with a ceiling. */
-function storageReclaimWith(store, k, v, expendable) {
+function storageReclaimWith(store, k, v, expendable, headroom) {
   const dropped = [];
-  for (const x of (expendable || [])) {
-    if (x === k) continue;
+  const list = (expendable || []).filter(x => x !== k);
+  const PROBE = "hvr__headroom";
+  const spare = () => {
+    if (!(headroom > 0)) return true;
+    try { store.setItem(PROBE, "x".repeat(headroom)); store.removeItem(PROBE); return true; }
+    catch (e) { try { store.removeItem(PROBE); } catch (e2) {} return false; }
+  };
+  let landed = false;
+  for (const x of list) {
     try { if (store.getItem(x) === null) continue; store.removeItem(x); } catch (e) { continue; }
     dropped.push(x);
-    try { store.setItem(k, v); return dropped; } catch (e) { /* not enough yet — keep going */ }
+    if (!landed) {
+      try { store.setItem(k, v); landed = true; } catch (e) { continue; /* not enough yet */ }
+    }
+    if (spare()) return dropped;
   }
-  return null;
+  /* Out of things to drop. The write landing is what matters; short of spare room is
+     still better than the write lost. */
+  return landed ? dropped : null;
 }
 let _reclaiming = false;
 function storageReclaim(k, v) {
@@ -4504,7 +4528,7 @@ function storageReclaim(k, v) {
   _reclaiming = true;
   try {
     const before = storageCensusLine(storageEverything());
-    const dropped = storageReclaimWith(localStorage, k, v, STORAGE_EXPENDABLE);
+    const dropped = storageReclaimWith(localStorage, k, v, STORAGE_EXPENDABLE, STORAGE_HEADROOM);
     if (!dropped) return false;
     /* Still inside the guard, so if even this note does not fit it goes to the alarm
        rather than reclaiming a second time on its own behalf. */
@@ -45713,6 +45737,30 @@ T("storageReclaim: stops at the first drop that is enough", () => {
   const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE);
   assertEq(JSON.stringify(dropped), JSON.stringify(["hvr_ailog"]));
   assertEq(s.getItem("dash_maps"), "M".repeat(60), "the dashboard's maps survive when the log was enough");
+});
+T("storageReclaim: once the write lands it keeps going until there is room to spare", () => {
+  /* 11 Nov 2026: the write fitted, the store sat at the brim, and the health note
+     written straight after it failed and raised the alarm. */
+  const s = fakeStore(200, { "hvr_library": "L".repeat(60), "dash_maps": "M".repeat(60), "hvr_ailog": "A".repeat(50) });
+  const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE, 50);
+  assertEq(JSON.stringify(dropped), JSON.stringify(["hvr_ailog", "dash_maps"]));
+  assertEq(s.getItem("hvr_session"), "S".repeat(40));
+  assertEq(s.getItem("hvr__headroom"), null, "the probe is never left behind");
+  s.setItem("hvr_health", "H".repeat(40));   // the next write fits now
+});
+T("storageReclaim: the dashboard's backup copy goes before its maps", () => {
+  const s = fakeStore(300, { "hvr_library": "L".repeat(60), "dash_maps": "M".repeat(60),
+                             "dash_data": "D".repeat(60), "dash_data_previous": "P".repeat(80) });
+  const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE, 10);
+  assertEq(JSON.stringify(dropped), JSON.stringify(["dash_data_previous"]));
+  assertEq(s.getItem("dash_maps"), "M".repeat(60));
+  assertEq(s.getItem("dash_data"), "D".repeat(60), "the dashboard's own document is never touched");
+});
+T("storageReclaim: a write that landed counts even when no spare room could be found", () => {
+  const s = fakeStore(200, { "hvr_library": "L".repeat(100), "hvr_ailog": "A".repeat(50) });
+  const dropped = storageReclaimWith(s, "hvr_session", "S".repeat(40), STORAGE_EXPENDABLE, 1000);
+  assertEq(JSON.stringify(dropped), JSON.stringify(["hvr_ailog"]));
+  assertEq(s.getItem("hvr_session"), "S".repeat(40));
 });
 T("storageReclaim: says so when nothing it may drop is enough", () => {
   const s = fakeStore(100, { "hvr_library": "L".repeat(85) });

@@ -1,6 +1,10 @@
 {
   "version": 1,
   "flags": {
+    "1794430129768-uuhn4": { "status": "addressed", "kind": "bug", "at": "2026-11-12T10:30:00Z",
+      "note": "Storage full again: the dashboard keeps a full spare copy of its data, the size of the whole thing. When space runs out the app now clears that copy first, and makes room to spare so the next save does not hit the same wall." },
+    "1794430622594-cxg8s": { "status": "addressed", "kind": "hebrew", "at": "2026-11-12T10:30:00Z",
+      "note": "Retired. For a habit, the everyday 'sometimes' is lif'amim (לפעמים); pa'am ... pa'am is more 'one time ... another time'." },
     "1794138184733-66uv4": { "status": "addressed", "kind": "bug", "at": "2026-11-09T09:34:23Z",
       "note": "Listen cards are now marked on what you meant: the app checks your answer and sets each word, with a line on where it differed. What you said is kept too (3b73449)." },
     "1788873957185-k3xe3": { "status": "addressed", "kind": "idea", "at": "2026-09-08T15:40:00Z",

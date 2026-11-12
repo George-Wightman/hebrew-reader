@@ -1,6 +1,6 @@
 {
- "version": 12,
- "generated": "2026-11-03",
+ "version": 13,
+ "generated": "2026-11-12",
  "retired": [
   {
    "he": "איפה המיטה שלך"
@@ -391,6 +391,10 @@
    "he": "מה קורה עם אמא, ולמה הילד בוכה?",
    "any": true,
    "why": "sift 2026-11-03, transliteration off scheme"
+  },
+  {
+   "he": "פעם אני אוהב תה, פעם קפה.",
+   "why": "flag 2026-11-11: for a habit, the natural sometimes is lif'amim, not pa'am ... pa'am"
   }
  ],
  "scenes": [
@@ -8803,14 +8807,6 @@
    "en": "Again, mum?",
    "type": "sentence",
    "lvl": 1,
-   "for": "פעם"
-  },
-  {
-   "he": "פעם אני אוהב תה, פעם קפה.",
-   "tr": "pa'am ani ohev te, pa'am kafe.",
-   "en": "Sometimes I like tea, sometimes coffee.",
-   "type": "sentence",
-   "lvl": 4,
    "for": "פעם"
   },
   {

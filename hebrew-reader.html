@@ -22766,10 +22766,21 @@ function libWordsTidyIfNeeded() {
    `uses` came out empty fails `.some(u => lib[u])` and would be thrown away by the very
    call that was supposed to rescue it. Every read path in the app goes through here, so
    after this no reader can see a stale `uses` — and none can see a retired sentence. */
+/* ONLY CLAUDE'S SENTENCES ARE SERVED (2026-11-12). The phone's writer was switched off on
+   2026-11-03, but the ~350 sentences it had already written stayed in the bank and kept
+   being dealt: 15 of 93 cards in the week before this, among them a listen card he was
+   marked wrong on. George: "AI should not be writing sentences. We came to this conclusion
+   that only you write the sentences." Every item that came in through content/nodes.json
+   carries src "claude" (contentApply stamps it); the writer's items carry none. They are
+   left in storage rather than deleted, so this is one constant to undo, and nothing else
+   about the bank (ids, seen counts, sync) moves. */
+const BANK_CLAUDE_ONLY = true;
+function bankIsClaudes(it) { return !!it && it.src === "claude"; }
 function bankPrune(bank, lib, retired) {
   const ret = retired || retiredAll();
   return bankDedupeWords(bankUsesRefresh(bank, lib).bank
-    .filter(it => it && it.he && (it.uses || []).some(u => lib[u]) && !isRetired(it, ret)));
+    .filter(it => it && it.he && (!BANK_CLAUDE_ONLY || bankIsClaudes(it)) &&
+                  (it.uses || []).some(u => lib[u]) && !isRetired(it, ret)));
 }
 
 /* ---- refusing the same sentence wearing a different hat ----------------------
@@ -27890,6 +27901,10 @@ async function campSceneWrite(node) {
    place's own warm-up, never beside it, so opening a sheet is never five requests at once. */
 const sceneInflight = {};
 function campSceneEnsure(id) {
+  /* Scenes are Hebrew sentences, so the same rule as the bank: Claude writes them, in
+     content/nodes.json, and the phone does not (2026-11-12). A place with no scene yet
+     simply has none until the file brings one. */
+  if (!PHONE_WRITES_SENTENCES) return Promise.resolve(null);
   const c = campAll(), n = campNode(id, c);
   if (!n || n.scene || !geminiKeys().length || sceneInflight[id]) return sceneInflight[id] || Promise.resolve(null);
   if (!dayClaim(SCENE_DAY_KEY, SCENE_RUNS_PER_DAY)) return Promise.resolve(null);
@@ -31701,7 +31716,9 @@ function contentApplyScenes(scenes, c) {
        heard from being replaced by a different one. The same scene — Claude's, same
        title — re-dated in the file is that scene with a line fixed, and leaving the broken
        line in place forever is not what the rule was for. */
-    if (n.scene && !sceneIsCorrection(n.scene, next)) return;
+    /* ...but a scene the phone's writer made is not his to keep once Claude's exists: it
+       is the same AI-written Hebrew the bank stopped serving (2026-11-12). */
+    if (n.scene && n.scene.src === "claude" && !sceneIsCorrection(n.scene, next)) return;
     n.scene = next;
     filled++;
   });
@@ -38008,7 +38025,7 @@ T("campBuild: wider material is bounded, and a sentence with no node word is ref
        path refuses two items with the same words (bankDedupeWords, 2026-11-03). */
     const TAILS = ["", "גם", "לא"];
     const mk = (id, ws, j) => ({ id: id, type: "sentence", he: ws.join(" ") + (j ? " " + TAILS[j] : ""),
-                                 tr: id, en: id, uses: ws, lvl: 1, seen: 0 });
+                                 tr: id, en: id, uses: ws, lvl: 1, seen: 0, src: "claude" });
     const bank = [];
     /* Plenty of pure consolidation, so an unbounded wider slice has something to beat. */
     own.forEach((w, i) => { for (let j = 0; j < 3; j++) bank.push(mk("own" + i + "_" + j, [w, "גדול"], j)); });
@@ -40348,7 +40365,7 @@ T("bankUsesRefresh: nothing to do reports no change", () => {
 T("bankPrune: refreshes, so an item with empty uses is recovered not dropped", () => {
   /* Three of George's real items recorded uses:[] and so failed bankPrune's own
      `.some(u => lib[u])` — invisible app-wide, not merely inside the node. */
-  const bank = [{ id: "x", he: "הדלת אדומה", uses: [] }];
+  const bank = [{ id: "x", he: "הדלת אדומה", uses: [], src: "claude" }];
   assertEq(bankPrune(bank, { "דלת": {}, "אדום": {} }).length, 1,
            "recomputing has to happen BEFORE the filter, or the filter throws it away");
   assertEq(bankPrune(bank, { "בית": {} }).length, 0,
@@ -40889,10 +40906,18 @@ T("isRetired: a bare retirement covers the answer everywhere; a paired one only 
 });
 T("bankPrune: a retired sentence is never served", () => {
   const lib = { "כלב": { en: "dog" }, "קטן": { en: "small" } };
-  const bank = [{ id: "a", he: "קצת כלב", uses: ["כלב"] }, { id: "b", he: "כלב קטן", uses: ["כלב", "קטן"] }];
+  const bank = [{ id: "a", he: "קצת כלב", uses: ["כלב"], src: "claude" },
+                { id: "b", he: "כלב קטן", uses: ["כלב", "קטן"], src: "claude" }];
   const store = {};
   retiredAdd([{ he: "קצת כלב" }], "t", store);
   assertEq(bankPrune(bank, lib, store).map(it => it.id), ["b"]);
+});
+T("bankPrune: a sentence the phone's AI wrote is never served, only Claude's (2026-11-12)", () => {
+  const lib = { "כלב": { en: "dog" }, "קטן": { en: "small" } };
+  const bank = [{ id: "ai", he: "כלב קטן", uses: ["כלב", "קטן"] },
+                { id: "ai2", he: "קטן כלב גם", uses: ["כלב"], src: "" },
+                { id: "cl", he: "הכלב קטן מאוד", uses: ["כלב", "קטן"], src: "claude" }];
+  assertEq(bankPrune(bank, lib, {}).map(it => it.id), ["cl"]);
 });
 T("heFinalFix: repairs a last letter in the wrong form, and nothing else", () => {
   assertEq(heFinalFix("אפ פעמ"), "אף פעם");
@@ -48813,12 +48838,17 @@ T("libWordsTidy: fixes what was imported wrong and leaves his own corrections al
 T("contentApplyScenes: a written scene lands on the node of that name, and never replaces one", () => {
   const scene = { node: "Going Places ", title: "Bus", speakers: [{ name: "A", he: "" }],
                   lines: [{ he: "איפה האוטובוס?", en: "where" }, { he: "שם", en: "there" }, { he: "תודה", en: "thanks" }] };
-  const had = { title: "old", speakers: [], lines: [] };
-  const c = { chapters: [{ n: 1, nodes: [{ id: "x1", name: "going places" }, { id: "x2", name: "Home", scene: had }] }] };
-  assertEq(contentApplyScenes([scene, Object.assign({}, scene, { node: "Home" }), { node: "nowhere" }], c), 1);
+  const had = { title: "old", speakers: [], lines: [], src: "claude" };
+  /* One the phone's writer made (no src): Claude's replaces it (2026-11-12). */
+  const phones = { title: "phone", speakers: [], lines: [] };
+  const c = { chapters: [{ n: 1, nodes: [{ id: "x1", name: "going places" }, { id: "x2", name: "Home", scene: had },
+                                         { id: "x3", name: "Shop", scene: phones }] }] };
+  assertEq(contentApplyScenes([scene, Object.assign({}, scene, { node: "Home" }),
+                               Object.assign({}, scene, { node: "Shop" }), { node: "nowhere" }], c), 2);
   assertEq(c.chapters[0].nodes[0].scene.title, "Bus", "matched by name, whatever the case and spacing");
   assertEq(c.chapters[0].nodes[0].scene.src, "claude");
-  assertTrue(c.chapters[0].nodes[1].scene === had, "a scene already there is left alone");
+  assertTrue(c.chapters[0].nodes[1].scene === had, "a scene of Claude's already there is left alone");
+  assertEq(c.chapters[0].nodes[2].scene.src, "claude", "an AI-written one is replaced by Claude's");
   assertEq(contentApplyScenes([{ node: "going places", lines: [] }], { chapters: [{ nodes: [{ name: "going places" }] }] }), 0,
            "a malformed scene is dropped, not drawn");
 });

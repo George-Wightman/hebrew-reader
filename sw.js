@@ -223,7 +223,11 @@ self.addEventListener("push", (event) => {
     icon: "./icons/icon-192.png",
     /* The status-bar icon. Android draws it from the image's transparency alone, so the
        full icon (opaque paper background) came out as a white square (flag, 2026-11-12).
-       badge-96 is the ש and its full stop in white on transparent. */
+       badge-96 is the ש and its full stop in white on transparent.
+       That fixed the shade but not the status bar (2026-11-16): the installed app draws
+       its status-bar icon from its own package, built from the manifest, and with no
+       "monochrome" icon there it used the opaque app icon. The manifest now lists
+       badge-96 as monochrome; the phone picks it up when Chrome next rebuilds the app. */
     badge: "./icons/badge-96.png",
     data: { url: "./hebrew-reader.html" }
   }));

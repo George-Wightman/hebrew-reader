@@ -28812,6 +28812,24 @@ const PICK_COVERED = -2, PICK_RECENT = -3;
 /* This week's cards (src "week"): how much a fresh one is lifted, how many a session, and how long a
    batch counts as this week's. */
 const WEEK_LIFT = 20, WEEK_PER_SESSION = 4, WEEK_FRESH_DAYS = 8;
+/* THIS WEEK'S CARDS CARRY THEIR ONE LEARNING WORD (2026-11-20). A card about his week is worth
+   most this week, but one leaning on a word he is still learning would otherwise wait for a day
+   that word happened to be rescued, and by then the week is over: on the first batch only three
+   of his words were rescue words, and fourteen of the thirty cards leant on one. So the one
+   not-ready word of a fresh week card joins the session's carry, a few a session. bankServable
+   still demands that everything else in the card be strong (or ready, around a word he has never
+   met), so this opens no impossible card; it only brings a fair one forward. */
+function weekCarryWords(bank, lib, srs, today, max) {
+  const out = [];
+  for (const it of bank || []) {
+    if (out.length >= max) break;
+    if (!weekCardFresh(it, today)) continue;
+    const unready = bankContentWords(it, lib).filter(u => !wordReady(u, srs));
+    if (unready.length !== 1 || out.indexOf(unready[0]) !== -1) continue;
+    if (bankServable(it, lib, srs, new Set(unready))) out.push(unready[0]);
+  }
+  return out;
+}
 function weekCardFresh(it, today) {
   if (!it || it.src !== "week" || (it.seen || 0) > 0 || !it.wk) return false;
   const ago = srsDaysSince(it.wk, today);
@@ -28932,6 +28950,8 @@ function learnBuild(opts) {
   const launching = gentle ? [] : introWords(targets, srsNow, shape === "quick" ? 1 : NEW_WORD_CARDS);
   /* Gentle: nothing carried either, so every sentence is made only of words he has. */
   const carry = gentle ? new Set() : new Set(rescueWords(lib, srsNow).concat(launching));
+  /* And the one learning word of a few of this week's cards (weekCarryWords). */
+  if (!gentle) weekCarryWords(bank, lib, srsNow, todayISO(), WEEK_PER_SESSION).forEach(w => carry.add(w));
   /* The one list — see practiceNeeds. Everything below that chooses a sentence or a
      word reads this, and so does learnTopUp's writer. */
   const needs = practiceNeeds(lib, srsNow, todayISO(), archiveAll());
@@ -49656,6 +49676,22 @@ T("learnPickBank: this week's unseen cards get a lift, four a session across eve
   assertEq(first.length, 4);
   assertEq(budget.left, 0, "the budget is shared");
   assertEq(second.map(x => x.it.id)[0], "due", "past four, an ordinary due card comes first again");
+});
+T("weekCarryWords: a fresh week card's one learning word rides along, on strong ground only", () => {
+  const st = carryStores();
+  const today = "2026-11-22";
+  const wk = (id, uses, extra) => Object.assign({ id: id, src: "week", wk: "2026-11-20", he: id, uses: uses }, extra || {});
+  const bank = [
+    wk("w1", ["עובד", "היום"]),                          // weak word on strong ground: carried
+    wk("w2", ["לומד", "היום"]),                          // on progressing ground: the gate still says no
+    wk("w3", ["עובד", "בית"]),                           // nothing to carry
+    wk("w4", ["בית", "היום"], { seen: 1 }),              // met already: an ordinary card
+    { id: "c1", src: "claude", he: "c1", uses: ["בית", "היום"] }];  // not this week's
+  assertEq(weekCarryWords(bank, st.lib, st.srs, today, 4), ["היום"]);
+  assertEq(weekCarryWords(bank, st.lib, st.srs, "2026-12-20", 4), [], "a batch from weeks ago carries nothing");
+  assertEq(weekCarryWords(bank, st.lib, st.srs, today, 0), [], "and never past the session's share");
+  assertTrue(bankServable(bank[0], st.lib, st.srs, new Set(weekCarryWords(bank, st.lib, st.srs, today, 4))),
+             "so the card is served this week");
 });
 
 if (location.search.indexOf("selftest") !== -1) {

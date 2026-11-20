@@ -10416,6 +10416,116 @@ document.getElementById("remindersBtn").onclick = settingsAction(async () => {
   if (syncConfigured()) syncRun("reminders", { pushOnly: true, quiet: true }).then(() => remindersPaint());
 });
 
+/* ---- A card answered on the lock screen (2026-11-20) -----------------------------------
+   The planner's pings now carry one card (the dashboard's js/hebrew-voice.js, pingCard): a
+   word he is learning to say, given in English. sw.js shows it with Show answer, then Got it
+   or Missed, and queues the answer in IndexedDB, because a service worker cannot reach
+   localStorage. This applies the queue whenever the app opens or comes back to the front: an
+   ordinary production answer through srsAnswer (logged kd "push"), on the day he gave it, and a
+   card and its seconds in that day's stats. A self-graded card here is what a self-graded card
+   in a session is, so it moves the schedule like one. It is not a session: the dashboard's
+   daily tick still needs one.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 1. */
+const SW_DB = "hvr-sw", SW_CARDS = "cards";
+const PUSH_CARD_MAX_AGE_MS = 3 * 86400000;   // older than this, the moment has gone
+const PUSH_CARD_SEC_CAP = 60;                 // from Show answer to the grade, at most
+
+function swDbOpen() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") { reject(new Error("no IndexedDB")); return; }
+    const req = indexedDB.open(SW_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(SW_CARDS)) db.createObjectStore(SW_CARDS, { keyPath: "n", autoIncrement: true });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/* Pure: what a queue of answers does. `entries` are { k, grade, at, shown } as sw.js writes
+   them. Returns the answers to apply, each on its own day with its seconds, and how many were
+   dropped (too old, or a word no longer in the library). */
+function pushCardsPlan(entries, lib, nowMs) {
+  const apply = [];
+  let skipped = 0;
+  (entries || []).forEach(e => {
+    if (!e || typeof e.k !== "string" || !lib[e.k] || !(e.at > 0) || nowMs - e.at > PUSH_CARD_MAX_AGE_MS || e.at > nowMs + 60000) {
+      skipped++;
+      return;
+    }
+    const sec = e.shown > 0 ? Math.max(0, Math.min(PUSH_CARD_SEC_CAP, Math.round((e.at - e.shown) / 1000))) : 0;
+    apply.push({ k: e.k, grade: e.grade === 2 ? 2 : 0, day: isoOf(new Date(e.at)), sec: sec });
+  });
+  return { apply: apply, skipped: skipped };
+}
+
+/* statsBump on a given day rather than today: a card answered at 23:50 and applied at 08:00
+   belongs to the night before. */
+function statsBumpOn(day, patch) {
+  const st = statsAll();
+  const d = statsDay(st, day);
+  Object.keys(patch).forEach(k => { d[k] = (d[k] || 0) + patch[k]; });
+  statsSave(st);
+}
+
+/* Pure: the answers applied to `srs` (mutated) and the day-by-day stats patches. */
+function pushCardsApply(plan, srs, today) {
+  const byDay = {};
+  plan.apply.forEach(a => {
+    srsAnswer(srs, a.k, a.grade, "prod", { kd: "push" }, a.day === today ? undefined : a.day);
+    const d = byDay[a.day] || (byDay[a.day] = { cards: 0, clean: 0, sec: 0 });
+    d.cards++;
+    if (a.grade === 2) d.clean++;
+    d.sec += a.sec;
+  });
+  return byDay;
+}
+
+let pushCardsDraining = null;
+function pushCardsDrain() {
+  if (pushCardsDraining) return pushCardsDraining;
+  pushCardsDraining = (async () => {
+    let db = null;
+    try { db = await swDbOpen(); } catch (e) { return 0; }
+    try {
+      const entries = await new Promise((res, rej) => {
+        const r = db.transaction(SW_CARDS, "readonly").objectStore(SW_CARDS).getAll();
+        r.onsuccess = () => res(r.result || []);
+        r.onerror = () => rej(r.error);
+      });
+      if (!entries.length) return 0;
+      const plan = pushCardsPlan(entries, libAll(), Date.now());
+      if (plan.apply.length) {
+        const srs = srsAll();
+        const byDay = pushCardsApply(plan, srs, todayISO());
+        srsSave(srs);
+        Object.keys(byDay).forEach(day => statsBumpOn(day, byDay[day]));
+      }
+      /* Only what was read, by key: an answer the worker queues while this runs stays queued. */
+      await new Promise((res, rej) => {
+        const tx = db.transaction(SW_CARDS, "readwrite");
+        const store = tx.objectStore(SW_CARDS);
+        entries.forEach(e => { if (e && e.n != null) store.delete(e.n); });
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+      });
+      if (plan.apply.length && syncConfigured()) syncRun("cards", { quiet: true }).catch(() => {});
+      return plan.apply.length;
+    } catch (e) {
+      try { healthNote("push-cards", String(e && e.message || e).slice(0, 120)); } catch (x) {}
+      return 0;
+    } finally {
+      try { db.close(); } catch (e) {}
+    }
+  })().finally(() => { pushCardsDraining = null; });
+  return pushCardsDraining;
+}
+if (!/[?&]selftest\b/.test(location.search)) {
+  setTimeout(() => { pushCardsDrain(); }, 400);
+  try { document.addEventListener("visibilitychange", () => { if (!document.hidden) pushCardsDrain(); }); } catch (e) {}
+}
+
 function syncPaintSettings() {
   const on = syncConfigured();
   const desc = document.getElementById("syncDesc");
@@ -49368,6 +49478,35 @@ T("saidReviewClean: ok stays ok, a fix needs Hebrew, a stray index is dropped", 
   assertEq(got[1].tr, "halakhti la'ir", "the house scheme is applied to what comes back");
   assertTrue(saidReviewPrompt([{ en: "a", said: "b" }]).indexOf("never") !== -1 &&
              saidReviewPrompt([{ en: "a", said: "b" }]).indexOf("kh for") !== -1, "the prompt carries the scheme");
+});
+
+/* ====================  A CARD ON THE LOCK SCREEN  ==================== */
+T("pushCardsPlan: a lock-screen answer lands on its own day; too old or unknown is dropped", () => {
+  const lib = { "עייף": { tr: "ayef" }, "שלום": { tr: "shalom" } };
+  const now = new Date(2026, 10, 20, 10, 0, 0).getTime();
+  const plan = pushCardsPlan([
+    { n: 1, k: "עייף", grade: 2, shown: now - 3600000 - 12000, at: now - 3600000 },
+    { n: 2, k: "שלום", grade: 0, shown: 0, at: now - 86400000 },
+    { n: 3, k: "לא", grade: 2, at: now - 1000 },
+    { n: 4, k: "שלום", grade: 2, at: now - 4 * 86400000 },
+    { n: 5, k: "שלום", grade: 2, shown: now - 600000, at: now - 1000 },
+    { n: 6, k: "שלום", grade: 1, at: now - 1000 },
+  ], lib, now);
+  assertEq(plan.skipped, 2, "an unknown word and a four-day-old answer");
+  assertEq(plan.apply.map(a => [a.k, a.grade, a.day, a.sec]),
+           [["עייף", 2, "2026-11-20", 12], ["שלום", 0, "2026-11-19", 0], ["שלום", 2, "2026-11-20", 60], ["שלום", 0, "2026-11-20", 0]],
+           "seconds from Show answer to the grade, capped at a minute; anything but Got it is a miss");
+});
+T("pushCardsApply: each answer goes through srsAnswer as kd push, on its own day; stats by day", () => {
+  const keep = srsAnswer;
+  const calls = [];
+  try {
+    srsAnswer = function (srs, k, g, side, extra, day) { calls.push([k, g, side, extra && extra.kd, day || null]); };
+    const byDay = pushCardsApply({ apply: [{ k: "a", grade: 2, day: "2026-11-20", sec: 12 },
+                                           { k: "b", grade: 0, day: "2026-11-19", sec: 0 }] }, {}, "2026-11-20");
+    assertEq(calls, [["a", 2, "prod", "push", null], ["b", 0, "prod", "push", "2026-11-19"]]);
+    assertEq(byDay, { "2026-11-20": { cards: 1, clean: 1, sec: 12 }, "2026-11-19": { cards: 1, clean: 0, sec: 0 } });
+  } finally { srsAnswer = keep; }
 });
 
 if (location.search.indexOf("selftest") !== -1) {

@@ -213,29 +213,88 @@ self.addEventListener("message", (event) => {
 
 /* Reminders (2026-11-02): pings the dashboard's planner sends to the subscription this
    app publishes in its sync file. Shown with the app's own icon; a tap brings the app
-   forward on its home screen, or opens it there. Nothing else in the worker changes. */
+   forward on its home screen, or opens it there.
+
+   A CARD ON THE LOCK SCREEN (2026-11-20). A ping can carry one card (`card`: { k, he, tr, en }),
+   a word he is learning to say. It shows with one button, Show answer; that replaces it with the
+   Hebrew and two buttons, Got it and Missed, and the answer is queued in IndexedDB (hvr-sw ›
+   cards) for the app to apply the next time it is open, because a worker cannot reach
+   localStorage. A tap on the notification itself still opens the app.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 1. */
+const NOTE_ICON = "./icons/icon-192.png";
+/* The status-bar icon. Android draws it from the image's transparency alone, so the full icon
+   (opaque paper background) came out as a white square (flag, 2026-11-12). badge-96 is the ש
+   and its full stop in white on transparent. That fixed the shade but not the status bar
+   (2026-11-16): the installed app draws its status-bar icon from its own package, built from
+   the manifest, and with no "monochrome" icon there it used the opaque app icon. The manifest
+   now lists badge-96 as monochrome; the phone picks it up when Chrome next rebuilds the app. */
+const NOTE_BADGE = "./icons/badge-96.png";
+const APP_URL = "./hebrew-reader.html";
+
+function cardOf(data) {
+  const c = data && data.card;
+  return c && typeof c.he === "string" && c.he && typeof c.en === "string" && c.en
+    ? { k: String(c.k || c.he), he: String(c.he), tr: String(c.tr || ""), en: String(c.en) } : null;
+}
+
+function queueCardAnswer(entry) {
+  return new Promise((resolve) => {
+    let req;
+    try { req = indexedDB.open("hvr-sw", 1); } catch (e) { resolve(false); return; }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("cards")) db.createObjectStore("cards", { keyPath: "n", autoIncrement: true });
+    };
+    req.onerror = () => resolve(false);
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction("cards", "readwrite");
+        tx.objectStore("cards").add(entry);
+        tx.oncomplete = () => { db.close(); resolve(true); };
+        tx.onerror = () => { db.close(); resolve(false); };
+      } catch (e) { db.close(); resolve(false); }
+    };
+  });
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : "" }; }
-  event.waitUntil(self.registration.showNotification(data.title || "Hebrew", {
+  const card = cardOf(data);
+  const options = {
     body: data.body || "",
     tag: data.tag || "hebrew",
-    icon: "./icons/icon-192.png",
-    /* The status-bar icon. Android draws it from the image's transparency alone, so the
-       full icon (opaque paper background) came out as a white square (flag, 2026-11-12).
-       badge-96 is the ש and its full stop in white on transparent.
-       That fixed the shade but not the status bar (2026-11-16): the installed app draws
-       its status-bar icon from its own package, built from the manifest, and with no
-       "monochrome" icon there it used the opaque app icon. The manifest now lists
-       badge-96 as monochrome; the phone picks it up when Chrome next rebuilds the app. */
-    badge: "./icons/badge-96.png",
-    data: { url: "./hebrew-reader.html" }
-  }));
+    icon: NOTE_ICON,
+    badge: NOTE_BADGE,
+    data: { url: APP_URL, card: card }
+  };
+  if (card) options.actions = [{ action: "show", title: "Show answer" }];
+  event.waitUntil(self.registration.showNotification(data.title || "Hebrew", options));
 });
 
 self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  const url = new URL("./hebrew-reader.html", self.registration.scope).href;
+  const note = event.notification;
+  const card = note.data && note.data.card;
+  note.close();
+  if (card && event.action === "show") {
+    /* Same tag, so it replaces the question rather than adding a second notification. */
+    event.waitUntil(self.registration.showNotification(card.he, {
+      body: (card.tr ? card.tr + " · " : "") + "“" + card.en + "”",
+      tag: note.tag || "hebrew",
+      icon: NOTE_ICON,
+      badge: NOTE_BADGE,
+      data: { url: APP_URL, card: card, shown: Date.now() },
+      actions: [{ action: "got", title: "Got it" }, { action: "missed", title: "Missed" }]
+    }));
+    return;
+  }
+  if (card && (event.action === "got" || event.action === "missed")) {
+    event.waitUntil(queueCardAnswer({ k: card.k, grade: event.action === "got" ? 2 : 0, at: Date.now(),
+                                      shown: (note.data && note.data.shown) || 0 }));
+    return;
+  }
+  const url = new URL(APP_URL, self.registration.scope).href;
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const open = windows.find((c) => c.url.startsWith(self.registration.scope));

@@ -66,7 +66,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((names) => Promise.all(
-        names.filter((n) => n !== CACHE).map((n) => caches.delete(n))
+        /* The page's own audio cache (hebrew-reader.html, AUDIO_CACHE) is not the shell: its clips
+           are named by their text's hash and kept for good, so an update must not throw them away. */
+        names.filter((n) => n !== CACHE && n.indexOf("hvr-audio") !== 0).map((n) => caches.delete(n))
       ))
       .then(() => self.clients.claim())
   );
@@ -120,6 +122,10 @@ self.addEventListener("fetch", (event) => {
      Straight to the network. Offline it simply fails, and contentIngest already treats
      any failure as a no-op — the bank it is topping up works perfectly well without it. */
   if (new URL(req.url).pathname.indexOf("/content/") !== -1) return;
+  /* NOR IS THE AUDIO. The page keeps its own clips (AUDIO_CACHE) and asks the network for the
+     index itself; cached here as well, every clip would sit in the shell twice and its bytes
+     would be compared as if it were the app. */
+  if (new URL(req.url).pathname.indexOf("/audio/") !== -1) return;
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);

@@ -2061,6 +2061,40 @@
   .lact-quick button.primary:hover { background: var(--accent); filter: brightness(1.06); }
   .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
   .lact .lhint:empty { display: none; }
+  /* On the move (moveOpen). Fixed under the top bar so it stays put while the board scrolls, above
+     the board and the action card (z 6), below the sheets and modals. */
+  /* 64px below the bar: on a phone the bar is gone (--navh 0) and the round "me" button sits in that
+     corner, over where Close would be. */
+  .lmove { position: fixed; left: 12px; right: 12px; top: calc(var(--navh, 57px) + 64px); z-index: 30;
+           max-width: 420px; margin: 0 auto; background: var(--panel); border: 1px solid var(--border);
+           border-radius: 14px; padding: 12px 14px; box-shadow: 0 6px 24px var(--c-34-48-60-16); }
+  .lmove-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .lmove-head b { font-family: var(--display); font-size: 1.05rem; font-weight: 600; color: var(--ink); }
+  .lmove-sub { margin: 4px 0 8px; font-size: .78rem; color: var(--muted); line-height: 1.4; }
+  .lmove audio { width: 100%; display: block; }
+  .lmove-row { display: flex; gap: 8px; margin-top: 8px; }
+  .lmove-row button { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+                      padding: 8px 4px; font-family: inherit; font-size: .84rem; color: var(--accent); cursor: pointer; }
+  .lmove-row button:hover { border-color: var(--accent); background: var(--accent-soft); }
+  /* The two ways to practise away from the cards, side by side under the card's buttons. */
+  .lact-more { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
+  .lact-more .lact-check { margin: 0; }
+  /* The live coach (liveOpen): over everything, like a call screen. */
+  .lcall { position: fixed; inset: 0; z-index: 62; background: var(--c-20-30-40-32);
+           display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .lcall-card { width: min(460px, 100%); height: min(78vh, 640px); display: flex; flex-direction: column; gap: 10px;
+                background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px;
+                box-shadow: 0 10px 40px var(--c-34-48-60-16); }
+  .lcall-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .lcall-head b { font-family: var(--display); font-size: 1.1rem; font-weight: 600; color: var(--ink); }
+  .lcall-clock { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lcall-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+  .lcall-log p { margin: 0; padding: 7px 10px; border-radius: 10px; max-width: 88%; line-height: 1.4;
+                 font-size: 1rem; unicode-bidi: plaintext; }
+  .lcall-his { align-self: flex-end; background: var(--accent-soft); color: var(--ink); }
+  .lcall-coach { align-self: flex-start; background: var(--gold-soft); color: var(--ink); font-family: var(--he); }
+  .lcall-status { margin: 0; font-size: .82rem; color: var(--muted); line-height: 1.4; min-height: 1.2em; }
+  .lcall .btn { width: 100%; }
   /* Tonight's phrase (sayPaint): a head on the action card, not a second card on the board.
      Gold once said, because §3 gives gold "you did this"; outlined until then, so Start stays
      the one filled button. */
@@ -3647,6 +3681,29 @@
 <!-- decorative fade behind the dock so content scrolling under it softens out -->
 <div class="learnwrap" id="viewLearn" style="display:none">
   <audio id="learnAudioEl" style="display:none"></audio>
+  <!-- On the move (moveOpen): his sentences as one track, to listen to with the screen off. Over
+       the board from the top, clear of the action card and the dock. -->
+  <!-- The live coach (liveOpen): a spoken call, transcribed as it goes. -->
+  <div class="lcall" id="lCall" style="display:none">
+    <div class="lcall-card">
+      <div class="lcall-head"><b>📞 Talking Hebrew</b><span class="lcall-clock" id="lCallClock"></span></div>
+      <div class="lcall-log" id="lCallLog"></div>
+      <p class="lcall-status" id="lCallStatus"></p>
+      <button type="button" class="btn big" id="lCallEnd">Hang up</button>
+    </div>
+  </div>
+  <div class="lmove" id="lMove" style="display:none">
+    <div class="lmove-head">
+      <b>🎧 On the move</b>
+      <button type="button" class="linkbtn" id="lMoveClose">Close</button>
+    </div>
+    <p class="lmove-sub" id="lMoveSub"></p>
+    <audio id="lMoveAudio" controls preload="auto"></audio>
+    <div class="lmove-row">
+      <button type="button" id="lMovePrev">⏮ Back one</button>
+      <button type="button" id="lMoveNext">Skip one ⏭</button>
+    </div>
+  </div>
 
   <!-- Start: the session you're about to do, then the practice behind it.
        One screen rather than two — the progress isn't a report you go and look up,
@@ -32836,6 +32893,553 @@ async function sayPaint() {
   box.style.display = "";
 }
 
+/* =====================  ON THE MOVE  =====================
+   Hands-free, screen-off listening for the walk, the run, the cooking, the flight: the English,
+   a pause to say it, the Hebrew slowly, then at normal speed.
+
+   The phone's own voice can't play with the screen off or be recorded, so the clips are made ahead
+   on the laptop with a free natural voice (tools/audio/build.py: audio/clips/<hash>.<he|slow|en>.mp3
+   and audio/index.json, course sentences only). Here the episode is his: the sentences his due
+   words need most, from his own bank and within his reach (bankServable), their clips fetched once
+   and kept (a clip's name is its text's hash, so a kept clip is never stale), laid end to end with
+   the pauses into ONE track. One track keeps playing with the screen off and shows on the lock
+   screen with play, pause and skip; a string of clips with timers between them would not.
+   The seconds actually played go into the day's practice time.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 4. */
+const AUDIO_BASE = "./audio/";
+const AUDIO_CACHE = "hvr-audio-v1";     // kept by the worker across updates (sw.js, activate)
+const MOVE_ITEMS = 40, MOVE_MIN = 8, MOVE_RATE = 24000;
+/* The pauses, in seconds: before the first sentence; after the English, time to say it (at least
+   MOVE_SAY_MIN, or the Hebrew's own length × MOVE_SAY_X); after the slow Hebrew; after the Hebrew. */
+const MOVE_LEAD = 0.6, MOVE_SAY_MIN = 2.2, MOVE_SAY_X = 1.5, MOVE_AFTER_SLOW = 0.8, MOVE_AFTER = 1.8;
+const MOVE_FLUSH_SEC = 15;
+
+/* The text a clip's hash is taken over: shared with build.py's norm(). */
+function audioNorm(s) { return String(s || "").normalize("NFC").split(/\s+/).filter(Boolean).join(" "); }
+
+let audioIndex = null;
+async function audioIndexLoad() {
+  if (audioIndex) return audioIndex;
+  const url = AUDIO_BASE + "index.json";
+  try {
+    const cache = await caches.open(AUDIO_CACHE);
+    let r = null;
+    try { r = await fetchWithTimeout(url, { cache: "no-cache" }, FETCH_TIMEOUT_MS); } catch (e) { r = null; }
+    if (r && r.ok) await cache.put(url, r.clone());
+    else r = await cache.match(url);
+    const d = r ? await r.json() : null;
+    audioIndex = d && d.items && typeof d.items === "object" ? d.items : null;
+  } catch (e) { audioIndex = null; }
+  return audioIndex;
+}
+async function audioClip(name) {
+  const url = AUDIO_BASE + "clips/" + name + ".mp3";
+  const cache = await caches.open(AUDIO_CACHE);
+  let r = await cache.match(url);
+  if (!r) {
+    r = await fetchWithTimeout(url, {}, FETCH_TIMEOUT_MS);
+    if (!r || !r.ok) throw new Error("clip " + name + ": " + (r ? r.status : "no response"));
+    await cache.put(url, r.clone());
+  }
+  return r.arrayBuffer();
+}
+
+/* Pure: the episode's sentences. His own bank's, with clips, within his reach, the ones his words
+   need most first (practiceNeeds, the one list every picker reads); a day's own order among equals,
+   so two episodes in a week are not the same forty. */
+function movePick(bank, lib, srs, index, need, n, today) {
+  const seen = new Set(), out = [];
+  const mix = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  (bank || []).forEach(it => {
+    if (!it || (it.type !== "sentence" && it.type !== "listen") || !it.he) return;
+    const key = audioNorm(it.he);
+    const ids = index && index[key];
+    if (!Array.isArray(ids) || ids.length < 2 || seen.has(key)) return;
+    if (!bankServable(it, lib, srs)) return;
+    seen.add(key);
+    const score = bankContentWords(it, lib).reduce((s, w) => s + (need[w] || 0), 0);
+    out.push({ it: it, ids: ids, score: score, tie: mix(key + "|" + today) });
+  });
+  out.sort((a, b) => b.score - a.score || a.tie - b.tie);
+  return out.slice(0, n).map(x => ({ he: x.it.he, tr: x.it.tr || "", en: x.it.en || "", h: x.ids[0], e: x.ids[1] }));
+}
+
+/* Pure: where each clip goes, from their lengths in seconds. */
+function moveLayout(durs) {
+  let t = MOVE_LEAD;
+  const at = durs.map(d => {
+    const o = { start: t, en: t };
+    t += d.en + Math.max(MOVE_SAY_MIN, d.he * MOVE_SAY_X);
+    o.slow = t;
+    t += d.slow + MOVE_AFTER_SLOW;
+    o.he = t;
+    t += d.he + MOVE_AFTER;
+    return o;
+  });
+  return { at: at, total: t };
+}
+
+/* Pure: 16-bit mono PCM as a WAV file. */
+function moveWav(pcm, rate) {
+  const head = new DataView(new ArrayBuffer(44));
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) head.setUint8(o + i, s.charCodeAt(i)); };
+  const bytes = pcm.length * 2;
+  str(0, "RIFF"); head.setUint32(4, 36 + bytes, true); str(8, "WAVE");
+  str(12, "fmt "); head.setUint32(16, 16, true); head.setUint16(20, 1, true); head.setUint16(22, 1, true);
+  head.setUint32(24, rate, true); head.setUint32(28, rate * 2, true); head.setUint16(32, 2, true); head.setUint16(34, 16, true);
+  str(36, "data"); head.setUint32(40, bytes, true);
+  return new Blob([head.buffer, pcm.buffer], { type: "audio/wav" });
+}
+
+async function moveBuild(items, onStep) {
+  const ctx = new OfflineAudioContext(1, MOVE_RATE, MOVE_RATE);
+  const got = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    try {
+      const [en, slow, he] = await Promise.all([it.e + ".en", it.h + ".slow", it.h + ".he"]
+        .map(name => audioClip(name).then(b => ctx.decodeAudioData(b))));
+      got.push({ it: it, en: en, slow: slow, he: he });
+    } catch (e) { /* a clip that won't come: that sentence sits this one out */ }
+    if (onStep) onStep(i + 1, items.length);
+  }
+  if (got.length < MOVE_MIN) throw new Error("Only " + got.length + " sentences' audio came through.");
+  const lay = moveLayout(got.map(g => ({ en: g.en.duration, slow: g.slow.duration, he: g.he.duration })));
+  const pcm = new Int16Array(Math.ceil(lay.total * MOVE_RATE));
+  const put = (buf, sec) => {
+    const d = buf.getChannelData(0), o = Math.round(sec * MOVE_RATE);
+    for (let i = 0; i < d.length && o + i < pcm.length; i++) {
+      const v = Math.max(-1, Math.min(1, d[i]));
+      pcm[o + i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+    }
+  };
+  got.forEach((g, i) => { const a = lay.at[i]; put(g.en, a.en); put(g.slow, a.slow); put(g.he, a.he); });
+  return { blob: moveWav(pcm, MOVE_RATE), marks: lay.at.map(a => a.start), items: got.map(g => g.it), total: lay.total };
+}
+
+/* The episode playing now, and the seconds heard since the last count. */
+let move = null;
+function moveAudio() { return document.getElementById("lMoveAudio"); }
+/* Seconds actually played: the distance the track moved while playing, between events. A seek
+   resets the mark rather than counting, so skipping ahead is never practice. */
+function moveCount(final) {
+  const a = moveAudio();
+  if (!move || !a) return;
+  if (move.from !== null) {
+    const d = a.currentTime - move.from;
+    if (d > 0 && d < 30) move.carry += d;
+  }
+  move.from = (a.paused || final) ? null : a.currentTime;
+  const whole = Math.floor(move.carry);
+  if (whole > 0 && (whole >= MOVE_FLUSH_SEC || final)) { statsBump({ sec: whole }); move.carry -= whole; }
+}
+function moveSkip(dir) {
+  const a = moveAudio();
+  if (!move || !a) return;
+  const t = a.currentTime;
+  const marks = move.marks;
+  let to;
+  if (dir > 0) to = marks.find(m => m > t + 0.3);
+  else { const before = marks.filter(m => m < t - 2); to = before.length ? before[before.length - 1] : 0; }
+  if (to === undefined) return;
+  moveCount(false);
+  a.currentTime = to;
+}
+function moveMediaSession(ep) {
+  if (!("mediaSession" in navigator)) return;
+  const set = (k, f) => { try { navigator.mediaSession.setActionHandler(k, f); } catch (e) {} };
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "Hebrew on the move", artist: ep.items.length + " sentences", album: "Hebrew Reader",
+      artwork: [{ src: "icons/icon-192.png", sizes: "192x192", type: "image/png" }]
+    });
+  } catch (e) {}
+  const a = moveAudio();
+  set("play", () => a.play());
+  set("pause", () => a.pause());
+  set("nexttrack", ep ? () => moveSkip(1) : null);
+  set("previoustrack", ep ? () => moveSkip(-1) : null);
+}
+function moveSay(text) { const p = document.getElementById("lMoveSub"); if (p) p.textContent = text; }
+
+async function moveOpen() {
+  document.getElementById("lMove").style.display = "";
+  if (move && move.url) return;            // already built: the panel just comes back
+  move = { url: null, marks: [], items: [], from: null, carry: 0, building: true };
+  moveSay("Choosing your sentences…");
+  try {
+    const idx = await audioIndexLoad();
+    if (!idx) throw new Error("The audio isn't reachable just now.");
+    const lib = libAll(), srs = srsAll();
+    const needs = practiceNeeds(lib, srs, todayISO(), archiveAll());
+    const items = movePick(bankAll(), lib, srs, idx, needs.need || {}, MOVE_ITEMS, todayISO());
+    if (items.length < MOVE_MIN) throw new Error("Not enough of your sentences have audio yet.");
+    const ep = await moveBuild(items, (i, n) => moveSay("Getting the audio… " + i + " of " + n));
+    if (!move) return;                     // closed while it was building
+    move.url = URL.createObjectURL(ep.blob);
+    move.marks = ep.marks; move.items = ep.items; move.building = false;
+    const a = moveAudio();
+    a.src = move.url;
+    moveSay(ep.items.length + " sentences, " + Math.round(ep.total / 60) +
+            " min: the English, a pause to say it, then the Hebrew slowly and at speed.");
+    moveMediaSession(ep);
+    a.play().catch(() => {});              // a phone may want the tap on play itself
+  } catch (e) {
+    moveSay(String(e && e.message || e));
+    try { healthNote("move", String(e && e.message || e).slice(0, 120)); } catch (x) {}
+    move = null;
+  }
+}
+function moveClose() {
+  const a = moveAudio();
+  if (a) { a.pause(); moveCount(true); a.removeAttribute("src"); a.load(); }
+  if (move && move.url) URL.revokeObjectURL(move.url);
+  move = null;
+  moveMediaSession(null);
+  document.getElementById("lMove").style.display = "none";
+}
+(function moveWire() {
+  const a = moveAudio();
+  if (!a) return;
+  a.addEventListener("play", () => { if (move) move.from = a.currentTime; });
+  a.addEventListener("timeupdate", () => moveCount(false));
+  a.addEventListener("pause", () => moveCount(true));
+  a.addEventListener("ended", () => moveCount(true));
+  a.addEventListener("seeking", () => { if (move) move.from = null; });
+  a.addEventListener("seeked", () => { if (move && !a.paused) move.from = a.currentTime; });
+  document.getElementById("lMoveClose").addEventListener("click", moveClose);
+  document.getElementById("lMovePrev").addEventListener("click", () => moveSkip(-1));
+  document.getElementById("lMoveNext").addEventListener("click", () => moveSkip(1));
+  window.addEventListener("pagehide", () => moveCount(true));
+})();
+/* Whether the action card offers it: once the index has come, and the bank has enough. */
+let moveOffered = false;
+function moveOfferButton() {
+  const mv = document.createElement("button");
+  mv.type = "button"; mv.className = "linkbtn lact-check";
+  mv.textContent = "🎧 Listen on the move";
+  mv.title = "Your sentences as one track for a walk or a run: the English, a pause to say it, " +
+             "then the Hebrew slowly and at speed. Plays with the screen off.";
+  mv.onclick = () => { moveOpen(); };
+  return mv;
+}
+async function moveCheck() {
+  const idx = await audioIndexLoad();
+  const was = moveOffered;
+  /* Offered only when an episode can be made: enough of HIS sentences, within reach, have audio. */
+  let n = 0;
+  try { n = idx ? movePick(bankAll(), libAll(), srsAll(), idx, {}, MOVE_MIN, todayISO()).length : 0; } catch (e) { n = 0; }
+  moveOffered = n >= MOVE_MIN;
+  if (moveOffered !== was) { try { learnRenderAct(); } catch (e) {} }
+}
+
+/* =====================  A COACH YOU CAN TALK TO  =====================
+   The coach was record, wait, read. This is a call: he speaks, it answers in Hebrew in a second
+   or two, he can interrupt it, and it hears him hesitate. Google's Live API (free tier) over a
+   WebSocket with the key already in Settings: the microphone goes up as 16 kHz 16-bit PCM, the
+   answer comes back as PCM and plays as it arrives, and both sides are transcribed and shown.
+   Fifteen minutes at most, the API's own limit for audio. The library words he says, other than
+   ones the coach had just said to him, are credited as said live, as the old coach's are
+   (coachLandRecord); no schedule moves, by the 3 Nov rule. The call's minutes are practice time,
+   and it is logged with the coach's conversations (coachLogRecord) for the weekly evidence.
+   If the API refuses, it says so in a sentence and the ordinary coach is still there.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 5. */
+const LIVE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+const LIVE_MODEL = "models/gemini-3.8-live";
+const LIVE_VOICE = "Kore";
+const LIVE_MAX_MS = 15 * 60000;
+const LIVE_IN_RATE = 16000, LIVE_OUT_RATE = 24000;
+const LIVE_CHUNK = 1600;                  // 100 ms of microphone a message
+const LIVE_WORDS_MAX = 220;
+
+/* Pure: what the coach is told. His level, the words he has in three bands, the rules of the
+   call, and a situation to start from. */
+function liveBrief(lib, srs, level, situation) {
+  const can = [], learning = [];
+  Object.keys(lib || {}).forEach(w => {
+    if (STOPLIST.has(w) || w.length > 24) return;
+    const s = srsStrengthOf(srs, w, "prod");
+    if (s === "strong" || s === "progressing") can.push(w);
+    else if (s === "weak") learning.push(w);
+  });
+  const list = ws => ws.slice(0, LIVE_WORDS_MAX).join(", ") || "none yet";
+  return [
+    "You are a friendly Hebrew conversation partner on a voice call with an English speaker learning Modern Israeli Hebrew. " +
+      "His level is " + (level || 1) + " of 5, where 1 is a beginner.",
+    "Speak Hebrew, slowly and clearly, in short turns: one or two short sentences, then stop and let him answer. Never lecture.",
+    "Build what you say from the words he can say: " + list(can) + ".",
+    "Bring in the words he is learning, a few at a time: " + list(learning) + ".",
+    "Avoid other words. If you must use one, say what it means in English once, in a few words.",
+    "Pronouns, possessives, prepositions and small grammar words he knows already.",
+    "If he speaks English or gets stuck, give him the Hebrew for what he wanted to say, slowly, and ask him to say it.",
+    "If he makes a mistake, say the right version once, briefly, and carry on with the conversation.",
+    "Stay in Hebrew: no more than a few English words at a time.",
+    "Start from this: " + (situation || "his day today") + ". Begin by greeting him in Hebrew and asking one simple question about it."
+  ].join("\n");
+}
+/* What to talk about: this week's cards if there are any (the English only; they are his), else
+   his day. */
+function liveSituation() {
+  const w = weekAll();
+  const say = w && Array.isArray(w.say) ? w.say.map(s => s && s.en).filter(Boolean) : [];
+  const banked = bankAll().filter(it => it && it.src === "week" && weekCardFresh(Object.assign({}, it, { seen: 0 }), todayISO()))
+    .map(it => it.en).filter(Boolean);
+  const lines = say.concat(banked).slice(0, 8);
+  return lines.length ? "his week, things like: " + lines.join("; ") : "his day today";
+}
+/* Pure: the words to credit from what he said this turn. Library words, not the grammar he knows
+   cold, and not ones the coach had just said to him: repeating is not saying it. */
+function liveCredit(said, coachSaid, lib) {
+  const echo = new Set(bankUses(String(coachSaid || ""), lib));
+  return bankUses(String(said || ""), lib).filter(w => !STOPLIST.has(w) && !echo.has(w));
+}
+/* Pure: float samples at one rate to another, by straight-line interpolation. */
+function liveResample(input, from, to) {
+  if (from === to) return input;
+  const n = Math.floor(input.length * to / from);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i * from / to, j = Math.floor(x), f = x - j;
+    const a = input[j] || 0, b = input[j + 1] === undefined ? a : input[j + 1];
+    out[i] = a + (b - a) * f;
+  }
+  return out;
+}
+/* Pure: float samples as base64 16-bit little-endian PCM, and back. */
+function livePcmB64(f32) {
+  const pcm = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) { const v = Math.max(-1, Math.min(1, f32[i])); pcm[i] = v < 0 ? v * 0x8000 : v * 0x7FFF; }
+  const bytes = new Uint8Array(pcm.buffer);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function liveB64Pcm(b64) {
+  const s = atob(b64), bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const out = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / (pcm[i] < 0 ? 0x8000 : 0x7FFF);
+  return out;
+}
+/* Pure: one server message as what to do about it. */
+function liveRead(msg) {
+  const out = { setup: false, audio: [], his: "", coach: "", interrupted: false, turnDone: false, goAway: null, error: "" };
+  if (!msg || typeof msg !== "object") return out;
+  if (msg.setupComplete) out.setup = true;
+  if (msg.goAway) out.goAway = String(msg.goAway.timeLeft || "");
+  if (msg.error) out.error = String(msg.error.message || msg.error.status || "error");
+  const sc = msg.serverContent;
+  if (sc) {
+    ((sc.modelTurn && sc.modelTurn.parts) || []).forEach(p => {
+      if (p && p.inlineData && p.inlineData.data) {
+        const m = /rate=(\d+)/.exec(String(p.inlineData.mimeType || ""));
+        out.audio.push({ data: p.inlineData.data, rate: m ? Number(m[1]) : LIVE_OUT_RATE });
+      }
+    });
+    if (sc.inputTranscription && sc.inputTranscription.text) out.his = String(sc.inputTranscription.text);
+    if (sc.outputTranscription && sc.outputTranscription.text) out.coach = String(sc.outputTranscription.text);
+    out.interrupted = !!sc.interrupted;
+    out.turnDone = !!sc.turnComplete;
+  }
+  return out;
+}
+/* A refusal, in a sentence he can act on. */
+function liveWhy(code, reason) {
+  const r = String(reason || "");
+  if (/quota|exhausted|rate.?limit|429/i.test(r)) return "Google says the free allowance is used up for now. Try later, or use the ordinary coach.";
+  if (/key|permission|auth|403|401|denied/i.test(r)) return "Google didn't accept the key in Settings for live calls.";
+  if (/model|not found|404|unsupported/i.test(r)) return "The live model isn't available just now. The ordinary coach still is.";
+  if (code === 1000) return "";
+  return "The call dropped" + (r ? " (" + r.slice(0, 80) + ")" : "") + ".";
+}
+
+const LIVE_WORKLET = "class HvrUp extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('hvr-up',HvrUp);";
+let live = null;
+function liveSay(text) { const p = document.getElementById("lCallStatus"); if (p) p.textContent = text; }
+function liveLine(who, text, fresh) {
+  const box = document.getElementById("lCallLog");
+  if (!box || !text) return;
+  let last = box.lastElementChild;
+  if (fresh || !last || last.dataset.who !== who) {
+    last = document.createElement("p");
+    last.className = "lcall-" + who; last.dataset.who = who; last.dir = "auto";
+    box.append(last);
+  }
+  last.textContent = (last.textContent + text).replace(/\s+/g, " ");
+  box.scrollTop = box.scrollHeight;
+}
+function liveClock() {
+  const el = document.getElementById("lCallClock");
+  if (!live || !el) return;
+  const s = Math.floor((Date.now() - live.at) / 1000);
+  el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " / 15:00";
+}
+function livePlay(chunk) {
+  if (!live || !live.out) return;
+  const ctx = live.out;
+  const f = liveB64Pcm(chunk.data);
+  if (!f.length) return;
+  const buf = ctx.createBuffer(1, f.length, chunk.rate);
+  buf.copyToChannel(f, 0);
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination);
+  const at = Math.max(ctx.currentTime + 0.02, live.nextAt);
+  src.start(at);
+  live.nextAt = at + buf.duration;
+  live.playing.push(src);
+  src.onended = () => { if (live) live.playing = live.playing.filter(x => x !== src); };
+}
+function liveHush() {
+  if (!live) return;
+  live.playing.forEach(s => { try { s.stop(); } catch (e) {} });
+  live.playing = [];
+  live.nextAt = 0;
+}
+/* His turn ends when the coach starts answering: credit what he said, keep the turn. */
+function liveTurnEnd() {
+  if (!live || !live.his.trim()) return;
+  const words = liveCredit(live.his, live.lastCoach, libAll());
+  words.forEach(w => live.credited.add(w));
+  live.turns.push({ said: live.his.trim(), say: "", ok: "", why: "" });
+  live.his = "";
+}
+async function liveOpen() {
+  if (live) return;
+  const key = geminiKeys()[0];
+  document.getElementById("lCall").style.display = "";
+  document.getElementById("lCallLog").innerHTML = "";
+  document.getElementById("lCallClock").textContent = "";
+  document.getElementById("lCallEnd").textContent = "Hang up";
+  if (!key) { liveSay("Add your Gemini key in Settings to talk."); return; }
+  live = { at: Date.now(), ws: null, mic: null, inCtx: null, out: null, node: null, buf: [], n: 0,
+           nextAt: 0, playing: [], his: "", lastCoach: "", coach: "", credited: new Set(), turns: [],
+           ready: false, ended: false, timer: null, tick: null, fresh: true };
+  liveSay("Getting the microphone…");
+  try {
+    live.mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) { liveEnd("The microphone isn't available: " + String(e && e.message || e).slice(0, 80)); return; }
+  if (!live) return;
+  try {
+    live.out = new AudioContext({ sampleRate: LIVE_OUT_RATE });
+    try { live.inCtx = new AudioContext({ sampleRate: LIVE_IN_RATE }); } catch (e) { live.inCtx = new AudioContext(); }
+    const url = URL.createObjectURL(new Blob([LIVE_WORKLET], { type: "text/javascript" }));
+    await live.inCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+  } catch (e) { liveEnd("This browser can't stream the microphone."); return; }
+  if (!live) return;
+  liveSay("Calling…");
+  const lib = libAll(), srs = srsAll();
+  const ws = new WebSocket(LIVE_URL + "?key=" + encodeURIComponent(key));
+  live.ws = ws;
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ setup: {
+      model: LIVE_MODEL,
+      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } } },
+      systemInstruction: { parts: [{ text: liveBrief(lib, srs, learnerLevel(), liveSituation()) }] },
+      inputAudioTranscription: {}, outputAudioTranscription: {},
+      realtimeInputConfig: { automaticActivityDetection: {} }
+    } }));
+  };
+  ws.onmessage = async ev => {
+    let msg;
+    try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : await ev.data.text()); } catch (e) { return; }
+    if (!live || live.ws !== ws) return;
+    const r = liveRead(msg);
+    if (r.error) { liveEnd(liveWhy(0, r.error)); return; }
+    if (r.setup && !live.ready) liveStartMic();
+    if (r.his) { live.his += r.his; liveLine("his", r.his); }
+    if (r.coach || r.audio.length) {
+      liveTurnEnd();
+      if (r.coach) { live.coach += r.coach; liveLine("coach", r.coach, live.fresh); live.fresh = false; }
+      if (!live.heard) { live.heard = true; liveSay("Talk whenever you like. You can cut in."); }
+      r.audio.forEach(livePlay);
+    }
+    if (r.interrupted) liveHush();
+    if (r.turnDone) {
+      if (live.coach.trim()) { live.lastCoach = live.coach; if (live.turns.length) live.turns[live.turns.length - 1].say = live.coach.trim(); }
+      live.coach = "";
+      live.fresh = true;          // the next answer is a new paragraph, even with nothing from him between
+    }
+    if (r.goAway) liveSay("Google is ending the call shortly.");
+  };
+  ws.onerror = () => {};
+  ws.onclose = ev => { if (live && live.ws === ws && !live.ended) liveEnd(liveWhy(ev.code, ev.reason) || "The call ended."); };
+  live.timer = setTimeout(() => liveEnd("Fifteen minutes: that's the longest a call can be."), LIVE_MAX_MS);
+  live.tick = setInterval(liveClock, 1000);
+}
+function liveStartMic() {
+  if (!live || live.ready) return;
+  live.ready = true;
+  const ctx = live.inCtx;
+  const src = ctx.createMediaStreamSource(live.mic);
+  const node = new AudioWorkletNode(ctx, "hvr-up");
+  live.node = node;
+  node.port.onmessage = ev => {
+    if (!live || !live.ws || live.ws.readyState !== 1) return;
+    const f = liveResample(ev.data, ctx.sampleRate, LIVE_IN_RATE);
+    live.buf.push(f); live.n += f.length;
+    if (live.n < LIVE_CHUNK) return;
+    const all = new Float32Array(live.n);
+    let o = 0; live.buf.forEach(b => { all.set(b, o); o += b.length; });
+    live.buf = []; live.n = 0;
+    live.ws.send(JSON.stringify({ realtimeInput: { audio: { data: livePcmB64(all), mimeType: "audio/pcm;rate=" + LIVE_IN_RATE } } }));
+  };
+  src.connect(node);
+  liveSay("Say something in Hebrew, or wait for it to start.");
+  /* The first word is the coach's, from the situation it was given. */
+  live.ws.send(JSON.stringify({ realtimeInput: { text: "(The call has started. Greet him in Hebrew and begin.)" } }));
+}
+function liveEnd(why) {
+  if (!live || live.ended) return;
+  const l = live;
+  l.ended = true;
+  liveTurnEnd();
+  if (l.coach.trim() && l.turns.length) l.turns[l.turns.length - 1].say = l.coach.trim();
+  clearTimeout(l.timer); clearInterval(l.tick);
+  try { if (l.ws && l.ws.readyState <= 1) l.ws.close(1000); } catch (e) {}
+  try { if (l.mic) l.mic.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { if (l.node) l.node.disconnect(); } catch (e) {}
+  liveHush();
+  try { if (l.inCtx) l.inCtx.close(); } catch (e) {}
+  try { if (l.out) l.out.close(); } catch (e) {}
+  const sec = l.ready ? Math.min(LIVE_MAX_MS / 1000, Math.round((Date.now() - l.at) / 1000)) : 0;
+  const words = Array.from(l.credited);
+  if (sec > 0) statsBump({ sec: sec });
+  if (words.length) coachLandRecord(words);
+  if (l.turns.length) {
+    try {
+      coachLogRecord({ id: syncDeviceId() + "-" + l.at, at: l.at, node: "live", lvl: learnerLevel(),
+                       objectives: [], turns: l.turns }, libAll());
+    } catch (e) {}
+  }
+  if (why) try { healthNote("live", why.slice(0, 120)); } catch (e) {}
+  live = null;
+  const mins = Math.round(sec / 60);
+  liveSay([why, sec ? (mins ? mins + " min" : sec + " s") + " of Hebrew." : "",
+           words.length ? "You said " + words.slice(0, 12).join(", ") + (words.length > 12 ? "…" : "") + "." : ""]
+          .filter(Boolean).join(" "));
+  const btn = document.getElementById("lCallEnd");
+  if (btn) btn.textContent = "Close";
+  if (sec > 0 || words.length) { try { learnRenderStart(); } catch (e) {} }
+}
+(function liveWire() {
+  const end = document.getElementById("lCallEnd");
+  if (!end) return;
+  end.addEventListener("click", () => {
+    if (live) liveEnd("");
+    else { document.getElementById("lCall").style.display = "none"; end.textContent = "Hang up"; }
+  });
+})();
+function liveOfferButton() {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "linkbtn lact-check";
+  b.textContent = "📞 Talk it through, live";
+  b.title = "A spoken conversation with the coach: it answers in Hebrew as you talk. Up to 15 minutes.";
+  b.onclick = () => { liveOpen(); };
+  return b;
+}
+
 /* =====================  SESSION SURVIVAL  =====================
    learnSession was memory-only. It survived switching tabs inside the app (learnEnter
    resumes rather than restarts) but not a reload, a crash, or the tab being closed —
@@ -33106,6 +33710,12 @@ function learnRenderAct() {
   sit.title = "Warm up, practise, the new words on your map, a talk with the coach, and an easy one to finish.";
   sit.onclick = () => { sitStart(); };
   box.append(sit);
+  /* Away from the cards: on the move (moveOpen) once there is audio to make an episode from, and
+     the live coach (liveOpen) once there is a Gemini key to call with. */
+  const more = document.createElement("div"); more.className = "lact-more";
+  if (moveOffered) more.append(moveOfferButton());
+  if (geminiKeys().length) more.append(liveOfferButton());
+  if (more.childElementCount) box.append(more);
   /* The Duolingo check, only while there is something to check — see learnStartCheck.
      A quiet line under the two sizes rather than a third equal button: it is a chore he
      can pick up when he has five minutes, not what the card is for. */
@@ -37987,6 +38597,8 @@ if (!SELFTEST_RUN) setTimeout(() => syncRun("open", { quiet: true }), 1200);
 if (!SELFTEST_RUN) setTimeout(() => { contentCheck(true); }, 2600);
 /* His own week's cards, after the sync for the same reason (see weekCheck). */
 if (!SELFTEST_RUN) setTimeout(() => { weekCheck(); }, 3400);
+/* Whether there is audio for an episode: off the opening path, and only a small file. */
+if (!SELFTEST_RUN) setTimeout(() => { moveCheck(); }, 4200);
 /* After the content check for the same reason it waits for the sync: the bank should be
    the merged one before anything is retired from it. */
 if (!SELFTEST_RUN) setTimeout(() => { legacyClean(); }, 5200);
@@ -49942,6 +50554,87 @@ T("irlRecord: the day, its words but not the grammar, one spoken rep, and no sch
     putBack(IRL_KEY, keep.irl); putBack(STATS_KEY, keep.stats); putBack(SRS_KEY, keep.srs);
   }
 });
+/* ====================  ON THE MOVE  ==================== */
+T("movePick: his own bank's sentences with audio and within reach, the most needed first", () => {
+  const st = carryStores();        // עובד and בית strong, לומד progressing, היום weak
+  const idx = { "עובד בית": ["h1", "e1"], "לומד בית": ["h2", "e2"], "עובד היום": ["h3", "e3"] };
+  const bank = [
+    { id: "a", type: "sentence", he: "עובד  בית", uses: ["עובד", "בית"] },   // spacing doesn't matter
+    { id: "b", type: "listen", he: "לומד בית", uses: ["לומד", "בית"] },
+    { id: "c", type: "sentence", he: "עובד היום", uses: ["עובד", "היום"] },   // a weak word: not within reach
+    { id: "d", type: "sentence", he: "בית עובד", uses: ["בית", "עובד"] },    // no audio for it
+    { id: "e", type: "reply", he: "עובד בית", uses: ["עובד", "בית"] },       // not a sentence
+    { id: "f", type: "sentence", he: "עובד בית", uses: ["עובד", "בית"] }];   // the same sentence again
+  const got = movePick(bank, st.lib, st.srs, idx, { "לומד": 5, "עובד": 1 }, 10, "2026-11-20");
+  assertEq(got.map(g => [g.h, g.e]), [["h2", "e2"], ["h1", "e1"]], "the word he needs most first, each sentence once");
+  assertEq(movePick(bank, st.lib, st.srs, idx, {}, 1, "2026-11-20").length, 1, "never more than asked");
+  assertEq(movePick(bank, st.lib, st.srs, null, {}, 10, "2026-11-20"), [], "no index, no episode");
+});
+T("moveLayout: the English, time to say it, the Hebrew slowly, then at speed", () => {
+  const l = moveLayout([{ en: 1, slow: 2, he: 1 }, { en: 1, slow: 3, he: 2 }]);
+  const r = o => Object.keys(o).reduce((m, k) => { m[k] = Math.round(o[k] * 100) / 100; return m; }, {});
+  assertEq(r(l.at[0]), { start: 0.6, en: 0.6, slow: 3.8, he: 6.6 }, "a short sentence gets the floor to say it");
+  assertEq(r(l.at[1]), { start: 9.4, en: 9.4, slow: 13.4, he: 17.2 }, "a longer one gets half as long again as itself");
+  assertEq(Math.round(l.total * 100) / 100, 21);
+});
+T("moveWav: a 16-bit mono WAV of the samples", async () => {
+  const blob = moveWav(new Int16Array([0, 1000, -1000]), 24000);
+  assertEq([blob.size, blob.type], [50, "audio/wav"]);
+  const v = new DataView(await blob.arrayBuffer());
+  const tag = o => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+  assertEq([tag(0), v.getUint32(4, true), tag(8), tag(36), v.getUint32(40, true)], ["RIFF", 42, "WAVE", "data", 6]);
+  assertEq([v.getUint16(22, true), v.getUint32(24, true), v.getUint16(34, true)], [1, 24000, 16]);
+  assertEq(v.getInt16(46, true), 1000);
+});
+/* ====================  A COACH YOU CAN TALK TO  ==================== */
+T("liveBrief: his level, his words in bands, short slow turns, and where to start", () => {
+  const st = carryStores();        // עובד and בית strong, לומד progressing, היום weak
+  const lib = Object.assign({ "אני": { tr: "ani", en: "I" } }, st.lib);
+  const b = liveBrief(lib, st.srs, 2, "his week, things like: I'm tired");
+  assertTrue(/level is 2 of 5/.test(b));
+  assertTrue(/words he can say: [^\n]*עובד/.test(b) && /words he can say: [^\n]*לומד/.test(b));
+  assertTrue(/words he is learning[^\n]*היום/.test(b));
+  assertTrue(!/אני/.test(b), "the grammar he knows cold isn't listed");
+  assertTrue(/short turns/.test(b) && /Start from this: his week, things like: I'm tired/.test(b));
+});
+T("liveCredit: library words he said, not grammar, and not what the coach had just said", () => {
+  const st = carryStores();
+  const lib = Object.assign({ "אני": { tr: "ani", en: "I" } }, st.lib);
+  assertEq(liveCredit("אני עובד היום בבית", "", lib).sort(), ["בית", "היום", "עובד"].sort());
+  assertEq(liveCredit("עובד היום", "אתה עובד?", lib), ["היום"], "echoing the question is not saying it");
+  assertEq(liveCredit("", "x", lib), []);
+});
+T("liveResample and the PCM round trip", () => {
+  const f = new Float32Array([0, 0.5, 1, 0.5, 0, -0.5]);
+  const down = liveResample(f, 48000, 16000);
+  assertEq(Array.from(down), [0, 0.5]);
+  assertEq(liveResample(f, 16000, 16000), f, "same rate, same samples");
+  const back = liveB64Pcm(livePcmB64(new Float32Array([0, 0.25, -0.25, 1, -1])));
+  assertEq(Array.from(back).map(x => Math.round(x * 100) / 100), [0, 0.25, -0.25, 1, -1]);
+});
+T("liveRead: the server's messages as what to do", () => {
+  assertTrue(liveRead({ setupComplete: {} }).setup);
+  const r = liveRead({ serverContent: {
+    modelTurn: { parts: [{ inlineData: { mimeType: "audio/pcm;rate=24000", data: "AAA=" } }, { text: "x" }] },
+    outputTranscription: { text: "שלום" }, inputTranscription: { text: "היי" }, turnComplete: true } });
+  assertEq([r.audio, r.coach, r.his, r.turnDone, r.interrupted], [[{ data: "AAA=", rate: 24000 }], "שלום", "היי", true, false]);
+  assertEq(liveRead({ serverContent: { interrupted: true } }).interrupted, true);
+  assertEq(liveRead({ serverContent: { modelTurn: { parts: [{ inlineData: { data: "B" } }] } } }).audio[0].rate, 24000, "no rate given: 24 kHz");
+  assertEq(liveRead({ goAway: { timeLeft: "10s" } }).goAway, "10s");
+  assertEq(liveRead(null).setup, false);
+});
+T("liveWhy: a refusal in a sentence he can act on", () => {
+  assertTrue(/allowance/.test(liveWhy(1011, "RESOURCE_EXHAUSTED: quota")));
+  assertTrue(/key/.test(liveWhy(1008, "API key not valid")));
+  assertTrue(/model/.test(liveWhy(1008, "models/x is not found")));
+  assertEq(liveWhy(1000, ""), "", "an ordinary hang-up says nothing");
+});
+
+T("audioNorm: the same text build.py hashes", () => {
+  assertEq(audioNorm("  שלום   חבר "), "שלום חבר");
+  assertEq(audioNorm("é"), "é", "composed, as Python's NFC");
+});
+
 
 
 

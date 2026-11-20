@@ -63,7 +63,7 @@ a person.
 - **Tonight's phrase.** One sentence a day to say to her: from this week's cards marked `say`, else
   from the course at his level. The same choice everywhere: the Learn page, and the dashboard's
   Hebrew widget, whose evening card shows it (as a phrase card) and opens the app with it.
-- **I said it.** One tap records it (`hvr_maya`, by day). Its words count as said live for the
+- **I said it.** One tap records it (`hvr_irl`, by day). Its words count as said live for the
   dashboard's weekly target and ladder, and the day gets a spoken rep. Opened from the widget, the app
   asks the one question, *Did you say it?*, and records on yes.
 - **It does not move the schedule.** On 3 Nov the app stopped letting the coach's right answers move

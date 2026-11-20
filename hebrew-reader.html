@@ -2061,6 +2061,28 @@
   .lact-quick button.primary:hover { background: var(--accent); filter: brightness(1.06); }
   .lact .lhint { margin: 7px 0 0; font-size: .7rem; text-align: left; }
   .lact .lhint:empty { display: none; }
+  /* Tonight's phrase (sayPaint): a head on the action card, not a second card on the board.
+     Gold once said, because §3 gives gold "you did this"; outlined until then, so Start stays
+     the one filled button. */
+  .lsay { margin: 0 0 9px; padding: 0 0 9px; border-bottom: 1px solid var(--hair); text-align: left; }
+  .lsay-head { display: flex; align-items: center; gap: 6px; }
+  .lsay-lbl { flex: 1; font-size: .62rem; letter-spacing: .11em; text-transform: uppercase; color: var(--muted); }
+  .lsay.said .lsay-lbl { color: var(--gold); }
+  .lsay.ask .lsay-lbl { color: var(--accent); }
+  .lsay-ic { background: none; border: none; padding: 0 2px; font-size: .9rem; line-height: 1;
+             cursor: pointer; color: var(--muted); }
+  .lsay-done { color: var(--gold); font-weight: 700; }
+  .lsay-pill { flex: 0 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+               padding: 3px 10px; font-family: inherit; font-size: .74rem; color: var(--accent); cursor: pointer; }
+  .lsay-pill:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .lsay-he { font-family: var(--he); font-size: 1.08rem; line-height: 1.3; color: var(--ink);
+             text-align: right; margin: 4px 0 1px; }
+  .lsay-tr { font-size: .72rem; color: var(--muted); line-height: 1.35; }
+  .lsay-row { display: flex; gap: 7px; margin-top: 7px; }
+  .lsay-row button { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+                     padding: 7px 4px; font-family: inherit; font-size: .84rem; color: var(--accent); cursor: pointer; }
+  .lsay-row button:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .lsay-row button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
   /* THE COACH, ON THE FRONT DOOR. The same mark he wears everywhere else — the display
      serif and a soft gold rule, exactly .lcoach's treatment — because the thing that
      makes this the coach speaking rather than the app reporting is the voice, and a voice
@@ -3699,6 +3721,10 @@
       </div>
 
       <div class="lact" id="lAct">
+        <!-- Tonight's phrase (sayPaint): one sentence to say to her, the one the phone widget
+             shows in the evening. A child of the card and not of its body, which
+             learnRenderAct rebuilds on every draw. -->
+        <div class="lsay" id="lSay" style="display:none"></div>
         <div id="lActBody"></div>
         <!-- What is ahead, said before he starts rather than reported after. A CHILD of
              the card and not of its body, for the same reason #lStartHint is:
@@ -5182,7 +5208,9 @@ const MERGE_RULES = {
   /* Learning evidence (2026-11-04). Without rules both fall to the generic handling and
      one device's history erases the other's. */
   "hvr_wordweek":   (a, b) => mergeWordWeek(a, b),
-  "hvr_coachlog":   (a, b) => mergeSessions(a, b, COACHLOG_MAX)
+  "hvr_coachlog":   (a, b) => mergeSessions(a, b, COACHLOG_MAX),
+  /* Said to a person (sayPaint): by day, the later tap wins, so an undo travels. */
+  "hvr_irl":        (a, b) => mergeIrl(a, b)
 };
 
 /* THE CAMPAIGN HAD NO RULE, AND A NEW DEVICE ERASED EIGHT NODES WITH IT.
@@ -32646,6 +32674,168 @@ function weekCheck(force) {
   return weekChecking;
 }
 
+/* =====================  SAY IT FOR REAL  =====================
+   "Words said live" counted only words said to the AI coach. The point of all of it is saying
+   them to a person. So: one sentence a day to say to her (sayPick), from this week's cards marked
+   "say", else from the course at his level. The dashboard's phone widget makes the same pick in
+   its evening card (js/hebrew-voice.js, tonightPhrase) from the same synced week meta, the same
+   public course file and the same level, so the phone and this card always agree.
+
+   "I said it" records the day (IRL_KEY). Its words count as said live on the dashboard, and the
+   day gets a spoken rep. It moves no schedule: since 3 Nov unverified credit doesn't (see
+   srsAnswer), and a tap is less verifiable than the coach.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 3. */
+const IRL_KEY = "hvr_irl";      // { [day]: { he, tr, en, words: [lemma], at } or { off: true, at } }: synced
+const IRL_MAX_DAYS = 400;
+/* Shared with the dashboard's widget (js/hebrew-voice.js): change one, change both. */
+const SAY_EPOCH = "2026-01-01", SAY_COURSE_SALT = 3;
+
+function irlAll() {
+  try { const o = JSON.parse(lsGet(IRL_KEY)); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; }
+  catch (e) { return {}; }
+}
+function irlTrim(o) {
+  const out = {};
+  Object.keys(o || {}).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().slice(-IRL_MAX_DAYS)
+    .forEach(d => { out[d] = o[d]; });
+  return out;
+}
+/* Union by day; on the same day the later tap wins, so an undo (off) beats the tap it undid
+   and a later "said it" beats the undo. */
+function mergeIrl(a, b) {
+  const out = {};
+  unionKeys(a, b).forEach(d => {
+    const x = (a || {})[d], y = (b || {})[d];
+    out[d] = !x ? y : !y ? x : ((Number(y.at) || 0) > (Number(x.at) || 0) ? y : x);
+  });
+  return irlTrim(out);
+}
+function irlOn(day) { const e = irlAll()[day]; return e && !e.off ? e : null; }
+
+/* Pure: the course file's phrases, filtered exactly as the planner reads them
+   (planner/hebrew-progress.js, readHebrewPhrases), so both lists are the same list. */
+function sayCourse(items) {
+  return (Array.isArray(items) ? items : [])
+    .filter(i => i && i.type === "sentence" && i.he && i.tr && i.en && String(i.he).length <= 40)
+    .map(i => ({ he: i.he, tr: i.tr, en: i.en, lvl: Number(i.lvl) || 1 }));
+}
+/* Pure: tonight's phrase. This week's say cards in Claude's order, one a day from the batch day,
+   while the batch is this week's (WEEK_FRESH_DAYS); else the course's phrase of the day at his
+   level, by the widget's own rule. Null when there is neither. */
+function sayPick(week, phrases, level, today) {
+  const partner = week && typeof week.partner === "string" ? week.partner : "";
+  const say = week && Array.isArray(week.say) ? week.say.filter(s => s && s.he) : [];
+  if (say.length) {
+    const n = srsDaysSince(String(week.week || ""), today);
+    if (n !== null && n < WEEK_FRESH_DAYS) {
+      const s = say[n % say.length];
+      return { he: s.he, tr: s.tr || "", en: s.en || "", from: "week", partner: partner };
+    }
+  }
+  const all = phrases || [];
+  const at = all.filter(p => p.lvl === level);
+  const list = at.length ? at : all.filter(p => !level || p.lvl <= level);
+  if (!list.length) return null;
+  const p = list[((srsDaysSince(SAY_EPOCH, today) || 0) * 7 + SAY_COURSE_SALT) % list.length];
+  return { he: p.he, tr: trHouse(p.tr), en: p.en, from: "course", partner: partner };
+}
+/* His level as stored, unrounded, which is what the planner reads (Number(hvr_level.at)). */
+function sayLevel() {
+  try { const o = JSON.parse(lsGet(LEVEL_KEY)); return Number(o && o.at) || null; } catch (e) { return null; }
+}
+let sayPhrases = null;
+async function sayLoadCourse() {
+  if (sayPhrases) return sayPhrases;
+  try {
+    const r = await fetchWithTimeout(CONTENT_URL, {}, FETCH_TIMEOUT_MS);
+    if (r && r.ok) sayPhrases = sayCourse((await r.json()).items);
+  } catch (e) {}
+  return sayPhrases || [];
+}
+/* Records the day: the phrase, the words in it that count (library words, not the grammar he
+   knows cold), and a spoken rep. Returns the entry. */
+function irlRecord(pick, day) {
+  const lib = libAll();
+  const words = bankUses(pick.he, lib).filter(w => !STOPLIST.has(w));
+  const entry = { he: pick.he, tr: pick.tr || "", en: pick.en || "", words: words, at: Date.now() };
+  const all = irlAll();
+  const had = all[day] && !all[day].off;
+  all[day] = entry;
+  lsSet(IRL_KEY, JSON.stringify(irlTrim(all)));
+  if (!had) statsBumpOn(day, { spoken: 1, spokenOk: 1 });
+  if (!SELFTEST_RUN && syncConfigured()) syncRun("said", { quiet: true }).catch(() => {});
+  return entry;
+}
+function irlUndo(day) {
+  const all = irlAll();
+  if (!all[day] || all[day].off) return;
+  all[day] = { off: true, at: Date.now() };
+  lsSet(IRL_KEY, JSON.stringify(irlTrim(all)));
+  statsBumpOn(day, { spoken: -1, spokenOk: -1 });
+  if (!SELFTEST_RUN && syncConfigured()) syncRun("said", { quiet: true }).catch(() => {});
+}
+
+/* Opened from the phone widget (?say): the card asks the one question. */
+let sayAsk = !SELFTEST_RUN && /[?&]say\b/.test(location.search);
+if (sayAsk) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+
+async function sayPaint() {
+  const box = document.getElementById("lSay");
+  if (!box) return;
+  await sayLoadCourse();
+  const today = todayISO();
+  const pick = sayPick(weekAll(), sayPhrases || [], sayLevel(), today);
+  if (!pick) { box.style.display = "none"; return; }
+  const said = irlOn(today);
+  const who = pick.partner;
+  const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  box.innerHTML = "";
+  box.className = "lsay" + (said ? " said" : "") + (sayAsk && !said ? " ask" : "");
+  const head = mk("div", "lsay-head");
+  head.append(mk("span", "lsay-lbl", said ? (who ? "Said to " + who : "Said it") + " tonight"
+    : sayAsk ? "Did you say it" + (who ? " to " + who : "") + "?"
+    : "Tonight, to " + (who || "someone")));
+  const shown = said || pick;
+  if (HE_VOICE) {
+    const hear = mk("button", "lsay-ic", "🔊");
+    hear.type = "button"; hear.title = "Hear it"; hear.setAttribute("aria-label", "Hear it");
+    hear.addEventListener("click", () => speakHe(shown.he));
+    head.append(hear);
+  }
+  /* On the front door the tap is a small pill beside the label, so the card grows by two lines
+     of text and no more; asked from the widget, it is the whole question and gets a row. */
+  if (!said && !sayAsk) {
+    const pill = mk("button", "lsay-pill", "I said it");
+    pill.type = "button";
+    pill.addEventListener("click", () => { irlRecord(pick, today); sayPaint(); });
+    head.append(pill);
+  }
+  if (said) {
+    const mark = mk("button", "lsay-ic lsay-done", "✓");
+    mark.type = "button"; mark.title = "Said it. Tap to undo"; mark.setAttribute("aria-label", "Said it. Tap to undo");
+    mark.addEventListener("click", () => { if (confirm("Undo \"said it\" for tonight?")) { irlUndo(today); sayPaint(); } });
+    head.append(mark);
+  }
+  box.append(head);
+  const he = mk("div", "lsay-he", shown.he); he.dir = "rtl";
+  box.append(he);
+  if (!said) {
+    box.append(mk("div", "lsay-tr", [shown.tr, shown.en ? "“" + shown.en + "”" : ""].filter(Boolean).join(" · ")));
+  }
+  if (!said && sayAsk) {
+    const row = mk("div", "lsay-row");
+    const yes = mk("button", "primary", "Yes");
+    yes.type = "button";
+    yes.addEventListener("click", () => { irlRecord(pick, today); sayAsk = false; sayPaint(); });
+    const no = mk("button", "", "Not yet");
+    no.type = "button";
+    no.addEventListener("click", () => { sayAsk = false; sayPaint(); });
+    row.append(yes, no);
+    box.append(row);
+  }
+  box.style.display = "";
+}
+
 /* =====================  SESSION SURVIVAL  =====================
    learnSession was memory-only. It survived switching tabs inside the app (learnEnter
    resumes rather than restarts) but not a reload, a crash, or the tab being closed —
@@ -33233,6 +33423,7 @@ function learnRenderStart() {
   pathFocusCurrent();
   learnRenderAct();
   learnRenderForecast();
+  sayPaint();
   /* Writes the next chapter while he is looking at this one, so the wait happens
      where he is not. Deliberately not awaited, and it swallows its own failures —
      a background spend he did not ask for has no business surfacing an error over the
@@ -49693,6 +49884,66 @@ T("weekCarryWords: a fresh week card's one learning word rides along, on strong 
   assertTrue(bankServable(bank[0], st.lib, st.srs, new Set(weekCarryWords(bank, st.lib, st.srs, today, 4))),
              "so the card is served this week");
 });
+/* ====================  SAY IT FOR REAL  ==================== */
+/* The same fixture as the dashboard's tests/hebrew-voice.test.js "tonightPhrase" test: the two
+   picks must agree, or the phone shows one sentence and the app records another. */
+T("sayPick: this week's say cards one a day from the batch day, then the course by the widget's rule", () => {
+  const week = { week: "2026-11-20", partner: "Ana", say: [{ he: "א", tr: "a", en: "A" }, { he: "ב", tr: "b", en: "B" }, { he: "ג", tr: "g", en: "G" }] };
+  const phrases = [1, 2, 3, 4, 5].map(i => ({ he: "p" + i, tr: "p" + i, en: "P" + i, lvl: i <= 3 ? 1 : 2 }));
+  assertEq(sayPick(week, phrases, 1, "2026-11-20").he, "א", "the batch day takes the first");
+  assertEq(sayPick(week, phrases, 1, "2026-11-22").he, "ג");
+  assertEq(sayPick(week, phrases, 1, "2026-11-23").he, "א", "and round again");
+  const w = sayPick(week, [], 1, "2026-11-21");
+  assertEq([w.he, w.from, w.partner], ["ב", "week", "Ana"]);
+  /* Past the week: the course's phrase of the day, (days since 1 Jan × 7 + 3) mod the list. */
+  assertEq(sayPick(week, phrases, 1, "2026-11-28").he, "p2", "his level's phrases");
+  assertEq(sayPick(week, phrases, 1.5, "2026-11-28").he, "p2", "a level between bands takes the ones at or under it");
+  assertEq(sayPick(null, phrases, null, "2026-11-28").he, "p1", "no level: all of them");
+  assertEq(sayPick({ week: "2026-11-20", say: [] }, phrases, 2, "2026-11-21").from, "course", "a week with nothing to say");
+  assertNull(sayPick(null, [], 1, "2026-11-28"));
+});
+T("sayCourse: the course's sentences as the planner reads them", () => {
+  assertEq(sayCourse([{ type: "sentence", he: "שלום", tr: "shalom", en: "hello", lvl: "2" },
+                      { type: "listen", he: "x", tr: "x", en: "x" },
+                      { type: "sentence", he: "א".repeat(41), tr: "x", en: "x" },
+                      { type: "sentence", he: "תודה", tr: "toda", en: "thanks" }]),
+           [{ he: "שלום", tr: "shalom", en: "hello", lvl: 2 }, { he: "תודה", tr: "toda", en: "thanks", lvl: 1 }]);
+});
+T("mergeIrl: union by day, the later tap wins, an undo included", () => {
+  const a = { "2026-11-20": { he: "א", at: 5 }, "2026-11-21": { he: "ב", at: 9 } };
+  const b = { "2026-11-21": { off: true, at: 12 }, "2026-11-22": { he: "ג", at: 1 } };
+  const m = mergeIrl(a, b);
+  assertEq(Object.keys(m), ["2026-11-20", "2026-11-21", "2026-11-22"]);
+  assertTrue(m["2026-11-21"].off, "undone later on the other device");
+  assertEq(mergeIrl(b, a)["2026-11-21"].off, true, "whichever side it's merged from");
+  assertEq(mergeIrl({ "bad": { at: 1 } }, {}), {}, "not a day, not kept");
+});
+T("irlRecord: the day, its words but not the grammar, one spoken rep, and no schedule moved", () => {
+  const keep = { irl: lsGet(IRL_KEY), stats: lsGet(STATS_KEY), srs: lsGet(SRS_KEY) };
+  const keepLib = libAll;
+  try {
+    localStorage.removeItem(IRL_KEY);
+    libAll = () => ({ "עייף": { tr: "ayef", en: "tired" }, "היום": { tr: "hayom", en: "today" }, "אני": { tr: "ani", en: "I" } });
+    const day = "2026-11-21";
+    const before = (statsAll()[day] || {}).spoken || 0;
+    const e = irlRecord({ he: "אני עייף היום", tr: "ani ayef hayom", en: "I'm tired today" }, day);
+    assertEq(e.words.slice().sort(), ["היום", "עייף"].sort(), "אני is grammar he knows cold");
+    assertTrue(irlOn(day) && irlOn(day).he === "אני עייף היום");
+    assertEq(statsAll()[day].spoken, before + 1);
+    irlRecord({ he: "אני עייף היום", tr: "", en: "" }, day);
+    assertEq(statsAll()[day].spoken, before + 1, "said twice in a night is one rep");
+    assertEq(lsGet(SRS_KEY), keep.srs, "the schedule stays with the cards");
+    irlUndo(day);
+    assertNull(irlOn(day), "undone");
+    assertEq(statsAll()[day].spoken, before, "and its rep with it");
+  } finally {
+    libAll = keepLib;
+    const putBack = (k, v) => { if (v == null) localStorage.removeItem(k); else lsSet(k, v); };
+    putBack(IRL_KEY, keep.irl); putBack(STATS_KEY, keep.stats); putBack(SRS_KEY, keep.srs);
+  }
+});
+
+
 
 if (location.search.indexOf("selftest") !== -1) {
   /* after the init block has run, so every const is initialised */

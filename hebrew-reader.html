@@ -10733,6 +10733,9 @@ function SYNC_LOCAL_SET() {
        which ones he has had is a rotation marker, not progress — the words carry that.
        Literals rather than the consts: this set is built during init, before them. */
     "hvr_prompts", "hvr_promptseen",
+    /* His own week (weekCheck): when this device last looked and what it banked are about the
+       device; the bank and the week's meta, which do travel, are about him. */
+    "hvr_week_last", "hvr_week_seen",
     /* A LIVE DIAGNOSTIC FOR THE DEVICE IN YOUR HAND. It shipped syncing, because it is
        hvr_-prefixed and syncKeys is a prefix scan — and under the default array rule the
        laptop's twenty calls simply overwrite the phone's. Nothing is lost by keeping it
@@ -22905,7 +22908,10 @@ function libWordsTidyIfNeeded() {
    what stops a synced copy resurrecting them. A merge never sees Claude's items lose their
    src: bankSlimForSync keeps it on the stubs, and bankDropStubs is applied after. */
 const BANK_CLAUDE_ONLY = true;
-function bankIsClaudes(it) { return !!it && it.src === "claude"; }
+/* "week" is Claude's writing too (2026-11-20): the cards about his own week, read from the
+   dashboard's private sync repo (weekCheck). Kept and served like the course's; unlike them
+   their words exist nowhere public, so bankSlimForSync, which only slims "claude", leaves them whole. */
+function bankIsClaudes(it) { return !!it && (it.src === "claude" || it.src === "week"); }
 function bankOnlyClaudes(bank) {
   const a = Array.isArray(bank) ? bank : [];
   return BANK_CLAUDE_ONLY ? a.filter(bankIsClaudes) : a;
@@ -28803,6 +28809,14 @@ function practiceNeedsRecv(lib, srs, today) {
 
    Pure. `pool` entries are {it, recent, carry?}; nothing is read from storage. */
 const PICK_COVERED = -2, PICK_RECENT = -3;
+/* This week's cards (src "week"): how much a fresh one is lifted, how many a session, and how long a
+   batch counts as this week's. */
+const WEEK_LIFT = 20, WEEK_PER_SESSION = 4, WEEK_FRESH_DAYS = 8;
+function weekCardFresh(it, today) {
+  if (!it || it.src !== "week" || (it.seen || 0) > 0 || !it.wk) return false;
+  const ago = srsDaysSince(it.wk, today);
+  return ago !== null && ago < WEEK_FRESH_DAYS;
+}
 const UNPROVEN_PER_SESSION = { quick: 2, balanced: 5 };
 function learnPickBank(pool, room, level, needs, opts) {
   opts = opts || {};
@@ -28818,8 +28832,14 @@ function learnPickBank(pool, room, level, needs, opts) {
     unpOf.set(x, ws.filter(w => unproven.has(w)).length);
   });
   const eligible = (pool || []).filter(x => unpOf.get(x) <= 1);
+  /* HIS OWN WEEK FIRST, A FEW AT A TIME (2026-11-20). A card about this week is worth most while it
+     is still this week, so one he hasn't met gets a lift, at most WEEK_PER_SESSION a session. */
+  /* One budget for the whole session: learnBuild hands the same { left } to every call. */
+  const week = opts.week || (opts.week = { left: WEEK_PER_SESSION });
+  const fresh = x => weekCardFresh(x.it, opts.today || todayISO());
   const scoreOf = x => wordsOf.get(x).reduce((s, w) =>
-    s + (covered.has(w) ? PICK_COVERED : (need[w] || 0)), 0) + (x.recent ? PICK_RECENT : 0);
+    s + (covered.has(w) ? PICK_COVERED : (need[w] || 0)), 0) + (x.recent ? PICK_RECENT : 0) +
+    (week.left > 0 && fresh(x) ? WEEK_LIFT : 0);
   const used = new Set(), out = [];
   const takeAt = (L, positiveOnly) => {
     let best = null, bestScore = -Infinity;
@@ -28847,6 +28867,7 @@ function learnPickBank(pool, room, level, needs, opts) {
     out.push(got);
     wordsOf.get(got).forEach(w => covered.add(w));
     unprovenLeft -= unpOf.get(got);
+    if (fresh(got)) week.left--;
     return true;
   };
   const unfilled = levelQuota(room, level).filter(L => !fill(L, true));
@@ -29002,12 +29023,14 @@ function learnBuild(opts) {
      the same way the sentences below are picked on `prod`, so it goes to unheard and
      overdue words first. A win that happened to be a listen card counts toward it.
      Every word ready to say: hearing a word he cannot yet say is not what rescues it. */
+  /* This week's cards, four a session across every pick below (see WEEK_PER_SESSION). */
+  const weekBudget = { left: WEEK_PER_SESSION };
   const listenPicks = wantListen ? learnPickBank(
     ranked.filter(x => x.it.type === "listen" && shadowPicks.indexOf(x) === -1 &&
                        winPicks.indexOf(x) === -1 &&
                        bankContentWords(x.it, lib).every(w => wordReady(w, srsNow))),
     Math.max(0, listenRoom(size) - winPicks.filter(x => x.it.type === "listen").length),
-    level, { need: needs.recvNeed, unproven: needs.unproven }, { lib: lib, srs: srsNow }) : [];
+    level, { need: needs.recvNeed, unproven: needs.unproven }, { lib: lib, srs: srsNow, week: weekBudget }) : [];
   listenPicks.forEach(x => cards.push({ kind: "listen", item: x.it, words: x.it.uses || [] }));
 
   /* ---- the soft launch -----------------------------------------------------
@@ -29114,7 +29137,7 @@ function learnBuild(opts) {
      slot by slot, which is what the hits/rest split was approximating. Carried items
      still go first and still cap at CARRY_CARDS; they now also draw down the same
      unproven budget and count as covered for what follows. */
-  const pickOpts = { lib: lib, srs: srsNow, covered: [],
+  const pickOpts = { lib: lib, srs: srsNow, covered: [], week: weekBudget,
                      unprovenLeft: (UNPROVEN_PER_SESSION[shape] || UNPROVEN_PER_SESSION.balanced) -
                                    stuckPicks.filter(k => needs.unproven.has(k)).length };
   cards.forEach(c => (c.words || []).forEach(w => pickOpts.covered.push(w)));
@@ -31533,7 +31556,11 @@ function learnIngest(data) {
          Cleared naturally — once he approves the word in Pending it is a library word,
          and this list is then satisfied. */
       pend: pend,
-      uses: uses, seen: it.seen || 0, added: todayISO()
+      uses: uses, seen: it.seen || 0, added: todayISO(),
+      /* A card about his own week: the batch it came in (weekCheck), and whether it is one to say
+         to her (sayPick). Absent on everything else. */
+      ...(it.wk ? { wk: String(it.wk) } : {}),
+      ...(it.say ? { say: true } : {})
     });
     n++;
   });
@@ -32521,6 +32548,84 @@ function learnVoiceBanner() {
   document.getElementById("lVoiceBanner").style.display =
     (hasHeVoice() || lsGet("hvr_voicebanner") === "0") ? "none" : "block";
 }
+/* =====================  HIS OWN WEEK  =====================
+   Once a week Claude writes 20 to 30 cards about his coming week (the shifts, the bars, what he
+   is cooking, the trip home), from the words he has. They are personal, so they never go near
+   content/nodes.json, which is public: they live in the dashboard's PRIVATE sync repo as
+   hebrew/week.json, and this reads them with the dashboard's own settings. Both apps are served
+   from this address, so on a device where the dashboard is set up its key is already here; on
+   one where it isn't, there is simply no weekly file. Banked through learnIngest like any other
+   batch, as src "week" with the batch day (wk), and "say" on the few meant for her.
+   The meta (WEEK_KEY) syncs, so the say pick is the same on every device; when this device last
+   looked, and what it has already banked, do not.
+   Spec: docs/superpowers/specs/2026-11-20-practice-everywhere-design.md, Phase 2. */
+const WEEK_KEY = "hvr_week";              // { week, written, partner, say: [{ he, tr, en }] }
+const WEEK_LAST_KEY = "hvr_week_last";    // when this device last looked (ms): local
+const WEEK_SEEN_KEY = "hvr_week_seen";    // the `written` stamp this device banked: local
+const WEEK_EVERY_MS = 3 * 3600000;
+const DASH_SETTINGS_KEY = "dash_settings";
+
+function weekAll() {
+  try { const w = JSON.parse(lsGet(WEEK_KEY)); return w && typeof w === "object" ? w : null; } catch (e) { return null; }
+}
+/* The dashboard's sync repo and key, from its settings on this device, or null. */
+function dashSync() {
+  try {
+    const s = JSON.parse(lsGet(DASH_SETTINGS_KEY) || "null");
+    const token = s && typeof s.token === "string" ? s.token.trim() : "";
+    const repo = s && typeof s.repo === "string" ? s.repo.trim() : "";
+    return token && /^[\w.-]+\/[\w.-]+$/.test(repo) ? { token: token, repo: repo } : null;
+  } catch (e) { return null; }
+}
+/* Pure: the file as learnIngest items, and the meta kept for the say pick. Null for anything
+   that isn't a week file. */
+function weekItems(data) {
+  if (!data || !Array.isArray(data.cards) || !/^\d{4}-\d{2}-\d{2}$/.test(String(data.week || ""))) return null;
+  const items = data.cards.filter(c => c && typeof c.he === "string" && c.he && c.tr && c.en).map(c => ({
+    he: String(c.he), tr: String(c.tr), en: String(c.en),
+    type: c.type === "listen" ? "listen" : "sentence",
+    lvl: c.lvl, gloss: Array.isArray(c.gloss) ? c.gloss : undefined,
+    src: "week", wk: String(data.week), say: c.say === true
+  }));
+  const meta = {
+    week: String(data.week), written: String(data.written || ""),
+    partner: String(data.partner || "").trim().slice(0, 30),
+    say: items.filter(i => i.say).map(i => ({ he: i.he, tr: trHouse(i.tr), en: i.en }))
+  };
+  return { items: items, meta: meta };
+}
+let weekChecking = null;
+function weekCheck(force) {
+  if (weekChecking) return weekChecking;
+  const dash = dashSync();
+  if (!dash) return Promise.resolve(0);
+  const last = parseInt(lsGet(WEEK_LAST_KEY), 10) || 0;
+  if (!force && Date.now() - last < WEEK_EVERY_MS) return Promise.resolve(0);
+  weekChecking = (async () => {
+    try {
+      lsSet(WEEK_LAST_KEY, String(Date.now()));
+      const r = await fetchWithTimeout("https://api.github.com/repos/" + dash.repo + "/contents/hebrew/week.json", {
+        cache: "no-store",
+        headers: { Authorization: "Bearer " + dash.token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" }
+      }, FETCH_TIMEOUT_MS);
+      if (!r || !r.ok) return 0;
+      const got = weekItems(await r.json());
+      if (!got) return 0;
+      const have = weekAll();
+      if (!have || have.week !== got.meta.week || have.written !== got.meta.written) lsSet(WEEK_KEY, JSON.stringify(got.meta));
+      if (lsGet(WEEK_SEEN_KEY) === got.meta.written) return 0;
+      const n = learnIngest({ items: got.items });
+      lsSet(WEEK_SEEN_KEY, got.meta.written);
+      try { if (typeof sayPaint === "function") sayPaint(); } catch (e) {}
+      return n;
+    } catch (e) {
+      try { healthNote("week-check", String(e && e.message || e).slice(0, 120)); } catch (x) {}
+      return 0;
+    } finally { weekChecking = null; }
+  })();
+  return weekChecking;
+}
+
 /* =====================  SESSION SURVIVAL  =====================
    learnSession was memory-only. It survived switching tabs inside the app (learnEnter
    resumes rather than restarts) but not a reload, a crash, or the tab being closed —
@@ -37669,6 +37774,8 @@ if (!SELFTEST_RUN) setTimeout(() => syncRun("open", { quiet: true }), 1200);
    something the other device already had. Late enough to be off the opening critical
    path either way — nothing on screen is waiting for it. */
 if (!SELFTEST_RUN) setTimeout(() => { contentCheck(true); }, 2600);
+/* His own week's cards, after the sync for the same reason (see weekCheck). */
+if (!SELFTEST_RUN) setTimeout(() => { weekCheck(); }, 3400);
 /* After the content check for the same reason it waits for the sync: the bank should be
    the merged one before anything is retired from it. */
 if (!SELFTEST_RUN) setTimeout(() => { legacyClean(); }, 5200);
@@ -37677,7 +37784,7 @@ if (!SELFTEST_RUN) setTimeout(() => { legacyClean(); }, 5200);
    the load-time one rather than throwing on boot. */
 try {
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && !SELFTEST_RUN) contentCheck();
+    if (!document.hidden && !SELFTEST_RUN) { contentCheck(); weekCheck(); }
   });
 } catch (e) {}
 syncPadOffset();
@@ -49507,6 +49614,48 @@ T("pushCardsApply: each answer goes through srsAnswer as kd push, on its own day
     assertEq(calls, [["a", 2, "prod", "push", null], ["b", 0, "prod", "push", "2026-11-19"]]);
     assertEq(byDay, { "2026-11-20": { cards: 1, clean: 1, sec: 12 }, "2026-11-19": { cards: 1, clean: 0, sec: 0 } });
   } finally { srsAnswer = keep; }
+});
+
+/* ====================  HIS OWN WEEK  ==================== */
+T("weekItems: the private file as week cards, the say ones kept for the pick", () => {
+  const got = weekItems({ week: "2026-11-20", written: "2026-11-20T18:00:00Z", partner: "Ana", cards: [
+    { he: "אני עייף היום", tr: "ani ayef hayom", en: "I'm tired today", say: true, lvl: 1 },
+    { he: "קר בחוץ", tr: "kar bakhutz", en: "It's cold outside", type: "listen" },
+    { he: "", tr: "x", en: "y" }] });
+  assertEq(got.items.length, 2, "a card with no Hebrew is dropped");
+  assertEq([got.items[0].src, got.items[0].wk, got.items[0].say, got.items[1].type, got.items[1].say],
+           ["week", "2026-11-20", true, "listen", false]);
+  assertEq(got.meta.say, [{ he: "אני עייף היום", tr: "ani ayef hayom", en: "I'm tired today" }]);
+  assertEq([got.meta.partner, got.meta.week, got.meta.written], ["Ana", "2026-11-20", "2026-11-20T18:00:00Z"]);
+  assertNull(weekItems({ cards: [] }), "no week, no file");
+  assertNull(weekItems(null));
+});
+T("week cards are Claude's writing: kept by the merge, and their words are not slimmed away", () => {
+  assertTrue(bankIsClaudes({ src: "week" }) && bankIsClaudes({ src: "claude" }) && !bankIsClaudes({ src: "" }));
+  const slim = JSON.parse(bankSlimForSync(JSON.stringify([
+    { id: "a", src: "week", he: "קפה", seen: 1 }, { id: "b", src: "claude", he: "תה", seen: 2 }])));
+  assertEq(slim[0].he, "קפה", "a week card's words exist nowhere public, so they travel");
+  assertEq(slim[1].he, undefined, "a course item still goes as a stub");
+  const merged = MERGE_RULES["hvr_bank"]([{ id: "a", src: "week", he: "קפה", seen: 1 }], []);
+  assertEq(merged.map(x => x.id), ["a"], "kept by the merge");
+});
+T("learnPickBank: this week's unseen cards get a lift, four a session across every call", () => {
+  const needs = { need: { "א1": 10, "ב1": -4 }, unproven: new Set() };
+  const today = "2026-11-22";
+  const wk = (id, extra) => PKI(id, ["ב1"], Object.assign({ src: "week", wk: "2026-11-20" }, extra || {}));
+  assertEq(learnPickBank([PKI("due", ["א1"]), wk("mine")], 1, 2, needs, { lib: PKLIB, today: today }).map(x => x.it.id), ["mine"],
+           "a fresh card about his week beats an ordinary one");
+  assertEq(learnPickBank([PKI("due", ["א1"]), wk("met", { seen: 1 })], 1, 2, needs, { lib: PKLIB, today: today }).map(x => x.it.id), ["due"],
+           "once met, it's an ordinary card");
+  assertEq(learnPickBank([PKI("due", ["א1"]), wk("old", { wk: "2026-11-01" })], 1, 2, needs, { lib: PKLIB, today: today }).map(x => x.it.id), ["due"],
+           "a batch from weeks ago isn't this week's");
+  const budget = { left: 4 };
+  const pool = ["w1", "w2", "w3", "w4", "w5", "w6"].map(id => wk(id));
+  const first = learnPickBank(pool.slice(0, 4), 4, 2, needs, { lib: PKLIB, today: today, week: budget });
+  const second = learnPickBank(pool.slice(4).concat([PKI("due", ["א1"])]), 1, 2, needs, { lib: PKLIB, today: today, week: budget });
+  assertEq(first.length, 4);
+  assertEq(budget.left, 0, "the budget is shared");
+  assertEq(second.map(x => x.it.id)[0], "due", "past four, an ordinary due card comes first again");
 });
 
 if (location.search.indexOf("selftest") !== -1) {
